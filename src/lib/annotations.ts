@@ -154,9 +154,51 @@ export function textOf(root: HTMLElement): string {
 
 // ===== Selection → anchor =====
 
-/** The anchor of `range`, or null when it is empty, only whitespace, or reaches outside `root`. */
-export function anchorFromRange(root: HTMLElement, range: Range): Anchor | null {
-  if (!root.contains(range.startContainer) || !root.contains(range.endContainer)) return null;
+/** The text a range from (`fromNode`, `fromOffset`) to (`toNode`, `toOffset`) covers, whitespace-trimmed. */
+function textCovered(fromNode: Node, fromOffset: number, toNode: Node, toOffset: number): string {
+  const covered = document.createRange();
+  covered.setStart(fromNode, fromOffset);
+  covered.setEnd(toNode, toOffset);
+  return covered.toString().trim();
+}
+
+/**
+ * `range` limited to `root`, or null when it covers text outside it (N7). A triple click on the last block of the
+ * root, or a drag that ends just past its last line, leaves one end of the range at the very edge of the next (or
+ * previous) element, outside the root, although nothing outside is highlighted; such an overreach holds no text
+ * and is trimmed to the root's edge.
+ */
+function withinRoot(root: HTMLElement, range: Range): Range | null {
+  const startsInside = root.contains(range.startContainer);
+  const endsInside = root.contains(range.endContainer);
+  if (startsInside && endsInside) return range;
+  try {
+    const edge = document.createRange();
+    edge.selectNodeContents(root);
+    const trimmed = range.cloneRange();
+    if (!endsInside) {
+      // The range must run on past the end of the root, and nothing but empty space may lie beyond it.
+      if (range.comparePoint(edge.endContainer, edge.endOffset) !== 0) return null;
+      if (textCovered(edge.endContainer, edge.endOffset, range.endContainer, range.endOffset)) return null;
+      trimmed.setEnd(edge.endContainer, edge.endOffset);
+    }
+    if (!startsInside) {
+      if (range.comparePoint(edge.startContainer, edge.startOffset) !== 0) return null;
+      if (textCovered(range.startContainer, range.startOffset, edge.startContainer, edge.startOffset)) return null;
+      trimmed.setStart(edge.startContainer, edge.startOffset);
+    }
+    return trimmed;
+  } catch {
+    // Comparing points throws when the range and the root are in different trees (the page was redrawn under the
+    // selection): such a range has nothing to do with this root.
+    return null;
+  }
+}
+
+/** The anchor of `range`, or null when it is empty, only whitespace, or covers text outside `root`. */
+export function anchorFromRange(root: HTMLElement, selected: Range): Anchor | null {
+  const range = withinRoot(root, selected);
+  if (!range) return null;
   const model = buildModel(root);
   let start = -1;
   let end = -1;

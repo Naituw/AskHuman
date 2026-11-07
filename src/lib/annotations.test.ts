@@ -134,6 +134,78 @@ describe("anchorFromRange", () => {
     expect(anchorFromRange(root, range)?.quote).toBe("Alpha beta gamma");
   });
 
+  it("trims a triple click on the last block, whose range ends at the start of the next element outside the root", () => {
+    const root = mount(ARTICLE);
+    const options = document.createElement("div");
+    options.innerHTML = "<label>Option A</label>";
+    document.body.appendChild(options);
+    const last = root.querySelectorAll("p")[1];
+
+    const byText = document.createRange();
+    byText.setStart(last.firstChild as Text, 0);
+    byText.setEnd(options.querySelector("label")?.firstChild as Text, 0);
+    expect(anchorFromRange(root, byText)).toEqual({ start: 17, end: 30, quote: "delta epsilon" });
+
+    const byElements = document.createRange();
+    byElements.setStart(last, 0);
+    byElements.setEnd(options, 0);
+    expect(anchorFromRange(root, byElements)?.quote).toBe("delta epsilon");
+
+    const afterRoot = document.createRange();
+    afterRoot.setStart(last, 0);
+    afterRoot.setEndAfter(root);
+    expect(anchorFromRange(root, afterRoot)?.quote).toBe("delta epsilon");
+
+    // The live selection takes the same way in.
+    window.getSelection()?.addRange(byText);
+    expect(currentAnchor(root)?.quote).toBe("delta epsilon");
+  });
+
+  it("trims a start that sits at the end of the element just before the root", () => {
+    document.body.innerHTML = '<p id="head">Header</p><div id="root"><p>Alpha beta</p><p>gamma</p></div>';
+    const root = document.getElementById("root") as HTMLElement;
+    const head = document.getElementById("head")?.firstChild as Text;
+    const range = document.createRange();
+    range.setStart(head, head.data.length);
+    range.setEnd(textNodeWith(root, "gamma").node, 5);
+    expect(anchorFromRange(root, range)?.quote).toBe("Alpha beta gamma");
+  });
+
+  it("still refuses a range that covers text outside the root, at either end or both", () => {
+    document.body.innerHTML = '<p id="head">Header</p><div id="root"><p>Alpha beta</p></div><p id="tail">Footer</p>';
+    const root = document.getElementById("root") as HTMLElement;
+    const head = document.getElementById("head")?.firstChild as Text;
+    const tail = document.getElementById("tail")?.firstChild as Text;
+    const inside = textNodeWith(root, "Alpha").node;
+    const rangeBetween = (from: Node, fromOffset: number, to: Node, toOffset: number) => {
+      const range = document.createRange();
+      range.setStart(from, fromOffset);
+      range.setEnd(to, toOffset);
+      return range;
+    };
+
+    expect(anchorFromRange(root, rangeBetween(inside, 0, tail, 2))).toBeNull();
+    expect(anchorFromRange(root, rangeBetween(head, 3, inside, inside.data.length))).toBeNull();
+    expect(anchorFromRange(root, rangeBetween(head, 0, tail, tail.data.length))).toBeNull();
+    const page = document.createRange();
+    page.selectNodeContents(document.body);
+    expect(anchorFromRange(root, page)).toBeNull();
+    // Nothing of the root at all.
+    expect(anchorFromRange(root, rangeBetween(tail, 0, tail, tail.data.length))).toBeNull();
+    expect(anchorFromRange(root, rangeBetween(head, 0, head, head.data.length))).toBeNull();
+  });
+
+  it("answers null instead of throwing when the range lives in another tree than the root", () => {
+    const root = mount(ARTICLE);
+    const detached = document.createElement("div");
+    detached.innerHTML = "<p>elsewhere</p>";
+    const text = detached.firstChild?.firstChild as Text;
+    const range = document.createRange();
+    range.setStart(text, 0);
+    range.setEnd(text, 4);
+    expect(anchorFromRange(root, range)).toBeNull();
+  });
+
   it("refuses a selection that reaches outside the root, a collapsed one and whitespace", () => {
     const root = mount(`${ARTICLE}<p id="gap"> </p>`);
     const outside = document.createElement("p");

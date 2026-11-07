@@ -198,6 +198,30 @@ describe("notes on the Agent's text", () => {
       expect(fab(w).exists()).toBe(true);
     });
 
+    it("offers the button after a triple click on a lone question, whose range ends past the question", async () => {
+      interaction = () => ask("a", {
+        message: { text: "", files: [] },
+        questions: [{ message: "Should the index be added now, given the 18% slowdown?", predefinedOptions: ["Yes", "No"] }],
+      });
+      const w = await mountPopup();
+      const host = root() as HTMLElement;
+      // The browser selects the whole paragraph and leaves the end of the range at the start of what follows it.
+      const range = document.createRange();
+      range.setStart(textNodeWith(host, "Should").node, 0);
+      range.setEndAfter(host);
+      expect(host.contains(range.endContainer)).toBe(false);
+      host.dispatchEvent(new MouseEvent("pointerdown", { bubbles: true }));
+      window.getSelection()?.removeAllRanges();
+      window.getSelection()?.addRange(range);
+      document.dispatchEvent(new MouseEvent("pointerup", { bubbles: true }));
+      await new Promise((resolve) => setTimeout(resolve, 10));
+      await flushPromises();
+      expect(fab(w).exists()).toBe(true);
+      await fab(w).trigger("click");
+      await flushPromises();
+      expect(w.find(".an-editor .an-quote").text()).toBe("Should the index be added now, given the 18% slowdown?");
+    });
+
     it("leaves a question beside a Message, several questions and What's next alone", async () => {
       interaction = () => ask("a", {
         message: { text: "", files: [] },
