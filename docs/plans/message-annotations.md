@@ -431,3 +431,55 @@ P1 先于 P2 做：它只决定 P4 的路是否走得通，早知道比晚知道
 - 新用例在 iOS 18.5 / 27.x 与 zh-Hans 上没跑；`swift test` 全包、`vue-tsc --noEmit`、整库 `vitest` 在本期改动之后没有重跑。
 - 多词、跨块选区的拖选没法在模拟器上自动化（P1 已记），只有 vitest 覆盖。
 - 真机。
+
+### P4c iOS 回答页界面（2026-11-07，提交 `02ca4215`）
+
+**结论：代码写完并入库，但没有编译，也没有跑过任何测试。** 这一期是在机器严重换页（交换区 22 GiB 以上，另有别人的三台模拟器开着）时写的；用户在 AskHuman 里选了「先不编译、不跑测试：继续写 P4c / P5 的代码和 P6 文档，机器缓下来后再统一验证并查那条回归」。所以下面「验证」只有读代码与语法解析，**窄屏的数字一个也没量**，需求 §4.3 与 `ios-answer-flow.md` G14 里的宽度仍是估算。`PROTOCOL_VERSION` 不变（本期不碰协议）。
+
+**与计划的差异**（都是计划没写死的实现细节；第 1、10 条请评审时留意）：
+
+1. **回到原文不用「锚点视图 + `ScrollViewProxy.scrollTo`」**：被找的是网页里的一段字，不是 SwiftUI 的视图，放锚点要在 `MessageCard` 上叠一层、再把页面报告的位置换算成内边距。改成 `WebPage.Coordinator.reveal(_:)`：向页面要 `AH.locate(id)` 的位置，顺着 `superview` 找到包着整屏的 `UIScrollView`，把这一点滚到可见区域约 30% 处（夹在内容允许的范围里），动画结束后（等 450 ms；系统开了「减少动态效果」就不动画、不等）再 `AH.flash(id)`。代价：靠「SwiftUI 的 `ScrollView` 背后是个 `UIScrollView`」这件事（现在的系统上成立，但不是公开保证）；也可能与 `RequestScrollPosition`（回答页自己记阅读位置）抢位置，要实测。页面通过 `AnnotationPage.reveal(_:)` 暴露给 `AnnotationHost.page`（弱引用）。
+2. **列表与后续动作的衔接**：一个行要带人去别处（编辑器或原文）时，先关列表，由 `AnswerScreen` 在列表 `.sheet` 的 `onDismiss` 里接着做（`AnnotationHost.leaveTheList(for:)` 记下去向、`takeDeparture()` 取一次；去向是 `Departure.edit(id)` 或 `.reveal(id)`）。原因：一张表单在还没退场时不能换成另一张，也不能让屏幕滚动。点「完成」或下滑关闭时没有去向，什么也不做。编辑器与清单是同一个视图上的两个 `.sheet`，是否互不干扰要实测。
+3. **页面找不到位置的附注**（N3）：行里序号位画「–」，附注下面一行橙色小字「找不到原文位置」，点它打开编辑器（没有地方可去，所以不是回到原文）。
+4. **新增 `AnswerComposer.annotationRows`**（AHCore，`AnnotationRows.swift`）：清单要的行（`id`、页面的序号 `number?`、原文、附注）。序号是页面的序号（页面只给找到的编号，按阅读顺序从 1 起），找不到的没有序号、排在最后，之后的不跳号。纯函数，7 条单测。
+5. **底栏圆钮**：只在 `SendBar.buttons` 里的 `DirectiveMenu` 与 `nextIconButton` 之间加了一个子视图；`ButtonRow` 与 `CountAndButtons` 一行没改（它们按子视图个数通用排布）。有附注就一直在——包括网页画不出来、附注只是草稿的情况（N9）；发送中或请求已结束时置灰；点它先收键盘再开清单（清单盖住表单，留着输入框的键盘会随它一起弹回来）。浮动栏是 `barRoundButton()` 的圆，经典栏是 `barSecondaryButton()` 的胶囊；角标 `AnnotationCountBadge` 不接点击、对 VoiceOver 隐藏，按钮的标签是「Annotations · N」。`accessibilityIdentifier` 是 `annotations-button`，清单里是 `annotation-row-<i>` 与 `annotation-list-done`。
+6. **历史页**：回答之后多一张「Annotations · N」卡片（序号按顺序，原文最多三行，附注可选中），在 `HistoryDetailScreen`。
+7. **Mock 与启动选项**：`annotations` 场景加第四条请求 `req-notes-tall`（一段比屏幕高的消息，首尾各一个单词段，用来测「回到看不见的那一段」）；`MockBackend.allowAnnotations()` 与启动选项 `-AHAnnotate YES` 让别的场景的请求也收附注（底栏的测试用的是 `away` 场景，表单更长）；`-AHNotes N` 在 `-AHOpen` 打开的请求里预先写 N 条附注（`seedNotes`，偏移是编的、原文都是「users」，所以页面按词找得到一部分、找不到另一部分，数字照算）。
+8. **测试**：`AskHumanAnnotationUITests` 9 条（没写时底栏没有圆钮；清单按段落顺序排；点一行回到原文；左滑删除、编辑去编辑器；删完最后一条清单自己关；离开再打开附注还在；纯文本消息的附注仍可达；回答后的历史里有附注；清单的中文）；`AskHumanBarUITests` 加 6 条带附注的（2 条附注在默认、XL、XXL、XXXL、辅助字号五档；20 条附注在默认字号，角标是两位数），都复用 `checkTheCrowdedStates()`；`AnnotationRowsTests` 7 条；`AnnotationE2ETests` 5 条（附注随回答到 Agent、只有附注、What's next 的「结束本轮」加附注只交付附注、取消丢掉附注、严格选择不收附注）。
+9. **中文文案**：11 条加进 `ios/Tools/make-catalog.py`（含 P4b 编辑面板的几条，那时漏了）。`Localizable.xcstrings` **没有重新生成**（要先编译、脚本读 `.stringsdata`），所以在重新生成之前中文界面会显示英文原文。
+10. **窄屏验证设备没有创建**：计划里的两台 iPhone SE（第三代）模拟器（iOS 26.2 浮动栏、iOS 18.5 经典栏）一台没建（机器在换页，不起新模拟器）。375 pt 的实测一次也没做；若建不成再退回到「更大字号档」的做法（计划已写），要在验证后的记录里写明。
+
+**验证**（只有这些）：
+
+- 本期与 P5 改动、新增的 21 个 Swift 文件逐个 `swiftc -parse`（只查语法，不查类型）全部通过。
+- 对着视图与 Mock 逐条读了 UI 测试：用到的标识符、启动选项、请求 id 都有对应。
+- 没有 `swift build`、`swift test`、`xcodegen`、`xcodebuild`、模拟器、真实 daemon。
+
+**没验证**（所以下面每一项都可能出错，编译错误几乎肯定有）：
+
+- 编译：新增的 `AnnotationListSheet.swift`、`AnnotationParts.swift` 要 `xcodegen generate` 之后才进工程。
+- `swift test`（`AnnotationRowsTests` 与既有的全包）、`xcodebuild` 的 UI 测试（英文与 zh-Hans，iOS 26.2 与 18.5）、`AnnotationE2ETests`（要 `AH_E2E_BIN`）。
+- **375 pt 的窄屏实测**（需求 D21：不达标回来找用户，不自己换方案）；先在每台设备上量出 HEAD 上就失败的那 5 条 `AskHumanBarUITests` 与 `AskHumanInputVisibilityUITests` 那 1 条为什么失败，再判断数字。
+- 几个值得先看的风险点：`reveal` 的 UIKit 滚动与 `RequestScrollPosition` 抢位置；同一视图上两个 `.sheet`；`@Observable` 里嵌套的 `Departure`；目录里缺的键（`Edit`、`Delete`、`Keep editing`、`Discard` 是否已有）；左滑出的「Edit」「Delete」按钮能否被 XCUITest 按名字找到。
+- P4b 留下的那条阅读位置用例（`testManualReturnRestoresTheReadingPositionOfALongForm`）：机器恢复后在两棵树上各跑几遍再下结论。
+- 真机。
+
+### P5 iOS 直接提问（2026-11-07，提交 `dd848e0d`）
+
+**结论：代码写完并入库，同样没有编译、没有跑过任何测试**（原因同 P4c）。`PROTOCOL_VERSION` 不变。
+
+**与计划的差异**：
+
+1. 判断是 `AskView` 的两个属性（AHCore，`DirectQuestion.swift`）：`isDirectAsk`（四条：Message 去空白为空、没有附件、恰好一个问题、不是 What's next；不看 `annotatable`、能力位、是否 Markdown、是否严格选择）与 `messageAreaText`（Message 区该显示的文字：直接提问时是题干，否则是去空白的 Message）。`MessageCard.text(of:)` 直接取后者，`drawnByWebPage`、阅读追踪的「网页排版完成」都按它判断，所以不必另改。
+2. `QuestionCard` 里整个题干行（含多题才有的题号圆标）包在 `if !ask.isDirectAsk` 里；单题本来没有题号，所以去掉的就是题干。非 Markdown 的直接提问，题干在 Message 卡里是原生文字、仍在上方。`MessageCard` 只在 `ask.annotatable` 时给网页挂附注，所以严格选择或老 Mac 的直接提问也会把题干挪上去，但那一页不收附注（计划写的：只看四条）。
+3. **Mock 新增 `direct` 场景**（八条请求：短题干、大段题干、严格选择、纯文本、不收附注的 Mac、What's next、两个问题、有 Message 的提问），因为原来所有 Mock 请求都带 Message，没有直接提问的；`MockData.preview(of:)` 与 Rust 的 `preview_of` 一样，Message 为空时取第一个题干。
+4. **测试不是加在 `AskHumanWebUITests` / `AskHumanUITests`，而是新文件 `AskHumanDirectAskUITests`**（9 条）：XCUITest 看不到「卡片里装着什么」，所以用题干与第一个选项之间的间距分辨两种版面（同一张卡里约 12 pt，两张卡之间约 48 pt，阈值 30 pt）；另有「大段题干能选字写附注」「回答挪过去的题照常发送、进历史」。`DirectQuestionTests` 16 条覆盖四个条件各一条与「这些都不影响」。
+5. `docs/specs/ios-web-markdown.md` U2「题干保持原生」的例外已在 P6 一起写。
+
+**验证**：与 P4c 相同，只有语法解析与读代码。
+
+**没验证**：编译、`swift test`（`DirectQuestionTests`）、UI 测试（`AskHumanDirectAskUITests`，含间距阈值 30 pt 是否分得开两种版面）、真机。
+
+### P6 文档同步（2026-11-07）
+
+按需求 §8 与计划 §9 同步了：`docs/overview-popup-ui.md`（新增「消息附注」一节）、`docs/overview-ios.md`（消息附注一条、页面八个消息、直接提问挪题干、Mock 场景与启动选项、`answer_hash`、`Caps.annotations` / `annotatable`）、`docs/specs/ios-web-markdown.md`（U2 例外、W1、W6、§4、新增 W18）、`docs/specs/ios-answer-flow.md`（新增 G14、验收第 17 条、反馈记录；宽度写明是估算）、`docs/specs/strict-choice-and-structured-output.md`（新增 D6c：`[user_annotations]` 区块与 JSON 的 `user_annotations`）、`docs/specs/todo-whats-next.md`（附注与「结束本轮」不批准结束）、`docs/specs/mcp.md`、`docs/wiki/ios-setup.md` 与 `ios-setup.en.md`（各一条）。**与计划不同的一处**：`docs/overview.md` 里 What's next 那一条加了半句——带附注的「结束本轮」不算准许结束，只回 `[user_annotations]`——因为那一句原先只写「准许结束为 `[selected_options]`」，读起来像选了「结束本轮」就一定结束；其余没动。

@@ -344,6 +344,28 @@ App 里用只读小铃铛标出「会通知你」。需求 [`docs/specs/ios-foll
   （Face ID；真实 Agent 的启动要用户批准）——列表行出现铃铛、详情页有一行说明；Mac 在用时做完应**不**推；停手满 60 秒才来一条；
   做完之前回到 Mac 敲键盘则不应补推；做完后铃铛消失（`state.json` 的 `followSet` 为空）。配置用后还原；不要用 `AskHuman help` 之类的词试命令。
 
+## 待验证：消息附注（在消息里选字写附注，随回答发给 Agent；Mac 与弹窗已验，iOS 回答页与直接提问写完后一次都没编译过）
+
+需求 [`docs/specs/message-annotations.md`](specs/message-annotations.md)，计划与各期实施记录 [`docs/plans/message-annotations.md`](plans/message-annotations.md) §14。
+Mac（守护进程、CLI 输出、MCP、iOS 网关）、弹窗（P3，在真实弹窗里点过）、iOS 的协议 / 草稿 / 网页引擎 / 选字菜单 / 编辑面板（P4a、P4b，iOS 26.2 模拟器）已入库并验过。
+**P4c（回答页的清单、底栏的圆钮、历史）与 P5（直接提问把题干挪进消息区）是在机器严重换页时写的，用户选了「先不编译、不跑测试」，所以从未编译、从未运行**，
+窄屏（375 pt）底栏的宽度也只有估算，一次没量；P6 的文档已同步。
+
+下一步（机器恢复后一次做完，前一步没过不要往下）：
+
+1. `node scripts/machine-health.mjs` 退出码不是 2 之后：`xcodegen generate`；`swift test`（`ios/Packages/AskHumanKit`）；`xcodebuild build`，再跑 `ios/Tools/make-catalog.py` 重新生成 `Localizable.xcstrings`
+   （目录里还没有 11 条附注的中文）；修编译错误。
+2. 新建两台 iPhone SE（第三代）模拟器（iOS 26.2 验浮动栏、iOS 18.5 验经典栏）。先弄清 HEAD 上就失败的 5 条 `AskHumanBarUITests` 与
+   `AskHumanInputVisibilityUITests` 的那 1 条为什么失败，再跑带附注的 6 条，对照需求 §4.3 的估算；**不达标就回来找用户，不自己换方案**（D21）。
+3. 跑 `AskHumanAnnotationUITests`（9）、`AskHumanDirectAskUITests`（9）、`AnnotationE2ETests`（要 `AH_E2E_BIN`），英文与 zh-Hans；`vue-tsc --noEmit` 与整库 `vitest run`。
+4. P4b 的树上超时过的 `AskHumanRequestNavigationUITests.testManualReturnRestoresTheReadingPositionOfALongForm`：在 HEAD 与现在的树上各跑几遍再下结论；
+   若是真回归，从 `.sheet(item:)`、`AnnotatingWebView`、`notes.js`、`reveal` 里的 UIKit 滚动二分。
+5. 验完后问用户要不要出一版内部 TestFlight 上真机（计划 §7：P4c 之后问；用户没说要之前不出，做法见 `ios-testflight` 技能）。
+
+没有人在真环境里点过的：Windows / Linux 的真实弹窗；真实 macOS 弹窗里鼠标拖选（自动化的拖动不产生文字选区，只用过双击与三击）；浅色主题与 420 px 窄窗口的真实弹窗；
+真实输入法组词；「查看源码」模式重新定位、历史窗口里的附注、共享窗口的未答标记（只有单元测试）；iPhone 真机上的多词与跨块选区、系统选字菜单里的「添加附注」入口、整套手感；
+真实 Agent（Claude Code、Codex、Cursor）收到 `[user_annotations]` 区块后的反应（会调用模型，要用户授权）。iOS 17 用户决定不验，不记。
+
 ## 待验收：iOS 请求正文网页渲染、选项手感、「下一题」逻辑、图片查看与底栏（已实现并过模拟器测试，真机一轮待用户看）
 
 2026-10-28 用户在真机上提了三点（提问页 Markdown 渲染不如 Mac 弹窗且流程图画不出来、不能选字；选项选中是渐变的、手感软；「下一题」会跳过看过没答的题），
