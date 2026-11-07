@@ -1,4 +1,5 @@
 import SwiftUI
+import AHCore
 
 /// The Markdown body of a request, drawn by a web page that runs the same engine as the Mac popup
 /// (markdown-it, and Mermaid for diagrams), so that the same text looks the same on both. One view is
@@ -13,6 +14,10 @@ struct WebMarkdownView: View {
     /// Called once, when the text has been laid out for the first time (after any diagram was drawn), or
     /// when the native renderer took over. The height of the text is known from then on.
     var onSettled: () -> Void = {}
+    /// Set for the message of a request that takes notes: the page then lets a passage be selected and written on,
+    /// and draws the notes of the form. Without it the page only shows its text. The native renderer, which takes
+    /// over when the page cannot be used, takes no notes: the ones the form has stay, and are sent.
+    var notes: MessageNotes?
 
     @Environment(\.launchOptions) private var launch
     @Environment(\.dynamicTypeSize) private var typeSize
@@ -23,9 +28,10 @@ struct WebMarkdownView: View {
     /// The page has been starting for a while (web content takes a moment the first time).
     @State private var impatient = false
 
-    init(text: String, onSettled: @escaping () -> Void = {}) {
+    init(text: String, onSettled: @escaping () -> Void = {}, notes: MessageNotes? = nil) {
         self.text = text
         self.onSettled = onSettled
+        self.notes = notes
         // A text seen before starts at the height it had, so that coming back to it does not jump.
         _height = State(initialValue: WebHeights.value(for: text) ?? WebHeights.placeholder)
     }
@@ -33,9 +39,11 @@ struct WebMarkdownView: View {
     var body: some View {
         Group {
             if launch.webMarkdown, phase != .failed {
+                // (Read here, in the body, so that a note written or a passage chosen draws the view again.)
                 WebPage(
                     text: text, typeSize: typeSize, timeout: launch.webTimeout, height: $height, phase: $phase,
-                    onLink: { links.tapped($0) }, onSettled: settle
+                    onLink: { links.tapped($0) }, onSettled: settle,
+                    notes: notes, noteList: notes?.composer.pageNotes ?? [], pending: notes?.host.pending
                 )
                 .frame(height: height)
                 .opacity(phase == .loading ? 0 : 1)

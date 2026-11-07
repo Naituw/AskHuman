@@ -9,4 +9,7 @@ named in `VERSIONS.txt`, the same ones the Mac app uses. They are copied here by
   The minified file also contains the code of Mermaid's own dependencies (the `dependencies` of the
   package at the version in `VERSIONS.txt`); each of them keeps its own license.
 
-`index.html`, `style.css` and `render.js` are part of AskHuman.
+`annotations.js` is AskHuman's own annotation engine, built from `src/lib/annotations.ts` (the file the Mac popup
+imports) by `ios/Tools/web-markdown/build-annotations.sh`; its first line names the source it was built from.
+
+`index.html`, `style.css`, `render.js` and `notes.js` are part of AskHuman.

@@ -22,6 +22,8 @@ struct AnswerScreen: View {
     /// The question whose text field has the keyboard.
     @State private var focused: Int?
     @State private var messageReady = false
+    /// The writing of notes on the message that this page shares with its web page (docs/specs/message-annotations.md).
+    @State private var annotations = AnnotationHost()
     @Environment(\.launchOptions) private var launch
 
     fileprivate static let space = "answer-scroll"
@@ -39,8 +41,11 @@ struct AnswerScreen: View {
                         if case .failed = item.state { FailedSubmissionNotice(item: item) }
                         if store.isEscalated(item), !ended { EscalationNotice(item: item) }
                         RequestHeader(item: item)
-                        MessageCard(ask: ask, macId: item.macId, onSettled: { tracker.messageSettled(); messageReady = true })
-                            .endedDimming(ended)
+                        MessageCard(
+                            ask: ask, macId: item.macId, notes: MessageNotes(composer: composer, host: annotations),
+                            onSettled: { tracker.messageSettled(); messageReady = true }
+                        )
+                        .endedDimming(ended)
                         VStack(spacing: 0) {
                             ForEach(Array(ask.questions.enumerated()), id: \.offset) { index, question in
                                 QuestionCard(
@@ -100,6 +105,10 @@ struct AnswerScreen: View {
                         // The page's own watchdog gives up on it after this long (and the native renderer settles).
                         patience: .seconds(launch.webTimeout + 1)
                     )
+                }
+                // The note being written on a passage of the message (or changed).
+                .sheet(item: Binding(get: { annotations.editing }, set: { annotations.editing = $0 }), onDismiss: { annotations.closed() }) { edit in
+                    AnnotationEditorSheet(edit: edit, composer: composer, host: annotations)
                 }
             }
 
@@ -387,6 +396,8 @@ private final class ReadingTracker {
 private struct MessageCard: View {
     let ask: AskView
     let macId: String
+    /// Where notes on the message are kept and written; used when the Mac takes notes for this request.
+    let notes: MessageNotes
     /// The message has been laid out (see `WebMarkdownView`); said at once when it needs no page.
     var onSettled: () -> Void = {}
 
@@ -406,7 +417,7 @@ private struct MessageCard: View {
             VStack(alignment: .leading, spacing: 12) {
                 if !text.isEmpty {
                     if ask.isMarkdown {
-                        WebMarkdownView(text: text, onSettled: onSettled)
+                        WebMarkdownView(text: text, onSettled: onSettled, notes: ask.annotatable ? notes : nil)
                     } else {
                         Text(verbatim: text).font(.body).textSelection(.enabled).frame(maxWidth: .infinity, alignment: .leading)
                     }

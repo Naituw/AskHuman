@@ -10,6 +10,9 @@
   --thead-bg: rgba(120, 120, 128, 0.12);
   --quote-border: rgba(60, 60, 67, 0.3);
   --btn-bg: rgba(255, 255, 255, 0.85);
+  /* Notes written on the text (docs/specs/message-annotations.md D12): the system purple, which keeps them apart from
+     the blue of a selection and of links. */
+  --note: #af52de;
   --mono: ui-monospace, "SF Mono", Menlo, monospace;
 }
 @media (prefers-color-scheme: dark) {
@@ -22,6 +25,7 @@
     --thead-bg: rgba(120, 120, 128, 0.24);
     --quote-border: rgba(235, 235, 245, 0.3);
     --btn-bg: rgba(60, 60, 67, 0.85);
+    --note: #bf5af2;
   }
 }
 
@@ -178,4 +182,51 @@ thead th { background: var(--thead-bg); }
   background: transparent;
   color: var(--link);
   font: -apple-system-footnote;
+}
+
+/* Notes on passages of the text (annotations.js wraps the text nodes in <mark>; the look is the Mac popup's). */
+mark.an-mark {
+  color: inherit;
+  /* A mark is only tapped when it is a thing to tap for the page (iOS sends no click to plain text). */
+  cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
+  border-radius: 2px;
+  padding: 0;
+  background: color-mix(in srgb, var(--note) 16%, transparent);
+  box-shadow: inset 0 -1.5px 0 color-mix(in srgb, var(--note) 70%, transparent);
+  -webkit-box-decoration-break: clone;
+  box-decoration-break: clone;
+}
+/* The number after the last piece of each passage: the one the list in the app shows. It grows with the text size. */
+mark.an-mark.an-last::after {
+  content: attr(data-annotation-n);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  vertical-align: super;
+  box-sizing: border-box;
+  min-width: 1.35em;
+  height: 1.35em;
+  margin: 0 1px 0 2px;
+  padding: 0 0.3em;
+  border-radius: 0.7em;
+  background: var(--note);
+  color: #fff;
+  font-size: 0.62em;
+  font-weight: 700;
+  line-height: 1;
+}
+mark.an-mark.an-flash { animation: an-flash 1.2s ease-out; }
+@keyframes an-flash {
+  0% { background: color-mix(in srgb, var(--note) 55%, transparent); }
+  100% { background: color-mix(in srgb, var(--note) 16%, transparent); }
+}
+/* The passage a note is being written on is not a note yet: it is only outlined. */
+mark.an-draft {
+  color: inherit;
+  border-radius: 2px;
+  padding: 0;
+  background: color-mix(in srgb, var(--note) 10%, transparent);
+  outline: 1px dashed color-mix(in srgb, var(--note) 80%, transparent);
+  outline-offset: 1px;
 }

@@ -2,11 +2,12 @@ import os
 import SwiftUI
 import UIKit
 import WebKit
+import AHCore
 
 private let logger = Logger(subsystem: "com.naituw.humaninloop.ios", category: "web-markdown")
 
 /// The `WKWebView` behind `WebMarkdownView`: loads the bundled page (`Resources/WebMarkdown`), hands it
-/// the text, and follows what it reports. The page has no other way to reach the app than the five
+/// the text, and follows what it reports. The page has no other way to reach the app than the script
 /// messages below, and no way out to the network or to other pages.
 struct WebPage: UIViewRepresentable {
     let text: String
@@ -19,9 +20,17 @@ struct WebPage: UIViewRepresentable {
     let onLink: (URL) -> Void
     /// The text was laid out for the first time.
     let onSettled: () -> Void
+    /// Set for the message of a request that takes notes (see `notes.js`); `nil` is a page that only shows its text.
+    var notes: MessageNotes?
+    /// The notes the page draws, and the passage a note is being written on (read by `WebMarkdownView`, so that a
+    /// change of either draws the view again).
+    var noteList: [NotesPage.Note] = []
+    var pending: NotesPage.Anchor?
 
-    /// What the page may tell the app (see `render.js`); `log` only ever lands in the system log.
-    fileprivate static let messages = ["ready", "height", "rendered", "copy", "failed", "log"]
+    /// What the page may tell the app (see `render.js` and `notes.js`); `log` only ever lands in the system log.
+    fileprivate static let messages = [
+        "ready", "height", "rendered", "copy", "failed", "log", "selection", "noteTap", "notes",
+    ]
 
     /// Passes the page's script errors and policy violations on to the log, from before any of its own
     /// scripts run (a page that cannot start leaves no other trace).
@@ -49,7 +58,9 @@ struct WebPage: UIViewRepresentable {
         configuration.userContentController = controller
         // Nothing the page does is kept: no cookies, no cache on disk.
         configuration.websiteDataStore = .nonPersistent()
-        let view = WKWebView(frame: .zero, configuration: configuration)
+        let view = AnnotatingWebView(frame: .zero, configuration: configuration)
+        view.offer = { [weak coordinator] in coordinator?.menuOffer() }
+        view.choose = { [weak coordinator] offer in coordinator?.choose(offer) }
         view.isOpaque = false
         view.backgroundColor = .clear
         let scroll = view.scrollView
@@ -86,6 +97,10 @@ struct WebPage: UIViewRepresentable {
         /// How often the page was loaded again after its web content process ended.
         private var reloads = 0
         private var watchdog: Task<Void, Never>?
+        /// What the page was last told about notes: the list, and the passage being written on. A page that is
+        /// loaded again knows neither.
+        private var sentNotes: [NotesPage.Note] = []
+        private var sentPending: NotesPage.Anchor?
 
         /// Text a copy button may hand over, in UTF-16 units (a code block is far smaller than this).
         private static let copyLimit = 1_000_000
@@ -93,12 +108,15 @@ struct WebPage: UIViewRepresentable {
         func attach(_ view: WKWebView, page: WebPage) {
             webView = view
             self.page = page
+            page.notes?.host.page = self
             load()
         }
 
         func update(_ page: WebPage) {
             self.page = page
+            page.notes?.host.page = self
             renderIfNeeded()
+            pushNotes()
         }
 
         func close(_ view: WKWebView) {
@@ -112,6 +130,8 @@ struct WebPage: UIViewRepresentable {
             guard let webView else { return }
             ready = false
             drawn = nil
+            sentNotes = []
+            sentPending = nil
             guard let directory = WebAssets.directory else {
                 fail("the page is not part of the app")
                 return
@@ -140,6 +160,37 @@ struct WebPage: UIViewRepresentable {
             }
         }
 
+        // MARK: notes (see `notes.js`)
+
+        /// Tells the page the notes it is to draw and the passage a note is being written on, when they are not
+        /// what it was told last. (Called with every update of the view, which happens far more often than they change.)
+        private func pushNotes() {
+            guard ready, let page, page.notes != nil, let webView else { return }
+            if sentNotes != page.noteList {
+                sentNotes = page.noteList
+                webView.evaluateJavaScript(NotesPage.setNotes(page.noteList), completionHandler: nil)
+            }
+            if sentPending != page.pending {
+                sentPending = page.pending
+                webView.evaluateJavaScript(NotesPage.setPending(page.pending), completionHandler: nil)
+            }
+        }
+
+        /// What the selection menu offers for the passage the page last said was selected.
+        func menuOffer() -> NotesPage.Offer? {
+            guard let notes = page?.notes else { return nil }
+            return notes.composer.annotationOffer(for: notes.host.selection)
+        }
+
+        /// The person chose the menu's entry.
+        func choose(_ offer: NotesPage.Offer) {
+            page?.notes?.host.begin(offer)
+        }
+
+        func clearSelection() {
+            webView?.evaluateJavaScript(NotesPage.clearSelection, completionHandler: nil)
+        }
+
         /// Gives the page up: the native renderer draws the text from now on. (Not done inside a view
         /// update, which is where this may be called from.)
         private func fail(_ reason: String) {
@@ -154,6 +205,7 @@ struct WebPage: UIViewRepresentable {
                 logger.notice("the page is ready")
                 ready = true
                 renderIfNeeded()
+                pushNotes()
             case "height":
                 report(body, settled: false)
             case "rendered":
@@ -164,6 +216,15 @@ struct WebPage: UIViewRepresentable {
                 fail("the page said so: \(body)")
             case "log":
                 logger.notice("page: \(String(describing: body), privacy: .public)")
+            case "selection":
+                page?.notes?.host.selection = NotesPage.selection(from: body)
+            case "noteTap":
+                // A tap on a note's highlight changes that note.
+                if let notes = page?.notes, let id = NotesPage.noteID(from: body), notes.composer.annotation(id: id) != nil {
+                    notes.host.beginEdit(id)
+                }
+            case "notes":
+                page?.notes?.composer.applyAnnotationPositions(NotesPage.positions(from: body))
             default:
                 break
             }
@@ -220,6 +281,8 @@ struct WebPage: UIViewRepresentable {
         }
     }
 }
+
+extension WebPage.Coordinator: AnnotationPage {}
 
 /// Script messages keep their handler alive; this one lets go of the page's coordinator.
 @MainActor

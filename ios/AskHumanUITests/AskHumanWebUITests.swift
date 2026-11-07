@@ -215,4 +215,163 @@ final class AskHumanWebUITests: XCTestCase {
         Thread.sleep(forTimeInterval: 1.0)
         shot("35-xxxl-top")
     }
+
+    // MARK: notes on the message (docs/specs/message-annotations.md)
+    //
+    // The `annotations` scenario has three requests about a session cache. Their message has two paragraphs of a
+    // single word ("Redis", "Memcached"), which can be pressed on to select that word: the system menu of the
+    // selection, which a person would use, is what these tests go through.
+
+    private func openNotes(_ id: String = "req-notes") {
+        launch("annotations")
+        openShowcase(id)
+    }
+
+    /// The one-word paragraph, whatever the page has put after it (the number of a note on it).
+    private func word(_ text: String) -> XCUIElement {
+        let pattern = NSRegularExpression.escapedPattern(for: text) + ".{0,3}"
+        return app.staticTexts.matching(NSPredicate(format: "label MATCHES %@", pattern)).firstMatch
+    }
+
+    /// An entry of the selection menu (or of anything else that is up) by its title.
+    private func entry(_ title: String) -> XCUIElement {
+        for query in [app.menuItems, app.buttons, app.staticTexts, app.otherElements] {
+            let found = query[title]
+            if found.exists { return found }
+        }
+        return app.menuItems[title]
+    }
+
+    private func pollFor(_ title: String, seconds: TimeInterval) -> XCUIElement? {
+        let deadline = Date().addingTimeInterval(seconds)
+        while Date() < deadline {
+            let found = entry(title)
+            if found.exists { return found }
+            Thread.sleep(forTimeInterval: 0.25)
+        }
+        return nil
+    }
+
+    /// Presses on a word until the menu of its selection shows `title`. The system does not always show the menu by
+    /// itself after a long press (the touch can lift before the page has selected the word); then a tap on the
+    /// selection does, as it does for a person.
+    private func selectWord(_ word: XCUIElement, until title: String) -> XCUIElement? {
+        for _ in 1...3 {
+            word.press(forDuration: 1.2)
+            if let found = pollFor(title, seconds: 8) { return found }
+            word.tap()
+            if let found = pollFor(title, seconds: 8) { return found }
+            // A tap elsewhere puts the menu away before the next try.
+            app.navigationBars.firstMatch.tap()
+            Thread.sleep(forTimeInterval: 0.5)
+        }
+        return nil
+    }
+
+    /// Waits until the editor sheet has gone (its text box is not on the screen any more).
+    private func waitForTheSheetToGo(file: StaticString = #filePath, line: UInt = #line) {
+        let gone = NSPredicate(format: "exists == false")
+        let wait = XCTNSPredicateExpectation(predicate: gone, object: element("annotation-field"))
+        XCTAssertEqual(XCTWaiter().wait(for: [wait], timeout: 10), .completed, "the sheet is still up", file: file, line: line)
+    }
+
+    /// A word is selected, the entry is chosen, the note typed and added; the word is a note then, and the menu of
+    /// the same word offers to edit it. The note is changed, and then taken away, and the word offers a new one again.
+    func testANoteIsWrittenOnASelectedWordAndComesBackForEditing() {
+        openNotes()
+        XCTAssertTrue(word("Redis").waitForExistence(timeout: 60), "the page is drawn")
+        let add = selectWord(word("Redis"), until: "Add annotation")
+        XCTAssertNotNil(add, "the selection's menu has the entry")
+        shot("40-notes-menu")
+        add?.tap()
+
+        let field = requireElement("annotation-field", timeout: 10)
+        XCTAssertTrue(element("annotation-quote").label.contains("Redis"), "the sheet shows the passage")
+        XCTAssertFalse(element("annotation-commit").isEnabled, "nothing to add before something is written")
+        field.typeText("Does it survive a restart?")
+        XCTAssertTrue(element("annotation-commit").isEnabled)
+        shot("41-notes-sheet")
+        element("annotation-commit").tap()
+        waitForTheSheetToGo()
+        Thread.sleep(forTimeInterval: 1.0)
+        shot("42-notes-drawn")
+
+        // The word is a note now: its menu offers to change that one, not to add another.
+        let edit = selectWord(word("Redis"), until: "Edit annotation")
+        XCTAssertNotNil(edit, "a word with a note offers to edit it")
+        XCTAssertFalse(entry("Add annotation").exists)
+        edit?.tap()
+        let again = requireElement("annotation-field", timeout: 10)
+        XCTAssertEqual(again.value as? String, "Does it survive a restart?", "the note comes back as it was written")
+        again.tap()
+        again.typeText(" And a failover?")
+        element("annotation-commit").tap()
+        waitForTheSheetToGo()
+
+        let changed = selectWord(word("Redis"), until: "Edit annotation")
+        changed?.tap()
+        XCTAssertEqual(requireElement("annotation-field", timeout: 10).value as? String, "Does it survive a restart? And a failover?")
+        element("annotation-delete").tap()
+        waitForTheSheetToGo()
+
+        XCTAssertNotNil(selectWord(word("Redis"), until: "Add annotation"), "once the note is gone the word offers a new one")
+        // Away without writing: nothing is kept.
+        app.navigationBars.firstMatch.tap()
+    }
+
+    /// Giving the writing up leaves no note behind: at once when nothing is written, after a question when something is.
+    func testCancellingTheSheetKeepsNothing() {
+        openNotes()
+        XCTAssertTrue(word("Memcached").waitForExistence(timeout: 60), "the page is drawn")
+
+        selectWord(word("Memcached"), until: "Add annotation")?.tap()
+        _ = requireElement("annotation-field", timeout: 10)
+        element("annotation-cancel").tap()
+        waitForTheSheetToGo()
+
+        selectWord(word("Memcached"), until: "Add annotation")?.tap()
+        requireElement("annotation-field", timeout: 10).typeText("never mind")
+        element("annotation-cancel").tap()
+        let discard = app.buttons["Discard"]
+        XCTAssertTrue(discard.waitForExistence(timeout: 5), "words that would be lost are asked about")
+        shot("45-notes-discard-asked")
+        // Not discarding: the button that says so where the system shows one, else a tap outside (which is how a
+        // question that comes up beside its button is put away).
+        if app.buttons["Keep editing"].exists {
+            app.buttons["Keep editing"].tap()
+        } else {
+            app.coordinate(withNormalizedOffset: CGVector(dx: 0.85, dy: 0.5)).tap()
+        }
+        let putAway = XCTNSPredicateExpectation(predicate: NSPredicate(format: "exists == false"), object: discard)
+        XCTAssertEqual(XCTWaiter().wait(for: [putAway], timeout: 5), .completed, "the question is gone")
+        XCTAssertEqual(element("annotation-field").value as? String, "never mind", "keeping on leaves the words as they were")
+        element("annotation-cancel").tap()
+        XCTAssertTrue(discard.waitForExistence(timeout: 5))
+        discard.tap()
+        waitForTheSheetToGo()
+        Thread.sleep(forTimeInterval: 0.5)
+        XCTAssertNotNil(selectWord(word("Memcached"), until: "Add annotation"), "the word is still without a note")
+        app.navigationBars.firstMatch.tap()
+    }
+
+    /// Plain text, and a message from a Mac without notes, take none: the menu is the system's own.
+    func testAMessageThatTakesNoNotesHasNoEntry() {
+        openNotes("req-notes-off")
+        XCTAssertTrue(word("Redis").waitForExistence(timeout: 60), "the page is drawn")
+        let copy = selectWord(word("Redis"), until: "Copy")
+        XCTAssertNotNil(copy, "the system's menu is up")
+        XCTAssertFalse(entry("Add annotation").exists, "but not with ours")
+        XCTAssertFalse(entry("Edit annotation").exists)
+        shot("43-notes-off")
+    }
+
+    func testAMessageDrawnAsPlainTextHasNoEntry() {
+        openNotes("req-notes-plain")
+        let text = app.staticTexts.matching(NSPredicate(format: "label CONTAINS %@", "I compared two candidates")).firstMatch
+        XCTAssertTrue(text.waitForExistence(timeout: 20), "the text is there")
+        let copy = selectWord(text, until: "Copy")
+        XCTAssertNotNil(copy, "the system's menu is up")
+        XCTAssertFalse(entry("Add annotation").exists)
+        shot("44-notes-plain")
+    }
 }

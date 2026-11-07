@@ -46,6 +46,9 @@ public actor MockBackend: RemoteBackend {
         /// Paired Macs that have not answered yet, as right after the app opened: the lists are
         /// still loading. They stay so unless a sync delay is given, after which the demo appears.
         case syncing
+        /// Macs that take notes written on the message (`caps.annotations`) and three requests about a session cache:
+        /// one that offers notes, one the Mac sent as plain text, and one from a Mac that has none.
+        case annotations
     }
 
     /// A submission as the mock received it (for tests).
@@ -171,7 +174,7 @@ public actor MockBackend: RemoteBackend {
         var initial: EngineState
         switch scenario {
         case .demo, .agentResults, .quota, .single, .longs, .markdown, .strict, .tall, .gallery, .outdated, .bothSync, .todoPick,
-             .away, .awayOn:
+             .away, .awayOn, .annotations:
             let inbox: [InboxItem]
             switch scenario {
             case .single: inbox = MockData.inbox(now: date).filter { $0.requestId == "req-select" }
@@ -180,6 +183,7 @@ public actor MockBackend: RemoteBackend {
             case .strict: inbox = MockData.strictOnly(now: date)
             case .tall: inbox = MockData.tallMessageOnly(now: date)
             case .gallery: inbox = MockData.galleryOnly(now: date)
+            case .annotations: inbox = MockData.annotationsInbox(now: date)
             default: inbox = MockData.inbox(now: date)
             }
             let traffic = scenario == .quota
@@ -189,7 +193,7 @@ public actor MockBackend: RemoteBackend {
                 phase: .connected(via: "tcp"), foreground: true,
                 macs: MockData.macs(
                     now: date, knowTodos: scenario != .outdated, pickTodos: scenario == .todoPick,
-                    awayMode: scenario == .away || scenario == .awayOn
+                    awayMode: scenario == .away || scenario == .awayOn, annotations: scenario == .annotations
                 ), inbox: inbox,
                 push: .registered(expiresAt: date.addingTimeInterval(86_400 * 80)), historyRevision: 1,
                 traffic: traffic,
