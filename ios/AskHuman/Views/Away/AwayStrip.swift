@@ -1,10 +1,10 @@
 import SwiftUI
 import AHCore
 
-// The strip above the tab bar while away mode is on (docs/specs/special-replies.md D31): orange, so that it is not
-// taken for a toolbar and forgotten. From iOS 26 it is tinted Liquid Glass; before, a material under orange. The
-// place is the same either way: the app draws it itself instead of the system's bottom accessory, which only
-// exists on iOS 26.
+// The strip above the tab bar while away mode is on (docs/specs/special-replies.md D31): tinted in the teal of the
+// system's Sleep Focus (`AwayStyle`), so that it is not taken for a toolbar and forgotten. From iOS 26 it is tinted
+// Liquid Glass; before, a material under the tint. The place is the same either way: the app draws it itself instead
+// of the system's bottom accessory, which only exists on iOS 26.
 
 extension View {
     /// Shows the away strip at the foot of a tab's root page, above the tab bar. A page pushed over the root has no
@@ -63,10 +63,10 @@ struct AwayStrip: View {
                 end()
             } label: {
                 Group {
-                    if ending { ProgressView().tint(.orange) } else { Text("End") }
+                    if ending { ProgressView().tint(AwayStyle.onWhite) } else { Text("End") }
                 }
                 .font(.subheadline.weight(.bold))
-                .foregroundStyle(Color.orange)
+                .foregroundStyle(AwayStyle.onWhite)
                 .frame(minWidth: 40)
                 .padding(.horizontal, 14)
                 .padding(.vertical, 7)
@@ -96,16 +96,16 @@ struct AwayStrip: View {
     }
 }
 
-/// The strip's body: tinted glass from iOS 26, a material under orange before.
+/// The strip's body: tinted glass from iOS 26, a material under the tint before.
 private struct AwayStripBackground: ViewModifier {
     func body(content: Content) -> some View {
         if #available(iOS 26, *) {
-            content.glassEffect(.regular.tint(.orange), in: .capsule)
+            content.glassEffect(.regular.tint(AwayStyle.tint), in: .capsule)
         } else {
             content
-                .background(Color.orange.opacity(0.94), in: Capsule())
+                .background(AwayStyle.tint.opacity(0.94), in: Capsule())
                 .background(.ultraThinMaterial, in: Capsule())
-                .shadow(color: .orange.opacity(0.35), radius: 10, y: 3)
+                .shadow(color: .black.opacity(0.14), radius: 8, y: 2)
         }
     }
 }

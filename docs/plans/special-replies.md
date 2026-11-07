@@ -62,7 +62,7 @@ Mac 端本来就有现成的东西：`QuestionAnswer.todo_ids` / `todo_selection
 
 - **线协议**（可选字段与新消息，不升 iOS `PROTO`）：`away.get` / `away.state` / `away.set` / `away.session.set`；`Caps` 加 `away` 能力位（老 Mac 没有它，手机隐藏相关入口或提示需要更新）；`RequestView` / `RequestSummary` 的可选 `escalated`；Agent 行的可选 `mode`；夹具与两边测试同步。
 - **Mac 网关**：`ios/gateway` 收到 `away.*` 与回答里的 `directive` 后调同一个引擎接口；多台 Mac 各自独立，手机按在线的 Mac 逐台下发（D34、N9）。
-- **手机**：`AwayStore`（每台 Mac 的状态汇总、持续时间 / 自动回复次数的显示）；常驻条 `AwayStrip` 由 `RootView` 用 `safeAreaInset(edge: .bottom)` 画在标签栏正上方（所有标签页；iOS 26+ `glassEffect(.regular.tint(橙色), in: .capsule)`，更早是材质 + 橙色，位置一致；「结束」一键）；Agents 页工具栏的月亮按钮与半屏开启页（说明、生效的 Mac、备注、「开启离开模式」；≥2 台 Mac 才显示 Mac 卡，不在线的置灰）；`AgentDetailScreen` 的「此会话的 AskHuman」行；`RequestScreen` 顶部的升级提示卡（带「结束离开模式」）；列表行「离开期间升级」「不再使用 AskHuman」标签；`AnswerScreen` 底栏的玻璃按钮 + 系统菜单（本期只有两条指令）与待发面板。
+- **手机**：`AwayStore`（每台 Mac 的状态汇总、持续时间 / 自动回复次数的显示）；常驻条 `AwayStrip` 由 `RootView` 用 `safeAreaInset(edge: .bottom)` 画在标签栏正上方（所有标签页；iOS 26+ `glassEffect(.regular.tint(AwayStyle.tint), in: .capsule)`，更早是材质 + 青绿色，位置一致；颜色见 `Design/AwayStyle.swift`；「结束」一键）；Agents 页工具栏的月亮按钮与半屏开启页（说明、生效的 Mac、备注、「开启离开模式」；≥2 台 Mac 才显示 Mac 卡，不在线的置灰）；`AgentDetailScreen` 的「此会话的 AskHuman」行；`RequestScreen` 顶部的升级提示卡（带「结束离开模式」）；列表行「离开期间升级」「不再使用 AskHuman」标签；`AnswerScreen` 底栏的玻璃按钮 + 系统菜单（本期只有两条指令）与待发面板。
 - 测试：Swift 包测试（状态汇总、范围计算）；UI 测试（iOS 26+ 一遍，降级样式用启动参数再跑一遍；en + zh-Hans）；`hello` 快照后常驻条在重连后仍正确。
 
 ## P3 细节（快捷回复）
@@ -188,7 +188,7 @@ Mac 端本来就有现成的东西：`QuestionAnswer.todo_ids` / `todo_selection
 
 - **线协议**：`away.state`（`rev`、`global`、`sessions[]`、`escalatedWaiting`）、`away.set`、`away.session.set`；`Caps.away`；`AnswerSubmit.directive`；`RequestView.escalated`。**与设计的差异**：没有单独的 `away.get`——状态放在 `hello` 快照里，之后每次变化、重新同步时主动下发；`away.set` 没有单独回执（紧接着到的 `away.state` 就是确认）；会话行里没有每行的 `mode`（手机用 `away.state.sessions` 推出），Agent 快照因此没动。夹具与两边测试同步（`ios/Fixtures/wire-v1/messages.json`）。
 - **Mac 网关**：`Host` trait 加 `away()` / `away_apply()`，Daemon 侧调同一个引擎接口（`daemon/runtime/ios.rs`）；回答里的 `directive` 只在**这条回答赢得请求**时才应用——选择落在 `Coordinator` 的一个 directive 槽里，由收尾代码取走，所以无论哪个渠道答，应用的位置只有一处。多台 Mac 各自独立，手机逐台下发。
-- **手机**：`AwayStore`（`AppStore+Away.swift`、`AwayModels.swift`、`PhoneEngine+Away.swift`）；`AwayStrip`（标签栏根页面上方的橙色条，带「结束」；推出去的页面没有标签栏也就没有条）、Agents 工具栏的月亮按钮与半屏开启页（≥2 台 Mac 才显示 Mac 卡）、Agent 详情里的「此会话的 AskHuman」行与 Agent 行上的小标签、升级提问上的提示卡、底栏旁的菜单与待发面板（`Views/Away/`）。
+- **手机**：`AwayStore`（`AppStore+Away.swift`、`AwayModels.swift`、`PhoneEngine+Away.swift`）；`AwayStrip`（标签栏根页面上方的青绿色条，带「结束」；推出去的页面没有标签栏也就没有条）、Agents 工具栏的月亮按钮与半屏开启页（≥2 台 Mac 才显示 Mac 卡）、Agent 详情里的「此会话的 AskHuman」行与 Agent 行上的小标签、升级提问上的提示卡、底栏旁的菜单与待发面板（`Views/Away/`）。
 - **界面细节**：待发面板在请求结束时清空；Agent 行上的次数用紧凑的小标签；条里的文字允许缩小（`minimumScaleFactor`）；一个 SwiftUI 的坑：空的待发面板仍然占一份布局间距，已处理（面板为空时不参与布局）。
 - **老 Mac**：没有 `caps.away` 就不显示任何离开相关入口（有测试）。
 - **验证**：Rust `ios::gateway` 的 `tests_away`；Swift 包测试（引擎、`AwayStore`、夹具往返）；模拟器 UI 测试 `AskHumanAwayUITests`（en + zh-Hans，模拟器 iOS 27）。iOS 18.5 的经典条样式在后面的「iOS 18.5 经典条补验」里补验过；iOS 17 没看过。

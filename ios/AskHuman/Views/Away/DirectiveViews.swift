@@ -74,8 +74,9 @@ struct DirectivePanel: View {
         if let directive = composer.directive {
             VStack(alignment: .leading, spacing: 8) {
                 HStack(spacing: 8) {
+                    // The moon is away mode's colour; "Stop using AskHuman" is not away mode, and is a caution.
                     Image(systemName: directive.kind == .away ? "moon.fill" : "bell.slash.fill")
-                        .foregroundStyle(.orange)
+                        .foregroundStyle(directive.kind == .away ? AwayStyle.tint : Color.orange)
                     Text(directive.kind == .away ? "Away mode" : "Stop using AskHuman")
                         .font(.subheadline.weight(.semibold))
                     if directive.kind == .away {
@@ -162,7 +163,7 @@ struct EscalationNotice: View {
             Label {
                 Text("Escalated while you are away").font(.subheadline.weight(.semibold))
             } icon: {
-                Image(systemName: "moon.fill").foregroundStyle(.orange)
+                Image(systemName: "moon.fill").foregroundStyle(AwayStyle.tint)
             }
             Text(item.view?.ask?.whatsNext == true
                 ? "The Agent says everything is done."
@@ -204,7 +205,7 @@ struct SessionAwayRow: View {
             VStack(alignment: .leading, spacing: 8) {
                 Divider()
                 HStack(spacing: 8) {
-                    Image(systemName: "moon").foregroundStyle(.orange)
+                    Image(systemName: "moon").foregroundStyle(AwayStyle.tint)
                     Text("AskHuman in this session").font(.subheadline)
                     Spacer(minLength: 8)
                     Menu {
@@ -239,8 +240,8 @@ struct SessionAwayRow: View {
 
     private func statusTint(_ mode: AwaySessionMode, globalOn: Bool) -> Color {
         switch mode {
-        case .away: .orange
-        case .follow: globalOn ? .orange : .secondary
+        case .away: AwayStyle.tint
+        case .follow: globalOn ? AwayStyle.tint : .secondary
         case .mute, .normal: .secondary
         }
     }

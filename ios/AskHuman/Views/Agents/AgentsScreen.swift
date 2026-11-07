@@ -103,7 +103,7 @@ private struct AgentsBar: ViewModifier {
                 if store.macs.count > 1 {
                     ToolbarItem(placement: .topBarLeading) { AgentFilterMenu() }
                 }
-                // Away mode: hollow while it is off, solid orange while it is on (docs/specs/special-replies.md D32).
+                // Away mode: hollow while it is off, solid teal while it is on (docs/specs/special-replies.md D32).
                 if store.hasPairedMacs, store.offersAway {
                     ToolbarItem(placement: .topBarTrailing) { AwayToolbarButton(showSheet: $showAway) }
                 }

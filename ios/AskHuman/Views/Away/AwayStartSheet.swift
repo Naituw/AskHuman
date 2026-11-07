@@ -2,7 +2,7 @@ import SwiftUI
 import AHCore
 
 /// The moon button in the bar of the Agents tab (docs/specs/special-replies.md D32): hollow while away mode is off, a
-/// solid orange one while it is on. Off, it opens the sheet that turns it on; on, it ends it.
+/// solid one in the colour of away mode (`AwayStyle`) while it is on. Off, it opens the sheet that turns it on; on, it ends it.
 struct AwayToolbarButton: View {
     @Binding var showSheet: Bool
     @Environment(AppStore.self) private var store
@@ -17,7 +17,7 @@ struct AwayToolbarButton: View {
             if on {
                 Button(action: tap) { Image(systemName: "moon.fill") }
                     .buttonStyle(.borderedProminent)
-                    .tint(.orange)
+                    .tint(AwayStyle.tint)
             } else {
                 Button(action: tap) { Image(systemName: "moon") }
             }
@@ -113,6 +113,8 @@ struct AwayStartSheet: View {
                 .accessibilityIdentifier("away-start")
             }
         }
+        // The whole sheet is in the colour of away mode: the ticks of the Macs, the caret of the note and the button.
+        .tint(AwayStyle.tint)
         .presentationDetents([.large])
         .onAppear { seed(away) }
         .onChange(of: away) { _, next in
@@ -150,7 +152,7 @@ struct AwayStartSheet: View {
             HStack(spacing: 12) {
                 Image(systemName: on ? "checkmark.circle.fill" : "circle")
                     .font(.title3)
-                    .foregroundStyle(on ? Color.accentColor : Color.secondary.opacity(0.5))
+                    .foregroundStyle(on ? AwayStyle.tint : Color.secondary.opacity(0.5))
                 VStack(alignment: .leading, spacing: 1) {
                     Text(verbatim: mac.name).foregroundStyle(reason == nil ? .primary : .secondary)
                     if let reason {

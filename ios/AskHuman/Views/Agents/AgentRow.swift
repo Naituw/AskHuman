@@ -47,7 +47,7 @@ struct AgentRow: View {
                     }
                     switch store.sessionMode(of: item) {
                     case .mute: Chip(text: "Not using AskHuman", systemImage: "bell.slash")
-                    case .away: Chip(text: "Away", systemImage: "moon.fill", tint: .orange)
+                    case .away: Chip(text: "Away", systemImage: "moon.fill", tint: AwayStyle.tint)
                     case .follow, .normal: EmptyView()
                     }
                     if item.view.state == "working" {
