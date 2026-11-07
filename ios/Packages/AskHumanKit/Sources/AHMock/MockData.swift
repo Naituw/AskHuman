@@ -435,7 +435,14 @@ public enum MockData {
     }
 
     static func preview(of view: RequestView) -> String {
-        let source = view.ask?.message.text ?? view.confirm?.detail.summary ?? ""
+        // Like the Mac's `preview_of`: a request with no message has its first question for a preview.
+        let source: String
+        if let ask = view.ask {
+            let message = ask.message.text.trimmingCharacters(in: .whitespacesAndNewlines)
+            source = message.isEmpty ? (ask.questions.first?.text ?? "") : message
+        } else {
+            source = view.confirm?.detail.summary ?? ""
+        }
         let line = source.split(whereSeparator: \.isNewline).map { $0.trimmingCharacters(in: .whitespaces) }.first { !$0.isEmpty } ?? ""
         return String(line.prefix(120))
     }

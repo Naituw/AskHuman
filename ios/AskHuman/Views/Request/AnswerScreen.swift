@@ -427,9 +427,10 @@ private struct MessageCard: View {
     /// The message has been laid out (see `WebMarkdownView`); said at once when it needs no page.
     var onSettled: () -> Void = {}
 
-    /// What the card shows of the message: its text, trimmed.
+    /// What the card shows of the message: its text, trimmed; for a request that is only a question, the question
+    /// (`AskView.isDirectAsk`: it is drawn here like a message, so that it can take notes like one).
     private static func text(of ask: AskView) -> String {
-        ask.message.text.trimmingCharacters(in: .whitespacesAndNewlines)
+        ask.messageAreaText
     }
 
     /// Whether a web page draws the message, whose height is then known only once the page said so.
@@ -480,23 +481,27 @@ private struct QuestionCard: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
-            HStack(alignment: .firstTextBaseline, spacing: 10) {
-                if count > 1 {
-                    Text("\(index + 1)")
-                        .font(.footnote.weight(.bold))
-                        .foregroundStyle(.white)
-                        .frame(width: 22, height: 22)
-                        .background(composer.isAnswered(index) ? Color.green : Color.accentColor, in: Circle())
-                        .accessibilityLabel("Question \(index + 1) of \(count)")
-                }
-                Group {
-                    if ask.isMarkdown {
-                        MarkdownView(text: question.text, baseFont: .body.weight(.semibold))
-                    } else {
-                        Text(verbatim: question.text).font(.body.weight(.semibold))
+            // A request that is only this question has it in the message area, above (`AskView.isDirectAsk`): the card
+            // has the options and the input.
+            if !ask.isDirectAsk {
+                HStack(alignment: .firstTextBaseline, spacing: 10) {
+                    if count > 1 {
+                        Text("\(index + 1)")
+                            .font(.footnote.weight(.bold))
+                            .foregroundStyle(.white)
+                            .frame(width: 22, height: 22)
+                            .background(composer.isAnswered(index) ? Color.green : Color.accentColor, in: Circle())
+                            .accessibilityLabel("Question \(index + 1) of \(count)")
                     }
+                    Group {
+                        if ask.isMarkdown {
+                            MarkdownView(text: question.text, baseFont: .body.weight(.semibold))
+                        } else {
+                            Text(verbatim: question.text).font(.body.weight(.semibold))
+                        }
+                    }
+                    .frame(maxWidth: .infinity, alignment: .leading)
                 }
-                .frame(maxWidth: .infinity, alignment: .leading)
             }
             if !question.options.isEmpty {
                 let listing = self.queue

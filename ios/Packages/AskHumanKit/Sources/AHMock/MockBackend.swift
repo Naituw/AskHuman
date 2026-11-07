@@ -50,6 +50,10 @@ public actor MockBackend: RemoteBackend {
         /// one that offers notes, one the Mac sent as plain text, one from a Mac that has none, and one whose message is
         /// taller than the screen.
         case annotations
+        /// Macs that take notes and eight requests that have no message: a short question, a long one, a strict choice, plain
+        /// text, a Mac without notes, What's next, two questions, and (for contrast) one with a message. The phone shows a
+        /// request that is one question (and not What's next) with the question in the message area.
+        case direct
     }
 
     /// A submission as the mock received it (for tests).
@@ -175,7 +179,7 @@ public actor MockBackend: RemoteBackend {
         var initial: EngineState
         switch scenario {
         case .demo, .agentResults, .quota, .single, .longs, .markdown, .strict, .tall, .gallery, .outdated, .bothSync, .todoPick,
-             .away, .awayOn, .annotations:
+             .away, .awayOn, .annotations, .direct:
             let inbox: [InboxItem]
             switch scenario {
             case .single: inbox = MockData.inbox(now: date).filter { $0.requestId == "req-select" }
@@ -185,6 +189,7 @@ public actor MockBackend: RemoteBackend {
             case .tall: inbox = MockData.tallMessageOnly(now: date)
             case .gallery: inbox = MockData.galleryOnly(now: date)
             case .annotations: inbox = MockData.annotationsInbox(now: date)
+            case .direct: inbox = MockData.directInbox(now: date)
             default: inbox = MockData.inbox(now: date)
             }
             let traffic = scenario == .quota
@@ -194,7 +199,7 @@ public actor MockBackend: RemoteBackend {
                 phase: .connected(via: "tcp"), foreground: true,
                 macs: MockData.macs(
                     now: date, knowTodos: scenario != .outdated, pickTodos: scenario == .todoPick,
-                    awayMode: scenario == .away || scenario == .awayOn, annotations: scenario == .annotations
+                    awayMode: scenario == .away || scenario == .awayOn, annotations: scenario == .annotations || scenario == .direct
                 ), inbox: inbox,
                 push: .registered(expiresAt: date.addingTimeInterval(86_400 * 80)), historyRevision: 1,
                 traffic: traffic,
