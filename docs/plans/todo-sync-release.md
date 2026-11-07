@@ -176,3 +176,30 @@ Linux 首轮系统依赖安装耗时较长，但最终成功；不把 runner 排
 ### 0.17.0 发布授权与安全检查
 
 2026-11-07 用户要求先检查凭据再发布，审阅英文发布说明并批准 0.17.0。Gitleaks 8.30.1 使用默认完整规则、关闭仓库忽略项，扫描全部受版本管理文件与 main 可达的 1099 个提交。16 处告警已逐项核实：7 个固定加密测试向量、8 个假的 CloudKit 游标、1 个 Swift 类型声明；未发现真实密钥。仓库未跟踪私钥、证书导出、环境凭据文件。实际安装包另行检查；不读取或导出 Keychain 凭据。独立账号、稳定系统与首次批准形态保持待验，不宣称已通过。
+
+### 2026-11-07：0.17.0 已正式发布
+
+- 用户审阅并批准英文 Release notes 后，最终版本由 0.16.1 改为 0.17.0。固定发布源码为
+  `4da9a915195f7a3a5aedcb186dffd5c79ce6ea68`；`v0.17.0` 标签只指向该提交，不包含发布后并行的工作区改动。
+- [候选验证 42334807543](https://github.com/Naituw/AskHuman/actions/runs/42334807543) 四平台成功、发布 skipped；
+  [常规 CI 42334803246](https://github.com/Naituw/AskHuman/actions/runs/42334803246) 七项全部成功。
+- [正式发布 42336271991](https://github.com/Naituw/AskHuman/actions/runs/42336271991) 全部成功；
+  [GitHub v0.17.0](https://github.com/Naituw/AskHuman/releases/tag/v0.17.0) 已为公开稳定版本，包含四平台原版资产和 SHA256SUMS。
+  npm 主包 `askhuman` 与四个 `@humaninloop/*` 平台包的 0.17.0 / latest 均已在官方源读回。
+  Windows 元数据曾短暂不可见，刷新后恢复；发布日志确认五包均成功，未重发或改版本。
+- 正式组件 ZIP SHA-256 为 `7bb3cbaf44ff698d9aba15bad7195592ccfd500b0481a0434d47b45a0492e29a`，
+  两架构、版本 0.17.0、Production、固定 Team / bundle / 容器、显式 notarized 要求、staple 与 Gatekeeper 均通过。
+- 四平台正式直接包 SHA-256 与清单相符；Mac ARM / Intel 实物的 npm pack / 旧式直接复制 smoke 通过，
+  仅在临时目录验证资源，不注册 helper、不写用户状态。隔离前缀从官方 npm 安装后，CLI 版本、
+  wrapper 与内嵌资源信任均通过，没有创建应用状态。
+- 长构建前 machine-health 为 tight（非退出 2），按已授权的单任务后台方式完成 install.sh；
+  日常二进制为 0.17.0，helper 自动升级至 0.17.0，Production / 0 未上传 / 无安装错误，随后正常 AskHuman 提问成功。
+- 发布前后均做密钥检查：Gitleaks 默认规则、不采用仓库忽略，16 个源码 / 历史告警均为已核实的测试数据或类型误报；
+  实际候选与正式四平台二进制的 ASCII / UTF-16 字符串扫描无告警，私钥与个人渠道配置未进入安装包。
+- [中文接入页面](https://naituw.github.io/AskHuman/beta-zh/) 已通过
+  [Pages 42337415283](https://github.com/Naituw/AskHuman/actions/runs/42337415283) 部署并 HTTP 200 读回，包含 0.17.0 安装入口、
+  EMQX 官网 / 国内控制台及逐步配置、可选自部署。另备中文离线 HTML / Markdown 与原版安装文件合集；
+  中继入口仅在私有交付资料中提供，没有复制维护者的 broker 密码或任何签名凭据。
+- 独立账号、稳定系统与首次批准形态继续待验；不宣称补齐，不等待 24 小时，不执行断网或睡眠测试。
+
+正式发布后的五个 npm tarball 另已完整下载：文件清单与版本正确、官方 dist.integrity 相符；四个平台的二进制均与对应 GitHub 原版资产逐字节一致，GitHub 发布正文也与用户批准的英文文件完全一致。

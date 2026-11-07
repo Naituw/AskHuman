@@ -336,37 +336,29 @@ App 里用只读小铃铛标出「会通知你」。需求 [`docs/specs/ios-foll
 - [ ] 后置（需求 §4）：Mermaid 对齐 Mac 的 `sandbox`、`ahasset://` 本地图片、Markdown 附件预览改网页渲染、页内查找
 - [ ] 仓库外的原型目录 `/Users/wutian/Developer/HumanInLoop-ios-web-md-proto/`（约 399 MB，正式实现已从中移植）可以删除，删之前请用户确认
 
-## 进行中：跨设备待办同步（多台 Mac，iCloud）——自用已启用，准备发布 0.17.0
+## 待独立账号与稳定系统验收：iCloud 待办同步
 
-需求 `docs/specs/todo-sync.md`、计划 `docs/plans/todo-sync.md`（实施记录在其 §10）、实现地图 `docs/overview-todo-sync.md`、界面稿 `docs/assets/todo-sync-ui/`。
-2026-11-06 用户要求按面向所有用户的正式发布要求准备；继续留在实验设置、默认关闭；接受现有后台传播延迟，不再以 5 秒作为发布门槛。
-2026-11-07 用户要求先检查密钥再公开发布，审阅并批准英文 Release notes 后最终指定 0.17.0；独立账号 / 稳定系统等未测边界继续保留。
-已确认 npm 平台子包携带组件、首次启用才安装、同步要求 macOS 14+（本体仍 11+）；为覆盖旧版直接更新器，后续确认把已签名公证的 helper zip 嵌入 Mac 可执行文件。
-按用户要求直接在主工作树开发；规格 [todo-sync-release](specs/todo-sync-release.md)，计划 [todo-sync-release](plans/todo-sync-release.md)。朋友独立账号的首次使用验收安排在候选包完成后，已记项目待办。
-2026-10-27 用户评审通过并说「你自己全部搞定，我要上班了」；分支 `feat/todo-sync`，worktree `../HumanInLoop-todosync`（Dev Instance，popup-only）；两者 2026-10-29 已清理（提交都在 main 里）。
-S0 可行性 spike 的结果摘要在需求附录 A；spike 工程在仓库外：`~/Developer/AskHuman-TodoSync-Spike/`（复现方法见其中的 `RUNBOOK.txt`）。
+2026-11-07 已按用户授权随 **v0.17.0** 公开发布；仍为实验性功能，默认关闭，要求 macOS 14+。
+规格 [todo-sync](specs/todo-sync.md)、[分发规格](specs/todo-sync-release.md)，实现与完整验证记录见
+[同步计划 §10](plans/todo-sync.md)与[分发计划](plans/todo-sync-release.md)。
 
-已定（用户 AskHuman 八轮，详见需求 §3、§17）：同一 Apple ID 的自己的多台 Mac；按 git remote 自动合并，每个目录 / worktree 是同一份待办的副本；无 remote 不同步；⚡ 不跨机；
-v1 不同步附件、同步执行历史；**清空历史是全局的**（清空时提示）；iCloud 模式下可见所有项目；架构 = Rust 同步核心 + 薄 CloudKit 适配器（不用 `CKSyncEngine`，推送只当提示）；
-whats-next 前「过期才拉」（> 20 秒，最多等 1.5 秒）；待办窗口统一改侧栏且打开不得卡顿；先自用，之后另行评审随正式版发布。
-容器 / bundle id：`iCloud.com.naituw.humaninloop.todosync` / `com.naituw.humaninloop.todosync`。
+已完成工程与分发：组件嵌入 Mac 程序、双架构 Developer ID 签名与 Production 公证、npm / Direct
+资源传播、升级 / 回滚 / 停用保护；四平台候选与正式发布 CI、常规 CI 均通过。
+本机已升级至 0.17.0，Production / 0 未上传 / 无安装错误；正式 Mac 包两架构信任与分发 smoke、
+隔离环境从 npm 全新安装通过。源码、可达历史与实际二进制的密钥检查未发现真实凭据。
 
-进度（分支 `feat/todo-sync`，提交即进度）：P0 性能埋点与脚本 ✓；P1 侧栏 ✓（**已合并进 main：`abdfa3b`，未推送**）；P2 同步核心 ✓（模拟与崩溃枚举全过）；
-P3 CloudKit helper ✓（`swift test` 过；Xcode 自动签名的 Development 构建对真实 iCloud 跑通）；P4 集成 ✓（读取钩子、`AskHuman todo-sync`、设置卡、侧栏底部状态；Dev Instance 恒关闭所以只能用模拟验证）；
-P5 iCloud 模式界面 ✓（虚拟键 `icloud:<身份>`、合并行、仅云端 / 仅本机、移除；与界面稿的对照用浏览器预览目测）；P6 双机验收 ✓（下面两段；睡眠唤醒、联网恢复、登录项形态、24 小时浸泡除外）。各阶段与计划的差异见计划 §10。
-**已合并进 main（本地，未推送）**：用户 2026-10-28 看了两台真机验收的报告后选了「现在就合并」（功能默认关、helper 不随版本发布，回来直接用 main 的构建装机验收），推翻了 2026-10-27 22:05「真机验收后再合并」的决定。合并前先把 main（含 iOS 选模型的 4 个提交）合进分支，只有 `docs/PROGRESS.md` 一处冲突；合并后全量测试：Rust 2040 通过、0 失败（10 忽略）；vue-tsc 与 vitest 未重跑（main 这 4 个提交没动 `src/`）。
-**真实 iCloud（Development）验证 ✓**（用户 2026-10-27 22:05 授权，Xcode 自动签名创建 App ID / 容器 / 开发描述文件）：两份假 HOME 模拟两台 Mac、共用一个 helper，`scripts/todo-sync-e2e.py` 13 组用例 59 项断言全过（互传 / 并发 / 全局清空历史 / 虚拟键与接管 / worktree / helper 缺席 / 账号变化 / 重建 / 清云与恢复 / 轮询追平 / `kill -9` 循环 / 空闲资源）；真实延迟：`fetch` 中位 0.48 s、`save` 0.70 s、无改动 tick 中位 0.45 s（冷连接 2.45 s），whats-next 的 1.5 s 预算够用；helper 空闲 0.0 % CPU / 9 MiB。验收中发现并修了一个真实缺陷（只剩 `enabled` 标记、`state.json` 丢了时 tick 空转而设置显示已开启，现在自愈重建）。结果与限制见计划 §10，用法见 `docs/overview-todo-sync.md`。
-新容器在大陆 iCloud 账号上首次访问会被拒（CKError 15），用户已在 CloudKit Dashboard 打开过 Development 环境；测试数据已用 `clear-cloud` 清掉，假 HOME 与临时文件已删，helper 已停。
-**两台真 Mac 对 Production ✓**（用户 2026-10-28 授权 Developer ID 构建 + SSH 到 Mac B，只用假 HOME 与测试数据；Production 的 schema 由用户部署；不含公证）：`scripts/todo-sync-e2e-twomac.py` 8 组用例 22 项断言全过（双向互传、设备列表、并发新增 4.7 秒一致、删除 / 清空互传、B 的 helper 被杀后启动 3.4 秒追平、空闲 10 分钟后再传）。**推送路径是通的，延迟与 S0 同量级**：两台都无人操作时一台保存到另一台收到推送 142 / 107 / 273 秒（10 分钟轮询封顶），刚有往来时 12 / 8.5 秒；helper 空闲 0.0 % CPU、5–34 MiB。需求 §16 第 1 条「两台活跃时 5 秒内」要有人在用的机器才能判定，这次无人值守没有结论。测试区已用 `clear-cloud` 从 Production 删除，两台的 helper 已停、假 HOME 与日志已删，没碰任何一台的真实 `~/.askhuman`、B 的网络与代理。结果与发现（含 `open` 会把 `ASKHUMAN_HOME` 传给 helper 与 tick 的坑）见计划 §10，用法见 `docs/overview-todo-sync.md`。
-**两台 Mac 已装机并对真实数据启用 ✓**（用户 2026-10-28 夜在场授权，A = MacBook Pro，B = Mac Studio）：A 装了 main 的构建与 helper 并启用（登录项直接 `enabled`，没弹批准），首次同步 93 条；B 经 SSH 装（AskHuman 在 B 上用 B 自己的 Developer ID 重签，A 与 B 的签名团队不同，直接拷会让 B 的钥匙串不再信任；SSH 里 `codesign` 拿不到私钥，改走 GUI 会话的一次性 launchd 任务），helper 用 zip + `ditto` 拷过去、同样注册成登录项。首次合并后两台各显示 **40 待办 / 86 历史、0 未上传**，设备列表有两台；同一仓库的多个目录互为副本，所以本机目录数与条数比装前多（A：8 → 10 个项目、21 → 34 条；B：8 → 14、23 → 44）。A 约 3.5 分钟后才由 10 分钟轮询追平 B 的首次上传（没收到推送，与无人值守的 107–273 秒同量级），之后一次上传 0.4 秒内推到了 B。对真实数据第一次跑还发现并修了一个真实缺陷：同一条待办在 A 的两个目录里附件数不同（只有一处有文件），附件提示被两个目录轮流改写，A 每个 tick 都白上传一条记录（修法与测试见计划 §10；B 不受这个缺陷影响，之后也已更新到修复后的构建——第一次因 B 的磁盘被 B 上别的项目的测试写满而中止，用户清理后重来）。装机与重签的细节、坑见计划 §10 与 `docs/overview-todo-sync.md`「装到另一台 Mac」。
+下一步仅保留尚未实测的边界：
 
-下一步：
-- [ ] **看着用一阵**：两台的真实数据已在同步（见上一段）。有异常（重复、缺失、迟迟不到）先看 `AskHuman todo-sync status` 与 `~/Library/Logs/AskHumanTodoSync/helper.log`；要退回就 `AskHuman todo-sync disable`，装前备份在两台的 `~/.askhuman/state/todos.json.before-todo-sync-2026-10-28`（满意后可删）。B 的旧二进制备份在 B 的 `~/.askhuman/backups/pre-todo-sync-install-*/`。
-- [ ] **需要真实环境的剩余项**：首次安装与登录项批准形态（A、B 注册后都直接是 `enabled`，没弹过批准）；独立账号 / 稳定系统。用户 2026-11-07 明确要求不做断网相关和睡眠测试，并因功能仍属实验性取消新版必须运行满 24 小时的门槛；不为此等待或安排回查，保留未验证边界。SSH 到 Mac B 的旧同意已用完，再用要当次同意。
-- [ ] **正式分发准备**：安装 / 升级 / 回滚、嵌入资源、签名公证流水线与中英文用户说明已实现。`1808f269` 已单独推送 main；内嵌候选装机、0.1.0 → 0.16.0 组件升级及 CI 四平台仅验证流程通过，发布阶段 skipped。CI 的 ARM / Intel 实物已下载并通过签名、npm / Direct 资源检查。仍待独立账号 / 稳定系统与首次批准形态；未公开发布。该 feat 提交已提供用户可见发布说明，详情见新计划。
-- [ ] 性能基线 / A-B：已重建 P0 `9f5bab2b` 与本轮前 `980349aa` 的参考程序，均在 `todo-sync-helper/build`，未安装到日常入口。繁忙环境下原 P0 完整 A/B 返回 1；本轮前主线的 stress 对比通过（冷端到端 +4 ms、热端到端 -16.5 ms、热前端 +4.5 ms），暂未检出本轮明显增量回归。热前端 p90 随负载波动为 192.4–301.8 ms，未写 baseline、未关闭原 P0 门槛。用户选择保留当前环境、单任务后台继续；仍需安静亮屏后复核原 P0 并建立正式基线，iCloud 模式首屏也需真实启用环境补验。完整数字与限制见新计划。
-- [ ] 分发给别人前：按正式分发规格完成内嵌公证资源和 CI 配置；用另一个大陆 iCloud 账号复测首次初始化，补稳定系统与恢复验收。helper 仍是首次启用时安装的独立 `.app`，资源内嵌方案替代旧计划的主应用 bundle 内嵌登录项。附件同步、手机直连 CloudKit 另行评审（iOS App 读写待办已由 Mac 网关代答，见下一节）。
-- 构建小贴士（shell 的 HOME 被指向 `/tmp/ph`）：`export CARGO_HOME=/Users/wutian/.cargo CARGO_INCREMENTAL=0 GIT_CONFIG_GLOBAL=/Users/wutian/.gitconfig npm_config_store_dir=/Users/wutian/Library/pnpm/store`，否则 cargo 会重新下载依赖、`./scripts/install.sh` 会卡在 pnpm 的交互提示
+- 独立 iCloud 账号从空状态首次使用，稳定版 macOS 14+，以及系统要求批准登录项的首次安装形态。
+  已有朋友验收项目待办；没有真实记录前不标为通过。两台自用 Mac 的注册都直接 enabled。
+- 日常观察双机真实待办是否重复、缺失或迟迟不到；异常先看 `AskHuman todo-sync status` 与
+  `~/Library/Logs/AskHumanTodoSync/helper.log`。停用保留本机 / 云端数据；装前备份为
+  `~/.askhuman/state/todos.json.before-todo-sync-2026-10-28`。
+- 原 P0 性能基线仍未校准、未写 baseline；繁忙环境完整 A/B 未通过，本轮前主线的 stress 对比通过，
+  未能证明原 P0 的差异来自本轮组件。保留[分发计划](plans/todo-sync-release.md)中的原始结果与限制。
+
+用户明确取消新版运行满 24 小时的等待门槛，并要求本轮不做断网相关与睡眠测试；不为此等待或安排回查。
+SSH 到 Mac B 的旧授权已用完，需要再次操作时当次确认。上述未验边界不阻止用户已批准的本次实验性发布。
 
 ## 待验收：iOS App 管理待办（已合并进 main，两台 Mac 与 iPhone Air 都已换上新版，决策全部是 agent 在用户睡觉时代定的，等用户审阅与真机验收）
 
