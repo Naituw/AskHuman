@@ -830,6 +830,18 @@ Release 归档及 external 预检通过；首次上传最终确认 401 后先查
 
 **没做**：任何真机；iOS 17；折叠屏内屏；用最终包复查 Release 配置下的生产推送。
 
+## 2026-11-07：Build 11 回答框焦点卡死的本地修复
+
+用户提供三份 0.1.0 (11)、iOS 27.3 Beta 的 `.ips`：一次 scene-update 超过 10 秒、两次 process-exit 超过 5 秒，均为 `0x8BADF00D` watchdog 终止。三份主线程都同时出现 AttributeGraph / SwiftUI 更新和 UIKit 的 `UITextView.becomeFirstResponder`，App 帧偏移相同；用户也确认主要在点回答输入框时发生。未找到 UUID 匹配的 Build 11 dSYM，因此这里依据栈形状和源码定位，不声称已将 App 帧精确符号化。
+
+`CaretTextView.updateUIView` 原来只将失焦延后，获取焦点仍同步执行。现在获取和释放都通过 Coordinator 合并到下一轮主线程，执行时读取最新 `focused` 绑定与启用状态，检查可编辑性与窗口，弱引用持有视图，避免在 SwiftUI 更新中重入以及旧任务抢回焦点。按钮动作调用的 `takeTheKeyboard()` 直接接力保持原规则。
+
+用户要求只做简单验证、继续暂停上传。验证使用 Build 11 源码的普通归档副本叠加本次修复（没有新建 git worktree），独立 Duo / iOS 27.1 模拟器，Xcode 27.2 单任务编译：App 和新增测试均编译成功。随后在已编译的 Mock App 上做轻量交互：外屏与内屏点回答框均出现键盘；内屏按屏幕键盘输入 `Q` 后正文与计数变为 `1/1`，点「发送」后请求离开收件箱、键盘收起、剩余数量减少。未启动真实 Agent 或使用真实服务；已关闭本次专用模拟器。
+
+新增 `AskHumanFocusUITests` 覆盖后台返回再编辑、切换两题后继续输入。**两条没有取得完整通过结果**：首轮一条在点按前因测试自身滚动方向错误失败，另一条完成前后台输入但总耗时超限；修正滚动后，重跑在 runner 建立连接前被 signal kill，中途没有执行测试。机器健康检查为 thrashing，用户不能关闭其他任务并要求缩小验证，未继续扩跑。不能据此认定两条自动化通过，也未验证 iOS 27.3 Beta 真机；后续工作见 `docs/PROGRESS.md`。没有归档或上传新 TestFlight 构建。
+
+用户经 AskHuman 明确豁免本次 `AGENTS.md` 的桌面 `./scripts/install.sh`：本次为 iOS 局部改动，主树还包含其他 Agent 未提交的桌面逻辑，机器仍在 thrashing。交付范围为上述本地修复、iOS 编译与轻量交互，不以桌面重装作为该修复的验证。
+
 ## 2026-11-07：TestFlight 内部构建 12
 
 用户在 build 11 上两次遇到 iPhone Duo 副屏右侧栏的返回键等按钮不见（`docs/PROGRESS.md`「待取证：iPhone Duo 副屏右侧栏……」），同意加开发者菜单的「复制诊断信息」（需求 D22），并要求用新包带上它。只发内部组；从干净的临时 worktree（`/tmp/ah-ship`，分离在 `7ce2bafb`）打包，因为主工作区里有别的工作线的未提交文件（Mac 端引导页、`CaretTextView` 与 `AskHumanFocusUITests` 等）。

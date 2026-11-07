@@ -32,15 +32,7 @@ struct CaretTextView: UIViewRepresentable {
             view.invalidateIntrinsicContentSize()
         }
         view.updatePlaceholder()
-        if focused.wrappedValue, !view.isFirstResponder, view.window != nil {
-            view.becomeFirstResponder()
-        } else if !focused.wrappedValue, view.isFirstResponder {
-            // Not in the middle of the pass: a resign asks the hosting view whether it can take the responder over, and
-            // that runs the view graph again inside this update (see `InlineTextView.setEditable`).
-            DispatchQueue.main.async { [weak view, focused] in
-                if let view, !focused.wrappedValue, view.isFirstResponder { view.resignFirstResponder() }
-            }
-        }
+        context.coordinator.synchronizeFocus(in: view, enabled: enabled)
     }
 
     func sizeThatFits(_ proposal: ProposedViewSize, uiView: InlineTextView, context: Context) -> CGSize? {
@@ -67,9 +59,32 @@ struct CaretTextView: UIViewRepresentable {
         #endif
     }
 
+    @MainActor
     final class Coordinator: NSObject, UITextViewDelegate {
         var parent: CaretTextView
+        private var focusUpdateQueued = false
+        private var focusEnabled = true
         init(_ parent: CaretTextView) { self.parent = parent }
+
+        func synchronizeFocus(in view: InlineTextView, enabled: Bool) {
+            focusEnabled = enabled
+            guard parent.focused.wrappedValue != view.isFirstResponder, !focusUpdateQueued else { return }
+            focusUpdateQueued = true
+            // Either responder transition can ask SwiftUI for focus values and reenter its view graph.
+            // Apply it after this update, reading the latest binding so an old request cannot steal focus.
+            DispatchQueue.main.async { [weak self, weak view] in
+                guard let self else { return }
+                focusUpdateQueued = false
+                guard let view else { return }
+                if parent.focused.wrappedValue {
+                    if focusEnabled, view.isEditable, view.window != nil, !view.isFirstResponder {
+                        view.becomeFirstResponder()
+                    }
+                } else if view.isFirstResponder {
+                    view.resignFirstResponder()
+                }
+            }
+        }
 
         func textViewDidBeginEditing(_ textView: UITextView) {
             if !parent.focused.wrappedValue { parent.focused.wrappedValue = true }
