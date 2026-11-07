@@ -35,7 +35,7 @@ Agent ─► Mac 上的 AskHuman ──MQTT（TLS）──► EMQX ──► iPh
 ## 二、准备 Apple 开发者资源
 
 1. 在 Apple Developer → Identifiers 注册两个 App ID：主 App `com.naituw.humaninloop.ios`（勾选 **Push Notifications**）和通知扩展 `com.naituw.humaninloop.ios.notification`（不需要任何能力）。使用自己的团队时，把 `ios/project.yml` 里的 Team 与 Bundle ID 一并改成自己的，并让中继的 `APNS_TOPIC` 与主 App 的 Bundle ID 一致。
-2. Keys → 新建一个启用 **Apple Push Notifications service (APNs)** 的密钥。点 APNs 一行的 Configure，环境选 **Sandbox & Production**（开发构建走沙盒、TestFlight / 正式版走生产，一把密钥通用；此时限制只能选 Team Scoped）——这两项**保存后 Apple 不允许修改**。注册后下载 `.p8` 文件（**只能下载一次**），记下 **Key ID** 和你的 **Team ID**。
+2. Keys → 新建一个启用 **Apple Push Notifications service (APNs)** 的密钥，选择自己的 App 所在团队及匹配的推送环境：开发构建用 Sandbox，TestFlight / 正式版用 Production。Apple 新建密钥支持按团队或指定 App 授权，并按环境区分；已有同时支持两个环境的旧密钥仍可继续使用。当前中继实例配置一把密钥，需要同时使用两种环境时分别部署对应环境的中继。注册后下载 `.p8` 文件（**只能下载一次**），记下 **Key ID** 和你的 **Team ID**。以 [Apple 当前的推送认证说明](https://developer.apple.com/documentation/UserNotifications/establishing-a-token-based-connection-to-apns)为准。
 
 ## 三、部署推送中继
 

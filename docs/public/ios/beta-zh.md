@@ -69,3 +69,9 @@ lang: zh-Hans
 - 是否能复现，打开 App 或刷新后是否恢复。
 
 不要发送 broker 密码、连接串、配对码、推送 token、私钥或完整机密会话。
+
+## 可选：完全自部署
+
+如果希望 broker 和推送中继都由自己管理，可以使用自己的 MQTT 服务，并将仓库里的中继部署到自己的腾讯云。完全自部署还需要 Apple 开发者账号：自行编译 iOS App，使用自己的 Team 和 Bundle ID 签名，配置与该 App 及推送环境匹配的 APNs 密钥，再在 Mac 上填写自己的中继地址并重新配对。详细步骤见[源码自部署指南](https://github.com/Naituw/AskHuman/blob/main/docs/wiki/ios-setup.md)。
+
+使用维护者签名的 TestFlight App 时，请继续使用维护者提供的中继；仅有腾讯云账号，不能直接用自己团队的 APNs 密钥替换这份 App 的推送授权。普通用户沿用上面的接入流程即可，无需自行签名或部署中继。
