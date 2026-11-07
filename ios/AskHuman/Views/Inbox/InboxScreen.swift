@@ -144,7 +144,7 @@ private struct InboxList: View {
 
     @ViewBuilder
     private func row(_ item: InboxItem) -> some View {
-        let content = InboxRow(item: item, hasDraft: store.hasDraft(for: item))
+        let content = InboxRow(item: item, hasDraft: store.hasDraft(for: item), landsArrival: selection != nil)
         if let selection {
             content.pickable(picked: selection.wrappedValue == item.id) { selection.wrappedValue = item.id }
         } else {

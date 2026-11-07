@@ -6,14 +6,29 @@ import AHProtocol
 struct InboxRow: View {
     let item: InboxItem
     let hasDraft: Bool
+    /// The list is a column beside the request (a wide window): the unread dot is where the arrival animation of a new
+    /// request lands, so the animation can find it, and it is held back until the bubble has become it (`ArrivalDots`).
+    var landsArrival = false
+
+    @Environment(AppStore.self) private var store
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
+    /// The bubble of this request is on its way to the dot.
+    private var dotHeld: Bool {
+        landsArrival && !reduceMotion && store.requestArrivals.contains { $0.id == item.id }
+            && !ArrivalDots.shared.reached.contains(item.id)
+    }
 
     var body: some View {
         HStack(alignment: .top, spacing: 10) {
             Circle()
                 .fill(Color.accentColor)
                 .frame(width: 9, height: 9)
+                .opacity(item.unread && !dotHeld ? 1 : 0)
+                .animation(.easeOut(duration: 0.15), value: dotHeld)
+                // Behind the dot, not behind what is held back: the animation measures the marker.
+                .background { if landsArrival { ArrivalDotMarker(key: item.id) } }
                 .padding(.top, 14)
-                .opacity(item.unread ? 1 : 0)
                 .accessibilityHidden(true)
             AgentBadge(agent: item.summary.agent, spoken: item.sessionTitle != nil)
             VStack(alignment: .leading, spacing: 4) {

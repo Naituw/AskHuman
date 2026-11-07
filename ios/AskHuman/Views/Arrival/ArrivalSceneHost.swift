@@ -52,6 +52,9 @@ final class ArrivalSceneController: NSObject {
         var target: CGPoint
         var offset: CGFloat
         var bubble: ArrivalBubbleView
+        /// The glow of the dot the bubble lands on in the list (`ArrivalDots`). Every row has its own; the tab's is shared
+        /// by the bubbles that land there.
+        var rowGlow: UIView?
     }
 
     private weak var source: UIWindow?
@@ -114,17 +117,7 @@ final class ArrivalSceneController: NSObject {
         canvas = view
         receiver.alpha = 0
         view.addSubview(receiver)
-        glow.isUserInteractionEnabled = false
-        glow.backgroundColor = .clear
-        glow.alpha = 0
-        glow.layer.cornerRadius = 18
-        let glowLayer = CAGradientLayer()
-        glowLayer.type = .radial
-        glowLayer.colors = [UIColor.systemBlue.cgColor, UIColor.clear.cgColor]
-        glowLayer.startPoint = CGPoint(x: 0.5, y: 0.5)
-        glowLayer.endPoint = CGPoint(x: 1, y: 1)
-        glowLayer.frame = CGRect(x: 0, y: 0, width: 44, height: 44)
-        glow.layer.addSublayer(glowLayer)
+        configureGlow(glow)
         view.addSubview(glow)
         diagnostic.isAccessibilityElement = true
         diagnostic.accessibilityIdentifier = "arrival-motion-state"
@@ -134,6 +127,28 @@ final class ArrivalSceneController: NSObject {
         view.addSubview(diagnostic)
         // Setting visibility is intentional: makeKeyAndVisible would dismiss the editing responder.
         startReadyRuns()
+    }
+
+    /// A soft blue light that pulses once where a bubble lands.
+    private func configureGlow(_ view: UIView) {
+        view.isUserInteractionEnabled = false
+        view.backgroundColor = .clear
+        view.alpha = 0
+        view.layer.cornerRadius = 18
+        view.layer.sublayers?.forEach { $0.removeFromSuperlayer() }
+        let layer = CAGradientLayer()
+        layer.type = .radial
+        layer.colors = [UIColor.systemBlue.cgColor, UIColor.clear.cgColor]
+        layer.startPoint = CGPoint(x: 0.5, y: 0.5)
+        layer.endPoint = CGPoint(x: 1, y: 1)
+        layer.frame = CGRect(x: 0, y: 0, width: 44, height: 44)
+        view.layer.addSublayer(layer)
+    }
+
+    /// Takes a bubble, and the glow it may have, off the screen.
+    private func retire(_ run: Run) {
+        run.bubble.removeFromSuperview()
+        run.rowGlow?.removeFromSuperview()
     }
 
     func synchronize(_ arrivals: [RequestArrival], pendingCount: Int, reduceMotion: Bool,
@@ -148,8 +163,10 @@ final class ArrivalSceneController: NSObject {
         let live = Set(arrivals.map(\.id))
         finished.formIntersection(live)
         for id in Array(runs.keys) where !live.contains(id) {
-            runs.removeValue(forKey: id)?.bubble.removeFromSuperview()
+            if let run = runs.removeValue(forKey: id) { retire(run) }
         }
+        // Not from inside the update that calls this: the rows read what the dots keep.
+        DispatchQueue.main.async { ArrivalDots.shared.keep(only: live) }
         decoration?.accessibilityElementsHidden = !diagnostics
         diagnostic.accessibilityElementsHidden = !diagnostics
         startReadyRuns()
@@ -202,9 +219,18 @@ final class ArrivalSceneController: NSObject {
             layoutAt = now
         }
         guard let layout = cachedLayout else { return }
+        // A bubble whose request has its row on screen, in a list that is a column of the window, flies to the unread dot of
+        // that row, as the Mac's flies to its sidebar's. It is looked up every frame: the list can scroll while the bubble is
+        // in the air, and the row is not there yet in the first frames. The others fly to the tab, or land at the title.
+        var rows: [String: CGPoint] = [:]
+        for id in runs.keys {
+            if let point = ArrivalDots.shared.center(of: id, in: source) { rows[id] = point }
+        }
         let ages = runs.values.map { (now - $0.began) * 1000 / slowdown }
-        let receiverOpacity = layout.destination == .title
-            ? (reduceMotion ? 1 : (ages.map { smooth(($0 - 1500) / 200) * (1 - smooth(($0 - ArrivalMotion.landedAt - 950) / 450)) }.max() ?? 0)) : 0
+        // The tray at the title takes the bubbles that land there, not those that land in the list.
+        let trayAges = runs.filter { rows[$0.key] == nil }.map { (now - $0.value.began) * 1000 / slowdown }
+        let receiverOpacity = layout.destination == .title && !trayAges.isEmpty
+            ? (reduceMotion ? 1 : (trayAges.map { smooth(($0 - 1500) / 200) * (1 - smooth(($0 - ArrivalMotion.landedAt - 950) / 450)) }.max() ?? 0)) : 0
         receiver.update(count: pendingCount)
         receiver.center = layout.receiverCenter
         receiver.alpha = receiverOpacity
@@ -218,26 +244,43 @@ final class ArrivalSceneController: NSObject {
         for id in Array(runs.keys) {
             guard var run = runs[id] else { continue }
             let elapsed = (now - run.began) * 1000 / slowdown
-            let end = reduceMotion ? 850.0 : (layout.destination == .title
+            let row = rows[id]
+            let end = reduceMotion ? 850.0 : (layout.destination == .title && row == nil
                 ? ArrivalMotion.landedAt + 950 + 450 : ArrivalMotion.duration)
             if elapsed >= end {
-                run.bubble.removeFromSuperview()
+                retire(run)
                 runs[id] = nil
                 finishRun(id)
                 continue
             }
             // Follow moving keyboard/navigation anchors without teleporting an in-flight bubble.
             let blend = 1 - exp(-dt / 0.10)
-            run.target = mix(run.target, target, blend)
+            run.target = mix(run.target, row ?? target, blend)
             let desiredOrigin = CGPoint(x: min(source.bounds.maxX - 48, max(48, layout.origin.x + run.offset)), y: layout.origin.y)
             run.origin = mix(run.origin, desiredOrigin, blend)
             let state = ArrivalMotion.frame(at: elapsed, origin: .init(x: run.origin.x, y: run.origin.y),
                                             target: .init(x: run.target.x, y: run.target.y))
             let opacity = reduceMotion ? 0 : state.opacity * (1 - smooth((elapsed - ArrivalMotion.landedAt) / 160))
             run.bubble.paint(state, opacity: opacity)
-            if reduceMotion { pulse = 0.12 }
+            var landing = 0.0
+            if reduceMotion { landing = 0.12 }
             else if elapsed >= ArrivalMotion.landedAt {
-                pulse = max(pulse, sin(.pi * min(1, (elapsed - ArrivalMotion.landedAt) / ArrivalMotion.land)) * 0.18)
+                landing = sin(.pi * min(1, (elapsed - ArrivalMotion.landedAt) / ArrivalMotion.land)) * 0.18
+            }
+            if row != nil, let canvas {
+                // The dot shows where the bubble became it, with a glow of its own.
+                let light = run.rowGlow ?? UIView()
+                if run.rowGlow == nil {
+                    configureGlow(light)
+                    canvas.addSubview(light)
+                    run.rowGlow = light
+                }
+                light.frame = CGRect(x: run.target.x - 22, y: run.target.y - 22, width: 44, height: 44)
+                light.alpha = landing
+                if elapsed >= ArrivalMotion.landedAt { ArrivalDots.shared.reach(id) }
+            } else {
+                pulse = max(pulse, landing)
+                run.rowGlow?.alpha = 0
             }
             runs[id] = run
         }
@@ -246,7 +289,10 @@ final class ArrivalSceneController: NSObject {
         if diagnostics {
             let age = ages.max() ?? 0
             let phase = reduceMotion ? "static" : (age < ArrivalMotion.flightAt ? "bounce" : (age < ArrivalMotion.landedAt ? "flight" : "landed"))
-            diagnostic.accessibilityValue = "active=\(runs.count);destination=\(layout.destination == .inbox ? "inbox" : "title");key=\(source.isKeyWindow ? "source" : "other");touch=pass;phase=\(phase)"
+            let destination = rows.isEmpty ? (layout.destination == .inbox ? "inbox" : "title") : "row"
+            // Where the oldest bubble is heading, for the tests to compare with the screen.
+            let aim = runs.values.min { $0.began < $1.began }?.target ?? .zero
+            diagnostic.accessibilityValue = "active=\(runs.count);destination=\(destination);key=\(source.isKeyWindow ? "source" : "other");touch=pass;phase=\(phase);target=\(Int(aim.x)),\(Int(aim.y))"
             #if DEBUG
             if compositionFixture {
                 diagnostic.accessibilityValue = (diagnostic.accessibilityValue ?? "") + ";composition=" + compositionProbe.inspect(in: source)
@@ -258,6 +304,8 @@ final class ArrivalSceneController: NSObject {
 
     private func finishRun(_ id: String) {
         finished.insert(id)
+        // Whatever ended it, the dot of the request is not held back any more.
+        ArrivalDots.shared.reach(id)
         let callback = finish
         Task { @MainActor in callback?(id) }
     }
@@ -284,7 +332,7 @@ final class ArrivalSceneController: NSObject {
     private func removeWindow() {
         for id in Array(runs.keys) { finishRun(id) }
         idle()
-        for run in runs.values { run.bubble.removeFromSuperview() }
+        for run in runs.values { retire(run) }
         runs.removeAll()
         decoration?.rootViewController = nil
         decoration = nil
@@ -294,7 +342,7 @@ final class ArrivalSceneController: NSObject {
 
     @objc private func interrupted() {
         for id in Array(runs.keys) { finishRun(id) }
-        for run in runs.values { run.bubble.removeFromSuperview() }
+        for run in runs.values { retire(run) }
         runs.removeAll()
         idle()
     }
