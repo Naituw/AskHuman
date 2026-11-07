@@ -34,7 +34,7 @@ final class AskHumanDeveloperUITests: XCTestCase {
         let locale = language == "en" ? "en_US" : "zh_CN"
         app.launchArguments = [
             "-AHMock", "YES", "-AHScenario", scenario, "-AHLatency", "0.05", "-AHAutoAdvance", "NO",
-            "-AHDeveloperMode", mode ? "YES" : "NO", "-AHTab", "todos",
+            "-AHDeveloperMode", mode ? "YES" : "NO", "-AHTab", "todos", "-AHDeveloperToastHold", "6",
             "-AppleLanguages", "(\(language))", "-AppleLocale", locale,
         ] + extra
         app.launch()
@@ -133,7 +133,12 @@ final class AskHumanDeveloperUITests: XCTestCase {
         app.buttons.matching(NSPredicate(format: "label == %@", localized("Quick todo", "快速待办"))).firstMatch
     }
 
-    /// Opens the page the way a tap does: the button, then its one row.
+    /// The menu's second row, which copies the diagnostics (found by its text, like the first).
+    private var diagnosticsRow: XCUIElement {
+        app.buttons.matching(NSPredicate(format: "label == %@", localized("Copy diagnostics", "复制诊断信息"))).firstMatch
+    }
+
+    /// Opens the page the way a tap does: the button, then its row.
     private func openTheQuickAddPage() {
         requireElement("dev-button").tap()
         XCTAssertTrue(menuRow.waitForExistence(timeout: 5), "the menu did not open")
@@ -266,6 +271,24 @@ final class AskHumanDeveloperUITests: XCTestCase {
         XCTAssertTrue(button.exists, "the button is above the project page too")
     }
 
+    func testTheMenuCopiesTheDiagnosticsAndTheNoteSaysSoWithoutOpeningAPage() {
+        launch()
+        button.tap()
+        XCTAssertTrue(menuRow.waitForExistence(timeout: 5), "the menu did not open")
+        XCTAssertTrue(diagnosticsRow.exists, "the menu lists Copy diagnostics")
+        XCTAssertLessThan(menuRow.frame.minY, diagnosticsRow.frame.minY, "the quick todo stays the first row")
+        shot("dev-03b-menu-two-rows")
+
+        diagnosticsRow.tap()
+        let note = requireElement("dev-toast", timeout: 15)
+        XCTAssertEqual(note.label, localized("Diagnostics copied", "已复制诊断信息"))
+        shot("dev-03c-diagnostics-copied")
+        XCTAssertFalse(element("quick-todo-picker").exists, "copying opens no page")
+        XCTAssertFalse(element("quick-todo-field").exists, "copying opens no page")
+        XCTAssertTrue(gone("dev-toast", timeout: 20), "the note does not stay")
+        XCTAssertTrue(button.exists, "the button is still there")
+    }
+
     func testTouchesThatAreNotTheButtonsReachTheAppUnderIt() {
         launch()
         tab(4)
@@ -370,7 +393,7 @@ final class AskHumanDeveloperUITests: XCTestCase {
         XCTAssertTrue(note.label.contains("AskHuman"), note.label)
         shot("dev-09-toast")
         XCTAssertFalse(element("quick-todo-field").exists, "the page closes when the Mac has taken the todo")
-        XCTAssertTrue(gone("dev-toast", timeout: 8), "the note does not stay")
+        XCTAssertTrue(gone("dev-toast", timeout: 20), "the note does not stay")
 
         // And the todo is in the project.
         element("todo-project-" + askHuman).tap()
