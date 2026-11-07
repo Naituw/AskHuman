@@ -403,3 +403,31 @@ P1 先于 P2 做：它只决定 P4 的路是否走得通，早知道比晚知道
 
 - 页面到原生的消息接到 `AnswerComposer`：`selection` 由 `AnnotationHost` 存着；确认添加时调 `addAnnotation(start:end:quote:note:)`；`notes`（重绘后的回报）整个转给 `applyAnnotationPositions(_:)`；改与删用 `setAnnotationNote(_:id:)`、`removeAnnotation(id:)`；发给页面的列表取 `annotations`（已经是阅读顺序）。
 - `HistoryEntry.annotations` 已经有，P4c 的历史详情直接读。
+
+### P4b iOS 网页引擎与选字菜单（2026-11-07，提交 `f135c889`）
+
+**结论：按计划完成并入库；选字菜单 → 编辑面板 → 高亮这条路在 iOS 26.2 模拟器上走通，没有需要问用户的现象。有一条旧用例在本期的树上超时，没有查清（更像机器换页造成的，见「没验证」）。** `PROTOCOL_VERSION` 不变（本期不碰协议）。
+
+**与计划的差异**（都是计划没写死的实现细节）：
+
+1. `AnnotatingWebView` 不持有 `host`，而是有两个闭包：`offer`（此刻菜单提供什么）与 `choose`（点了入口），由页面的协调者接上并从表单取答案——`AnswerComposer.annotationOffer(for:)` 是 AHCore 里的纯函数，可以单测（`NotesPageTests`）。
+2. `AnnotationHost` 比计划轻：不持有页面的脚本通道，也不判断「能否添加」。向页面推送附注与虚线框由 `WebPage.Coordinator.pushNotes()` 做，与上次推过的比较，没变就不推（`updateUIView` 随父视图的每次计算都会跑，`@Observable` 对相同值的写入也会通知，不比较会形成反馈环）；能否添加由 `annotationOffer` 判断（请求 `annotatable`、有选区、没满 20 条）。`Caps.annotations` 没有再单独查一遍：只有带这个能力位的 Mac 才会发 `annotatable`，两者来自同一版本，缺一不会出现。
+3. `WebMarkdownView(text:onSettled:notes:)` 的参数是 `MessageNotes`（表单 + host），不是计划写的 `annotations: AnnotationHost?`：页面要从表单读附注列表、把偏移写回表单，光有 host 不够。不传时与以前一样（历史页等其余用处不变）。
+4. 编辑面板 `AnnotationEditorSheet` 在本期就做了（计划放在 P4c）：没有它「选字 → 菜单 → 面板 → 高亮」这条路不完整，也没法测。行为按计划 §7.3：输入框有字时禁用下滑关闭、取消要确认丢弃、删除不确认；`.presentationDetents([.medium, .large])`。清单、底栏圆钮、历史仍在 P4c。
+5. `notes` 消息只在页面有附注时才发（`found.length`）：没有附注的页面不发任何新消息。`selection` 消息按计划经 `requestAnimationFrame` 合并；P1 担心的「多一帧延迟会不会让菜单缺项」，4 条 UI 测试里入口每次都在，所以不用改成立刻发。
+6. 选区碰到已有附注时入口是「编辑附注」；已满 20 条时入口置灰并写明上限（不是消失，免得像故障）。
+7. 新 Mock 场景 `annotations`（三条请求：可附注的、Mac 当纯文本发的、没有附注能力的 Mac 发的），`MockData.macs(… annotations:)`；`MockData.items` 由 `private` 改成模块内可见，给 `MockData+Annotations.swift` 用。UI 测试 4 条（计划写「一条」）：在一个词上写附注并回来编辑、改、删；取消面板什么也不留（含丢弃确认）；不可附注的请求没有入口；纯文本消息没有入口。
+8. 引擎打包产物 `annotations.js` 带 sha256 文件头，`src/lib/annotations.bundle.test.ts` 比对；`ios/Tools/web-markdown/build-annotations.sh` 重新生成。
+
+**验证**：
+
+- iOS 26.2（iPhone 17）模拟器：4 条新 UI 测试通过；截图里菜单入口排在 Copy 之前、面板原文在上输入框在下、写好后词带紫色下划线与编号。
+- 页面侧：`vitest` 的 `notesPage.test.ts` 21 条（`AH.render` 的包装会重绘、`setNotes` 幂等、`locate` 恒返回数字、`selection` / `noteTap` / `notes` 的内容、选区终点落在 `#content` 外紧邻处仍报告选区）与 `annotations.bundle.test.ts` 通过；Swift：`NotesPageTests` 15 条通过。
+- 与 HEAD 对照（`/tmp/AH-baseline`，clean HEAD 的隔离工作树，另一份 DerivedData）：`AskHumanBarUITests` 5 条与 `AskHumanInputVisibilityUITests.testShortAnswerAndAttachmentFitWithAccessibilityText` **在 HEAD 上就失败**（iPhone 17 / iOS 26.2，条数一样），不是本期造成。P4c 的窄屏实测要用这组测试，所以到时先弄清它们为什么在 HEAD 上失败，再判断数字。另有 3 条（`testALinkOnThePageAsksBeforeItOpens`、`testTheMessageIsDrawnByTheWebPage`、`testTheSharedMoreMenuCanStillDismissAConfirmation`）在高负载下失败、重跑通过。
+
+**没验证 / 未解决**：
+
+- **`AskHumanRequestNavigationUITests.testManualReturnRestoresTheReadingPositionOfALongForm`**：HEAD 上跑了一次，通过，返回后约 10 s 才看到位置恢复（15 s 的等待）；本期的树上两次（单跑一次、整批里一次）在 15 s 内都没等到，之后带诊断输出的一次被系统杀掉（测试运行器 `signal kill`）。正常情况下恢复不到 1 s，这几次慢到 10 s 以上，是因为当时机器在严重换页（交换区 20+ GiB、负载 300+，返回时要重新起一个网页进程，恢复要等页面排版完成）。这条用例的请求不可附注（`notes == nil`），本期加的代码对它按读代码是空操作（`engine.highlight(el, [])` 只做一次 `querySelectorAll`，选区没变就不发消息，`WebPage` 的新输入都是 nil / 空），所以更像余量不大的超时波动；**但样本只有 1 比 2，没有用对照实验证实**。机器恢复后在两棵树上各跑几遍再下结论；若是真回归，从 `.sheet(item:)`、`AnnotatingWebView`、`notes.js` 三处二分。
+- 新用例在 iOS 18.5 / 27.x 与 zh-Hans 上没跑；`swift test` 全包、`vue-tsc --noEmit`、整库 `vitest` 在本期改动之后没有重跑。
+- 多词、跨块选区的拖选没法在模拟器上自动化（P1 已记），只有 vitest 覆盖。
+- 真机。
