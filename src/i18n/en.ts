@@ -217,6 +217,7 @@ export default {
     confirmCancel: {
       title: "Discard and cancel?",
       desc: "All entered answers will be lost.",
+      descWithNotes: "All entered answers and annotations will be lost.",
       keep: "Keep answering",
       confirm: "Discard",
     },
@@ -259,6 +260,24 @@ export default {
       empty: "No todos in this project yet",
       openWindow: "Open the Todos window",
       addFailed: "Could not add the todo: {reason}",
+    },
+    // Notes on passages of the Agent's text: the button beside a selection, the editor, the footer chip and its list
+    // (docs/specs/message-annotations.md D10–D16).
+    annotations: {
+      add: "Add annotation",
+      edit: "Edit annotation",
+      full: "Annotation limit reached ({max})",
+      dialog: "Annotation",
+      placeholder: "Write your question or comment…",
+      hintAdd: "to add",
+      addNote: "Add",
+      save: "Save",
+      delete: "Delete",
+      editRow: "Edit",
+      chip: "Annotations",
+      listTitle: "Annotations · {n}",
+      listHint: "Sent to the Agent with your answer",
+      unlocated: "Original text not found",
     },
     // The footer's "Quick reply" menu and the armed directive bar (docs/specs/special-replies.md D19–D21).
     quickReply: {
@@ -1034,6 +1053,8 @@ export default {
     copyReply: "Reply:",
     copyReplyImages: "Reply images:",
     copyReplyFiles: "Reply files:",
+    annotations: "Annotations",
+    copyAnnotations: "Annotations:",
     copySession: "Session: {session}",
     attach: {
       button: "Attachments",

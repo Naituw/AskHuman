@@ -23,6 +23,8 @@ export interface AskRequest {
    * strict-choice questions, anything without the menu).
    */
   quickReplies?: string[];
+  /** The Agent's text may carry notes the user writes on passages of it (docs/specs/message-annotations.md); absent = false. */
+  annotatable?: boolean;
 }
 
 /** Why a question came through away mode: the Agent asked for it, it asked repeatedly, or the user asked it to ask. */
@@ -633,9 +635,18 @@ export interface PopupDirective {
   note?: string;
 }
 
+/** A note the user wrote on a passage of the Agent's text (docs/specs/message-annotations.md). */
+export interface UserAnnotation {
+  /** The passage as the user saw it: rendered text folded to one line, middle-truncated at 2000 characters. */
+  quote: string;
+  note: string;
+}
+
 export interface PopupSubmission {
   answers: QuestionAnswer[];
   directive?: PopupDirective;
+  /** In reading order; left out when there are none. The daemon cleans and caps them again. */
+  annotations?: UserAnnotation[];
 }
 
 export type ChannelAction = "send" | "cancel";
@@ -669,6 +680,8 @@ export interface HistoryEntry {
   message: MessagePrompt;
   questions: Question[];
   answers: HistoryAnswer[];
+  /** Notes written on the Agent's text with the answer; absent on entries recorded without any. */
+  annotations?: UserAnnotation[];
 }
 
 /** Aggregated project info for the history window's project picker. */

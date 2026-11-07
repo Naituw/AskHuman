@@ -169,6 +169,15 @@ function buildPlainText(): string {
     }
   });
 
+  if (e.annotations?.length) {
+    lines.push("", t("history.copyAnnotations"));
+    // Same shape as the [user_annotations] block the Agent received: the quote line, the note, a blank line between.
+    e.annotations.forEach((note, i) => {
+      if (i > 0) lines.push("");
+      lines.push(`> ${note.quote}`, note.note.trimEnd());
+    });
+  }
+
   return lines.join("\n");
 }
 
@@ -422,6 +431,18 @@ const thumbs = images.urls;
           </div>
         </div>
       </template>
+    </div>
+
+    <!-- Notes written on the Agent's text together with this reply (docs/specs/message-annotations.md D23) -->
+    <div v-if="entry.annotations?.length" class="q-block with-divider annotations">
+      <div class="q-header"><span class="annotations-label">{{ t("history.annotations") }}</span></div>
+      <div v-for="(note, i) in entry.annotations" :key="i" class="annotation">
+        <span class="annotation-num">{{ i + 1 }}</span>
+        <div class="annotation-body">
+          <div class="annotation-quote">{{ note.quote }}</div>
+          <pre class="reply-text">{{ note.note }}</pre>
+        </div>
+      </div>
     </div>
   </div>
 </template>
@@ -686,6 +707,44 @@ const thumbs = images.urls;
   color: var(--text-primary);
   white-space: pre-wrap;
   word-break: break-word;
+}
+/* Notes written on the Agent's text */
+.annotations-label {
+  color: var(--accent-annotation);
+}
+.annotation {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+}
+.annotation-num {
+  flex: none;
+  width: 18px;
+  height: 18px;
+  margin-top: 2px;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: color-mix(in srgb, var(--accent-annotation) 16%, transparent);
+  color: var(--accent-annotation);
+  font-size: 11px;
+  font-weight: 700;
+}
+.annotation-body {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  min-width: 0;
+  flex: 1 1 auto;
+}
+.annotation-quote {
+  padding: 1px 0 1px 8px;
+  border-left: 2px solid var(--accent-annotation);
+  font-size: 12px;
+  line-height: 1.45;
+  color: var(--text-secondary);
+  overflow-wrap: anywhere;
 }
 /* Thumbs */
 .thumbs {

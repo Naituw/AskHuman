@@ -9,6 +9,7 @@ const ctx = usePopupContext();
 const {
   request,
   showDescription,
+  annotationTarget,
   messageText,
   projectPath,
   viewSource,
@@ -39,11 +40,13 @@ const {
       :source="messageText"
       :base-directory="projectPath"
       data-find-seg="message"
+      :data-annotation-root="annotationTarget === 'message' ? '' : undefined"
     />
     <pre
       v-else-if="messageText"
       class="plain-body"
       data-find-seg="message"
+      :data-annotation-root="annotationTarget === 'message' ? '' : undefined"
     >{{ messageText }}</pre>
 
     <div v-if="attachments.length" class="attachments">

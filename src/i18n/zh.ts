@@ -209,6 +209,7 @@ export default {
     confirmCancel: {
       title: "确定要取消吗？",
       desc: "已填写的回答将全部丢失。",
+      descWithNotes: "已填写的回答和附注将全部丢失。",
       keep: "继续作答",
       confirm: "确定取消",
     },
@@ -250,6 +251,23 @@ export default {
       empty: "这个项目还没有待办",
       openWindow: "打开待办窗口",
       addFailed: "没能添加待办：{reason}",
+    },
+    // 对 Agent 正文的附注：选区旁的按钮、输入浮层、页脚「附注」按钮及其清单（docs/specs/message-annotations.md D10–D16）。
+    annotations: {
+      add: "添加附注",
+      edit: "编辑该附注",
+      full: "附注已满（最多 {max} 条）",
+      dialog: "附注",
+      placeholder: "写下你的疑问或意见…",
+      hintAdd: "添加",
+      addNote: "添加",
+      save: "保存",
+      delete: "删除",
+      editRow: "编辑",
+      chip: "附注",
+      listTitle: "附注 · {n} 条",
+      listHint: "提交时随回答一起发给 Agent",
+      unlocated: "找不到原文位置",
     },
     // 页脚「快捷回复」菜单与待发条（docs/specs/special-replies.md D19–D21）。
     quickReply: {
@@ -1013,6 +1031,8 @@ export default {
     copyReply: "回复：",
     copyReplyImages: "回复图片：",
     copyReplyFiles: "回复文件：",
+    annotations: "附注",
+    copyAnnotations: "附注：",
     copySession: "会话：{session}",
     attach: {
       button: "附件",

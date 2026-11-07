@@ -7,6 +7,7 @@ const { t } = useI18n();
 const {
   isConfirm,
   showCancelConfirm,
+  hasAnnotations,
   dismissCancelConfirm,
   doCancel,
   showConfirmCloseWarning,
@@ -21,7 +22,7 @@ const {
   <div v-if="!isConfirm && showCancelConfirm" class="confirm-overlay" @click.self="dismissCancelConfirm">
     <div class="confirm-box">
       <p class="confirm-title">{{ t("popup.confirmCancel.title") }}</p>
-      <p class="confirm-desc">{{ t("popup.confirmCancel.desc") }}</p>
+      <p class="confirm-desc">{{ t(hasAnnotations ? "popup.confirmCancel.descWithNotes" : "popup.confirmCancel.desc") }}</p>
       <div class="confirm-actions">
         <button class="btn" type="button" @click="dismissCancelConfirm">
           {{ t("popup.confirmCancel.keep") }}

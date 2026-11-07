@@ -2267,3 +2267,249 @@ mark.popup-find-hit-current,
 /* Scope fixed overlays to the currently visible answer/preview area, not the virtual reserve. */
 .inbox-native .popup-shell { contain: layout; }
 .inbox-native .popup-shell .confirm-overlay { position: absolute; width: var(--inbox-main); right: auto; }
+
+/* ===== Annotations: notes on passages of the Agent's text (docs/specs/message-annotations.md) ===== */
+/* The highlights live in the rendered text itself: src/lib/annotations.ts wraps text nodes in <mark>. They are purple
+   (--accent-annotation) so they stay apart from the find hits (yellow / orange) and the system selection (blue). */
+mark.an-mark {
+  position: relative;
+  color: inherit;
+  cursor: pointer;
+  border-radius: 2px;
+  padding: 0;
+  background: color-mix(in srgb, var(--accent-annotation) 16%, transparent);
+  box-shadow: inset 0 -1.5px 0 color-mix(in srgb, var(--accent-annotation) 70%, transparent);
+  box-decoration-break: clone;
+  -webkit-box-decoration-break: clone;
+}
+mark.an-mark:hover { background: color-mix(in srgb, var(--accent-annotation) 26%, transparent); }
+/* The number after the last piece of each annotated passage, the same one the list shows. */
+mark.an-mark.an-last::after {
+  content: attr(data-annotation-n);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  vertical-align: super;
+  min-width: 13px;
+  height: 13px;
+  margin: 0 1px 0 2px;
+  padding: 0 3px;
+  box-sizing: border-box;
+  border-radius: 7px;
+  background: var(--accent-annotation);
+  color: #fff;
+  font-size: 9px;
+  font-weight: 700;
+  line-height: 1;
+}
+mark.an-mark.an-flash { animation: an-flash 1.2s ease-out; }
+@keyframes an-flash {
+  0% { background: color-mix(in srgb, var(--accent-annotation) 55%, transparent); }
+  100% { background: color-mix(in srgb, var(--accent-annotation) 16%, transparent); }
+}
+/* The passage the editor is open on is not a note yet, so it is only outlined. */
+mark.an-draft {
+  color: inherit;
+  border-radius: 2px;
+  padding: 0;
+  background: color-mix(in srgb, var(--accent-annotation) 10%, transparent);
+  outline: 1px dashed color-mix(in srgb, var(--accent-annotation) 80%, transparent);
+  outline-offset: 1px;
+}
+
+/* The floating layer over the window: the button beside a selection and the editor. It never takes a click itself. */
+.an-layer {
+  position: absolute;
+  inset: 0;
+  z-index: 40;
+  pointer-events: none;
+}
+.an-fab {
+  position: absolute;
+  z-index: 1;
+  box-sizing: border-box;
+  height: 26px;
+  padding: 0 11px 0 9px;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  pointer-events: auto;
+  border: 1px solid var(--control-border);
+  border-radius: 13px;
+  background: var(--surface-overlay);
+  color: var(--text-primary);
+  font: inherit;
+  font-size: 12px;
+  font-weight: 500;
+  line-height: 1;
+  white-space: nowrap;
+  cursor: default;
+  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.22), 0 0 0 0.5px rgba(0, 0, 0, 0.06);
+}
+.an-fab svg { color: var(--accent-annotation); }
+.an-fab:hover:not(:disabled) { background: color-mix(in srgb, var(--text-primary) 6%, var(--surface-overlay)); }
+.an-fab:disabled { color: var(--text-tertiary); }
+.an-fab:disabled svg { color: var(--text-tertiary); }
+.an-editor {
+  position: absolute;
+  z-index: 2;
+  width: 320px;
+  max-width: calc(100% - 24px);
+  box-sizing: border-box;
+  padding: 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  pointer-events: auto;
+  background: var(--surface-overlay);
+  border: 1px solid var(--border, rgba(127, 127, 127, 0.2));
+  border-radius: 10px;
+  box-shadow: 0 8px 28px rgba(0, 0, 0, 0.28);
+  font-size: 13px;
+  color: var(--text-primary);
+  outline: none;
+}
+.an-quote {
+  padding: 1px 0 1px 8px;
+  border-left: 2px solid var(--accent-annotation);
+  font-size: 12px;
+  line-height: 1.45;
+  color: var(--text-secondary);
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  overflow: hidden;
+  overflow-wrap: anywhere;
+}
+.an-textarea {
+  width: 100%;
+  box-sizing: border-box;
+  min-height: 64px;
+  padding: 7px 9px;
+  resize: none;
+  font: inherit;
+  font-size: 13px;
+  line-height: 1.45;
+  color: var(--text-primary);
+  background: var(--control-bg);
+  border: var(--hairline) solid var(--control-border);
+  border-radius: var(--radius-md);
+  box-shadow: var(--clickable-shadow);
+  outline: none;
+}
+.an-textarea::placeholder { color: var(--text-tertiary); }
+.an-textarea:focus { box-shadow: var(--focus-ring), var(--clickable-shadow); }
+.an-editor-foot { display: flex; align-items: center; gap: 6px; }
+.an-spacer { flex: 1 1 auto; }
+.an-hint { font-size: 11.5px; color: var(--text-tertiary); }
+.an-kbd {
+  font-family: inherit;
+  font-size: 11px;
+  line-height: 1;
+  color: var(--text-secondary);
+  background: var(--bg-elevated);
+  border: var(--hairline) solid var(--border);
+  border-radius: 5px;
+  padding: 3px 5px;
+}
+.an-delete {
+  padding: 4px 6px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: #ff453a;
+  font: inherit;
+  font-size: 12.5px;
+  cursor: default;
+}
+.an-delete:hover { background: color-mix(in srgb, #ff453a 12%, transparent); }
+
+/* The footer chip beside Send (after the quick-reply menu) and its list. The list reuses the quick-reply menu's frame. */
+/* The icon is as tall as the button's 13px line, so the chip is no taller than its neighbours. */
+.an-chip svg { opacity: 1; margin-right: 0; width: 13px; height: 13px; color: var(--accent-annotation); }
+.an-count {
+  /* The badge is taller than the button's 13px line: the negative margin keeps it from making this button taller than its neighbours. */
+  margin: -3px 0;
+  min-width: 16px;
+  height: 16px;
+  padding: 0 4px;
+  box-sizing: border-box;
+  border-radius: 8px;
+  background: var(--accent-annotation);
+  color: #fff;
+  font-size: 11px;
+  font-weight: 600;
+  line-height: 16px;
+  text-align: center;
+}
+/* The chip is one more control on a row that must also fit the narrowest window (420 px). In a narrow window the
+   keyboard hints (redundant with the buttons) give way first and the chip keeps only its icon and count; a row that
+   still does not fit wraps, right-aligned, instead of pushing Send / Next out of the window. */
+.popup-main .footer:has(.an-chip) { flex-wrap: wrap; justify-content: flex-end; row-gap: 6px; }
+@container (max-width: 520px) {
+  .popup-main .footer:has(.an-chip) .sc { display: none; }
+  .popup-main .footer .an-chip-label { display: none; }
+}
+.an-list { width: min(380px, calc(100vw - 24px)); }
+.an-row {
+  position: relative;
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  width: 100%;
+  box-sizing: border-box;
+  padding: 7px 10px;
+  border-radius: 6px;
+  line-height: 1.35;
+  cursor: default;
+  outline: none;
+}
+.an-row:hover,
+.an-row.hover,
+.an-row:focus-visible { background: color-mix(in srgb, var(--text-primary) 7%, transparent); }
+.an-num {
+  flex: none;
+  width: 18px;
+  height: 18px;
+  margin-top: 1px;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: color-mix(in srgb, var(--accent-annotation) 16%, transparent);
+  color: var(--accent-annotation);
+  font-size: 11px;
+  font-weight: 700;
+}
+.an-row.lost .an-num {
+  background: transparent;
+  box-shadow: inset 0 0 0 1px var(--text-tertiary);
+  color: var(--text-tertiary);
+}
+.an-row-body { display: flex; flex-direction: column; gap: 2px; min-width: 0; flex: 1 1 auto; }
+.an-row-quote { font-size: 11.5px; color: var(--text-secondary); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.an-row-text {
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  overflow: hidden;
+  overflow-wrap: anywhere;
+}
+.an-row-lost { font-size: 11px; color: var(--accent-orange); }
+.an-row-actions { flex: none; display: none; align-items: center; gap: 2px; margin-top: -1px; }
+.an-row:hover .an-row-actions,
+.an-row.hover .an-row-actions,
+.an-row:focus-within .an-row-actions { display: flex; }
+.an-icon-btn {
+  width: 22px;
+  height: 22px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: 0;
+  border-radius: 5px;
+  background: transparent;
+  color: var(--text-secondary);
+  cursor: default;
+}
+.an-icon-btn:hover { background: rgba(128, 128, 128, 0.2); color: var(--text-primary); }

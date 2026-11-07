@@ -2,6 +2,7 @@
 // 页脚区（多根组件）：R6 一次性 IM 引导条 + 三种底部按钮排布（多题导航 / 单题发送 / 确认提交）。
 import { useI18n } from "vue-i18n";
 import { primaryShortcutLabel } from "../../lib/platform";
+import AnnotationChip from "./AnnotationChip.vue";
 import PopupLaterButton from "./PopupLaterButton.vue";
 import QuickReplyMenu from "./QuickReplyMenu.vue";
 import { usePopupContext } from "./context";
@@ -69,6 +70,7 @@ const {
     <PopupLaterButton />
     <span class="spacer"></span>
     <QuickReplyMenu />
+    <AnnotationChip />
     <!-- An armed directive is a commit: the navigation gives way to one button that says what Send will do. -->
     <button
       v-if="armedDirective"
@@ -123,6 +125,7 @@ const {
     <PopupLaterButton />
     <span class="spacer"></span>
     <QuickReplyMenu />
+    <AnnotationChip />
     <button
       class="btn btn-primary"
       :class="{ 'qr-send': !!armedDirective }"

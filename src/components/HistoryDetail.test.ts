@@ -112,6 +112,48 @@ describe("HistoryDetail", () => {
     wrapper.unmount();
   });
 
+  describe("notes written on the Agent's text (docs/specs/message-annotations.md D23)", () => {
+    const withNotes = () => baseEntry({
+      id: "with-notes",
+      message: { text: "The migration drops three indexes.", files: [] },
+      questions: [{ message: "Go ahead?", predefinedOptions: [] }],
+      answers: [{ selectedOptions: [], userInput: "Yes.", images: [], files: [] }],
+      annotations: [
+        { quote: "drops three indexes", note: "Which three?\nAnd why now?" },
+        { quote: "migration", note: "Is it reversible?" },
+      ],
+    });
+
+    it("lists them under the answer with the passage and the note", () => {
+      const { wrapper } = mountDetail(withNotes());
+      expect(wrapper.find(".annotations-label").text()).toBe("Annotations");
+      const notes = wrapper.findAll(".annotation");
+      expect(notes.map((note) => note.find(".annotation-num").text())).toEqual(["1", "2"]);
+      expect(notes.map((note) => note.find(".annotation-quote").text())).toEqual(["drops three indexes", "migration"]);
+      expect(notes[0].find(".reply-text").text()).toBe("Which three?\nAnd why now?");
+      wrapper.unmount();
+    });
+
+    it("shows no section for an entry without notes", () => {
+      const { wrapper } = mountDetail(baseEntry({ id: "plain", questions: [{ message: "Go ahead?", predefinedOptions: [] }] }));
+      expect(wrapper.find(".annotations").exists()).toBe(false);
+      wrapper.unmount();
+    });
+
+    it("copies them as text in the shape of the block the Agent received", async () => {
+      const writeText = vi.fn(async () => {});
+      vi.stubGlobal("navigator", { ...navigator, clipboard: { writeText } });
+      const { wrapper } = mountDetail(withNotes());
+      await wrapper.get(".copy-btn").trigger("click");
+      await flushPromises();
+      const text = String((writeText.mock.calls[0] as unknown[])[0]);
+      expect(text).toContain("Reply:\nYes.");
+      expect(text.endsWith("Annotations:\n> drops three indexes\nWhich three?\nAnd why now?\n\n> migration\nIs it reversible?")).toBe(true);
+      wrapper.unmount();
+      vi.unstubAllGlobals();
+    });
+  });
+
   it("routes stored Markdown prompts through the shared Mermaid component", () => {
     const entry: HistoryEntry = baseEntry({
       id: "mermaid-history",

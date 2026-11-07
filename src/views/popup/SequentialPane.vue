@@ -11,6 +11,7 @@ const {
   request,
   showQuestionHeader,
   showDescription,
+  annotationTarget,
   questionHeaderLabel,
   qHeaderRef,
   transitionName,
@@ -51,11 +52,13 @@ const {
         :source="currentQuestion.message"
         :base-directory="projectPath"
         :data-find-seg="`q-${current}-msg`"
+        :data-annotation-root="annotationTarget === 'question' ? '' : undefined"
       />
       <pre
         v-else-if="currentQuestion?.message"
         class="plain-body"
         :data-find-seg="`q-${current}-msg`"
+        :data-annotation-root="annotationTarget === 'question' ? '' : undefined"
       >{{ currentQuestion?.message }}</pre>
 
       <div v-if="currentQuestion && currentQuestion.predefinedOptions.length" class="options">

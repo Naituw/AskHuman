@@ -80,6 +80,7 @@ import { useUpdateState } from "./useUpdateState";
 import { usePopupFind } from "./usePopupFind";
 import { useTodoPopover } from "./useTodoPopover";
 import { useQuickReply, type ArmedDirective } from "./useQuickReply";
+import { useAnnotations, type AnnotationTarget } from "./useAnnotations";
 import {
   canComposerDock,
   composerHomeVisibleRatio,
@@ -1815,8 +1816,15 @@ export function usePopupCore(scope?: PopupScope) {
     scope?.sending?.();
     submissionError.value = null;
     try {
+      // A note still being typed goes out with the answer rather than being lost (Send was clicked, not Enter).
+      annotations.commitAnnotationDraft();
+      const notes = annotations.annotationPayload();
       await submitPopup(
-        { answers: collectAnswers(presetText), directive: quickReply.quickReplyDirective.value },
+        {
+          answers: collectAnswers(presetText),
+          directive: quickReply.quickReplyDirective.value,
+          ...(notes.length > 0 ? { annotations: notes } : {}),
+        },
         scope?.requestId,
       );
     } catch (error) {
@@ -2021,6 +2029,9 @@ export function usePopupCore(scope?: PopupScope) {
     find.noteFindInteraction(event);
   }
 
+  // The annotation editor and list are modal: the todo popover and the quick-reply menu stay shut while one is open.
+  const annotationModalOpen = ref(false);
+
   // ===== Adding a todo to this request's project from the navbar button (docs/specs/todo-quick-add.md) =====
   const todoPopover = useTodoPopover({
     projectPath,
@@ -2034,7 +2045,8 @@ export function usePopupCore(scope?: PopupScope) {
       !!speech.speechShortcut.value &&
       matchShortcut(e, speech.speechShortcut.value),
     insertNewline: insertNewlineInFocusedTextarea,
-    suspended: () => !acceptsInput() || showCancelConfirm.value || showConfirmCloseWarning.value,
+    suspended: () =>
+      !acceptsInput() || showCancelConfirm.value || showConfirmCloseWarning.value || annotationModalOpen.value,
   });
 
   // ===== Quick-reply menu in the footer (docs/specs/special-replies.md D19–D21) =====
@@ -2051,13 +2063,48 @@ export function usePopupCore(scope?: PopupScope) {
       !acceptsInput() ||
       showCancelConfirm.value ||
       showConfirmCloseWarning.value ||
-      todoPopover.todoPopoverOpen.value,
+      todoPopover.todoPopoverOpen.value ||
+      annotationModalOpen.value,
     presetTargets,
     sendPreset: (text) => submitWith(text),
     openManage: () => {
       openSettings("general#quick-replies").catch(() => {});
     },
   });
+
+  // ===== Notes on passages of the Agent's text (docs/specs/message-annotations.md) =====
+  // What can carry notes: the Message; or, with no Message at all (no text, no files) and a single question, that
+  // question's text, which is then the body of the request (D6). Several questions, What's next and anything the daemon
+  // did not mark `annotatable` (confirm cards, IM-only answers, strict choice) offer none.
+  const annotationTarget = computed<AnnotationTarget | null>(() => {
+    if (!request.value?.annotatable || isConfirm.value) return null;
+    if (messageText.value.trim() !== "") return "message";
+    if (showDescription.value || whatsNext.value || questions.value.length !== 1) return null;
+    return questions.value[0].message?.trim() ? "question" : null;
+  });
+  const annotations = useAnnotations({
+    target: annotationTarget,
+    contentRef,
+    submitWithBareEnter,
+    insertNewline: insertNewlineInFocusedTextarea,
+    suspended: () =>
+      !acceptsInput() ||
+      showCancelConfirm.value ||
+      showConfirmCloseWarning.value ||
+      todoPopover.todoPopoverOpen.value ||
+      quickReply.quickReplyOpen.value,
+    modalOpen: annotationModalOpen,
+  });
+  // Notes count as having something to lose (cancel and close confirm, the shared window's unanswered mark), but not as
+  // an answer: they neither fill a question nor satisfy strict choice.
+  const hasAnyContent = computed(() => hasAnyAnswer.value || annotations.hasAnnotations.value);
+  /** The page's markdown was redrawn (image, Mermaid, source view): notes find their text again, then find repaints. */
+  function onMarkdownContentUpdated() {
+    annotations.reapplyAnnotations();
+    find.refreshFind();
+  }
+  // The source view swaps the text under the notes; they look for their passages in the new one.
+  watch(viewSource, () => void nextTick(annotations.reapplyAnnotations));
 
   /** The navbar todo button: the popover, or the todos window when the request has no project. */
   function onTodoButtonClick() {
@@ -2132,7 +2179,7 @@ export function usePopupCore(scope?: PopupScope) {
   // 取消入口：有回答时二次确认，否则直接取消。只作用于本请求；合并窗口里同样如此。
   function requestCancel() {
     if (submitting.value) return;
-    if (hasAnyAnswer.value) {
+    if (hasAnyContent.value) {
       showCancelConfirm.value = true;
     } else {
       doCancel();
@@ -2209,6 +2256,8 @@ export function usePopupCore(scope?: PopupScope) {
     // submit an answer or approve a permission card.
     // The quick-reply menu (⌘K) is modal in the same way and goes first: while it is open the todo
     // shortcut must not open the popover on top of it (it stays closed while the popover is open).
+    // An annotation list or editor (focus inside it) is modal too, and goes before both: neither may open on top of it.
+    if (!showCancelConfirm.value && !showConfirmCloseWarning.value && annotations.handleAnnotationKeydown(e)) return;
     if (!showCancelConfirm.value && !showConfirmCloseWarning.value && quickReply.handleQuickReplyKeydown(e)) return;
     if (!showCancelConfirm.value && !showConfirmCloseWarning.value && todoPopover.handleTodoPopoverKeydown(e)) return;
     // In-page find (⌘/Ctrl+F, Esc while open, ⌘G, …) — before business shortcuts.
@@ -2439,6 +2488,7 @@ export function usePopupCore(scope?: PopupScope) {
     todosOpen.value = false;
     todoPopover.resetTodoPopover();
     quickReply.resetQuickReply();
+    annotations.resetAnnotations();
     todoChosenIds.value = [];
     todoChosenSnapshots.value = {};
     attach.loadThumbs();
@@ -2760,7 +2810,7 @@ export function usePopupCore(scope?: PopupScope) {
     speech.disposeSpeech();
   });
 
-  const hasDraft = computed(() => hasAnyAnswer.value || !!confirmComment.value.trim()
+  const hasDraft = computed(() => hasAnyContent.value || !!confirmComment.value.trim()
     || (isConfirm.value && confirmChoiceIndex.value !== initialConfirmChoice.value));
   if (scope) watch(hasDraft, value => scope.draft(scope.requestId, value), { immediate: true });
   if (scope?.completion) watch(scope.completion, value => {
@@ -2986,6 +3036,9 @@ export function usePopupCore(scope?: PopupScope) {
     // Quick-reply menu, the directive armed from it, and the escalation banner
     armedDirective,
     ...quickReply,
+    // Notes on passages of the Agent's text (the selection button, editor, footer chip and list)
+    ...annotations,
+    onMarkdownContentUpdated,
     // R6 引导
     imTipVisible,
     imTipConfigure,

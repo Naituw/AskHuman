@@ -94,13 +94,15 @@ Current prototypes:
   and the per-session "AskHuman" pull-down (`?variant=menu`); spec `special-replies.md` D25.
 - `settings-away.html` — Settings › General with the "Quick replies" and "Away mode" cards (spec `special-replies.md`
   D26); `?theme=light|dark&focus=1&tab=general`.
-- `popup-annotations.html` — message annotations in the popup: the floating "Add annotation" button, the editor, the
-  numbered highlights, the footer "Annotations N" chip and its list (spec `docs/specs/message-annotations.md`, images in
-  `docs/assets/message-annotations/`). The **real** `PopupView` runs against `mockIPC` (`annotationsMock.ts`);
-  `AnnotationsFrame.vue` teleports the prototype-only parts into its DOM. `?scene=idle|select|editor|notes|list|edit`
-  draws one fixed state (every state can also be reached by selecting text by hand), `shape=message|direct|three` picks
-  the request (a Message and one question / a direct ask / a Message and three questions), plus `theme=dark`,
-  `platform=win`, `w=`, `h=`. Not shipped: the product popup has none of this yet.
+- `popup-annotations.html` — message annotations in the popup, rendered by the shipped components: the floating
+  "Add annotation" button, the editor, the numbered highlights, the footer "Annotations N" chip and its list (spec
+  `docs/specs/message-annotations.md`; the images in `docs/assets/message-annotations/popup-*.jpg` are screenshots of
+  this page). The **real** `PopupView` runs against `mockIPC` (`annotationsMock.ts`) inside a fake window
+  (`AnnotationsFrame.vue`); nothing on the page is prototype-only UI. `?scene=idle|select|editor|notes|list|edit` plays
+  the gestures that reach that state through the real UI (select text, type, click) and every state can also be
+  reached by hand. `shape=message|direct|three` picks the request (a Message and one question / a direct ask / a
+  Message and three questions), plus `theme=dark`, `platform=win`, `w=`, `h=`. Use `w=420` with a 420 px viewport to
+  check the narrowest window, whose footer must keep Send / Next inside it.
 - `ios-annotations.html` — a static mock of the same flow on the iPhone answer page, not product code and not a
   screenshot: `?board=flow|direct|bar&cells=1,2`. The `bar` board's widths are estimates; the real ones are measured by
   `AskHumanBarUITests` at 375 pt.

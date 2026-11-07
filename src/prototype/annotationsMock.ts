@@ -1,6 +1,7 @@
-// Mock backend for the "annotations in the popup" prototype. Like replyMenuMock.ts it lets the real `PopupView` run in a
-// plain browser; on top of that it can build a *direct ask* (no Message, one long question), the one shape in which the
-// question text is the body of the request and therefore can carry annotations.
+// Mock backend for the "annotations in the popup" page. Like replyMenuMock.ts it lets the real `PopupView` run in a plain
+// browser; on top of that it can build a *direct ask* (no Message, one long question), the one shape in which the question
+// text is the body of the request and therefore can carry annotations. Every request is marked `annotatable`, as the
+// daemon marks an ordinary ask.
 import { mockIPC, mockWindows } from "@tauri-apps/api/mocks";
 import type { AskRequest, PopupInit } from "../lib/types";
 import { PROJECT, REQUEST_ID, readParams as readBase, type FrameParams } from "./replyMenuMock";
@@ -19,7 +20,7 @@ export function readParams(search: string = location.search): AnnotationParams {
 const OPTION = (text: string, recommended = false) => ({ text, recommended });
 
 function askRequest(id: string, shape: Shape): AskRequest {
-  const base = { id, isMarkdown: true, selectOnly: false, single: false, outputFormat: "text" as const };
+  const base = { id, isMarkdown: true, selectOnly: false, single: false, outputFormat: "text" as const, annotatable: true };
   if (shape === "direct") {
     return {
       ...base,
@@ -131,8 +132,6 @@ export function installMock(params: AnnotationParams): void {
         return { branch: "main", detached: false, worktree: null, changes: { total: 3, staged: 1, unstaged: 2, untracked: 0 } };
       case "todos_list":
         return [];
-      case "popup_im_tip_visible":
-        return false;
       default:
         return null;
     }

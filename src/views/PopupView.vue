@@ -21,6 +21,7 @@ import EscalatedNotice from "./popup/EscalatedNotice.vue";
 import PopupFooter from "./popup/PopupFooter.vue";
 import PopupOverlays from "./popup/PopupOverlays.vue";
 import AttachmentPreviewPanel from "./popup/AttachmentPreviewPanel.vue";
+import AnnotationLayer from "./popup/AnnotationLayer.vue";
 import "./popup/popup.css";
 
 const props = defineProps<{ scope?: PopupScope }>();
@@ -43,7 +44,7 @@ const {
   fileRef,
   onScroll,
   onContentWheel,
-  refreshFind,
+  onMarkdownContentUpdated,
   onDrop,
   onBackgroundClick,
   onFileChange,
@@ -107,7 +108,7 @@ const { beginDivider } = usePreviewDivider({ mainWidth: () => previewLayout.valu
       class="content"
       @scroll="onScroll"
       @wheel.passive="onContentWheel"
-      @markdown-content-updated="refreshFind"
+      @markdown-content-updated="onMarkdownContentUpdated"
     >
       <DevVerificationBanner v-if="request?.message.development" :info="request.message.development" />
       <ConfirmPane v-if="isConfirm" />
@@ -142,6 +143,8 @@ const { beginDivider } = usePreviewDivider({ mainWidth: () => previewLayout.valu
       @keydown.right.prevent="resizePreview(previewLayout.mainWidth + 20)"
  />
     <AttachmentPreviewPanel v-if="previewOpen && previewLayout.side !== 'closed' && !isConfirm" />
+    <!-- Notes on the Agent's text: the button beside a selection and the editor float over the whole window. -->
+    <AnnotationLayer v-if="!isConfirm" />
     <PopupOverlays />
   </div>
 </template>
