@@ -1,6 +1,6 @@
 # iCloud todo sync
 
-> For a new release that includes the sync component. Published v0.16.0 does not include it.
+> Included in macOS packages from v0.17.0; off by default.
 > [简体中文](todo-sync.md)
 
 Share project todos and run history between your Macs signed in to the same Apple ID. This is an

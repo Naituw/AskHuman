@@ -19,15 +19,15 @@
 后续验收已登记项目待办 #9（`90e4972e-cf41-4c59-9a0b-a216989915fb`）。
 完成界面确认后删除本节；用户已授权将本次变更单独提交并推送 main，主树另有并行待办同步改动。
 
-## 待 Apple 审核与首位朋友验收：iOS 外部 TestFlight
+## 待邀请与首位朋友验收：iOS 外部 TestFlight
 
 用户已批准 [开发计划](plans/ios-external-testflight.md)：首批 1–5 位朋友，各自 Mac 与 EMQX，开发者提供现有推送中继；外部邮件邀请，无公开加入链接，先不提供演示模式、直接尝试 Beta 审核。
 工作树 `HumanInLoop-ios-external-testflight`（`codex/ios-external-testflight`），不挂渠道预设。工具、公开材料与 App 内链接已完成；24 项工具回归、iOS 页面回归、最终安装及 Dev 转送通过。Pages 与 Mac 预览包已公开、Apple 审核资料与中英文测试说明已读回。
 用户已批准启用 GitHub Pages、发布独立 Mac 预览包并继续上传/送审；审核联系人选定 Spatialify，个人信息只存私有输入并提交 Apple。
 完成标准与分阶段验证见计划；未经批准不加演示模式、不迁移中继、不自动创建定时任务。
 2026-11-05 23:45（北京时间）已提交 **0.1.0 (10)**：Apple build `81b235eb-4db3-46ee-8372-e74ca5bcbe0a`，VALID、APP_STORE_ELIGIBLE、`WAITING_FOR_BETA_REVIEW`（审核提交 `WAITING_FOR_REVIEW`）。源码与本地标签 `ios-testflight-10` 固定 `d3bb833`；后续 main 的已结束问题页面改动不在此包。首次上传最终确认 401 已通过同归档受控重试解决，不再重传。
-`AskHuman Friends` 已包含 build 10，公开链接关闭、手动指定构建、自动通知关闭、0 位测试员。尚未获批或邀请；朋友邮箱尚未提供。
-下一步：查询审核结果，获批后接收并仅邀请用户明确提供的 1–5 个邮箱；首位朋友按[中文接入指南](https://naituw.github.io/AskHuman/beta-zh/)安装[配套 Apple Silicon Mac 预览包](https://github.com/Naituw/AskHuman/releases/tag/friends-beta-20261105)，完成配对、前台回答、锁屏推送、切网与首答验证。若审核要求演示资源，先带实际反馈向用户确认。
+2026-11-07 只读核对：build 10 的 externalBuildState 已为 `IN_BETA_TESTING`，获准外测。`AskHuman Friends` 已包含 build 10，公开链接关闭、手动指定构建、自动通知关闭，尚无测试员；朋友邮箱尚未提供。build 11 为 INTERNAL_ONLY，仍只供内部测试。
+下一步：接收并仅邀请用户明确提供的 1–5 个邮箱；首位朋友按[中文接入指南](https://naituw.github.io/AskHuman/beta-zh/)安装[AskHuman 0.17.0](https://github.com/Naituw/AskHuman/releases/tag/v0.17.0)，完成配对、前台回答、锁屏推送、切网与首答验证。若审核要求演示资源，先带实际反馈向用户确认。
 用户在送审报告后选择“后续记为待办，拿到审核结果和邮箱后继续”；已记录项目待办，本次交付止于送审，不建立定时监控。
 
 ## 待平台验收：Daemon 更新接班的 Windows / Linux 原生路径
@@ -336,10 +336,11 @@ App 里用只读小铃铛标出「会通知你」。需求 [`docs/specs/ios-foll
 - [ ] 后置（需求 §4）：Mermaid 对齐 Mac 的 `sandbox`、`ahasset://` 本地图片、Markdown 附件预览改网页渲染、页内查找
 - [ ] 仓库外的原型目录 `/Users/wutian/Developer/HumanInLoop-ios-web-md-proto/`（约 399 MB，正式实现已从中移植）可以删除，删之前请用户确认
 
-## 进行中：跨设备待办同步（多台 Mac，iCloud）——已在 origin/main，自用已启用，正在准备正式分发
+## 进行中：跨设备待办同步（多台 Mac，iCloud）——自用已启用，准备发布 0.17.0
 
 需求 `docs/specs/todo-sync.md`、计划 `docs/plans/todo-sync.md`（实施记录在其 §10）、实现地图 `docs/overview-todo-sync.md`、界面稿 `docs/assets/todo-sync-ui/`。
 2026-11-06 用户要求按面向所有用户的正式发布要求准备；继续留在实验设置、默认关闭；接受现有后台传播延迟，不再以 5 秒作为发布门槛。
+2026-11-07 用户要求先检查密钥再公开发布，审阅并批准英文 Release notes 后最终指定 0.17.0；独立账号 / 稳定系统等未测边界继续保留。
 已确认 npm 平台子包携带组件、首次启用才安装、同步要求 macOS 14+（本体仍 11+）；为覆盖旧版直接更新器，后续确认把已签名公证的 helper zip 嵌入 Mac 可执行文件。
 按用户要求直接在主工作树开发；规格 [todo-sync-release](specs/todo-sync-release.md)，计划 [todo-sync-release](plans/todo-sync-release.md)。朋友独立账号的首次使用验收安排在候选包完成后，已记项目待办。
 2026-10-27 用户评审通过并说「你自己全部搞定，我要上班了」；分支 `feat/todo-sync`，worktree `../HumanInLoop-todosync`（Dev Instance，popup-only）；两者 2026-10-29 已清理（提交都在 main 里）。

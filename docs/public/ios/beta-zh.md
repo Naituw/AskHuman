@@ -13,7 +13,7 @@ lang: zh-Hans
 ## 准备
 
 - iOS 17 或更新系统的 iPhone，已安装 Apple TestFlight。
-- 自己的 Mac，安装邀请中指定版本的 AskHuman，并已配置好要使用的 Agent。
+- 自己的 Mac，安装 [AskHuman 0.17.0 或更新版本](https://github.com/Naituw/AskHuman/releases/tag/v0.17.0)，并已配置好要使用的 Agent。
 - 一个 EMQX Cloud 账号，下面会从注册开始配置。
 - 邀请中提供的推送中继地址。它不包含 APNs 私钥。
 
