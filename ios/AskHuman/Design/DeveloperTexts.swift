@@ -7,12 +7,14 @@ extension DeveloperMenuItem {
     var title: String {
         switch self {
         case .quickTodo: String(localized: "Quick todo")
+        case .copyDiagnostics: String(localized: "Copy diagnostics")
         }
     }
 
     var symbol: String {
         switch self {
         case .quickTodo: "text.badge.plus"
+        case .copyDiagnostics: "doc.on.clipboard"
         }
     }
 }
@@ -21,6 +23,7 @@ extension DeveloperToast {
     var text: String {
         switch message {
         case .todoAdded(let project): String(localized: "Added to \(project)")
+        case .diagnosticsCopied: String(localized: "Diagnostics copied")
         }
     }
 }

@@ -232,7 +232,7 @@ final class DeveloperOverlayView: UIView {
         UIAccessibility.post(notification: .announcement, argument: text)
         let id = toast.id
         toastTask = Task { [weak self] in
-            try? await Task.sleep(for: .seconds(DeveloperMetrics.toastDuration))
+            try? await Task.sleep(for: .seconds(toast.hold))
             guard !Task.isCancelled, let self else { return }
             self.toastTask = nil
             self.toastView.hide()

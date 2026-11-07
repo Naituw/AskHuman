@@ -15,6 +15,7 @@ struct AskHumanApp: App {
                 .environment(\.launchOptions, environment.launch)
                 .task { await environment.start() }
                 .task(id: scenePhase) {
+                    Diagnostics.note("app", "scenePhase \(scenePhase)")
                     switch scenePhase {
                     case .active:
                         await environment.store.setForeground(true)

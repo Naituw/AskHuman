@@ -145,10 +145,12 @@ extension DeveloperPlacement {
 
 // MARK: menu
 
-/// The things the developer menu offers. One for now: the structure is what makes more of them cheap. The
-/// menu itself is the system's (`UIMenu` on the button): this is only what it lists.
+/// The things the developer menu offers: the structure is what makes more of them cheap. The menu itself is the
+/// system's (`UIMenu` on the button): this is only what it lists, in the order it lists it.
 public enum DeveloperMenuItem: String, CaseIterable, Identifiable, Sendable {
     case quickTodo
+    /// Puts what `Diagnostics` has on the pasteboard (docs/specs/ios-developer-mode.md §12).
+    case copyDiagnostics
 
     public var id: String { rawValue }
 }

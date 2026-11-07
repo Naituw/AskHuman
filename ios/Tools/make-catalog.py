@@ -336,6 +336,9 @@ ZH = {
     "Forget all pairings": "忘记所有配对",
     "About": "关于",
     "Macs": "Mac",
+    # The two links at the foot of the Macs tab (they were put into the catalog by hand when external testing was prepared).
+    "Privacy Policy": "隐私政策",
+    "Beta setup guide": "内测接入指南",
     "Forget all pairings?": "忘记所有配对？",
     "This removes every Mac and the broker account from this phone. Your Macs are told, and you can pair again at any time.": "这会从这部手机移除所有 Mac 和 Broker 账号。你的 Mac 会收到通知，你随时可以重新配对。",
     # Markdown
@@ -568,9 +571,11 @@ ZH = {
     "Added to %@": "已添加到 %@",
     "Choose a project": "选择项目",
     "Choose a project first.": "请先选择项目。",
+    "Copy diagnostics": "复制诊断信息",
     "Developer": "开发者",
     "Developer mode": "开发者模式",
     "Developer tools": "开发者工具",
+    "Diagnostics copied": "已复制诊断信息",
     "No Mac with iCloud sync is reachable right now.": "开启了 iCloud 同步的 Mac 暂时都连不上。",
     "Puts a button above every screen. Press and hold it, then slide to a shortcut and let go. Drag it to move it.": "在所有界面上方显示一个按钮。按住它，滑到某个快捷项后松手即可触发；拖动它可以移动位置。",
     "Quick todo": "快速待办",

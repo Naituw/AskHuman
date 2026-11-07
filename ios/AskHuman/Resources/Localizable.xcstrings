@@ -1350,6 +1350,16 @@
         }
       }
     },
+    "Copy diagnostics" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "复制诊断信息"
+          }
+        }
+      }
+    },
     "Could not attach" : {
       "localizations" : {
         "zh-Hans" : {
@@ -1516,6 +1526,16 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "开发者工具"
+          }
+        }
+      }
+    },
+    "Diagnostics copied" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "已复制诊断信息"
           }
         }
       }

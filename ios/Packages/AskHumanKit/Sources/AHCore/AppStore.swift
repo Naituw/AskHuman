@@ -141,12 +141,17 @@ public final class AppStore {
     /// Whether the engine has published a state yet: before that, `state` is the empty placeholder.
     public private(set) var hasState = false
 
-    public var tab: AppTab = .inbox
+    public var tab: AppTab = .inbox {
+        didSet {
+            if oldValue != tab { Diagnostics.note("nav", "tab \(oldValue.rawValue) → \(tab.rawValue)") }
+        }
+    }
     public var filter: InboxFilter = .all
     /// Ids (`macId/requestId`) of the requests pushed on the inbox stack. A request that leaves the
     /// stack is closed: its draft is saved, or dropped when the request is over.
     public var inboxPath: [String] = [] {
         didSet {
+            if oldValue != inboxPath { Diagnostics.note("nav", "inbox stack \(oldValue.count) → \(inboxPath.count)") }
             if oldValue.last != inboxPath.last { requestNavigationEpoch &+= 1 }
             for id in Set(oldValue).subtracting(inboxPath) { closed(id: id) }
             if let open = inboxPath.last {
@@ -168,6 +173,7 @@ public final class AppStore {
     /// are asked for while its page is on the stack.
     public var agentPath: [String] = [] {
         didSet {
+            if oldValue != agentPath { Diagnostics.note("nav", "agents stack \(oldValue.count) → \(agentPath.count)") }
             for id in Set(agentPath).subtracting(oldValue) { setWatch(id, open: true) }
             for id in Set(oldValue).subtracting(agentPath) { setWatch(id, open: false) }
         }
@@ -207,6 +213,7 @@ public final class AppStore {
     @ObservationIgnored private var todoPickers: [String: RequestTodoPicker] = [:]
     @ObservationIgnored private var tasks: [Task<Void, Never>] = []
     @ObservationIgnored private var lastHistoryRevision = -1
+    @ObservationIgnored private var lastDiagnosticCounts = ""
     /// Every request seen in the inbox, kept while its page may still be open: when the request ends
     /// the page keeps showing it (with a notice) instead of going blank.
     @ObservationIgnored private var retained: [String: (item: InboxItem, at: Date)] = [:]
@@ -256,6 +263,7 @@ public final class AppStore {
     }
 
     public func setForeground(_ foreground: Bool) async {
+        Diagnostics.note("store", foreground ? "foreground" : "background")
         if foreground {
             if arrivalPresentationBegan == nil { arrivalPresentationBegan = .now }
         } else {
@@ -266,6 +274,7 @@ public final class AppStore {
     }
 
     public func setInactive() async {
+        Diagnostics.note("store", "inactive")
         arrivalPresentationBegan = nil
         clearRequestArrivals()
         await backend.setInactive()
@@ -283,7 +292,45 @@ public final class AppStore {
         }
     }
 
+    /// A line for the diagnostics when what the lists hold changes in number (not on every state: those come all the time).
+    private func noteDiagnostics(of next: EngineState) {
+        let counts = "connection \(Self.diagnosticName(of: next.phase)), macs \(next.macs.count), inbox \(next.inbox.count), agents \(next.agents.count), foreground \(next.foreground)"
+        guard counts != lastDiagnosticCounts else { return }
+        lastDiagnosticCounts = counts
+        Diagnostics.note("state", counts)
+    }
+
+    /// The phase without its payload (a host name, a reason): the diagnostics say states, not where the traffic goes.
+    static func diagnosticName(of phase: ConnectionPhase) -> String {
+        switch phase {
+        case .idle: "idle"
+        case .connecting: "connecting"
+        case .connected: "connected"
+        case .backoff: "backoff"
+        case .refused: "refused"
+        }
+    }
+
+    /// What the report says about the app's own state: names of states and counts, nothing that was written by a person.
+    public func diagnosticSummary() -> String {
+        let links = Dictionary(grouping: state.macs, by: \.link).map { "\($0.key) ×\($0.value.count)" }.sorted().joined(separator: ", ")
+        var lines = [
+            "tab \(tab.rawValue); inbox stack \(inboxPath.count), agents stack \(agentPath.count)",
+            "connection \(Self.diagnosticName(of: state.phase)); sync \(syncStatus); lists \(listReadiness); foreground \(state.foreground)",
+            "macs \(state.macs.count)\(links.isEmpty ? "" : " (\(links))"); inbox \(state.inbox.count) (unread \(unreadCount)); agents \(state.agents.count); history \(history.count)",
+            "ended while open \(finished.count); arrivals showing \(requestArrivals.count); banner \(banner != nil); receipt \(receipt != nil)",
+            "new task sheet \(taskComposer != nil); task progress sheet \(viewingTask != nil)",
+            "auto-advance \(autoAdvance); developer mode \(developer.enabled)",
+        ]
+        if !finished.isEmpty {
+            let outcomes = finished.values.map { $0.outcome.rawValue }.sorted().joined(separator: ", ")
+            lines.append("ended requests: \(outcomes)")
+        }
+        return lines.joined(separator: "\n")
+    }
+
     private func apply(_ next: EngineState) async {
+        noteDiagnostics(of: next)
         state = next
         hasState = true
         todos.update(macs: next.macs, foreground: next.foreground)
@@ -373,6 +420,9 @@ public final class AppStore {
             let submissionEpoch = submissionNavigationEpochs.removeValue(forKey: key)
             pendingArrivals[key] = nil
             finishRequestArrival(id: key)
+            Diagnostics.note(
+                "store", "request finished (\(outcome.rawValue)), page open: \(inboxPath.contains(key)), on top: \(inboxPath.last == key)"
+            )
             if inboxPath.contains(key) {
                 finished[key] = FinishedRequest(outcome: outcome, by: by, at: Date())
                 // Our own submission went through: move on.

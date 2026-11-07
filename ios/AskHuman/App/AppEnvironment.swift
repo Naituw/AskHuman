@@ -66,6 +66,9 @@ struct LaunchOptions {
     /// Seconds the "Added to <project>" note stays over a request page (the app's own 2 is too short for a
     /// UI test that polls a busy simulator).
     var todoNoteHold: Double?
+    /// Seconds the developer button's note ("Added to …", "Diagnostics copied") stays up (the app's own 1.8 is too
+    /// short for a UI test that polls a busy simulator).
+    var developerToastHold: Double?
     /// A request (on the first Mac) whose notification was tapped: its page opens at once, whether or
     /// not the Macs have answered yet, with a made-up notification text.
     var notifyRequest: String?
@@ -119,6 +122,7 @@ struct LaunchOptions {
         if defaults.object(forKey: "AHAdvanceHold") != nil { advanceHold = defaults.double(forKey: "AHAdvanceHold") }
         if defaults.object(forKey: "AHAdvanceSettle") != nil { advanceSettle = defaults.double(forKey: "AHAdvanceSettle") }
         if defaults.object(forKey: "AHTodoNoteHold") != nil { todoNoteHold = max(0, defaults.double(forKey: "AHTodoNoteHold")) }
+        if defaults.object(forKey: "AHDeveloperToastHold") != nil { developerToastHold = max(0, defaults.double(forKey: "AHDeveloperToastHold")) }
         notifyRequest = defaults.string(forKey: "AHNotify")
         if defaults.object(forKey: "AHWebMarkdown") != nil { webMarkdown = defaults.bool(forKey: "AHWebMarkdown") }
         if defaults.object(forKey: "AHWebTimeout") != nil { webTimeout = defaults.double(forKey: "AHWebTimeout") }
@@ -174,6 +178,7 @@ final class AppEnvironment {
             if let hold = launch.advanceHold { store.advanceTiming.hold = .seconds(hold) }
             if let settle = launch.advanceSettle { store.advanceTiming.settle = .seconds(settle) }
             if let hold = launch.todoNoteHold { store.todoNoteHold = .seconds(hold) }
+            if let hold = launch.developerToastHold { store.developer.toastHold = hold }
             leftoverPairings = 0
         } else {
             let group = Bundle.main.object(forInfoDictionaryKey: "AHKeychainGroup") as? String
@@ -209,6 +214,7 @@ final class AppEnvironment {
         push = PushCoordinator(store: store, simulated: launch.mock)
         if let tab = launch.tab { store.tab = tab }
         Self.current = self
+        AppDiagnostics.install(store: store)
     }
 
     func start() async {

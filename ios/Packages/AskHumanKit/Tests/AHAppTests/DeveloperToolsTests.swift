@@ -74,6 +74,62 @@ final class DeveloperToolsTests: XCTestCase {
         XCTAssertFalse(developer.quickTodoPresented)
     }
 
+    // MARK: the diagnostics (docs/specs/ios-developer-mode.md §12)
+
+    func testTheMenuListsTheQuickTodoAndTheDiagnosticsInThatOrder() {
+        XCTAssertEqual(DeveloperMenuItem.allCases, [.quickTodo, .copyDiagnostics])
+    }
+
+    func testCopyingDiagnosticsHandsTheReportToTheSinkAndSaysSo() async {
+        await make()
+        var copied: [String] = []
+        developer.diagnosticsSink = { copied.append($0) }
+
+        developer.invoke(.copyDiagnostics)
+        XCTAssertTrue(copied.isEmpty, "with the mode off nothing is copied")
+        XCTAssertNil(developer.toast)
+
+        developer.enabled = true
+        developer.invoke(.copyDiagnostics)
+        XCTAssertEqual(copied.count, 1)
+        XCTAssertTrue(copied.first?.hasPrefix("AskHuman diagnostics") == true)
+        XCTAssertEqual(developer.toast?.message, .diagnosticsCopied)
+        XCTAssertTrue(
+            Diagnostics.shared.entries().contains { $0.category == "dev" && $0.text.hasPrefix("diagnostics copied") },
+            "the copy is itself in the log, so that the next report shows where this one was taken"
+        )
+    }
+
+    func testCopyingDiagnosticsWithNowhereToPutThemChangesNothing() async {
+        await make()
+        developer.enabled = true
+        developer.invoke(.copyDiagnostics)
+        XCTAssertNil(developer.toast)
+    }
+
+    func testTheStoreWritesWhereTheUserWentAndWhatEndedUnderThem() async {
+        await make()
+        app.tab = .agents
+        app.tab = .inbox
+        XCTAssertTrue(Diagnostics.shared.entries().contains { $0.category == "nav" && $0.text == "tab inbox → agents" })
+        XCTAssertTrue(Diagnostics.shared.entries().contains { $0.category == "nav" && $0.text == "tab agents → inbox" })
+
+        let before = Diagnostics.shared.entries().count
+        app.tab = .inbox
+        XCTAssertEqual(Diagnostics.shared.entries().count, before, "choosing the tab that is already chosen says nothing")
+    }
+
+    func testTheSummaryOfTheStateHasCountsAndStatesAndNoNames() async {
+        await make()
+        let summary = app.diagnosticSummary()
+        XCTAssertTrue(summary.contains("tab inbox; inbox stack 0, agents stack 0"), summary)
+        XCTAssertTrue(summary.contains("macs 2"), summary)
+        XCTAssertTrue(summary.contains("developer mode false"), summary)
+        for name in app.state.macs.map(\.name) + app.state.macs.map(\.macName) + app.state.inbox.map(\.id) {
+            XCTAssertFalse(summary.contains(name), "the summary must not carry \(name)")
+        }
+    }
+
     // MARK: the button's place
 
     func testTheButtonStaysWhereItWasLeftAndAPlaceThatCannotBeReadIsTheStandardOne() async {
@@ -158,5 +214,15 @@ final class DeveloperToolsTests: XCTestCase {
 
         developer.clearToast(id: second)
         XCTAssertNil(developer.toast)
+    }
+
+    func testANoteStaysForTheUsualMomentUnlessTheToolsAreToldToHoldItLonger() async throws {
+        await make()
+        developer.showToast(.diagnosticsCopied)
+        XCTAssertEqual(try XCTUnwrap(developer.toast).hold, DeveloperMetrics.toastDuration)
+
+        developer.toastHold = 6
+        developer.showToast(.diagnosticsCopied)
+        XCTAssertEqual(try XCTUnwrap(developer.toast).hold, 6, "UI tests stretch it for a busy simulator")
     }
 }
