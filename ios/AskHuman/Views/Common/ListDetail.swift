@@ -54,6 +54,7 @@ struct ListDetailColumns<List: View, Detail: View>: View {
     /// What the detail shows that the list opened (a request, an Agent, a project), if anything. Told
     /// apart, not only present or not, so that another pick puts away a list that was called back over it.
     let opened: AnyHashable?
+    let showListRequest: Int
     let list: List
     let detail: Detail
 
@@ -67,9 +68,11 @@ struct ListDetailColumns<List: View, Detail: View>: View {
     private var fit: Fit { Self.fit(of: width) }
     private var isOpen: Bool { opened != nil }
 
-    init(hasList: Bool = true, opened: AnyHashable?, @ViewBuilder list: () -> List, @ViewBuilder detail: () -> Detail) {
+    init(hasList: Bool = true, opened: AnyHashable?, showListRequest: Int = 0,
+         @ViewBuilder list: () -> List, @ViewBuilder detail: () -> Detail) {
         self.hasList = hasList
         self.opened = opened
+        self.showListRequest = showListRequest
         self.list = list()
         self.detail = detail()
         // These columns come up again whenever the window turns wide (a foldable opened, an iPad window
@@ -130,6 +133,9 @@ struct ListDetailColumns<List: View, Detail: View>: View {
         .onChange(of: fit, initial: true) { settle() }
         .onChange(of: opened) { settle() }
         .onChange(of: hasList) { settle() }
+        .onChange(of: showListRequest) {
+            if hasList, fit == .narrow { visibility = .all }
+        }
         .onChange(of: visibility) {
             // The list cannot be put away while there is nothing else to look at, and it cannot be
             // brought out where there is none. With a request open it is the reader's to show and hide.

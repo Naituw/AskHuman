@@ -128,6 +128,26 @@ final class AskHumanLargeScreenUITests: XCTestCase {
         shot("narrow-3-second-pick")
     }
 
+    func testReselectingInboxRevealsTheFloatingListAndKeepsTheDraft() throws {
+        try launch(request: "req-select")
+        try XCTSkipIf(isTiled, "The sidebar only floats in a narrower split view.")
+        let option = require("option-0-0")
+        option.tap()
+        XCTAssertTrue(option.isSelected)
+
+        let row = element("inbox-row-req-select")
+        becomes(row, "isHittable == false")
+        let inbox = app.tabBars.buttons[language == "en" ? "Inbox" : "收件箱"]
+        XCTAssertTrue(inbox.isSelected)
+        inbox.tap()
+        becomes(row, "isHittable == true")
+        XCTAssertTrue(row.isSelected, "the open request stays selected")
+
+        app.windows.firstMatch.coordinate(withNormalizedOffset: CGVector(dx: 0.85, dy: 0.5)).tap()
+        becomes(row, "isHittable == false")
+        XCTAssertTrue(option.isSelected, "the draft survives showing and dismissing the list")
+    }
+
     /// Sending the one request that is open, with nothing to follow it, is what going back to the list is
     /// on a phone. Side by side that is the column of the request becoming the placeholder again; where
     /// the list lies over the request it is the list that is called back.

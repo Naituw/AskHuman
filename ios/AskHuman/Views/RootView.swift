@@ -7,6 +7,7 @@ struct RootView: View {
     @Environment(PushCoordinator.self) private var push
     let leftoverPairings: Int
     @State private var showPairing = false
+    @State private var inboxReselection = 0
     @State private var links = LinkPresenter()
     @State private var askAboutLeftovers: Bool
     @State private var arrivalFullscreenFixture = false
@@ -19,10 +20,16 @@ struct RootView: View {
         _askAboutLeftovers = State(initialValue: leftoverPairings > 0)
     }
 
+    private var tabSelection: Binding<AppTab> {
+        Binding(get: { store.tab }, set: { tab in
+            if tab == .inbox, store.tab == .inbox { inboxReselection += 1 }
+            store.tab = tab
+        })
+    }
+
     var body: some View {
-        @Bindable var store = store
-        TabView(selection: $store.tab) {
-            InboxScreen(showPairing: $showPairing)
+        TabView(selection: tabSelection) {
+            InboxScreen(showPairing: $showPairing, reselection: inboxReselection)
                 .tabItem { Label("Inbox", systemImage: "tray.full") }
                 .tag(AppTab.inbox)
                 .badge(store.pendingCount)
