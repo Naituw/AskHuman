@@ -12,10 +12,14 @@
 //! 生产用 [`TauriBackend`] 包 Tauri 菜单对象；单测用 mock 后端记录每步操作，从而既验证 diff 结果、又验证
 //! 操作的**最小性**（见文件末尾测试）。
 
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Arc;
 use tauri::menu::{
     IsMenuItem, Menu, MenuItem, MenuItemBuilder, PredefinedMenuItem, Submenu, SubmenuBuilder,
 };
 use tauri::{AppHandle, Wry};
+
+pub const AGENTS_MENU: &str = "agents_menu";
 
 /// 声明式菜单节点。`key` 在**同一层级内**唯一且稳定，用于 diff 时按身份匹配；可点条目的事件也靠它路由
 /// （`key` 即 muda 菜单项 id）。
@@ -295,6 +299,42 @@ fn reconcile<B: MenuOps>(
     }
 }
 
+/// Keep the visible tree in place during tracking. Only attach new Agent submenus at the end.
+fn append_agents<B: MenuOps>(b: &B, applied: &mut [Live<B>], desired: Vec<Node>) {
+    let Some(Node::Submenu { text, children, .. }) =
+        desired.into_iter().find(|node| node.key() == AGENTS_MENU)
+    else {
+        return;
+    };
+    let Some(Live::Submenu {
+        handle,
+        text: applied_text,
+        enabled,
+        children: applied_agents,
+        ..
+    }) = applied.iter_mut().find(|node| node.key() == AGENTS_MENU)
+    else {
+        return;
+    };
+    let previous_count = applied_agents.len();
+    for node in children {
+        if !applied_agents.iter().any(|agent| agent.key() == node.key()) {
+            let index = applied_agents.len();
+            applied_agents.push(build_live(b, Container::Sub(handle), index, &node));
+        }
+    }
+    if applied_agents.len() > previous_count {
+        if *applied_text != text {
+            b.set_sub_text(handle, &text);
+            *applied_text = text;
+        }
+        if !*enabled {
+            b.set_sub_enabled(handle, true);
+            *enabled = true;
+        }
+    }
+}
+
 // ===== 生产后端：Tauri 菜单对象 =====
 
 /// 包住 Tauri 的根 `Menu` + `AppHandle`，实现 [`MenuOps`]。
@@ -374,6 +414,7 @@ impl MenuOps for TauriBackend {
 pub struct TrayMenu {
     backend: TauriBackend,
     applied: Vec<Live<TauriBackend>>,
+    tracking: Arc<AtomicBool>,
 }
 
 impl TrayMenu {
@@ -381,11 +422,97 @@ impl TrayMenu {
         Self {
             backend: TauriBackend { app, root: menu },
             applied: Vec::new(),
+            tracking: Arc::new(AtomicBool::new(false)),
         }
     }
     /// 将期望的节点列表 diff 应用到菜单（最小增删 + 就地改文字 / 可用性）。
     pub fn apply(&mut self, desired: Vec<Node>) {
         reconcile(&self.backend, Container::Root, &mut self.applied, desired);
+    }
+
+    pub fn is_tracking(&self) -> bool {
+        self.tracking.load(Ordering::Relaxed)
+    }
+
+    pub fn append_agents(&mut self, desired: Vec<Node>) {
+        append_agents(&self.backend, &mut self.applied, desired);
+    }
+
+    #[cfg(target_os = "macos")]
+    pub fn observe_tracking(
+        &self,
+        tray: &tauri::tray::TrayIcon,
+        on_close: impl Fn() + Send + Sync + 'static,
+    ) -> tauri::Result<()> {
+        let tracking = self.tracking.clone();
+        tray.with_inner_tray_icon(move |tray| {
+            let mtm = objc2::MainThreadMarker::new().expect("tray icon must be on the main thread");
+            if let Some(menu) = tray.ns_status_item().and_then(|item| item.menu(mtm)) {
+                macos_tracking::attach(&menu, tracking, Box::new(on_close));
+            }
+        })
+    }
+}
+
+#[cfg(target_os = "macos")]
+mod macos_tracking {
+    use super::{Arc, AtomicBool, Ordering};
+    use objc2::rc::Retained;
+    use objc2::runtime::ProtocolObject;
+    use objc2::{define_class, ffi, msg_send, DefinedClass, MainThreadMarker, MainThreadOnly};
+    use objc2_app_kit::{NSMenu, NSMenuDelegate};
+    use objc2_foundation::{NSObject, NSObjectProtocol};
+
+    struct TrackingState {
+        tracking: Arc<AtomicBool>,
+        on_close: Box<dyn Fn() + Send + Sync>,
+    }
+
+    define_class!(
+        #[unsafe(super(NSObject))]
+        #[name = "AskHumanTrayMenuTracking"]
+        #[thread_kind = MainThreadOnly]
+        #[ivars = TrackingState]
+        struct MenuTracking;
+
+        unsafe impl NSObjectProtocol for MenuTracking {}
+
+        unsafe impl NSMenuDelegate for MenuTracking {
+            #[unsafe(method(menuWillOpen:))]
+            fn menu_will_open(&self, _menu: &NSMenu) {
+                self.ivars().tracking.store(true, Ordering::Relaxed);
+            }
+
+            #[unsafe(method(menuDidClose:))]
+            fn menu_did_close(&self, _menu: &NSMenu) {
+                self.ivars().tracking.store(false, Ordering::Relaxed);
+                (self.ivars().on_close)();
+            }
+        }
+    );
+
+    pub(super) fn attach(
+        menu: &NSMenu,
+        tracking: Arc<AtomicBool>,
+        on_close: Box<dyn Fn() + Send + Sync>,
+    ) {
+        static DELEGATE_KEY: u8 = 0;
+        let mtm = MainThreadMarker::new().expect("tray menu must be on the main thread");
+        let delegate = mtm
+            .alloc::<MenuTracking>()
+            .set_ivars(TrackingState { tracking, on_close });
+        let delegate: Retained<MenuTracking> = unsafe { msg_send![super(delegate), init] };
+        // NSMenu's delegate is weak. Tie this delegate to the native tray root's lifetime.
+        // Muda's original root delegate only stores an ID used for the application's main menu.
+        unsafe {
+            ffi::objc_setAssociatedObject(
+                (menu as *const NSMenu).cast_mut().cast(),
+                std::ptr::addr_of!(DELEGATE_KEY).cast(),
+                Retained::as_ptr(&delegate).cast_mut().cast(),
+                ffi::OBJC_ASSOCIATION_RETAIN_NONATOMIC,
+            );
+            menu.setDelegate(Some(ProtocolObject::from_ref(&*delegate)));
+        }
     }
 }
 
@@ -994,6 +1121,63 @@ mod tests {
         b.clear_log();
         d.apply(menu(vec![("s2", "Send Message…", false)]));
         assert_eq!(b.ops(), vec!["remove agent:s1 agents_menu".to_string()]);
+    }
+
+    #[test]
+    fn tracked_agents_append_without_changing_visible_submenus() {
+        let b = MockOps::new();
+        let mut d = Driver::new(&b);
+        let overview = |children: Vec<Node>| {
+            vec![Node::submenu(
+                AGENTS_MENU,
+                format!("{} working", children.len()),
+                !children.is_empty(),
+                children,
+            )]
+        };
+        let agent = |id: &str, working: bool| {
+            let actions = if working {
+                vec![it(&format!("ij:{id}"), "Send Message…")]
+            } else {
+                Vec::new()
+            };
+            Node::submenu(id, id, true, actions)
+        };
+        d.apply(overview(Vec::new()));
+        append_agents(&b, &mut d.applied, overview(vec![agent("a", true)]));
+        assert!(matches!(
+            d.applied.as_slice(),
+            [Live::Submenu { enabled: true, .. }]
+        ));
+        append_agents(
+            &b,
+            &mut d.applied,
+            overview(vec![agent("a", true), agent("b", true)]),
+        );
+        let before = b.render();
+
+        b.clear_log();
+        // B disappeared; A went idle; a new C arrived ahead of A in the latest frame.
+        let latest = overview(vec![agent("c", true), agent("a", false)]);
+        append_agents(&b, &mut d.applied, latest.clone());
+        let rendered = b.render();
+        let current = &rendered[0].children;
+        assert_eq!(current.len(), 3);
+        assert_eq!(&current[..2], before[0].children.as_slice());
+        assert!(b.ops().contains(&"insert c @2 agents_menu".to_string()));
+        assert!(!b.ops().iter().any(|op| op.starts_with("remove ")));
+
+        b.clear_log();
+        append_agents(&b, &mut d.applied, latest.clone());
+        assert!(b.ops().is_empty());
+
+        d.apply(latest.clone());
+        let after_close = b.render();
+        // Compare with rendering the same snapshot from scratch on a separate backend.
+        let fresh_backend = MockOps::new();
+        let mut fresh = Driver::new(&fresh_backend);
+        fresh.apply(latest);
+        assert_eq!(after_close, fresh_backend.render());
     }
 
     #[test]

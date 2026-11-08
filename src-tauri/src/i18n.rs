@@ -1545,6 +1545,11 @@ pub fn tr(lang: Lang, key: &'static str) -> &'static str {
             "Send Message… (queued)",
             "发送消息…（有待送达）",
         ),
+        "tray.agentNoLongerWorking" => pick(
+            lang,
+            "This Agent is no longer working or available. No message was sent.",
+            "这个 Agent 已不在工作中或暂时不可用，未发送消息。",
+        ),
         "tray.agentFocusTerminal" => pick(lang, "Focus Terminal", "聚焦终端"),
         // Agent 子菜单「添加待办」：打开待办窗口并预选该 agent 的项目、聚焦新增输入框。
         "tray.agentAddTodo" => pick(lang, "Add Todo…", "添加待办…"),

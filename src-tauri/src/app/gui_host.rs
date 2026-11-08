@@ -8,7 +8,7 @@
 //! - 配置监听：菜单栏模式 / 语言变化 → 重建菜单 + 装/卸登录项 + 切活动策略。
 //! - 二进制换新：盘上二进制变化且无窗口时 re-exec / 交 launchd（spec D11）。
 
-use crate::app::tray_menu::{Node, TrayMenu};
+use crate::app::tray_menu::{Node, TrayMenu, AGENTS_MENU};
 use crate::config::{AppConfig, DaemonLifecycleMode, MenuBarIconMode, ThemeMode};
 use crate::daemon::lifecycle::{self, Fingerprint, LockGuard};
 use crate::gui_host::{HostMsg, WindowKind};
@@ -668,8 +668,27 @@ fn ensure_tray(app: &AppHandle, present: bool) -> tauri::Result<()> {
         builder = builder.icon(img);
     }
     let tray = builder.build(app)?;
+    let tray_menu = TrayMenu::new(app.clone(), menu);
+    #[cfg(target_os = "macos")]
+    {
+        let app = app.clone();
+        tray_menu.observe_tracking(&tray, move || {
+            let app = app.clone();
+            // AppKit forbids structural changes inside menuDidClose, and Tauri runs
+            // run_on_main_thread synchronously when called from the main thread.
+            tauri::async_runtime::spawn(async move {
+                let host = app.clone();
+                let _ = app.run_on_main_thread(move || {
+                    if let Some(state) = host.try_state::<HostState>() {
+                        *state.menu_sig.lock().unwrap() = None;
+                        refresh_tray(&host);
+                    }
+                });
+            });
+        })?;
+    }
     *state.tray.lock().unwrap() = Some(tray);
-    *state.tray_menu.lock().unwrap() = Some(TrayMenu::new(app.clone(), menu));
+    *state.tray_menu.lock().unwrap() = Some(tray_menu);
     // 强制首刷：清掉签名缓存，确保 refresh_tray 一定填充菜单 + 摆正图标/tooltip。
     *state.menu_sig.lock().unwrap() = None;
     refresh_tray(app);
@@ -678,9 +697,7 @@ fn ensure_tray(app: &AppHandle, present: bool) -> tauri::Result<()> {
 
 /// 按最近状态刷新图标 + 菜单 + tooltip。须在主线程调用。
 ///
-/// 关键：**内容没变就整次跳过**（连菜单条目都不碰）；有变化时也只**原地增删菜单条目**，
-/// 绝不 `tray.set_menu` 换新对象。这样 daemon 持续停止（内容不变）时展开的菜单不会被 2s
-/// 刷新挤掉；即便有变化，原地改条目通常也不会关闭已展开菜单（只有替换 NSMenu 对象才会）。
+/// On macOS, keep the current native menu stable while AppKit is tracking it.
 pub fn refresh_tray(app: &AppHandle) {
     let Some(state) = app.try_state::<HostState>() else {
         return;
@@ -725,6 +742,26 @@ pub fn refresh_tray(app: &AppHandle) {
         return;
     }
 
+    if let Some(tm) = state.tray_menu.lock().unwrap().as_mut() {
+        let specs = build_specs(
+            up,
+            lang,
+            &data,
+            &integration_updates,
+            lifecycle_on,
+            stale,
+            &update_action,
+            setup_pending,
+        );
+        if tm.is_tracking() {
+            tm.append_agents(specs);
+            // The close callback invalidates this signature before applying the full snapshot.
+            *state.menu_sig.lock().unwrap() = Some(sig);
+            return;
+        }
+        tm.apply(specs);
+    }
+
     // 图标（set_icon / set_tooltip 不会关闭已展开菜单）。
     if let Some(img) = icon_for(
         up,
@@ -735,20 +772,6 @@ pub fn refresh_tray(app: &AppHandle) {
     ) {
         let _ = tray.set_icon(Some(img));
         let _ = tray.set_icon_as_template(icon_bytes::TEMPLATE);
-    }
-    // 菜单：把期望节点列表 diff 应用到**同一个**菜单对象——文字变化只 set_text、结构变化才最小增删，
-    // 绝不整段重建（整段重建会关掉已展开菜单）。
-    if let Some(tm) = state.tray_menu.lock().unwrap().as_mut() {
-        tm.apply(build_specs(
-            up,
-            lang,
-            &data,
-            &integration_updates,
-            lifecycle_on,
-            stale,
-            &update_action,
-            setup_pending,
-        ));
     }
     let mut tip = if up {
         i18n::tr(lang, "tray.tooltipRunning").to_string()
@@ -1246,7 +1269,7 @@ fn build_specs(
     // 独立成组（用户验收反馈，spec gui-agent-console 反馈记录）：分隔线 +
     // 「打开 Agent 状态窗口」直达项 + 忙闲概览子菜单（标签即「工作中 w · 空闲 i」，
     // 逐 agent：在控制台查看 / 发送消息 / 待办 / 聚焦终端；工作中在前）+
-    // 「新建 Agent 任务」末项。无活动 agent / 旧 daemon（缺摘要）→ 无概览子菜单。
+    // 「新建 Agent 任务」末项。
     if lifecycle_on {
         nodes.push(Node::separator("sep.agents_section"));
         nodes.push(Node::item(
@@ -1254,9 +1277,11 @@ fn build_specs(
             i18n::tr(lang, "tray.openAgents").to_string(),
             true,
         ));
-        if up && !data.agents.is_empty() {
+        let agents = if up { data.agents.as_slice() } else { &[] };
+        // Reserve the macOS row so the first Agent can appear without shifting the root menu.
+        if !agents.is_empty() || cfg!(target_os = "macos") {
             let mut children: Vec<Node> = Vec::new();
-            for a in &data.agents {
+            for a in agents {
                 // Agent 条目前缀用与 /watch 卡片一致的状态圆点，避免仅靠排序区分工作中/空闲。
                 // 编号可直接用于 `/msg <编号>`；标题截断 24 字符防菜单过宽。
                 let project = if a.project_name.is_empty() {
@@ -1304,7 +1329,7 @@ fn build_specs(
                 }
                 // 「发送消息」：grok 无可靠传话通道（首期排除，spec agent-interject D1），且仅「工作中」
                 // 才显示——插话在 agent 下一次工具调用时送达，对空闲无意义（用户定案）。
-                if a.kind != "grok" && a.state == "working" {
+                if tray_allows_interject(a) {
                     sub.push(Node::item(
                         format!("ijask:{}", a.session_id),
                         i18n::tr(lang, "tray.agentAskNow").to_string(),
@@ -1358,10 +1383,20 @@ fn build_specs(
                     ));
                 }
             }
+            let (working, idle) = if up {
+                (data.agents_working, data.agents_idle)
+            } else {
+                (0, 0)
+            };
             let overview = i18n::tr(lang, "tray.agentOverview")
-                .replace("{w}", &data.agents_working.to_string())
-                .replace("{i}", &data.agents_idle.to_string());
-            nodes.push(Node::submenu("agents_menu", overview, true, children));
+                .replace("{w}", &working.to_string())
+                .replace("{i}", &idle.to_string());
+            nodes.push(Node::submenu(
+                AGENTS_MENU,
+                overview,
+                !children.is_empty(),
+                children,
+            ));
         }
         if new_task_available {
             nodes.push(Node::item(
@@ -1502,6 +1537,10 @@ fn agent_state_label(state: &str, lang: Lang) -> &'static str {
     }
 }
 
+fn tray_allows_interject(agent: &ipc::TrayAgentInfo) -> bool {
+    agent.kind != "grok" && agent.state == "working"
+}
+
 /// Agent 子菜单条目里会话标题的截断长度（与「待答」预览同 24 字符口径）。
 const AGENT_TITLE_MAX_CHARS: usize = 24;
 
@@ -1546,18 +1585,33 @@ pub fn on_menu_event(app: &AppHandle, id: &str) {
         );
         return;
     }
-    // Agent 子菜单「发送消息」：宿主本进程直接开（或聚焦）该 session 的插话 composer 窗口。
-    if let Some(session_id) = id.strip_prefix("ij:") {
+    if let Some((action, session_id)) = id
+        .split_once(':')
+        .filter(|(action, _)| matches!(*action, "ij" | "ijask"))
+    {
+        // The visible menu may still show an action from before the latest daemon snapshot.
         let info = app.try_state::<HostState>().and_then(|s| {
+            if !s.daemon_up.load(Ordering::SeqCst) {
+                return None;
+            }
             s.data
                 .lock()
                 .unwrap()
                 .agents
                 .iter()
-                .find(|a| a.session_id == session_id)
+                .find(|a| a.session_id == session_id && tray_allows_interject(a))
                 .cloned()
         });
-        if let Some(a) = info {
+        let Some(a) = info else {
+            use tauri_plugin_dialog::DialogExt;
+            let lang = app.state::<HostState>().lang();
+            app.dialog()
+                .message(i18n::tr(lang, "tray.agentNoLongerWorking"))
+                .title("AskHuman")
+                .show(|_| {});
+            return;
+        };
+        if action == "ij" {
             open_window(
                 app,
                 WindowKind::Interject,
@@ -1571,26 +1625,23 @@ pub fn on_menu_event(app: &AppHandle, id: &str) {
                 None,
                 None,
             );
+        } else {
+            // Ask Me Now appends to the queue without opening a composer.
+            tauri::async_runtime::spawn(async move {
+                if let Ok(stream) = transport::connect().await {
+                    let (_r, mut w) = stream.into_split();
+                    let _ = ipc::write_msg(
+                        &mut w,
+                        &ClientMsg::InterjectAppend {
+                            session_id: a.session_id,
+                            text: QUICK_ASK_INTERJECT.to_string(),
+                            attachments: Vec::new(),
+                        },
+                    )
+                    .await;
+                }
+            });
         }
-        return;
-    }
-    // Agent 子菜单「要求提问」：追加一条固定插话，不打开 composer、不覆盖已有待送达内容。
-    if let Some(session_id) = id.strip_prefix("ijask:") {
-        let session_id = session_id.to_string();
-        tauri::async_runtime::spawn(async move {
-            if let Ok(stream) = transport::connect().await {
-                let (_r, mut w) = stream.into_split();
-                let _ = ipc::write_msg(
-                    &mut w,
-                    &ClientMsg::InterjectAppend {
-                        session_id,
-                        text: QUICK_ASK_INTERJECT.to_string(),
-                        attachments: Vec::new(),
-                    },
-                )
-                .await;
-            }
-        });
         return;
     }
     // Agent 子菜单的两个开关（离开模式 / 不再使用 AskHuman，此会话）：id 里带着要设成的值。
@@ -2285,7 +2336,8 @@ fn mode_of(app: &AppHandle) -> MenuBarIconMode {
 fn set_daemon_up(app: &AppHandle, up: bool) {
     let mut became_up = false;
     if let Some(state) = app.try_state::<HostState>() {
-        became_up = up && !state.daemon_up.swap(up, Ordering::SeqCst);
+        let was_up = state.daemon_up.swap(up, Ordering::SeqCst);
+        became_up = up && !was_up;
     }
     if became_up {
         refresh_integration_updates(app);
