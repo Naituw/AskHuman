@@ -133,8 +133,7 @@ struct RequestScreen: View {
                             .disabled(store.finished[id] != nil || !store.isOnline(macId: item.macId))
                     }
                 }
-            } label: { Image(systemName: "ellipsis") }
-            .accessibilityLabel("More")
+            } label: { Label("More", systemImage: "ellipsis") }
             .accessibilityIdentifier("request-menu")
         }
     }

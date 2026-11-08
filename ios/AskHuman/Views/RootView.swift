@@ -1,4 +1,5 @@
 import SwiftUI
+import Observation
 import AHCore
 import AHProtocol
 
@@ -6,8 +7,7 @@ struct RootView: View {
     @Environment(AppStore.self) private var store
     @Environment(PushCoordinator.self) private var push
     let leftoverPairings: Int
-    @State private var showPairing = false
-    @State private var inboxReselection = 0
+    @State private var presentation = TabPresentation()
     @State private var links = LinkPresenter()
     @State private var askAboutLeftovers: Bool
     @State private var arrivalFullscreenFixture = false
@@ -22,51 +22,18 @@ struct RootView: View {
 
     private var tabSelection: Binding<AppTab> {
         Binding(get: { store.tab }, set: { tab in
-            if tab == .inbox, store.tab == .inbox { inboxReselection += 1 }
+            if tab == .inbox, store.tab == .inbox { presentation.inboxReselection += 1 }
             store.tab = tab
         })
     }
 
+    @ViewBuilder
     var body: some View {
-        TabView(selection: tabSelection) {
-            InboxScreen(showPairing: $showPairing, reselection: inboxReselection)
-                .tabItem { Label("Inbox", systemImage: "tray.full") }
-                .tag(AppTab.inbox)
-                .badge(store.pendingCount)
-            AgentsScreen(showPairing: $showPairing)
-                .tabItem { Label("Agents", systemImage: "person.2.wave.2") }
-                .tag(AppTab.agents)
-            TodosScreen(showPairing: $showPairing)
-                .tabItem { Label("Todos", systemImage: "checklist") }
-                .tag(AppTab.todos)
-            HistoryScreen()
-                .tabItem { Label("History", systemImage: "clock.arrow.circlepath") }
-                .tag(AppTab.history)
-            MacsScreen(showPairing: $showPairing)
-                .tabItem { Label("Macs", systemImage: "desktopcomputer") }
-                .tag(AppTab.macs)
-        }
+        @Bindable var presentation = presentation
+        tabsWithBanner
         .environment(links)
-        .background {
-            ArrivalSceneHost(arrivals: store.requestArrivals, pendingCount: store.pendingCount,
-                             reduceMotion: reduceMotion || (launch.mock && launch.arrivalReducedMotion),
-                             diagnostics: launch.mock && launch.arrivalMotionDiagnostics,
-                             slowdown: launch.mock ? launch.arrivalMotionSlowdown : 1,
-                             compositionFixture: launch.mock && launch.arrivalMarkedTextFixture) { id in
-                store.finishRequestArrival(id: id)
-            }
-            .frame(width: 0, height: 0)
-            .allowsHitTesting(false)
-            .accessibilityHidden(true)
-            DeveloperOverlayAnchor()
-        }
-        .overlay(alignment: .top) {
-            VStack(spacing: 8) {
-                SentPillHost()
-                InAppBanner()
-            }
-        }
-        .sheet(isPresented: $showPairing) { PairingSheet() }
+        .background { rootBackground }
+        .sheet(isPresented: $presentation.showPairing) { PairingSheet() }
         .fullScreenCover(isPresented: $arrivalFullscreenFixture) {
             // A mock-only layout fixture verifies the no-navigation-bar presentation boundary.
             VStack(spacing: 24) {
@@ -105,10 +72,102 @@ struct RootView: View {
         .sensoryFeedback(trigger: store.sentTick) { _, _ in
             store.receipt?.outcome == .answered ? .success : .impact(weight: .light)
         }
+        // Keep the todo subscription in sync even when its hosted screen is offscreen.
+        .onChange(of: store.tab, initial: true) { _, tab in store.todos.setVisible(tab == .todos) }
         .onChange(of: store.pendingCount) { _, count in push.updateBadge(count) }
         .onChange(of: store.state.pairing?.stage) { _, stage in
             // A pairing started from a notification-less state (a deep link in the future) opens the sheet.
-            if stage != nil, !showPairing { showPairing = true }
+            if stage != nil, !presentation.showPairing { presentation.showPairing = true }
+        }
+    }
+
+    @ViewBuilder
+    private var rootBackground: some View {
+        ArrivalSceneHost(arrivals: store.requestArrivals, pendingCount: store.pendingCount,
+                         reduceMotion: reduceMotion || (launch.mock && launch.arrivalReducedMotion),
+                         diagnostics: launch.mock && launch.arrivalMotionDiagnostics,
+                         slowdown: launch.mock ? launch.arrivalMotionSlowdown : 1,
+                         compositionFixture: launch.mock && launch.arrivalMarkedTextFixture) { id in
+            store.finishRequestArrival(id: id)
+        }
+        .frame(width: 0, height: 0)
+        .allowsHitTesting(false)
+        .accessibilityHidden(true)
+        DeveloperOverlayAnchor()
+    }
+
+    private var rootBanner: some View {
+        VStack(spacing: 8) {
+            SentPillHost()
+            InAppBanner()
+        }
+    }
+
+    @ViewBuilder
+    private var tabsWithBanner: some View {
+        if #available(iOS 27.1, *) {
+            tabs
+        } else {
+            tabs.overlay(alignment: .top) { rootBanner }
+        }
+    }
+
+    @ViewBuilder
+    private var tabs: some View {
+        if #available(iOS 27.1, *) {
+            AppTabs(selection: tabSelection, pendingCount: store.pendingCount,
+                    hidesTabBarWhenCompact: hidesTabBarWhenCompact, isOverlayInteractive: store.banner != nil) { tab in
+                TabPage(tab: tab, presentation: presentation)
+                    .environment(store)
+                    .environment(push)
+                    .environment(links)
+                    .environment(\.launchOptions, launch)
+            } overlay: {
+                rootBanner.environment(store)
+            }
+            // UIKit lays out its bars outside the safe area; give the container the whole window.
+            .ignoresSafeArea()
+        } else {
+            TabView(selection: tabSelection) {
+                ForEach(AppTab.allCases, id: \.self) { tab in
+                    TabPage(tab: tab, presentation: presentation)
+                        .tabItem { Label(tab.title, systemImage: tab.symbol) }
+                        .tag(tab)
+                        .badge(tab == .inbox ? store.pendingCount : 0)
+                }
+            }
+        }
+    }
+
+    private var hidesTabBarWhenCompact: Bool {
+        switch store.tab {
+        case .inbox: return !store.inboxPath.isEmpty
+        case .agents: return !store.agentPath.isEmpty
+        case .todos: return store.todos.opened != nil
+        case .history, .macs: return false
+        }
+    }
+}
+
+/// Presentation state is shared across the independently hosted tab graphs.
+@MainActor @Observable
+private final class TabPresentation {
+    var showPairing = false
+    var inboxReselection = 0
+}
+
+private struct TabPage: View {
+    let tab: AppTab
+    let presentation: TabPresentation
+
+    var body: some View {
+        @Bindable var presentation = presentation
+        switch tab {
+        case .inbox: InboxScreen(showPairing: $presentation.showPairing, reselection: presentation.inboxReselection)
+        case .agents: AgentsScreen(showPairing: $presentation.showPairing)
+        case .todos: TodosScreen(showPairing: $presentation.showPairing)
+        case .history: HistoryScreen()
+        case .macs: MacsScreen(showPairing: $presentation.showPairing)
         }
     }
 }

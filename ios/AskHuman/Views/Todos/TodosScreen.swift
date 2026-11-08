@@ -14,10 +14,6 @@ struct TodosScreen: View {
         } stack: {
             stack
         }
-        // The tab asks the Macs for nothing while it is not the one on screen.
-        .onChange(of: store.tab, initial: true) { _, tab in
-            store.todos.setVisible(tab == .todos)
-        }
     }
 
     /// The phone's way: the projects, and the one that was opened pushed over them.

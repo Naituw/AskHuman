@@ -137,3 +137,24 @@ sheet 里同理：图标 / 角色按钮靠到 sheet 自己右边的一列，文�
 ## 7. 暂缓
 
 键盘快捷键（⌘1–5、↑↓、⌘↩）、指针悬停效果、附件拖放、Stage Manager 尺寸细调，记在一条项目待办里，不在本次范围。
+
+## 8. Duo 折叠过渡的共享栏承载
+
+五个标签保留上述导航、列表选中样式和窄浮层规则；共享栏由最外层标签容器承载。iOS 27.1 起 `RootView` 用 `AppTabs`
+的稳定 `UITabBarController` / `UITab` / `UIHostingController` 承载竖向共享栏，更早系统仍用 `TabView`。
+普通 UIKit 父控制器按完整 containment 生命周期承载标签控制器，并用公开的
+`childForPreferredVerticalBarBehavior` 转交共享栏决策；不直接把标签控制器作为 representable 的根。
+UIKit 容器获得全窗口，内部自行处理安全区；根页面同步选择、徽标、收件箱重选和原有紧凑屏
+标签栏显隐策略；实际显隐在 UIKit 尺寸类／字号 trait 变化及首次出现时同步，不再依赖 SwiftUI 回传尺寸类。程序同步暂停 delegate，避免默认标签回调覆盖模型或重复触发重选。
+控件没有手动搬到侧面，也不按尺寸重建标签。
+
+全局横幅 / 发送提示与标签控制器共同放在普通 UIKit 父容器内；横幅用独立且稳定的
+UIHostingController，按 [.intrinsicContentSize](https://developer.apple.com/documentation/swiftui/uihostingcontrollersizingoptions/intrinsiccontentsize) 更新高度，空时不占高度，只有横幅可以点击时
+接收触摸。不要在根标签容器外再叠 SwiftUI `.overlay`：同二进制产品对照中，仅恢复这层
+横幅 overlay 就在首次折叠丢失整组导航按钮，背景挂载、配对 sheet 与触觉反馈对照均通过。
+这是一项容器承载约束，不是延迟刷新或重建导航的补丁。
+
+独立程序在保留原 split → stack 模型时完成十次有效开合；产品验证状态见
+[排查记录](../investigations/ios-duo-fold-navigation.md)，不把独立程序通过当成产品回归通过。
+More 菜单提供含标题和符号的 `Label("More", systemImage: "ellipsis")`，让系统竖向栏与
+溢出菜单有完整项目标签，遵循 [Apple 的 Duo 工具栏指导](https://developer.apple.com/videos/play/tech-talks/111462/)。

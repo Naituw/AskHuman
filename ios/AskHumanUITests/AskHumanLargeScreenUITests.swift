@@ -254,7 +254,14 @@ final class AskHumanLargeScreenUITests: XCTestCase {
         title("Plan the users table migration")
         becomes(row, "isHittable == false", timeout: 20)
         shot("ax-pushed")
-        sidebarToggle().tap()
+        // Duo keeps the stack's back button in its floating bar, outside navigationBars.
+        let back = element("BackButton")
+        if back.exists {
+            XCTAssertTrue(back.isHittable)
+            back.tap()
+        } else {
+            sidebarToggle().tap()
+        }
         becomes(element("inbox-row-req-migration"), "isHittable == true", timeout: 20)
     }
 

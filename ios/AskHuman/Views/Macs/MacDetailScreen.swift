@@ -37,6 +37,7 @@ struct MacDetailScreen: View {
                     LabeledContent("Paired") { Text(mac.pairedAt, format: .dateTime.year().month().day()) }
                 } footer: {
                     Text("The name is only changed on this phone.")
+                        .accessibilityIdentifier("mac-detail")
                 }
 
                 Section {
