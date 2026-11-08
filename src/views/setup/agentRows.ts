@@ -19,7 +19,11 @@ export function isBlocked(row: SetupAgentRow): boolean {
   return !!row.statusError || row.delivery === "unsupportedVersion";
 }
 
-/** Rows worth the main area: installed here or already integrated. The rest wait under "other Agents". */
+/**
+ * Rows worth the main area: installed here or already integrated. The rest are listed below it as
+ * small tiles ("other supported Agents"): they show what else AskHuman supports and can still be
+ * ticked by hand when detection missed one.
+ */
 export function isMainRow(row: SetupAgentRow): boolean {
   return row.detected || isIntegrated(row);
 }
@@ -82,6 +86,8 @@ export function rowTags(row: SetupAgentRow): RowTag[] {
     });
   } else if (row.detected) {
     tags.push({ key: "detected", tone: "muted" });
+  } else {
+    tags.push({ key: "notDetected", tone: "muted" });
   }
   if (row.needsUpdate) tags.push({ key: "needsUpdate", tone: "warn" });
   if (row.delivery === "untrusted") tags.push({ key: "untrusted", tone: "warn" });

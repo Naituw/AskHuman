@@ -329,9 +329,9 @@ Rust 单测（均不碰真实 HOME / 钥匙串）：
 ### 3.3 第 1 页：接入 Agent（D5–D9、D19、D23）
 
 - 挂载即并行发起 `setupAgentsScan()` 与 `setupEnvCheck()`；扫描期间显示占位，不阻塞步骤导航。
-- 分组：**主区** = `detected || mode != none` 的行；**「未检测到的 Agent（N）」折叠区** = 其余（默认不勾选，仍可手动接入）。
+- 分组：**主区** = `detected || mode != none` 的行（完整磁贴）；**「其他支持的 Agent（N）」** = 其余，不折叠，以小磁贴（`AgentTile` 的 `compact` 形态：一行、标「未检测到」、徽标灰着，勾选后才展开接入方式）列出（默认不勾选，仍可手动接入）。一个都没检测到（主区为空）时，页头换成 `leadNone`，顶部多一张提示卡（`agents-none`，含 [重新检测] → `rescanAgents()`），小磁贴区的标题改为「支持的 Agent（N）」。
 - 预填：`mode`（所选模式）= `currentMode != none ? currentMode : recommended`；`checked` = `currentMode != none ? true : detected`。已集成行取消勾选 = 「本次不动它」，向导永不卸载。
-- 每个磁贴（`AgentTile.vue`，整块可点勾选）：徽标 + 标题 + 状态标签 + 勾选标记 + 接入方式分段控件（只列该家支持的模式，推荐项带「推荐」；只支持一种时显示固定标签；点选方式同时勾选该家）。「将创建或修改的文件」不放在磁贴里，而是磁贴下方的折叠合并清单（按 Agent 分组，来自 `planned[mode]`，标新建 / 修改）。状态标签：已集成 →「已集成 · CLI/MCP」；`needsUpdate` →「有更新」（默认纳入应用）；Codex `delivery == untrusted` →「待信任」，并在磁贴下方的提示卡片里写「首次启动 Codex 时按提示信任 Hook」；`unsupportedVersion` → 磁贴内错误；`statusError` →「无法读取状态」（磁贴禁用）。勾选 Cursor 时，同一提示卡片附既有 `settings.integration.cursorRulesHint` 文案。「已检测到」标签不在磁贴上重复（分区标题已写明）。
+- 每个磁贴（`AgentTile.vue`，整块可点勾选）：徽标 + 标题 + 状态标签 + 勾选标记 + 接入方式分段控件（只列该家支持的模式，推荐项带「推荐」；只支持一种时显示固定标签；点选方式同时勾选该家）。「将创建或修改的文件」不放在磁贴里，而是磁贴下方的折叠合并清单（按 Agent 分组，来自 `planned[mode]`，标新建 / 修改）。状态标签：已集成 →「已集成 · CLI/MCP」；`needsUpdate` →「有更新」（默认纳入应用）；Codex `delivery == untrusted` →「待信任」，并在磁贴下方的提示卡片里写「首次启动 Codex 时按提示信任 Hook」；`unsupportedVersion` → 磁贴内错误；`statusError` →「无法读取状态」（磁贴禁用）。勾选 Cursor 时，同一提示卡片附既有 `settings.integration.cursorRulesHint` 文案。「已检测到」标签不在磁贴上重复（分区标题已写明）；小磁贴带「未检测到」标签（`rowTags` 对没检测到、也没集成的行给出）。
 - `pending(row)` = `checked && (mode != currentMode || needsUpdate)`。主按钮：存在 `pending` 或风格有改动 →「应用并继续」，否则「下一步」。「跳过此步」仅在 Agent 域未决时显示，点击 `setupSkip("agents")` 后前进。
 - 协作风格 2 选 1（对齐 / 自主，各一句说明），预选当前值；当前为 `custom` 时多一项已选中的「自定义（在设置页编辑）」。
 - 应用顺序（D7）：风格有改动 → `core.config.general.collaborationStyle = …` → `await core.persist()` → `await collaborationStyleApplyIntegrations()`；随后 `setupApplyAgents(pending 行)`；刷新扫描。结果就地显示每行 ✓ / ✗ + 原因（失败行可重试）；全部处理完显示「已打开的 Agent 会话需要重启才会加载」；主按钮变「继续」，不自动跳转。

@@ -1,6 +1,8 @@
 <script setup lang="ts">
 // Wizard page 1: connect the Agents and pick the collaboration style (docs/specs/onboarding.md D5-D9).
 // A first run opens with a welcome header; a rerun gets the compact one that says what is kept.
+// Agents found here are full tiles; the other supported ones follow as small tiles, and when
+// nothing was found at all a notice card leads the page.
 import { computed, ref } from "vue";
 import { useI18n } from "vue-i18n";
 import appIcon from "../../../src-tauri/icons/128x128@2x.png";
@@ -33,11 +35,30 @@ const {
   applyAgents,
   skipAgents,
   scanAgents,
+  rescanAgents,
   goto,
 } = useSetupContext();
 
-const othersOpen = ref(false);
 const filesOpen = ref(false);
+
+/** Nothing is installed here and nothing is integrated: the page says so before anything else. */
+const noneFound = computed(
+  () => rowsLoaded.value && !rowsError.value && mainRows.value.length === 0,
+);
+const rescanning = ref(false);
+/** A "check again" has finished at least once, so "still nothing" is worth saying. */
+const rescanned = ref(false);
+
+async function rescan() {
+  if (rescanning.value) return;
+  rescanning.value = true;
+  try {
+    await rescanAgents();
+    rescanned.value = true;
+  } finally {
+    rescanning.value = false;
+  }
+}
 
 /** "Custom" is only an option while it is what is set: it is edited in Settings, never here. */
 const styleOptions = computed<CollaborationStyle[]>(() =>
@@ -103,7 +124,13 @@ async function onPrimary() {
       <SetupHeader
         :variant="isRerun ? 'page' : 'hero'"
         :title="isRerun ? t('setup.agents.title') : t('setup.agents.welcomeTitle')"
-        :lead="isRerun ? t('setup.agents.leadRerun') : t('setup.agents.lead')"
+        :lead="
+          isRerun
+            ? t('setup.agents.leadRerun')
+            : noneFound
+              ? t('setup.agents.leadNone')
+              : t('setup.agents.lead')
+        "
         lead-testid="agents-lead"
       >
         <template v-if="!isRerun" #icon>
@@ -128,6 +155,38 @@ async function onPrimary() {
         </button>
       </div>
       <template v-else>
+        <div v-if="noneFound" class="setup-none" role="status" data-testid="agents-none">
+          <span class="setup-none-icon" aria-hidden="true">
+            <svg viewBox="0 0 20 20">
+              <circle cx="10" cy="10" r="8" />
+              <path d="M10 5.8v5" />
+              <path d="M10 13.9v.1" />
+            </svg>
+          </span>
+          <div class="setup-none-body">
+            <p class="setup-none-title">{{ t("setup.agents.noneTitle") }}</p>
+            <p class="setup-none-desc">{{ t("setup.agents.noneDesc") }}</p>
+            <div class="setup-none-actions">
+              <button
+                class="btn"
+                type="button"
+                :disabled="rescanning"
+                data-testid="agents-rescan"
+                @click="rescan"
+              >
+                {{ rescanning ? t("setup.agents.rescanning") : t("setup.agents.rescan") }}
+              </button>
+              <span
+                v-if="rescanned && !rescanning"
+                class="setup-none-result"
+                data-testid="agents-rescanned"
+              >
+                {{ t("setup.agents.rescanned") }}
+              </span>
+            </div>
+          </div>
+        </div>
+
         <section v-if="mainRows.length > 0" class="setup-section">
           <h2 class="setup-section-title">
             {{ t("setup.agents.detectedTitle") }}
@@ -137,25 +196,19 @@ async function onPrimary() {
             <AgentTile v-for="row in mainRows" :key="row.id" :row="row" />
           </div>
         </section>
-        <p v-else class="setup-note" data-testid="agents-none">
-          {{ t("setup.agents.noneDetected") }}
-        </p>
 
-        <template v-if="otherRows.length > 0">
-          <button
-            class="setup-disclosure"
-            type="button"
-            data-testid="agents-others-toggle"
-            :aria-expanded="othersOpen"
-            @click="othersOpen = !othersOpen"
-          >
-            <span class="disclosure-caret" :class="{ open: othersOpen }">▸</span>
-            {{ t("setup.agents.others", { n: otherRows.length }) }}
-          </button>
-          <div v-if="othersOpen" class="agent-grid" data-testid="agents-others">
-            <AgentTile v-for="row in otherRows" :key="row.id" :row="row" />
+        <section v-if="otherRows.length > 0" class="setup-section" data-testid="agents-others">
+          <h2 class="setup-section-title">
+            {{ mainRows.length > 0 ? t("setup.agents.othersTitle") : t("setup.agents.supportedTitle") }}
+            <span class="setup-count">{{ otherRows.length }}</span>
+          </h2>
+          <p v-if="mainRows.length > 0" class="setup-section-lead">
+            {{ t("setup.agents.othersLead") }}
+          </p>
+          <div class="agent-grid compact">
+            <AgentTile v-for="row in otherRows" :key="row.id" :row="row" compact />
           </div>
-        </template>
+        </section>
 
         <ul v-if="cursorRow || codexRow" class="setup-notes" data-testid="agents-notes">
           <li v-if="cursorRow" data-testid="agent-note-cursor">

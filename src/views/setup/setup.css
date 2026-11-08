@@ -317,6 +317,64 @@
   color: var(--text-primary);
 }
 
+/* Nothing was found on this computer: a warm card that leads the Agent page, not a grey line.
+   This card is what a machine without any Agent is first shown, and that is often an old macOS
+   whose WebKit has neither `color-mix()` nor flex `gap` (Safari 13 on Catalina): the plain colours
+   come first for it, and the card spaces its parts with margins. */
+.setup-none {
+  display: flex;
+  align-items: flex-start;
+  padding: var(--space-3) var(--space-4);
+  border: 1px solid rgba(255, 159, 10, 0.5);
+  border: 1px solid color-mix(in srgb, var(--accent-orange) 45%, transparent);
+  border-radius: 12px;
+  background: rgba(255, 159, 10, 0.12);
+  background: color-mix(in srgb, var(--accent-orange) 9%, var(--card-bg));
+}
+.setup-none-icon {
+  flex: 0 0 auto;
+  width: 20px;
+  height: 20px;
+  margin: 1px var(--space-3) 0 0;
+  color: var(--accent-orange);
+}
+.setup-none-icon svg {
+  display: block;
+  width: 100%;
+  height: 100%;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.7;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+.setup-none-body {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+.setup-none-title {
+  margin: 0;
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--text-primary);
+}
+.setup-none-desc {
+  margin: 4px 0 0;
+  font-size: 12.5px;
+  line-height: 1.55;
+  color: var(--text-secondary);
+}
+.setup-none-actions {
+  display: flex;
+  align-items: center;
+  margin-top: var(--space-2);
+}
+.setup-none-result {
+  margin-left: var(--space-3);
+  font-size: 12px;
+  color: var(--text-secondary);
+}
+
 .setup-disclosure {
   display: inline-flex;
   align-items: center;
@@ -459,6 +517,9 @@
   box-sizing: border-box;
   width: 20px;
   height: 20px;
+  /* The plain colour is for a WebKit without `color-mix()` (Safari 13): without it an unticked tile
+     shows no circle at all, and a tile that was not detected could not be seen to be tickable. */
+  border: 1.5px solid var(--text-tertiary);
   border: 1.5px solid color-mix(in srgb, var(--text-tertiary) 80%, transparent);
   border-radius: 50%;
   color: transparent;
@@ -484,6 +545,52 @@
 .agent-tile.blocked .tile-tick,
 .agent-tile.readonly .tile-tick {
   opacity: 0.5;
+}
+
+/* An Agent that was not found here: a quiet one-line tile. It shows what else is supported and
+   can still be ticked by hand; the way-to-connect row only appears once it is ticked. */
+.agent-grid.compact {
+  gap: var(--space-2);
+  /* A ticked tile unfolds its mode row; its neighbour keeps its one line instead of stretching. */
+  align-items: start;
+}
+.agent-tile.compact {
+  gap: 8px;
+  padding: 8px 12px;
+  box-shadow: none;
+  background: color-mix(in srgb, var(--card-bg) 55%, transparent);
+}
+.agent-tile.compact:hover:not(.blocked):not(.readonly) {
+  background: color-mix(in srgb, var(--text-primary) 4%, var(--card-bg));
+}
+.agent-tile.compact.on {
+  background: color-mix(in srgb, var(--accent) 10%, var(--card-bg));
+}
+.agent-tile.compact .tile-head {
+  gap: 8px;
+}
+.agent-tile.compact .tile-id {
+  flex-direction: row;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 2px 8px;
+}
+.agent-tile.compact .tile-name {
+  font-size: 13px;
+  font-weight: 500;
+}
+.agent-tile.compact .tile-tick {
+  width: 18px;
+  height: 18px;
+}
+.agent-tile.compact .tile-tick svg {
+  width: 10px;
+  height: 10px;
+}
+/* Not found here: the badge is grey until the tile is ticked (the Agent-task page does the same). */
+.agent-tile.compact:not(.on) .brand-badge {
+  filter: grayscale(1);
+  opacity: 0.6;
 }
 
 /* How to connect: pinned to the tile's bottom so a row of tiles lines its controls up. */

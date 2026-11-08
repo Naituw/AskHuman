@@ -2,6 +2,8 @@
 // One Agent on the wizard's first page, as a selectable tile: logo badge, name, status tags, a
 // tick, the way to connect it, and (after applying) how that went. The files applying would touch
 // and the per-Agent hints live below the grid (AgentsPage), so every tile stays the same size.
+// A `compact` tile is the quiet one-line form for an Agent that was not found here: it shows what
+// else AskHuman supports, and unfolds its way-to-connect row only once someone ticks it.
 import { computed } from "vue";
 import { useI18n } from "vue-i18n";
 import type { SetupAgentMode, SetupAgentRow } from "../../lib/types";
@@ -9,7 +11,7 @@ import BrandBadge from "./BrandBadge.vue";
 import { isBlocked, modesOf, rowTags } from "./agentRows";
 import { useSetupContext } from "./useSetup";
 
-const props = defineProps<{ row: SetupAgentRow }>();
+const props = defineProps<{ row: SetupAgentRow; compact?: boolean }>();
 
 const { t } = useI18n();
 const { picks, applyResults, readOnly, applying } = useSetupContext();
@@ -42,7 +44,7 @@ function setMode(mode: SetupAgentMode) {
   <label
     v-if="pick"
     class="agent-tile"
-    :class="{ on: pick.checked, blocked, readonly: readOnly }"
+    :class="{ on: pick.checked, blocked, readonly: readOnly, compact }"
     :data-testid="`agent-${row.id}`"
   >
     <input
@@ -54,7 +56,7 @@ function setMode(mode: SetupAgentMode) {
     />
 
     <span class="tile-head">
-      <BrandBadge :id="row.id" :label="row.title" />
+      <BrandBadge :id="row.id" :label="row.title" :size="compact ? 'sm' : 'md'" />
       <span class="tile-id">
         <span class="tile-name">{{ row.title }}</span>
         <span v-if="tags.length > 0" class="tile-tags">
@@ -85,7 +87,7 @@ function setMode(mode: SetupAgentMode) {
       {{ t("setup.agents.unsupportedDesc") }}
     </span>
 
-    <span class="tile-mode">
+    <span v-if="!compact || pick.checked" class="tile-mode">
       <span class="tile-caption">{{ t("setup.agents.modeLabel") }}</span>
       <span
         v-if="modes.length > 1"

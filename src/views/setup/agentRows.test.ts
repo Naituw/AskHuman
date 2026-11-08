@@ -26,7 +26,7 @@ describe("row classification", () => {
     expect(isBlocked(row({ delivery: "untrusted" }))).toBe(false);
   });
 
-  it("the main area holds installed or integrated Agents; the rest wait under other Agents", () => {
+  it("the main area holds installed or integrated Agents; the rest are listed below as small tiles", () => {
     expect(isMainRow(row({ detected: true }))).toBe(true);
     expect(isMainRow(row({ detected: false, mode: "mcp" }))).toBe(true);
     expect(isMainRow(row({ detected: false, mode: "none" }))).toBe(false);
@@ -111,9 +111,15 @@ describe("rowTags", () => {
     expect(rowTags(row({ mode: "mcp" }))[0].params).toEqual({ mode: "MCP" });
   });
 
-  it("marks a detected, not yet integrated Agent; an undetected one gets no tag", () => {
+  it("marks a detected, not yet integrated Agent; an undetected one says it was not found", () => {
     expect(rowTags(row({ mode: "none", detected: true }))).toEqual([{ key: "detected", tone: "muted" }]);
-    expect(rowTags(row({ mode: "none", detected: false }))).toEqual([]);
+    expect(rowTags(row({ mode: "none", detected: false }))).toEqual([
+      { key: "notDetected", tone: "muted" },
+    ]);
+  });
+
+  it("an integrated Agent is never called not detected, even when its app was not found", () => {
+    expect(rowTags(row({ mode: "cli", detected: false })).map((t) => t.key)).toEqual(["integrated"]);
   });
 
   it("adds the update, trust and version tags after the integration tag", () => {

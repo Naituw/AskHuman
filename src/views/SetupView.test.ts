@@ -300,12 +300,31 @@ describe("setup wizard", () => {
       // Blocked rows are never ticked.
       expect(isChecked(w, "agent-check-pi")).toBe(false);
 
-      // The undetected Agent is folded away until asked for.
-      expect(find(w, "agent-antigravity").exists()).toBe(false);
-      expect(text(w, "agents-others-toggle")).toContain("Agents not detected (1)");
-      await click(w, "agents-others-toggle");
-      expect(find(w, "agents-others").exists()).toBe(true);
+      // The undetected Agent is listed below as a small tile: unticked, and it says why.
+      expect(find(w, "agent-antigravity").exists()).toBe(true);
+      expect(get(w, "agent-antigravity").classes()).toContain("compact");
+      expect(text(w, "agent-tag-antigravity-notDetected")).toBe("Not detected");
       expect(isChecked(w, "agent-check-antigravity")).toBe(false);
+      // It sits under its own title, not among the detected ones.
+      expect(get(w, "agents-main").find('[data-testid="agent-antigravity"]').exists()).toBe(false);
+      expect(text(w, "agents-others")).toContain("Other supported Agents");
+      expect(text(w, "agents-others")).toContain("tick it by hand");
+      // Something was found, so there is no notice.
+      expect(find(w, "agents-none").exists()).toBe(false);
+    });
+
+    it("a small tile unfolds its way to connect once it is ticked, and ticking it adds it to the apply", async () => {
+      rowsValue = [
+        row({ id: "claude", title: "Claude Code", detected: false, recommended: "cli" }),
+      ];
+      const w = await mountWizard();
+      expect(find(w, "agent-mode-claude").exists()).toBe(false);
+      expect(text(w, "agents-primary")).toBe("Next");
+
+      await get(w, "agent-check-claude").setValue(true);
+      expect(find(w, "agent-mode-claude").exists()).toBe(true);
+      expect(text(w, "agents-selected")).toContain("1 selected");
+      expect(text(w, "agents-primary")).toBe("Apply and continue");
     });
 
     it("tags each row with its state", async () => {
@@ -553,12 +572,75 @@ describe("setup wizard", () => {
       expect(find(decided, "agents-skip").exists()).toBe(false);
     });
 
-    it("says so when no Agent was found, and still lets the user continue", async () => {
-      rowsValue = [row({ id: "claude", detected: false })];
+    it("says so when no Agent was found, lists what is supported, and still lets the user continue", async () => {
+      rowsValue = [
+        row({ id: "claude", title: "Claude Code", detected: false }),
+        row({ id: "codex", title: "Codex", detected: false }),
+      ];
       const w = await mountWizard();
+      // The page leads with the notice, and the header no longer claims anything was preselected.
       expect(find(w, "agents-none").exists()).toBe(true);
+      expect(text(w, "agents-none")).toContain("No Agent was found on this computer");
+      expect(text(w, "agents-lead")).toContain("Install an Agent on this computer first");
       expect(find(w, "agents-main").exists()).toBe(false);
+      // What AskHuman supports is still there: small, unticked tiles under their own title.
+      expect(text(w, "agents-others")).toContain("Supported Agents");
+      expect(text(w, "agents-others")).not.toContain("Other supported Agents");
+      expect(get(w, "agent-claude").classes()).toContain("compact");
+      expect(isChecked(w, "agent-check-claude")).toBe(false);
+      expect(isChecked(w, "agent-check-codex")).toBe(false);
+      // The rest of the page is unchanged: the style question stays, and the user can move on.
+      expect(find(w, "agents-style").exists()).toBe(true);
       expect(text(w, "agents-primary")).toBe("Next");
+    });
+
+    describe("check again", () => {
+      it("scans again; an Agent that turned up is ticked and the notice goes away", async () => {
+        rowsValue = [row({ id: "claude", title: "Claude Code", detected: false })];
+        const w = await mountWizard();
+        expect(find(w, "agents-none").exists()).toBe(true);
+        expect(ipc.setupAgentsScan).toHaveBeenCalledTimes(1);
+
+        rowsValue = [row({ id: "claude", title: "Claude Code", detected: true })];
+        await click(w, "agents-rescan");
+        expect(ipc.setupAgentsScan).toHaveBeenCalledTimes(2);
+        expect(find(w, "agents-none").exists()).toBe(false);
+        expect(get(w, "agents-main").find('[data-testid="agent-claude"]').exists()).toBe(true);
+        expect(isChecked(w, "agent-check-claude")).toBe(true);
+        expect(text(w, "agents-primary")).toBe("Apply and continue");
+      });
+
+      it("says so when the second look finds nothing either, and keeps what was ticked by hand", async () => {
+        rowsValue = [
+          row({ id: "claude", title: "Claude Code", detected: false }),
+          row({ id: "codex", title: "Codex", detected: false }),
+        ];
+        const w = await mountWizard();
+        expect(find(w, "agents-rescanned").exists()).toBe(false);
+
+        await get(w, "agent-check-codex").setValue(true);
+        await click(w, "agents-rescan");
+        expect(text(w, "agents-rescanned")).toContain("still nothing found");
+        expect(find(w, "agents-none").exists()).toBe(true);
+        expect(isChecked(w, "agent-check-codex")).toBe(true);
+        expect(isChecked(w, "agent-check-claude")).toBe(false);
+      });
+
+      it("is not offered while a scan is still running", async () => {
+        rowsValue = [row({ id: "claude", title: "Claude Code", detected: false })];
+        const w = await mountWizard();
+        let release: (rows: SetupAgentRow[]) => void = () => {};
+        ipc.setupAgentsScan.mockImplementationOnce(
+          () => new Promise<SetupAgentRow[]>((resolve) => (release = resolve)),
+        );
+        await get(w, "agents-rescan").trigger("click");
+        expect(isDisabled(w, "agents-rescan")).toBe(true);
+        expect(text(w, "agents-rescan")).toBe("Checking…");
+
+        release(rowsValue);
+        await flushPromises();
+        expect(isDisabled(w, "agents-rescan")).toBe(false);
+      });
     });
 
     it("lets the user retry a scan that failed", async () => {

@@ -142,6 +142,19 @@ export function createSetup(initialPage: SetupPage = "agents") {
     }
   }
 
+  /**
+   * Scan again on request ("Check again" when nothing was found). What the person ticked by hand
+   * stays as it is; an Agent that has turned up since the last scan is preselected like any
+   * detected one, which `scanAgents(true)` alone would not do (it keeps the old, unticked pick).
+   */
+  async function rescanAgents() {
+    const found = new Set(rows.value.filter(isMainRow).map((row) => row.id));
+    await scanAgents(true);
+    for (const row of rows.value) {
+      if (isMainRow(row) && !found.has(row.id)) picks[row.id] = preselect(row);
+    }
+  }
+
   async function loadEnv() {
     try {
       env.value = await setupEnvCheck();
@@ -561,6 +574,7 @@ export function createSetup(initialPage: SetupPage = "agents") {
     isRerun,
     showPathCard,
     scanAgents,
+    rescanAgents,
     applyAgents,
     skipAgents,
     // Remote
