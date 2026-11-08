@@ -51,6 +51,13 @@ pub trait TextDeps {
     fn test_channel(&mut self, id: &str) -> Result<(), String>;
     fn tray_supported(&mut self) -> bool;
     fn login_item(&mut self, install: bool) -> Result<(), String>;
+    /// Whether this platform can start Agent tasks from the phone or IM (a supported terminal).
+    fn agent_tasks_supported(&mut self) -> bool;
+    /// Install the daemon's own login item. Settings does this before it saves the Agent-task
+    /// switch, and a failure there leaves the feature off.
+    fn install_daemon_login_item(&mut self) -> Result<(), String>;
+    /// Make sure the daemon runs with the saved settings (Settings does this after saving).
+    fn ensure_daemon(&mut self) -> Result<(), String>;
     fn mark_skipped(&mut self, domain: &str);
     fn mark_background_decided(&mut self);
     fn agents_decided(&mut self) -> bool;
@@ -64,6 +71,7 @@ pub fn run(lang: Lang, io: &mut dyn TextIo, deps: &mut dyn TextDeps) -> i32 {
         io,
         deps,
         env: EnvReport::empty(),
+        tasks_offered: false,
     };
     match flow.run_all() {
         Ok(()) => 0,
@@ -90,6 +98,9 @@ struct Flow<'a> {
     io: &'a mut dyn TextIo,
     deps: &'a mut dyn TextDeps,
     env: EnvReport,
+    /// Step 3 asked whether to create Agent tasks from the phone or IM (the summary points at
+    /// Settings when it did not).
+    tasks_offered: bool,
 }
 
 /// One Agent row of step 1 together with what the user wants done to it.
@@ -860,11 +871,22 @@ impl Flow<'_> {
 
     // ——— step 3: background and startup ———
 
+    /// Whether some Agent is integrated now: step 1 may have just changed that, so read it again.
+    fn agent_integrated(&mut self) -> bool {
+        self.deps
+            .scan()
+            .iter()
+            .any(|row| Mode::parse(&row.mode).is_some_and(|mode| mode != Mode::None))
+    }
+
     fn step_background(&mut self) -> Result<(), String> {
         self.blank();
         self.say("[3/3] Background and startup", "[3/3] 后台与启动");
         let mut config = self.deps.load_config();
-        let any_channel = self.deps.channel_rows().iter().any(|row| row.enabled);
+        // A remote channel of any kind: an IM channel, or the iOS app (set up in Settings, not in
+        // this flow, but it reaches the Mac all the same).
+        let any_remote =
+            self.deps.channel_rows().iter().any(|row| row.enabled) || config.channels.ios.enabled;
         let mut changed = false;
 
         if self.deps.tray_supported() {
@@ -897,20 +919,63 @@ impl Flow<'_> {
             }
         }
 
-        if any_channel {
-            let current = config.general.daemon_lifecycle == DaemonLifecycleMode::KeepAlive;
-            let keep_alive = self.yes_no(
-                "Keep AskHuman running in the background (so IM can start commands any time; uses a little memory)?",
-                "保持后台常驻（让手机 IM 随时能发起命令，会常驻少量资源）？",
+        // Creating Agent tasks from the phone or IM comes before "keep running": turning it on pins
+        // the daemon resident, so there is nothing left to ask about that.
+        let mut tasks_started = false;
+        if any_remote && self.deps.agent_tasks_supported() && self.agent_integrated() {
+            self.tasks_offered = true;
+            let current = config.agent_tasks.enabled;
+            let wanted = self.yes_no(
+                "Create Agent tasks from your phone or IM (\"New task\" in the iPhone app, /new in IM, !new in Slack)? It keeps AskHuman running in the background and adds a login item.",
+                "从手机 / IM 创建 Agent 任务（iPhone App 里点「新任务」，IM 里发 /new，Slack 里发 !new）？开启后 AskHuman 会保持后台常驻，并添加开机自启项。",
                 current,
             )?;
-            if keep_alive != current {
-                config.general.daemon_lifecycle = if keep_alive {
-                    DaemonLifecycleMode::KeepAlive
-                } else {
-                    DaemonLifecycleMode::Activity
-                };
+            if wanted && !current {
+                // Settings installs the daemon's login item before it saves the switch; so does
+                // this flow, and a failure leaves the feature off.
+                match self.deps.install_daemon_login_item() {
+                    Ok(()) => {
+                        config.agent_tasks.enabled = true;
+                        changed = true;
+                        tasks_started = true;
+                    }
+                    Err(error) => self.say(
+                        &format!("  ✗ Could not set up the background login item: {error}. Agent tasks stay off."),
+                        &format!("  ✗ 无法设置后台登录项：{error}。Agent 任务保持关闭。"),
+                    ),
+                }
+            } else if !wanted && current {
+                config.agent_tasks.enabled = false;
                 changed = true;
+            }
+        }
+
+        if any_remote {
+            if config.agent_tasks.enabled {
+                // The feature depends on a resident daemon (Settings pins it the same way).
+                if config.general.daemon_lifecycle != DaemonLifecycleMode::KeepAlive {
+                    config.general.daemon_lifecycle = DaemonLifecycleMode::KeepAlive;
+                    changed = true;
+                }
+                self.say(
+                    "  Keeping AskHuman running in the background: on (Agent tasks need it).",
+                    "  保持后台常驻：已开启（Agent 任务需要它）。",
+                );
+            } else {
+                let current = config.general.daemon_lifecycle == DaemonLifecycleMode::KeepAlive;
+                let keep_alive = self.yes_no(
+                    "Keep AskHuman running in the background (so your phone or IM can reach this computer and start commands any time; uses a little memory)?",
+                    "保持后台常驻（让手机 App / IM 随时能连上这台电脑并发起命令，会常驻少量资源）？",
+                    current,
+                )?;
+                if keep_alive != current {
+                    config.general.daemon_lifecycle = if keep_alive {
+                        DaemonLifecycleMode::KeepAlive
+                    } else {
+                        DaemonLifecycleMode::Activity
+                    };
+                    changed = true;
+                }
             }
         }
 
@@ -919,6 +984,16 @@ impl Flow<'_> {
                 self.say(
                     &format!("  ✗ Could not save the settings: {error}"),
                     &format!("  ✗ 无法保存设置：{error}"),
+                );
+                tasks_started = false;
+            }
+        }
+        if tasks_started {
+            // Settings makes sure the daemon is up with the new settings once it has saved them.
+            if let Err(error) = self.deps.ensure_daemon() {
+                self.say(
+                    &format!("  ✗ Could not start AskHuman in the background: {error}"),
+                    &format!("  ✗ 无法在后台启动 AskHuman：{error}"),
                 );
             }
         }
@@ -944,14 +1019,17 @@ impl Flow<'_> {
                 Some(format!("{} ({})", row.title, mode_label(mode)))
             })
             .collect();
-        let enabled: Vec<&str> = self
+        let mut enabled: Vec<String> = self
             .deps
             .channel_rows()
             .iter()
             .filter(|row| row.enabled)
             .filter_map(|row| channels::ORDER.iter().find(|id| **id == row.id))
-            .map(|id| channels::title(id, self.lang))
+            .map(|id| channels::title(id, self.lang).to_string())
             .collect();
+        if config.channels.ios.enabled {
+            enabled.push(self.t("iOS app", "iOS App"));
+        }
         let style = match config.general.collaboration_style {
             CollaborationStyle::Aligned => self.t("aligned", "对齐"),
             CollaborationStyle::Autonomous => self.t("autonomous", "自主"),
@@ -969,6 +1047,12 @@ impl Flow<'_> {
         }
         if config.general.daemon_lifecycle == DaemonLifecycleMode::KeepAlive {
             background.push(self.t("kept running in the background", "后台常驻"));
+        }
+        if config.agent_tasks.enabled {
+            background.push(self.t(
+                "Agent tasks from phone or IM",
+                "可从手机 / IM 创建 Agent 任务",
+            ));
         }
         let none = self.t("none", "无");
         self.blank();
@@ -1005,6 +1089,14 @@ impl Flow<'_> {
             "Next time, just use your Agent as usual. Run `AskHuman setup` any time to change this.",
             "下次直接在 Agent 里使用即可；随时运行 `AskHuman setup` 重新调整。",
         );
+        // Step 3 only offers the feature once a remote channel and an Agent exist: say where to
+        // turn it on later (either of the two may be what is still missing).
+        if self.deps.agent_tasks_supported() && !config.agent_tasks.enabled && !self.tasks_offered {
+            self.say(
+                "To start Agent tasks from your phone or IM, connect an Agent and set up a remote channel (IM or the iOS app), then turn on \"Create Agent tasks from phone or IM\" in Settings → Advanced.",
+                "想在手机 / IM 里新建 Agent 任务：先接入 Agent、配好远程渠道（IM 或 iOS App），再到「设置 → 高级」开启「从手机 / IM 创建 Agent 任务」。",
+            );
+        }
     }
 }
 
@@ -1105,6 +1197,23 @@ impl TextDeps for RealDeps {
             login_item::uninstall()
         };
         result.map_err(|error| error.to_string())
+    }
+
+    fn agent_tasks_supported(&mut self) -> bool {
+        // The same platforms as the settings page (a terminal the daemon can drive).
+        cfg!(any(target_os = "macos", target_os = "windows"))
+    }
+
+    fn install_daemon_login_item(&mut self) -> Result<(), String> {
+        // A Dev instance has no daemon login item of its own (Settings skips it too).
+        if crate::dev_instance::is_dev_instance_context() {
+            return Ok(());
+        }
+        login_item::sync_daemon(true).map_err(|error| error.to_string())
+    }
+
+    fn ensure_daemon(&mut self) -> Result<(), String> {
+        cfgio::block_on(crate::client::ensure_running()).map_err(|error| error.to_string())
     }
 
     fn mark_skipped(&mut self, domain: &str) {

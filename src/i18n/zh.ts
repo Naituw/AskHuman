@@ -511,6 +511,12 @@ export default {
         pairFinishing: "正在完成配对…",
         pairDone: "已配对「{name}」。",
         pairEnded: "配对已结束（已过期、被拒绝或已取消）。",
+        tasksTitle: "在 App 里新建 Agent 任务",
+        tasksTagOn: "已开启",
+        tasksTagOff: "未开启",
+        tasksOn: "在 App 的 Agents 页点「新任务」，就能让这台 Mac 打开 Agent 会话。权限选择与工作目录在「高级」里设置。",
+        tasksOff: "现在 App 里的「新任务」会提示这台 Mac 关闭了 Agent 任务。开启后，这台 Mac 会保持后台常驻，并添加开机自启项。",
+        tasksEnable: "开启…",
       },
       verticalQuestionsTitle: "多问题纵向同时显示",
       verticalQuestionsDesc:
@@ -522,7 +528,7 @@ export default {
       daemonLifecycleHint:
         "「按活动」：Agent 开始活动或提问时才启动守护进程，空闲一段时间后自动退出。「保活」：守护进程常驻并开机自启，让 IM 随时可接收消息；但会持续占用少量系统资源并占用 IM 通道。建议在多台设备上同时使用时为各设备配置不同的 IM 机器人。",
       daemonLifecycleLockedByTasks:
-        "已被「从 IM 创建 Agent 任务」锁定为保活；关闭该功能后即可切换回「按活动」。",
+        "已被「从手机 / IM 创建 Agent 任务」锁定为保活；关闭该功能后即可切换回「按活动」。",
     },
     permissionRules: {
       title: "Codex 会话授权",
@@ -768,14 +774,14 @@ export default {
       mcpExampleToml: "Codex（~/.codex/config.toml）",
     },
     agentTasks: {
-      title: "从 IM 创建 Agent 任务",
-      description: "在 IM 中发送 /new（Slack 使用 !new），选择工作目录与 Agent，然后在新的系统终端窗口中继续这个可见会话。开启后会强制 Daemon 保活并安装登录项。",
+      title: "从手机 / IM 创建 Agent 任务",
+      description: "在 iPhone App 里点「新任务」，或在 IM 中发送 /new（Slack 使用 !new），选择工作目录与 Agent，然后在这台电脑的新系统终端窗口中继续这个可见会话。开启后会强制 Daemon 保活并安装登录项。",
       permission: "权限选择",
       permissionAsk: "每次询问",
       permissionDefault: "总是 Agent 默认",
       permissionYolo: "总是 YOLO",
       yoloWarning: "YOLO 会对每个 IM 新任务自动批准操作并绕过 Agent 的常规保护。",
-      confirmTitle: "开启「从 IM 创建 Agent 任务」？",
+      confirmTitle: "开启「从手机 / IM 创建 Agent 任务」？",
       confirmIntro: "开启后将立即产生以下影响：",
       confirmKeepalive:
         "Daemon 将保持常驻并安装开机自启登录项；「高级」中的守护进程生命周期被锁定为「保活」，期间改动不会生效。",
@@ -796,7 +802,7 @@ export default {
       colIntegration: "集成",
       readinessHint: "点击橙色 × 前往修复；CLI 不可用时会打开官方安装文档。",
       unsupported: "暂不支持",
-      unsupportedHint: "标「暂不支持」的 Agent 目前不能从 IM 创建任务，无需处理。",
+      unsupportedHint: "标「暂不支持」的 Agent 目前不能从手机 / IM 创建任务，无需处理。",
       issueBinary: "CLI 不可用",
       issueLifecycle: "生命周期追踪未就绪",
       issueIntegration: "集成不可用",
@@ -1137,8 +1143,15 @@ export default {
       switchADesc: "在菜单栏 / 系统托盘常驻状态图标，登录后自动启动，随时打开设置与历史。",
       loginItemNote: "macOS 通常会弹出「后台项目已添加」的系统通知，这是正常的。",
       switchB: "保持后台常驻",
-      switchBDesc: "让手机上的 IM 随时能发起命令，会常驻少量资源。",
-      switchBLocked: "「从 IM 创建 Agent 任务」开启期间固定为常驻。",
+      switchBDesc: "让手机上的 App / IM 随时能连上这台电脑并发起命令，会常驻少量资源。",
+      switchBLocked: "「从手机 / IM 创建 Agent 任务」开启期间固定为常驻。",
+      switchC: "从手机 / IM 创建 Agent 任务",
+      switchCDesc:
+        "在 iPhone App 里点「新任务」，或在 IM 里发 /new（Slack 用 !new），就能让这台电脑打开 Agent 会话。开启后会保持后台常驻，并添加开机自启项，占用少量系统资源。",
+      switchCBot: "本机会长期占用 IM 机器人通道；多台设备共用同一机器人时会互相抢消息。",
+      tasksTip:
+        "想在手机 / IM 里新建 Agent 任务？先接入 Agent 并配好一个远程渠道（IM 或 iOS App），再到「设置 → 高级」开启「从手机 / IM 创建 Agent 任务」。",
+      tasksTipLink: "打开设置页",
       nextTitle: "下次怎么用",
       nextBody: "直接在 Agent 里提需求；Agent 需要你确认时会弹出提问窗口（也会发到已配置的渠道）。想再调整，随时运行 AskHuman setup，或打开设置。",
       finish: "完成",

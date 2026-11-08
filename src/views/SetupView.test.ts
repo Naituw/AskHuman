@@ -41,7 +41,19 @@ const events = vi.hoisted(() => ({
   handlers: new Map<string, (event: { payload: unknown }) => void>(),
 }));
 const win = vi.hoisted(() => ({ close: vi.fn() }));
+// The page offers the Agent-task switch only where a terminal can be driven (macOS, Windows); the
+// real value comes from the test runner's user agent, so each test sets the platform it means.
+const platform = vi.hoisted(() => ({ isMac: false, supportsAgentTasks: true }));
 
+vi.mock("../lib/platform", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../lib/platform")>()),
+  get isMac() {
+    return platform.isMac;
+  },
+  get supportsAgentTasks() {
+    return platform.supportsAgentTasks;
+  },
+}));
 vi.mock("../lib/ipc", () => ipc);
 vi.mock("@tauri-apps/api/event", () => ({
   listen: vi.fn(async (name: string, handler: (event: { payload: unknown }) => void) => {
@@ -97,6 +109,8 @@ describe("setup wizard", () => {
   beforeEach(() => {
     vi.resetAllMocks();
     i18n.global.locale.value = "en";
+    platform.isMac = false;
+    platform.supportsAgentTasks = true;
     events.handlers.clear();
     payload = settings();
     statusValue = status();
@@ -922,6 +936,195 @@ describe("setup wizard", () => {
       payload = settings({ agentTasks: true });
       const w = await mountWizard("done");
       expect(isDisabled(w, "switch-b")).toBe(true);
+    });
+
+    describe("the iOS app as a remote channel", () => {
+      it("lists the iOS app next to the IM channels that are on", async () => {
+        enabledSlack();
+        payload = settings({ ios: true });
+        const w = await mountWizard("done");
+        expect(chipIds(w, "summary-channel-")).toEqual(["summary-channel-slack", "summary-channel-ios"]);
+        expect(text(w, "summary-channel-ios")).toContain(message("setup.remote.ios"));
+      });
+
+      it("is a remote channel by itself: the summary has it and the keep-running switch is offered", async () => {
+        payload = settings({ ios: true, daemonLifecycle: "keepalive" });
+        const w = await mountWizard("done");
+        expect(chipIds(w, "summary-channel-")).toEqual(["summary-channel-ios"]);
+        expect(text(w, "summary-channels")).not.toContain(message("setup.done.channelsLater"));
+        expect(isChecked(w, "switch-b")).toBe(true);
+        expect(text(w, "done-background")).toContain(message("setup.done.switchBDesc"));
+      });
+    });
+
+    describe("switch C: creating Agent tasks from the phone or IM", () => {
+      it("is offered with a remote channel, an Agent and a platform that can run one, off by default", async () => {
+        enabledSlack();
+        const w = await mountWizard("done");
+        expect(find(w, "switch-c").exists()).toBe(true);
+        expect(isChecked(w, "switch-c")).toBe(false);
+        expect(text(w, "done-background")).toContain(message("setup.done.switchC"));
+        expect(text(w, "done-background")).toContain(message("setup.done.switchCDesc"));
+        // Nothing to point at later while it is on offer.
+        expect(find(w, "done-tasks-tip").exists()).toBe(false);
+      });
+
+      it("follows the saved setting", async () => {
+        enabledSlack();
+        payload = settings({ agentTasks: true, daemonLifecycle: "keepalive" });
+        const w = await mountWizard("done");
+        expect(isChecked(w, "switch-c")).toBe(true);
+      });
+
+      it("is offered with only the iOS app, and then says nothing about an IM bot", async () => {
+        payload = settings({ ios: true });
+        const w = await mountWizard("done");
+        expect(find(w, "switch-c").exists()).toBe(true);
+        expect(find(w, "switch-c-bot").exists()).toBe(false);
+      });
+
+      it("warns about holding the IM bot channel when an IM channel is on", async () => {
+        enabledSlack();
+        const w = await mountWizard("done");
+        expect(text(w, "switch-c-bot")).toBe(message("setup.done.switchCBot"));
+      });
+
+      it.each([
+        ["no remote channel is on", () => {}],
+        [
+          "no Agent is connected",
+          () => {
+            enabledSlack();
+            rowsValue = [row({ id: "claude", mode: "none" })];
+          },
+        ],
+        [
+          "the platform cannot run Agent tasks",
+          () => {
+            enabledSlack();
+            platform.supportsAgentTasks = false;
+          },
+        ],
+      ])("is not offered when %s", async (_name, arrange) => {
+        arrange();
+        const w = await mountWizard("done");
+        expect(find(w, "switch-c").exists()).toBe(false);
+      });
+
+      it("turning it on pins the keep-running switch on, and saves both", async () => {
+        enabledSlack();
+        const w = await mountWizard("done");
+        expect(isChecked(w, "switch-b")).toBe(false);
+        expect(isDisabled(w, "switch-b")).toBe(false);
+
+        await get(w, "switch-c").setValue(true);
+        expect(isChecked(w, "switch-b")).toBe(true);
+        expect(isDisabled(w, "switch-b")).toBe(true);
+        expect(text(w, "done-background")).toContain(message("setup.done.switchBLocked"));
+
+        await click(w, "finish");
+        expect(saves).toHaveLength(1);
+        expect(saves[0].config.agentTasks).toMatchObject({ enabled: true });
+        expect(saves[0].config.general).toMatchObject({ daemonLifecycle: "keepalive" });
+      });
+
+      it("turning it off lets the keep-running switch be chosen again", async () => {
+        enabledSlack();
+        payload = settings({ agentTasks: true, daemonLifecycle: "keepalive" });
+        const w = await mountWizard("done");
+        expect(isDisabled(w, "switch-b")).toBe(true);
+
+        await get(w, "switch-c").setValue(false);
+        expect(isDisabled(w, "switch-b")).toBe(false);
+        // B goes back to what it was: the mode that is saved.
+        expect(isChecked(w, "switch-b")).toBe(true);
+        await get(w, "switch-b").setValue(false);
+        await click(w, "finish");
+        expect(saves[0].config.agentTasks).toMatchObject({ enabled: false });
+        expect(saves[0].config.general).toMatchObject({ daemonLifecycle: "activity" });
+      });
+
+      it("leaves the feature and the lifecycle alone when the switch is untouched", async () => {
+        enabledSlack();
+        const w = await mountWizard("done");
+        await click(w, "finish");
+        expect(saves[0].config.agentTasks).toMatchObject({ enabled: false });
+        expect(saves[0].config.general).toMatchObject({ daemonLifecycle: "activity" });
+      });
+
+      it("leaves the feature alone where the switch is not offered", async () => {
+        payload = settings({ agentTasks: true, daemonLifecycle: "keepalive" });
+        const w = await mountWizard("done");
+        expect(find(w, "switch-c").exists()).toBe(false);
+        await click(w, "finish");
+        expect(saves[0].config.agentTasks).toMatchObject({ enabled: true });
+        expect(saves[0].config.general).toMatchObject({ daemonLifecycle: "keepalive" });
+      });
+    });
+
+    describe("where the feature is not on offer yet", () => {
+      it("tells where to turn it on later, and opens that place", async () => {
+        const w = await mountWizard("done");
+        expect(text(w, "done-tasks-tip")).toContain(message("setup.done.tasksTip"));
+        await click(w, "done-tasks-tip-link");
+        expect(ipc.openSettings).toHaveBeenCalledWith("advanced");
+      });
+
+      it("says nothing when the feature is already on, or the platform cannot run it", async () => {
+        payload = settings({ agentTasks: true });
+        const on = await mountWizard("done");
+        expect(find(on, "done-tasks-tip").exists()).toBe(false);
+        on.unmount();
+        wrappers.length = 0;
+
+        payload = settings();
+        platform.supportsAgentTasks = false;
+        const unsupported = await mountWizard("done");
+        expect(find(unsupported, "done-tasks-tip").exists()).toBe(false);
+      });
+    });
+
+    describe("what another window saved while the wizard stayed open", () => {
+      /** The Settings window saves a new state of the config; the wizard learns nothing until it asks. */
+      const savedMeanwhile = (over: Parameters<typeof settings>[0]) => {
+        payload = settings(over);
+      };
+
+      it("offers the switch for an iOS channel that was set up in Settings meanwhile", async () => {
+        const w = await mountWizard("remote");
+        savedMeanwhile({ ios: true });
+        await click(w, "step-done");
+        expect(find(w, "summary-channel-ios").exists()).toBe(true);
+        expect(find(w, "switch-c").exists()).toBe(true);
+        expect(find(w, "done-tasks-tip").exists()).toBe(false);
+      });
+
+      it("shows the feature as on when Settings turned it on, and does not turn it off again", async () => {
+        const w = await mountWizard("remote");
+        savedMeanwhile({ ios: true, agentTasks: true, daemonLifecycle: "keepalive" });
+        await click(w, "step-done");
+        expect(isChecked(w, "switch-c")).toBe(true);
+        await click(w, "finish");
+        expect(saves[0].config.agentTasks).toMatchObject({ enabled: true });
+        expect(saves[0].config.general).toMatchObject({ daemonLifecycle: "keepalive" });
+      });
+
+      it("saves on top of what is saved now, so the iOS settings are not overwritten", async () => {
+        const w = await mountWizard("done");
+        // Settings enables the iOS channel after the wizard loaded its copy; Done is already open.
+        savedMeanwhile({ ios: true });
+        await click(w, "finish");
+        expect(saves[0].config.channels.ios).toMatchObject({ enabled: true });
+      });
+
+      it("keeps the person's own choice over a newer saved value", async () => {
+        payload = settings({ menuBarIcon: "active" });
+        const w = await mountWizard("done");
+        await get(w, "switch-a").setValue(true);
+        savedMeanwhile({ menuBarIcon: "off" });
+        await click(w, "finish");
+        expect(saves[0].config.general).toMatchObject({ menuBarIcon: "always" });
+      });
     });
 
     it.each([

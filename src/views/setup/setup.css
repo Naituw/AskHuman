@@ -934,6 +934,9 @@
   line-height: 1.6;
   color: var(--text-secondary);
 }
+.setup-tip-body + .setup-tip-body {
+  margin-top: var(--space-2);
+}
 
 /* ---------- Footer ---------- */
 .setup-footer {

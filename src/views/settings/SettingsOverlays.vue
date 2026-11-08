@@ -1,11 +1,13 @@
 <script setup lang="ts">
-// 设置页根级弹层：「从 IM 创建 Agent 任务」开启确认 + 工作目录管理面板。
+// 设置页根级弹层：「从手机 / IM 创建 Agent 任务」开启确认 + 工作目录管理面板。
 // 与实验 tab 逻辑同源（状态在 useAgentTasks），但渲染在 .settings 根层以覆盖整页。
+import { computed } from "vue";
 import { useI18n } from "vue-i18n";
 import { useSettingsContext } from "./context";
 
 const { t } = useI18n();
 const {
+  config,
   agentTasksConfirmOpen,
   confirmEnableAgentTasks,
   workspacePanelOpen,
@@ -20,10 +22,23 @@ const {
   workspaceAgents,
   workspaceLastUsed,
 } = useSettingsContext();
+
+// The "holds the IM bot channel" note only applies when an IM bot is configured: a phone-only
+// (iOS app) setup has none, so the note would be wrong there.
+const imBotInUse = computed(() => {
+  const channels = config.value?.channels;
+  return (
+    !!channels &&
+    (channels.telegram.enabled ||
+      channels.slack.enabled ||
+      channels.dingding.enabled ||
+      channels.feishu.enabled)
+  );
+});
 </script>
 
 <template>
-  <!-- 开启「从 IM 创建 Agent 任务」前的副作用确认弹层 -->
+  <!-- 开启「从手机 / IM 创建 Agent 任务」前的副作用确认弹层 -->
   <div v-if="agentTasksConfirmOpen" class="workspace-panel-backdrop">
     <section
       class="confirm-dialog"
@@ -36,7 +51,7 @@ const {
       <ul class="confirm-list">
         <li>{{ t("settings.agentTasks.confirmKeepalive") }}</li>
         <li>{{ t("settings.agentTasks.confirmResources") }}</li>
-        <li>{{ t("settings.agentTasks.confirmBotChannel") }}</li>
+        <li v-if="imBotInUse">{{ t("settings.agentTasks.confirmBotChannel") }}</li>
       </ul>
       <p class="confirm-note">{{ t("settings.agentTasks.confirmRevert") }}</p>
       <div class="confirm-actions">

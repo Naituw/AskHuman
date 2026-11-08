@@ -493,3 +493,15 @@ vitest：三个按钮的状态机（成功 / 失败 / 超时 / 取消）与「�
 | 13 i18n | §2.4、§3.8 |
 | 14 既有行为不变 | §0.2、§0.3 |
 | 15 README / overview | §5 |
+| 16 / 17 / 18 手机 / IM 创建 Agent 任务、配置新鲜度、发现路径 | §9 |
+
+## 9. 增补：从手机 / IM 创建 Agent 任务开关（D25，2026-11-08）
+
+四期落地之后的一次增补（spec 第 9 轮），不改 P1–P4 已有的结构，只补完成页与文字版的一个开关和发现路径：
+
+- **前端**：`useSetup.ts`（开关 A / B / C 是「碰过才算」的选择，没碰就跟随已保存的值；`hasRemoteChannel` = IM ∨ iOS；`showBackgroundB` / `showBackgroundC` / `backgroundBLocked` / `showTasksTip`；`adoptSavedConfig()` 在完成页挂载与 `finish()` 时重读已保存的配置）、`DonePage.vue`（C 行与 IM 机器人说明、B 联动、摘要里的 iOS 小标签、提示卡片的「打开设置页」链接）、`IosChannelCard.vue`（卡片底部「在 App 里新建 Agent 任务」块）、`SettingsOverlays.vue`（确认弹窗的 IM 机器人条件项）、i18n（`settings.agentTasks.*`、`settings.experimental.ios.tasks*`、`setup.done.switchB* / switchC* / tasksTip*`）。
+- **Rust**：`onboarding/text.rs`（`TextDeps` 新增 `agent_tasks_supported` / `install_daemon_login_item` / `ensure_daemon`；`step_background` 先问 C 再问 B；`summary()` 列出 iOS 渠道、Agent 任务与结尾提示）；IM 里 `/new` 被拒的回复改名（`daemon/runtime/inbound.rs`、`fork.rs`）。
+- **顺序**：开启 C = 先装 daemon 登录项（失败则中止，功能保持关闭）→ 保存配置（`agentTasks.enabled=true` + `daemonLifecycle=keepalive`）→ 拉起 daemon；与设置页 `save_settings` 同序（登录项错误在保存前中止）。GUI 里这一串仍由 `save_settings` 完成，向导只写配置。
+- **测试**：vitest `SetupView.test.ts`、`IosChannelCard.test.ts`、`SettingsOverlays.test.ts`；Rust `onboarding/text/tests.rs`（`FakeDeps` 默认 `tasks_supported = false`，旧用例不变）。
+- **协议号**：无 IPC 变更，不动。
+- **遗留**：§7 风险里提到的「窗口获得焦点时重新 `getSettings()`」并没有实现，本轮只在完成页处理（D25 ⑥）；`saveChannel` / `applyAgents` 等其他保存点仍是整份写入、最后写入者胜出。

@@ -14,7 +14,7 @@ pub(super) const MAX_TASK_CHARS: usize = 3000;
 /// Why creating a task is not possible right now. Each surface words it itself.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(super) enum TaskBlock {
-    /// "Create Agent tasks from IM" is off in Settings.
+    /// "Create Agent tasks from phone or IM" is off in Settings.
     Disabled,
     /// The daemon is not kept alive by its login item, so a new terminal could not be driven.
     NotReady,

@@ -12,8 +12,10 @@ pub(super) async fn start_fork_flow(
     let _ = set_active_channel(state, channel_id).await;
     if !config.agent_tasks.enabled {
         let text = match lang {
-            Lang::Zh => "尚未开启「从 IM 创建 Agent 任务」。请先在设置中开启。",
-            Lang::En => "IM Agent task creation is disabled. Enable it in Settings first.",
+            Lang::Zh => "尚未开启「从手机 / IM 创建 Agent 任务」。请先在设置中开启。",
+            Lang::En => {
+                "Creating Agent tasks from phone or IM is turned off. Enable it in Settings first."
+            }
         };
         let _ = reply_channel_text(channel_id, config, text).await;
         return;
@@ -117,8 +119,10 @@ pub(super) async fn start_fork_source(
 ) {
     if !config.agent_tasks.enabled {
         let text = match lang {
-            Lang::Zh => "尚未开启「从 IM 创建 Agent 任务」。请先在设置中开启。",
-            Lang::En => "IM Agent task creation is disabled. Enable it in Settings first.",
+            Lang::Zh => "尚未开启「从手机 / IM 创建 Agent 任务」。请先在设置中开启。",
+            Lang::En => {
+                "Creating Agent tasks from phone or IM is turned off. Enable it in Settings first."
+            }
         };
         let _ = reply_channel_text(channel_id, config, text).await;
         return;

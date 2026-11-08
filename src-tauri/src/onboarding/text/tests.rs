@@ -67,6 +67,11 @@ struct FakeDeps {
     codex_delivery: Option<&'static str>,
     configure_fails: bool,
     test_fails: bool,
+    /// The platform can start Agent tasks from the phone or IM (off by default: most scripts are
+    /// about something else, and this is what Linux looks like).
+    tasks_supported: bool,
+    /// Installing the daemon's login item fails with this.
+    daemon_login_item_error: Option<&'static str>,
     /// Every side effect, in order.
     calls: Vec<String>,
     /// `(agent, mode)` of every selection handed to `apply_agents`, in order.
@@ -154,9 +159,21 @@ impl FakeDeps {
             codex_delivery: None,
             configure_fails: false,
             test_fails: false,
+            tasks_supported: false,
+            daemon_login_item_error: None,
             calls: Vec::new(),
             applied: Vec::new(),
         }
+    }
+
+    /// A machine that can run Agent tasks and has a Slack channel on: the setting where step 3
+    /// offers them.
+    fn with_tasks_and_slack() -> Self {
+        let mut deps = Self::fresh();
+        deps.tasks_supported = true;
+        deps.channel_mut("slack").enabled = true;
+        deps.channel_mut("slack").configured = true;
+        deps
     }
 
     fn with_rows(mut self, rows: Vec<AgentScanRow>) -> Self {
@@ -295,6 +312,23 @@ impl TextDeps for FakeDeps {
     fn login_item(&mut self, install: bool) -> Result<(), String> {
         self.calls
             .push(format!("login_item {}", if install { "on" } else { "off" }));
+        Ok(())
+    }
+
+    fn agent_tasks_supported(&mut self) -> bool {
+        self.tasks_supported
+    }
+
+    fn install_daemon_login_item(&mut self) -> Result<(), String> {
+        self.calls.push("daemon_login_item".to_string());
+        match self.daemon_login_item_error {
+            Some(error) => Err(error.to_string()),
+            None => Ok(()),
+        }
+    }
+
+    fn ensure_daemon(&mut self) -> Result<(), String> {
+        self.calls.push("ensure_daemon".to_string());
         Ok(())
     }
 
@@ -1041,6 +1075,256 @@ fn keep_alive_can_be_turned_off_again() {
         deps.config.general.daemon_lifecycle,
         DaemonLifecycleMode::Activity
     );
+}
+
+// ——— step 3: Agent tasks from the phone or IM ———
+
+const TASKS_PROMPT: &str = "Create Agent tasks from your phone or IM";
+const KEEP_RUNNING_PROMPT: &str = "Keep AskHuman running in the background";
+
+#[test]
+fn agent_tasks_are_offered_only_with_a_remote_channel_an_agent_and_a_platform_that_runs_them() {
+    // Offered: Slack on, Cursor and Claude Code get integrated by step 1, the platform can run them.
+    let mut deps = FakeDeps::with_tasks_and_slack();
+    let (_, io) = run_en(&mut deps, &["", "", "s", "", "n", "n"]);
+    assert!(io.prompted(TASKS_PROMPT));
+    assert!(
+        io.prompted("!new in Slack"),
+        "the question names how to start one from each place"
+    );
+
+    // No remote channel at all.
+    let mut deps = FakeDeps::fresh();
+    deps.tasks_supported = true;
+    let (_, io) = run_en(&mut deps, &["", "", "", ""]);
+    assert!(!io.prompted(TASKS_PROMPT));
+
+    // A channel but no Agent: nothing detected and nothing integrated.
+    let mut deps = FakeDeps::with_tasks_and_slack().with_rows(rows(&[], &[]));
+    let (_, io) = run_en(&mut deps, &["s", "s", "", "n"]);
+    assert!(!io.prompted(TASKS_PROMPT));
+    assert!(io.prompted(KEEP_RUNNING_PROMPT));
+
+    // A platform without a supported terminal (Linux): the question is not there, the old one is.
+    let mut deps = FakeDeps::with_tasks_and_slack();
+    deps.tasks_supported = false;
+    let (_, io) = run_en(&mut deps, &["", "", "s", "", "n"]);
+    assert!(!io.prompted(TASKS_PROMPT));
+    assert!(io.prompted(KEEP_RUNNING_PROMPT));
+}
+
+#[test]
+fn the_ios_app_counts_as_a_remote_channel_for_step_three() {
+    // Linux: no Agent tasks, but the iOS app alone is enough to ask about keeping AskHuman running.
+    let mut deps = FakeDeps::fresh();
+    deps.config.channels.ios.enabled = true;
+    let (_, io) = run_en(&mut deps, &["", "", "s", "", "y"]);
+    assert!(io.prompted(KEEP_RUNNING_PROMPT));
+    assert_eq!(
+        deps.config.general.daemon_lifecycle,
+        DaemonLifecycleMode::KeepAlive
+    );
+
+    // Where Agent tasks exist, the iOS app alone is enough to offer them as well.
+    let mut deps = FakeDeps::fresh();
+    deps.tasks_supported = true;
+    deps.config.channels.ios.enabled = true;
+    let (_, io) = run_en(&mut deps, &["", "", "s", "", "n", "n"]);
+    assert!(io.prompted(TASKS_PROMPT));
+}
+
+#[test]
+fn turning_agent_tasks_on_installs_the_login_item_then_saves_then_starts_the_daemon() {
+    let mut deps = FakeDeps::with_tasks_and_slack();
+    let (code, io) = run_en(&mut deps, &["", "", "s", "", "y"]);
+    assert_eq!(code, 0, "{:?}", io.noted);
+    assert!(deps.config.agent_tasks.enabled);
+    assert_eq!(
+        deps.config.general.daemon_lifecycle,
+        DaemonLifecycleMode::KeepAlive,
+        "the feature pins the daemon resident"
+    );
+    let login_item = deps.position("daemon_login_item");
+    let save = deps.position("save_config");
+    let start = deps.position("ensure_daemon");
+    assert!(
+        login_item < save && save < start,
+        "the login item first, as Settings does; the daemon once the settings are saved: {:?}",
+        deps.calls
+    );
+    // Nothing is left to ask about keeping it running: it was just pinned.
+    assert!(!io.prompted(KEEP_RUNNING_PROMPT));
+    let said = squeezed(&io.said());
+    assert!(
+        said.contains("Keeping AskHuman running in the background: on"),
+        "{said}"
+    );
+    assert!(
+        said.contains("Background: menu-bar icon, starts at login; kept running in the background; Agent tasks from phone or IM"),
+        "{said}"
+    );
+    // It was offered, so the summary does not point at Settings.
+    assert!(!said.contains("Settings → Advanced"), "{said}");
+}
+
+#[test]
+fn declining_agent_tasks_leaves_them_off_and_still_asks_about_keeping_it_running() {
+    let mut deps = FakeDeps::with_tasks_and_slack();
+    let (_, io) = run_en(&mut deps, &["", "", "s", "", "n", "y"]);
+    assert!(!deps.config.agent_tasks.enabled);
+    assert!(!deps.called("daemon_login_item"));
+    assert!(!deps.called("ensure_daemon"));
+    assert!(io.prompted(KEEP_RUNNING_PROMPT));
+    assert_eq!(
+        deps.config.general.daemon_lifecycle,
+        DaemonLifecycleMode::KeepAlive
+    );
+}
+
+#[test]
+fn the_default_answer_leaves_agent_tasks_as_they_are() {
+    let mut deps = FakeDeps::with_tasks_and_slack();
+    let (_, io) = run_en(&mut deps, &["", "", "s", "", "", ""]);
+    assert!(!deps.config.agent_tasks.enabled, "off stays off on Enter");
+    let question = io
+        .prompts
+        .iter()
+        .find(|prompt| prompt.starts_with(TASKS_PROMPT))
+        .expect("the Agent-task question");
+    assert!(question.ends_with("[y/N]: "), "{question}");
+
+    let mut deps = FakeDeps::with_tasks_and_slack();
+    deps.config.agent_tasks.enabled = true;
+    deps.config.general.daemon_lifecycle = DaemonLifecycleMode::KeepAlive;
+    let (_, io) = run_en(&mut deps, &["", "", "s", "", ""]);
+    let question = io
+        .prompts
+        .iter()
+        .find(|prompt| prompt.starts_with(TASKS_PROMPT))
+        .expect("the Agent-task question");
+    assert!(
+        question.ends_with("[Y/n]: "),
+        "the default follows the setting: {question}"
+    );
+    assert!(deps.config.agent_tasks.enabled, "on stays on on Enter");
+    assert!(!deps.called("daemon_login_item"), "nothing new to install");
+    assert!(!deps.called("ensure_daemon"));
+    assert!(!io.prompted(KEEP_RUNNING_PROMPT));
+}
+
+#[test]
+fn turning_agent_tasks_off_again_hands_the_lifecycle_back_to_its_own_question() {
+    let mut deps = FakeDeps::with_tasks_and_slack();
+    deps.config.agent_tasks.enabled = true;
+    deps.config.general.daemon_lifecycle = DaemonLifecycleMode::KeepAlive;
+    let (_, io) = run_en(&mut deps, &["", "", "s", "", "n", "n"]);
+    assert!(!deps.config.agent_tasks.enabled);
+    assert_eq!(
+        deps.config.general.daemon_lifecycle,
+        DaemonLifecycleMode::Activity,
+        "now it is the person's own choice"
+    );
+    assert!(io.prompted(KEEP_RUNNING_PROMPT));
+    assert!(
+        !deps.called("ensure_daemon"),
+        "switching off starts nothing"
+    );
+}
+
+#[test]
+fn a_failing_login_item_leaves_agent_tasks_off_and_says_so() {
+    let mut deps = FakeDeps::with_tasks_and_slack();
+    deps.daemon_login_item_error = Some("launchctl refused");
+    let (code, io) = run_en(&mut deps, &["", "", "s", "", "y", "n"]);
+    assert_eq!(code, 0);
+    assert!(!deps.config.agent_tasks.enabled);
+    assert!(!deps.called("ensure_daemon"));
+    let said = io.said();
+    assert!(
+        said.contains("✗ Could not set up the background login item: launchctl refused"),
+        "{said}"
+    );
+    // The feature is off, so keeping it running is the person's own choice again.
+    assert!(io.prompted(KEEP_RUNNING_PROMPT));
+}
+
+#[test]
+fn agent_tasks_that_are_on_pin_the_lifecycle_even_where_they_are_not_offered() {
+    // Linux (or no Agent): the question is not asked, but a config with the feature on and the
+    // daemon not resident is repaired the way Settings would.
+    let mut deps = FakeDeps::with_tasks_and_slack();
+    deps.tasks_supported = false;
+    deps.config.agent_tasks.enabled = true;
+    deps.config.general.daemon_lifecycle = DaemonLifecycleMode::Activity;
+    let (_, io) = run_en(&mut deps, &["", "", "s", ""]);
+    assert!(!io.prompted(TASKS_PROMPT));
+    assert!(!io.prompted(KEEP_RUNNING_PROMPT));
+    assert_eq!(
+        deps.config.general.daemon_lifecycle,
+        DaemonLifecycleMode::KeepAlive
+    );
+    assert!(deps.called("save_config"));
+}
+
+#[test]
+fn the_summary_names_the_ios_app_among_the_remote_channels() {
+    let mut deps = FakeDeps::fresh();
+    deps.config.channels.ios.enabled = true;
+    deps.channel_mut("slack").enabled = true;
+    deps.channel_mut("slack").configured = true;
+    let (_, io) = run_en(&mut deps, &["", "", "s", "", "n"]);
+    let said = squeezed(&io.said());
+    assert!(said.contains("Remote answering: Slack, iOS app"), "{said}");
+
+    let mut deps = FakeDeps::fresh();
+    deps.config.channels.ios.enabled = true;
+    let (_, io) = run_en(&mut deps, &["", "", "s", "", "n"]);
+    let said = squeezed(&io.said());
+    assert!(said.contains("Remote answering: iOS app"), "{said}");
+}
+
+#[test]
+fn the_summary_says_where_to_turn_agent_tasks_on_when_step_three_could_not_offer_them() {
+    // Supported, but no remote channel yet.
+    let mut deps = FakeDeps::fresh();
+    deps.tasks_supported = true;
+    let (_, io) = run_en(&mut deps, &["", "", "", ""]);
+    let said = squeezed(&io.said());
+    assert!(
+        said.contains("turn on \"Create Agent tasks from phone or IM\" in Settings → Advanced"),
+        "{said}"
+    );
+    // Either of the two prerequisites may be the one that is missing, so it names both.
+    assert!(
+        said.contains("connect an Agent and set up a remote channel"),
+        "{said}"
+    );
+
+    // Not supported here: nothing to point at.
+    let mut deps = FakeDeps::fresh();
+    let (_, io) = run_en(&mut deps, &["", "", "", ""]);
+    assert!(!squeezed(&io.said()).contains("Settings → Advanced"));
+
+    // Already on: nothing to point at either.
+    let mut deps = FakeDeps::fresh();
+    deps.tasks_supported = true;
+    deps.config.agent_tasks.enabled = true;
+    let (_, io) = run_en(&mut deps, &["", "", "", ""]);
+    assert!(!squeezed(&io.said()).contains("Settings → Advanced"));
+}
+
+#[test]
+fn the_agent_task_question_speaks_chinese_when_asked_to() {
+    let mut deps = FakeDeps::with_tasks_and_slack();
+    let mut io = FakeIo::new(&["", "", "s", "", "y"]);
+    assert_eq!(run(Lang::Zh, &mut io, &mut deps), 0);
+    assert!(io.prompted("从手机 / IM 创建 Agent 任务（iPhone App 里点「新任务」"));
+    let said = io.said();
+    assert!(
+        said.contains("保持后台常驻：已开启（Agent 任务需要它）。"),
+        "{said}"
+    );
+    assert!(said.contains("可从手机 / IM 创建 Agent 任务"), "{said}");
 }
 
 #[test]

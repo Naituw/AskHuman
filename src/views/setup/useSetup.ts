@@ -27,6 +27,7 @@ import type {
   SetupEnvReport,
   SetupStatus,
 } from "../../lib/types";
+import { supportsAgentTasks } from "../../lib/platform";
 import { createCore } from "../settings/context";
 import { useChannels } from "../settings/useChannels";
 import {
@@ -292,8 +293,33 @@ export function createSetup(initialPage: SetupPage = "agents") {
   }
 
   // ===== Page 3: Done =====
-  const backgroundA = ref(false);
-  const backgroundB = ref(false);
+  // Each switch follows what is saved until the person touches it (`null` = untouched), so a
+  // change another window makes in the meantime (Settings → the iOS card's "Turn on…") is neither
+  // hidden from this page nor undone when it finishes.
+  const choiceA = ref<boolean | null>(null);
+  const choiceB = ref<boolean | null>(null);
+  const choiceC = ref<boolean | null>(null);
+  /** A: the menu-bar icon stays and starts at login. */
+  const backgroundA = computed({
+    get: () => choiceA.value ?? config.value?.general.menuBarIcon === "always",
+    set: (value: boolean) => {
+      choiceA.value = value;
+    },
+  });
+  /** B: the daemon stays resident (`daemonLifecycle = keepalive`). */
+  const backgroundB = computed({
+    get: () => choiceB.value ?? config.value?.general.daemonLifecycle === "keepalive",
+    set: (value: boolean) => {
+      choiceB.value = value;
+    },
+  });
+  /** C: the phone / IM may start Agent tasks (`agentTasks.enabled`); it pins B on. */
+  const backgroundC = computed({
+    get: () => choiceC.value ?? config.value?.agentTasks?.enabled === true,
+    set: (value: boolean) => {
+      choiceC.value = value;
+    },
+  });
   const finishing = ref(false);
   const finishError = ref<string | null>(null);
   const capabilities = ref<CapabilityKey[]>([]);
@@ -326,9 +352,57 @@ export function createSetup(initialPage: SetupPage = "agents") {
     () => !readOnly.value && rows.value.some(isIntegrated),
   );
 
-  /** Switch B is only offered once a remote channel is on; the Agent-task feature pins it on. */
-  const showBackgroundB = computed(() => hasEnabledChannel.value);
-  const backgroundBLocked = computed(() => config.value?.agentTasks?.enabled === true);
+  /**
+   * The iOS app channel is on. It is set up in a Settings window of its own (the remote page only
+   * links to it), so this is only right after `adoptSavedConfig()`.
+   */
+  const iosEnabled = computed(() => config.value?.channels?.ios?.enabled === true);
+  /** A remote channel of any kind: an IM channel or the iOS app. */
+  const hasRemoteChannel = computed(() => hasEnabledChannel.value || iosEnabled.value);
+
+  /** Switch B is only offered once a remote channel is on. */
+  const showBackgroundB = computed(() => hasRemoteChannel.value);
+  /**
+   * Switch C starts Agent tasks from the phone or IM: it needs a remote channel to start them from,
+   * an Agent to start, and a platform with a supported terminal.
+   */
+  const showBackgroundC = computed(
+    () => supportsAgentTasks && hasRemoteChannel.value && rows.value.some(isIntegrated),
+  );
+  /** The Agent-task feature pins B on: by this page's own switch C, else by what is saved. */
+  const backgroundBLocked = computed(() =>
+    showBackgroundC.value ? backgroundC.value : config.value?.agentTasks?.enabled === true,
+  );
+  /** What B's switch shows: on while pinned, otherwise the person's choice (or the saved mode). */
+  const backgroundBChecked = computed({
+    get: () => backgroundBLocked.value || backgroundB.value,
+    set: (value: boolean) => {
+      backgroundB.value = value;
+    },
+  });
+  /** Nothing offers the feature yet: the page says where to turn it on later. */
+  const showTasksTip = computed(
+    () =>
+      supportsAgentTasks &&
+      rowsLoaded.value &&
+      !showBackgroundC.value &&
+      config.value?.agentTasks?.enabled !== true,
+  );
+
+  /**
+   * Replace this window's copy of the settings with what is saved now. Another window can change
+   * them while this one is open (the iOS card in Settings, say); the Done page reads the copy for
+   * what it offers and saves on top of it, so it must not be the older one.
+   */
+  async function adoptSavedConfig() {
+    try {
+      const payload = await getSettings();
+      core.config.value = payload.config;
+      core.secretsPresent.value = payload.secretsPresent;
+    } catch {
+      /* keep the copy loaded earlier; saving still works with it */
+    }
+  }
 
   async function closeWindow() {
     try {
@@ -339,22 +413,29 @@ export function createSetup(initialPage: SetupPage = "agents") {
   }
 
   /**
-   * Done: save the two background choices, record the decision (and the login item), close.
+   * Done: save the background choices, record the decision (and the login item), close.
    * The page only moves a menu-bar icon that is `always` (to `active`) or turns it on; it never
-   * picks `off`.
+   * picks `off`. Turning C on also pins the daemon resident; saving does the rest (Settings'
+   * `save_settings` installs the daemon's login item and makes sure it is running).
    */
   async function finish() {
-    const cfg = config.value;
-    if (!cfg || finishing.value) return;
+    if (!config.value || finishing.value) return;
     finishing.value = true;
     finishError.value = null;
     try {
+      await adoptSavedConfig();
+      const cfg = config.value;
+      if (!cfg) return;
       if (status.value?.trayAvailable) {
         if (backgroundA.value) cfg.general.menuBarIcon = "always";
         else if (cfg.general.menuBarIcon === "always") cfg.general.menuBarIcon = "active";
       }
+      // B reads C's switch, so decide both from the switches before either is written.
+      const tasksOn = backgroundC.value;
+      const keepRunning = backgroundBLocked.value || backgroundB.value;
+      if (showBackgroundC.value) cfg.agentTasks.enabled = tasksOn;
       if (showBackgroundB.value) {
-        cfg.general.daemonLifecycle = backgroundB.value ? "keepalive" : "activity";
+        cfg.general.daemonLifecycle = keepRunning ? "keepalive" : "activity";
       }
       await persist();
       await setupFinish();
@@ -381,8 +462,6 @@ export function createSetup(initialPage: SetupPage = "agents") {
     const collab = payload.config.general.collaborationStyle ?? "aligned";
     style.value = collab;
     styleBaseline.value = collab;
-    backgroundA.value = payload.config.general.menuBarIcon === "always";
-    backgroundB.value = payload.config.general.daemonLifecycle === "keepalive";
     void scanAgents();
     void loadEnv();
     void refreshChannelStatus();
@@ -442,9 +521,15 @@ export function createSetup(initialPage: SetupPage = "agents") {
     agentProbeAvailable,
     // Done
     backgroundA,
-    backgroundB,
+    backgroundBChecked,
+    backgroundC,
+    iosEnabled,
+    hasRemoteChannel,
     showBackgroundB,
+    showBackgroundC,
     backgroundBLocked,
+    showTasksTip,
+    adoptSavedConfig,
     finishing,
     finishError,
     capabilities,

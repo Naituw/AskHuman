@@ -904,7 +904,7 @@
   color: var(--text-secondary, #888);
   word-break: break-all;
 }
-/* Agent readiness matrix (Advanced → create Agent tasks from IM): one row per Agent (badge, name,
+/* Agent readiness matrix (Advanced → create Agent tasks from phone or IM): one row per Agent (badge, name,
    overall tag) and one fixed-width column per condition, so every row lines up. A met condition is a
    check; an unmet one is an orange cross button that goes to where it is fixed. */
 .readiness-matrix {
@@ -1389,6 +1389,10 @@
   font-size: 12.5px;
   font-weight: 600;
   color: var(--text-primary);
+}
+/* The title shares a row with a tag and a button: no bottom margin, so the three centre on one line. */
+.ios-tasks-head .ios-section-title {
+  margin: 0;
 }
 .ios-ports {
   display: grid;

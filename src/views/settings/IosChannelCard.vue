@@ -16,7 +16,15 @@ import {
 import { formatBytes, quotaShare, trafficLevel } from "./iosTraffic";
 
 const { t } = useI18n();
-const { persist, secretsPresent, SECRET_PLACEHOLDER, clearSecret } = useSettingsContext();
+const {
+  config,
+  persist,
+  secretsPresent,
+  SECRET_PLACEHOLDER,
+  clearSecret,
+  supportsAgentTasks,
+  agentTasksConfirmOpen,
+} = useSettingsContext();
 const {
   ios,
   state,
@@ -49,6 +57,10 @@ const {
   importConnection,
   exportConnection,
 } = useIosChannel();
+
+// Whether the phone's "New task" can reach this Mac: it is the same switch as Settings → Advanced.
+// Turning it on goes through that switch's confirmation, because it keeps the daemon resident.
+const tasksOn = computed(() => config.value?.agentTasks?.enabled === true);
 
 const statusText = computed(() => {
   const s = state.value;
@@ -357,6 +369,38 @@ function pushWarning(phone: IosPhone): string {
           </button>
         </li>
       </ul>
+
+      <!-- The app's "New task" needs the Agent-task switch on this Mac; say so where the phone is set up. -->
+      <template v-if="supportsAgentTasks">
+        <hr class="divider" />
+        <div class="row ios-tasks-head">
+          <p class="ios-section-title">{{ t("settings.experimental.ios.tasksTitle") }}</p>
+          <span class="status-tag" :class="{ ok: tasksOn }" data-testid="ios-tasks-state">
+            {{
+              tasksOn
+                ? t("settings.experimental.ios.tasksTagOn")
+                : t("settings.experimental.ios.tasksTagOff")
+            }}
+          </span>
+          <span class="spacer"></span>
+          <button
+            v-if="!tasksOn"
+            class="btn"
+            type="button"
+            data-testid="ios-tasks-enable"
+            @click="agentTasksConfirmOpen = true"
+          >
+            {{ t("settings.experimental.ios.tasksEnable") }}
+          </button>
+        </div>
+        <p class="card-desc" data-testid="ios-tasks-desc">
+          {{
+            tasksOn
+              ? t("settings.experimental.ios.tasksOn")
+              : t("settings.experimental.ios.tasksOff")
+          }}
+        </p>
+      </template>
     </template>
   </div>
 

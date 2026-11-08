@@ -86,7 +86,7 @@ const ISSUE_TEXT: Record<ReadinessIssue, string> = {
         </button>
       </div>
     </div>
-    <!-- 「从 IM 创建 Agent 任务」依赖保活：功能开启期间锁定本控件，并就地说明原因，
+    <!-- 「从手机 / IM 创建 Agent 任务」依赖保活：功能开启期间锁定本控件，并就地说明原因，
          避免用户改了不生效以为是 bug（save_settings 会静默强制回 keepalive）。 -->
     <p v-if="config.agentTasks.enabled" class="card-desc warn">
       {{ t("settings.experimental.daemonLifecycleLockedByTasks") }}

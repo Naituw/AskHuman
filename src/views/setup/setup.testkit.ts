@@ -75,6 +75,8 @@ interface ConfigOptions {
   daemonLifecycle?: string;
   experimental?: boolean;
   agentTasks?: boolean;
+  /** The iOS app channel is on (it is set up in Settings, not in the wizard). */
+  ios?: boolean;
 }
 
 /** Just the config fields the wizard reads or writes, typed as the full config. */
@@ -92,7 +94,7 @@ export function config(opts: ConfigOptions = {}): AppConfig {
       slack: { enabled: false, botToken: "", appToken: "", userId: "" },
       dingding: { enabled: false, clientId: "", clientSecret: "", userId: "" },
       feishu: { enabled: false, appId: "", appSecret: "", openId: "" },
-      ios: { password: "" },
+      ios: { enabled: opts.ios ?? false, password: "" },
     },
     agentTasks: { enabled: opts.agentTasks ?? false },
     experimental: { enabled: opts.experimental ?? false },

@@ -522,6 +522,12 @@ export default {
         pairFinishing: "Finishing the pairing…",
         pairDone: "Paired \"{name}\".",
         pairEnded: "Pairing ended (expired, denied or cancelled).",
+        tasksTitle: "New Agent tasks from the app",
+        tasksTagOn: "On",
+        tasksTagOff: "Off",
+        tasksOn: "Tap \"New task\" on the app's Agents tab to open an Agent session on this Mac. The permission choice and the workspaces are under Advanced.",
+        tasksOff: "Right now \"New task\" in the app says this Mac has Agent tasks turned off. Turning it on keeps this Mac running in the background and adds a login item.",
+        tasksEnable: "Turn on…",
       },
       verticalQuestionsTitle: "Show multiple questions vertically",
       verticalQuestionsDesc:
@@ -533,7 +539,7 @@ export default {
       daemonLifecycleHint:
         "\"On activity\": the daemon starts only when an agent becomes active or asks a question, and exits after a period of idleness. \"Keep alive\": the daemon stays resident and starts at login so IM channels can receive messages anytime; this keeps using a small amount of system resources and holds the IM channel open. When using multiple devices at once, configure a distinct IM bot per device.",
       daemonLifecycleLockedByTasks:
-        "Locked to \"Keep alive\" by \"Create Agent tasks from IM\"; turn that feature off to switch back to \"On activity\".",
+        "Locked to \"Keep alive\" by \"Create Agent tasks from phone or IM\"; turn that feature off to switch back to \"On activity\".",
     },
     permissionRules: {
       title: "Codex conversation grants",
@@ -782,14 +788,14 @@ export default {
       mcpExampleToml: "Codex (~/.codex/config.toml)",
     },
     agentTasks: {
-      title: "Create Agent tasks from IM",
-      description: "Use /new (or !new in Slack) to choose a workspace and Agent, then continue the visible session in a new system terminal window. Enabling this keeps the daemon available and installs its login item.",
+      title: "Create Agent tasks from phone or IM",
+      description: "Tap \"New task\" in the iPhone app, or use /new (!new in Slack) in IM, to choose a workspace and Agent, then continue the visible session in a new system terminal window on this computer. Enabling this keeps the daemon available and installs its login item.",
       permission: "Permission selection",
       permissionAsk: "Ask every time",
       permissionDefault: "Always Agent default",
       permissionYolo: "Always YOLO",
       yoloWarning: "YOLO auto-approves operations and bypasses normal Agent protections for every new IM task.",
-      confirmTitle: "Enable \"Create Agent tasks from IM\"?",
+      confirmTitle: "Enable \"Create Agent tasks from phone or IM\"?",
       confirmIntro: "Enabling this takes effect immediately:",
       confirmKeepalive:
         "The daemon stays resident and installs a start-at-login item; the daemon lifecycle under Advanced is locked to \"Keep alive\" and changes there won't take effect.",
@@ -810,7 +816,7 @@ export default {
       colIntegration: "Integration",
       readinessHint: "Click an orange × to fix it; a missing CLI opens the official installation guide.",
       unsupported: "Unsupported",
-      unsupportedHint: "An Agent marked “Unsupported” can't create tasks from IM yet; there is nothing to fix.",
+      unsupportedHint: "An Agent marked “Unsupported” can't create tasks from phone or IM yet; there is nothing to fix.",
       issueBinary: "CLI unavailable",
       issueLifecycle: "Lifecycle tracking not ready",
       issueIntegration: "Integration unavailable",
@@ -1158,8 +1164,15 @@ export default {
       switchADesc: "Keep the status icon in the menu bar / system tray and start AskHuman at login, so Settings and History are one click away.",
       loginItemNote: "macOS usually shows a \"Background item added\" notification; that is expected.",
       switchB: "Keep running in the background",
-      switchBDesc: "Lets your phone's IM app start commands at any time; it keeps a small amount of resources in use.",
-      switchBLocked: "Kept on while \"Create Agent tasks from IM\" is enabled.",
+      switchBDesc: "Lets the phone app or IM reach this computer and start commands at any time; it keeps a small amount of resources in use.",
+      switchBLocked: "Kept on while \"Create Agent tasks from phone or IM\" is enabled.",
+      switchC: "Create Agent tasks from phone or IM",
+      switchCDesc:
+        "Tap \"New task\" in the iPhone app, or send /new in IM (!new in Slack), to open an Agent session on this computer. Turning it on keeps AskHuman running in the background and adds a login item, which uses a little memory.",
+      switchCBot: "This computer will hold the IM bot's connection around the clock; devices sharing one bot compete for its messages.",
+      tasksTip:
+        "Want to start Agent tasks from your phone or IM? Connect an Agent and set up a remote channel (IM or the iOS app) first, then turn on \"Create Agent tasks from phone or IM\" in Settings → Advanced.",
+      tasksTipLink: "Open Settings",
       nextTitle: "How to use it from here",
       nextBody: "Just ask your Agent for what you need. When it needs you, a question window pops up (and is sent to the channels you set up). To change anything later, run AskHuman setup or open Settings.",
       finish: "Done",

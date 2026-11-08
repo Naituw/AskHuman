@@ -682,9 +682,11 @@ pub(super) async fn start_new_task_flow(
     let _ = set_active_channel(state, channel_id).await;
     if let Err(block) = task_gate_now(config) {
         let text = match (block, lang) {
-            (TaskBlock::Disabled, Lang::Zh) => "尚未开启「从 IM 创建 Agent 任务」。请先在设置中开启。",
+            (TaskBlock::Disabled, Lang::Zh) => {
+                "尚未开启「从手机 / IM 创建 Agent 任务」。请先在设置中开启。"
+            }
             (TaskBlock::Disabled, Lang::En) => {
-                "IM Agent task creation is disabled. Enable it in Settings first."
+                "Creating Agent tasks from phone or IM is turned off. Enable it in Settings first."
             }
             (TaskBlock::NotReady, Lang::Zh) => {
                 "功能尚未就绪：请在设置中重新保存此功能，以启用 Daemon 保活与登录项。"
