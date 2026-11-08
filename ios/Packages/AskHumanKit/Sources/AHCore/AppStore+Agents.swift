@@ -221,9 +221,13 @@ extension AppStore {
 
     // MARK: new tasks
 
-    /// Opens the new task form, on `macId` or the first Mac that can start tasks.
+    private static let taskMacKey = "ah.task.mac"
+
+    /// Opens on an explicit Mac, else the last manually picked Mac that can start tasks, else the first available.
     public func presentNewTask(macId: String? = nil) {
-        guard let target = macId ?? taskMacs.first?.id else { return }
+        let available = taskMacs
+        let remembered = defaults.string(forKey: Self.taskMacKey)
+        guard let target = macId ?? available.first(where: { $0.id == remembered })?.id ?? available.first?.id else { return }
         let composer = TaskComposer(macId: target)
         taskComposer = composer
         let backend = backend
@@ -250,7 +254,10 @@ extension AppStore {
     }
 
     public func selectTaskMac(_ macId: String) {
-        guard let composer = taskComposer, composer.macId != macId else { return }
+        guard let composer = taskComposer else { return }
+        // Only an explicit choice replaces the preference; a temporary fallback never does.
+        defaults.set(macId, forKey: Self.taskMacKey)
+        guard composer.macId != macId else { return }
         composer.switchMac(to: macId)
         let backend = backend
         Task { await backend.loadTaskOptions(macId: macId) }

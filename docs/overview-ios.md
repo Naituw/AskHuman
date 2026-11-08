@@ -63,6 +63,7 @@ Agent / CLI ─► Daemon ── IosGateway（一个 actor）──► MQTT（TL
   | `AHMarkdown` | Markdown 块解析，供原生渲染（题干、列表摘要、Watch 卡片、附件预览，以及网页渲染不可用时的回落）；请求正文平时由网页渲染（见下） |
   | `AHMock` | `MockBackend`：演示数据与可编程故障，UI 测试和截图都跑在它上面 |
 
+- 新建任务的 Mac 在手动选择时即保存为这部手机的本地偏好，取消或重启 App 也保留；打开时优先入口指定的 Mac，否则恢复可用的已记忆 Mac，再临时回退第一台可用 Mac，回退不覆盖记忆（`AppStore+Agents.swift`；`ios-channel.md` §6.8）。
 - 新建任务的 `TaskComposer` 在点击「开始」时，将模型 / 强度按 Agent 存为这部手机的本地偏好，所有 Mac / 工作区共用；取消不更新。
   打开表单或切换 Mac / Agent 时恢复，缺少已保存模型的 Mac 临时回默认并保留原偏好。完整约定见 `docs/specs/ios-task-model.md` M3。
 - Agent 消息对 Codex Desktop 走原生 `Operation::Send`（运行中补充／空闲时继续，继承线程设置）；其余走原有工作中 Hook 队列。

@@ -9,10 +9,10 @@ final class AgentStoreTests: XCTestCase {
     private var backend: MockBackend!
     private var store: AppStore!
 
-    private func make(latency: Double = 0, scenario: MockBackend.Scenario = .demo) async {
+    private func make(latency: Double = 0, scenario: MockBackend.Scenario = .demo, defaults: UserDefaults? = nil) async {
         backend = MockBackend(scenario: scenario, latency: latency)
-        let defaults = UserDefaults(suiteName: "ah-test-" + UUID().uuidString)!
-        store = AppStore(backend: backend, drafts: MemoryDraftStore(), defaults: defaults)
+        let preferences = defaults ?? UserDefaults(suiteName: "ah-test-" + UUID().uuidString)!
+        store = AppStore(backend: backend, drafts: MemoryDraftStore(), defaults: preferences)
         await store.start()
         await eventually("first state") { self.store.state.foreground }
     }
@@ -314,6 +314,90 @@ final class AgentStoreTests: XCTestCase {
     }
 
     // MARK: new tasks
+
+    func testTheNewTaskFormUsesTheFirstAvailableMacWithoutAPreference() async {
+        await make()
+        store.presentNewTask()
+        XCTAssertEqual(store.taskComposer?.macId, MockData.homeMacId)
+    }
+
+    func testTheSelectedTaskMacSurvivesCancellationAndReopeningTheApp() async {
+        let suite = "ah-task-mac-" + UUID().uuidString
+        defer { UserDefaults().removePersistentDomain(forName: suite) }
+        await make(defaults: UserDefaults(suiteName: suite)!)
+        store.presentNewTask()
+        store.selectTaskMac(MockData.officeMacId)
+        store.dismissNewTask()
+        store.presentNewTask()
+        XCTAssertEqual(store.taskComposer?.macId, MockData.officeMacId)
+
+        await make(defaults: UserDefaults(suiteName: suite)!)
+        store.presentNewTask()
+        XCTAssertEqual(store.taskComposer?.macId, MockData.officeMacId)
+    }
+
+    func testAnOfflinePreferredTaskMacFallsBackWithoutLosingThePreference() async {
+        await make()
+        store.presentNewTask()
+        store.selectTaskMac(MockData.officeMacId)
+        store.dismissNewTask()
+        await backend.setLink(.macOffline, for: MockData.officeMacId)
+        await eventually { self.store.taskMacs.map(\.id) == [MockData.homeMacId] }
+        store.presentNewTask()
+        XCTAssertEqual(store.taskComposer?.macId, MockData.homeMacId)
+        store.dismissNewTask()
+
+        await backend.setLink(.online, for: MockData.officeMacId)
+        await eventually { self.store.taskMacs.count == 2 }
+        store.presentNewTask()
+        XCTAssertEqual(store.taskComposer?.macId, MockData.officeMacId)
+    }
+
+    func testAnExplicitTaskMacTakesPrecedenceWithoutReplacingThePreference() async {
+        await make()
+        store.presentNewTask()
+        store.selectTaskMac(MockData.officeMacId)
+        store.dismissNewTask()
+        store.presentNewTask(macId: MockData.homeMacId)
+        XCTAssertEqual(store.taskComposer?.macId, MockData.homeMacId)
+        store.dismissNewTask()
+        store.presentNewTask()
+        XCTAssertEqual(store.taskComposer?.macId, MockData.officeMacId)
+    }
+
+    func testExplicitlySelectingTheFallbackMacReplacesThePreference() async {
+        await make()
+        store.presentNewTask()
+        store.selectTaskMac(MockData.officeMacId)
+        store.dismissNewTask()
+        await backend.setLink(.macOffline, for: MockData.officeMacId)
+        await eventually { self.store.taskMacs.count == 1 }
+        store.presentNewTask()
+        store.selectTaskMac(MockData.homeMacId)
+        store.dismissNewTask()
+
+        await backend.setLink(.online, for: MockData.officeMacId)
+        await eventually { self.store.taskMacs.count == 2 }
+        store.presentNewTask()
+        XCTAssertEqual(store.taskComposer?.macId, MockData.homeMacId)
+    }
+
+    func testAnUnpairedPreferredTaskMacFallsBackAndNoAvailableMacLeavesTheFormClosed() async {
+        await make()
+        store.presentNewTask()
+        store.selectTaskMac(MockData.officeMacId)
+        store.dismissNewTask()
+        await backend.unpair(macId: MockData.officeMacId)
+        await eventually { self.store.state.macs.count == 1 }
+        store.presentNewTask()
+        XCTAssertEqual(store.taskComposer?.macId, MockData.homeMacId)
+        store.dismissNewTask()
+
+        await backend.setLink(.macOffline, for: MockData.homeMacId)
+        await eventually { self.store.taskMacs.isEmpty }
+        store.presentNewTask()
+        XCTAssertFalse(store.isTaskSheetPresented)
+    }
 
     func testTheNewTaskFormStartsOnAMacThatCanRunTasks() async {
         await make()
