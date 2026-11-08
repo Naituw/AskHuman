@@ -202,12 +202,18 @@ export function useAgentTasks(core: SettingsCore) {
   const settingsTargetHighlight = ref("");
   let settingsTargetTimer: number | undefined;
 
-  /** 滚动定位 + 短暂高亮当前 tab 内的目标元素（须已切到目标 tab）。跨窗口锚点跳转
-   *（`open_settings` 的 `tab#elementId`，spec gui-agent-task-launch G5）也复用本函数。 */
-  async function gotoSettingsTarget(target: string) {
+  /**
+   * Scroll to a target element of the current tab (the tab must already be switched to) and
+   * highlight it briefly. Cross-window anchor jumps (`tab#elementId` of `open_settings`, spec
+   * gui-agent-task-launch G5) reuse it. `fallback` is where to go when the target element does
+   * not exist, e.g. only an integrated Agent card has a lifecycle row, so any other card falls
+   * back to the card itself.
+   */
+  async function gotoSettingsTarget(target: string, fallback?: string) {
     await nextTick();
-    settingsTargetHighlight.value = target;
-    const el = document.getElementById(target);
+    const id = fallback && !document.getElementById(target) ? fallback : target;
+    settingsTargetHighlight.value = id;
+    const el = document.getElementById(id);
     // A target inside a folded card: open the card before scrolling to it.
     await revealSettingsTarget(el);
     el?.scrollIntoView({ behavior: "smooth", block: "center" });
@@ -224,8 +230,11 @@ export function useAgentTasks(core: SettingsCore) {
       return;
     }
     activeTab.value = "integration";
+    // The lifecycle row exists only in an integrated Agent's card; for any other Agent the person
+    // lands on the card, where the integration mode is switched on first.
     await gotoSettingsTarget(
       issue === "lifecycle" ? `lifecycle-${kind}` : `integration-${kind}`,
+      `integration-${kind}`,
     );
   }
 
