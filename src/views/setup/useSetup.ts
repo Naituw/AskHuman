@@ -32,7 +32,6 @@ import { createCore } from "../settings/context";
 import { useChannels } from "../settings/useChannels";
 import {
   agentsPrimary,
-  canStartTasks,
   isIntegrated,
   isMainRow,
   isPending,
@@ -395,14 +394,13 @@ export function createSetup(initialPage: SetupPage = "agents") {
    */
   const showBackgroundB = computed(() => hasRemoteChannel.value || tasksWanted.value);
   /**
-   * Starting Agent tasks from the phone or IM can be offered: it needs an Agent to start and a
-   * platform with a supported terminal. It does not need a remote channel yet: the switch is
-   * global, and a channel set up later (in Settings, where it sits apart from this switch) would
-   * be easy to leave without it.
+   * Allowing Agent tasks from the phone or IM can be offered wherever the platform has a
+   * supported terminal. Neither a remote channel nor an Agent is needed yet: the switch is global,
+   * and a channel or an Agent set up later (in Settings, where it sits apart from this switch)
+   * would be easy to leave without it. The page greys out what is not there; it never checks
+   * whether a task could start (allowing is a permission, not a promise).
    */
-  const tasksAvailable = computed(
-    () => supportsAgentTasks && rows.value.some(canStartTasks),
-  );
+  const tasksAvailable = computed(() => supportsAgentTasks);
   /** The summary line on the Done page: where the feature is on offer, and wherever it is on. */
   const showTasksRow = computed(() => tasksAvailable.value || tasksSavedOn.value);
   /** The person turned the offer down on an earlier run of the wizard. */
@@ -430,15 +428,7 @@ export function createSetup(initialPage: SetupPage = "agents") {
       backgroundB.value = value;
     },
   });
-  /** Nothing offers the feature yet: the page says where to turn it on later. */
-  const showTasksTip = computed(
-    () => supportsAgentTasks && rowsLoaded.value && !tasksAvailable.value && !tasksSavedOn.value,
-  );
-
-  /**
-   * "Turn on": recorded here, saved with the rest of the settings when the wizard finishes. The
-   * offer screen has already checked that an Agent can start, so there is nothing more to show.
-   */
+  /** "Allow": recorded here, saved with the rest of the settings when the wizard finishes. */
   function wantTasks() {
     tasksWanted.value = true;
     goto("done");
@@ -608,7 +598,6 @@ export function createSetup(initialPage: SetupPage = "agents") {
     hasRemoteChannel,
     showBackgroundB,
     backgroundBLocked,
-    showTasksTip,
     adoptSavedConfig,
     finishing,
     finishError,

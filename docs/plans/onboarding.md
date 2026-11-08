@@ -494,7 +494,7 @@ vitest：三个按钮的状态机（成功 / 失败 / 超时 / 取消）与「�
 | 13 i18n | §2.4、§3.8 |
 | 14 既有行为不变 | §0.2、§0.3 |
 | 15 README / overview | §5 |
-| 16 / 17 / 18 手机 / IM 创建 Agent 任务、配置新鲜度、发现路径 | §9 |
+| 16 / 17 / 18 允许从手机 / IM 创建 Agent 任务、配置新鲜度、发现路径 | §9 |
 
 ## 9. 增补：从手机 / IM 创建 Agent 任务开关（D25，2026-11-08）
 
@@ -524,6 +524,8 @@ GUI 里的开关 C 换成「远程回答」步骤里的一屏，开启后即时�
 
 ### 第 11 轮：先体检再询问，判定统一，开关进渠道卡片（D25 再次重写，2026-11-08）
 
+（第 12 轮又把确认页改成只问「允许」：体检、一家都启不了的页面、`blockers` 与文字版的体检都删了，见本节末尾；下面第 11 轮里写到向导与文字版的几条是当时的做法，后端统一判定与设置页的部分仍然有效。）
+
 起因是用户点了确认页的「开启」后被带到「没有可以开启的 Agent」的页面（先邀请、后否定），而那台电脑装着 Codex 桌面版与 Cursor Desktop、实际能创建任务。后端判定只改一处，前端全部读它；不改 IPC 消息（`agent_task_readiness` 是 Tauri 命令，新增字段都是 additive，不动 `PROTOCOL_VERSION`）。
 
 - **后端统一判定**：新增 `integrations/agent_start.rs`——`AgentStart`（`AgentReadiness` 展平，外加 `startable` / `startRoute` / `launch`，camelCase）、`judge` / `startable` / `startable_now` / `route` / `blockers`。Codex 读 `codex_desktop::launch_status` 的目标，Cursor 读 `cursor_desktop::launch_status` 的目标，其余读 `AgentReadiness.ready`，`launch_supported` 为假（Antigravity）永不算。手机「新任务」页的 Agent 列表与 `noAgent`（`daemon/runtime/ios_tasks.rs`，门控顺序 `agentTasks.enabled` → keepalive → terminal → `noWorkspace` → `noAgent` 不变）、IM `/new`（`daemon/runtime/inbound.rs`）、命令 `agent_task_readiness`（`commands.rs`，现返回 `Vec<AgentStart>`）、`AskHuman doctor`（`cli/doctor.rs`，每家 `start=desktop|terminal|no`，JSON 同源）都读它。`readiness_with` 不调用 `launch_status`（探测缓存不重复起登录 shell）；向导与文字版体检用 `agent_launch::all_readiness_fresh()`（`force`）。
@@ -533,3 +535,14 @@ GUI 里的开关 C 换成「远程回答」步骤里的一屏，开启后即时�
 - **设置页**：新增 `AgentTasksSwitchRow.vue`（`agent-tasks-row` / `agent-tasks-switch` / `agent-tasks-stuck` / `agent-tasks-manage`；`supportsAgentTasks` 为假时不渲染；开关走 `toggleAgentTasks` 的同一个确认弹窗）；`ChannelsTab.vue` 把它放进 Telegram / 钉钉 / 飞书 / Slack 四张卡**已启用**内容的最底部（前面一道分隔线），`IosChannelCard.vue` 用它取代第 10 轮的提示条（`settings.css` 删 `.ios-tasks-callout*`）。卡片里的警示只读「高级」页已加载的 `taskReadiness`，不为它探测。`AdvancedTab.vue` + `readiness.ts`（`isStartable`、`readinessState`、`readinessIssues`、`startsOutsideTheCli`、`startBlockers`）让「Agent 就绪状态」矩阵读同一判定：标签 `ready` / `readyCodexApp` / `readyCursorWindow` / `notReady`，走桌面路线的 Agent 的 CLI 两列画「–」（`readiness-skip-*`），两条路都不通的 Agent 行下是 `readiness-blockers-*`；i18n `settings.agentTasks.*`（`channelOff` / `channelOn` / `channelStuck` / `channelManage`、`ready*`、`cliNotNeeded`、`outsideHint`、更新后的 `description`），删除 `settings.experimental.ios.tasksCallout / tasksEnable`。
 - **测试**：vitest `SetupView.test.ts`（新「the Agent-task screen」组：检查中 / 能启动 / 一家都启不了 / 没能检查 / 没有渠道 / 重新检查 / 焦点重检 / 暂不开启 / 先跳过，以及完成页行与页 2 的跳转）、`ChannelsTab.test.ts`（四张卡的开关行与全局共用）、`IosChannelCard.test.ts`、`AdvancedTab.test.ts`（路线标签、「–」、原因行）、`cursorLaunch.test.ts`；Rust `onboarding/text/tests.rs`（`FakeDeps.task_agents`、`with_blocked_agents()`）、`agent_start`、`cursor_desktop/launch.rs`。
 - **验证**：`./scripts/install.sh` 后用隔离环境（临时 HOME + `ASKHUMAN_HOME` 0700 + `ASKHUMAN_NO_KEYCHAIN=1`）打开真实窗口看向导确认页的各状态、没有渠道的路径、设置里五张渠道卡的开关行与「高级」矩阵，再用 pty 跑文字版；截图见交付说明。
+
+### 第 12 轮：只问「允许」，示意图取代体检（D25 第三次重写，2026-11-08）
+
+起因是用户审阅第 11 轮的页面：标题像是要当场创建任务、内容太复杂、「先问要不要、允许完又说不行」的互动很怪；他要的是一个纯「允许」的询问，配一张渠道 → Agent 的示意图（像 README 总览图）。后端统一判定（第 11 轮）保留给手机、IM、设置矩阵与 `doctor`，向导不再读它；不改 IPC，不动 `PROTOCOL_VERSION`。
+
+- **向导**：`TasksPage.vue` 重写——只读 `rows`（`isIntegrated`）、`iosEnabled`、`enabledChannelIds`；左列 `tasks-channels`（iOS App + `CHANNEL_DEFS`，一行一个，`tasks-channel-<id>`，带 `data-on`）、中间箭头「新任务」、右列 `tasks-agents`（Claude Code / Codex / Cursor / Grok / Pi，`tasks-agent-<id>`；Antigravity 不画）；没配的 `.off`（半透明 + 灰度），有灰色时一行 `tasks-dim-note`；页脚 [暂不允许]（`declineTasks`）与 [允许]（`wantTasks`，没有禁用态）。**删除** `useTasksCheck.ts`、`agentRows.ts::canStartTasks`、`useSetup.ts` 的 `showTasksTip` 与完成页的 `done-tasks-tip`，以及 `setup.css` 里只给体检用的样式（`.check-line`、`.check-item.warn*`、`.check-hint`、`.setup-header-glyph.warn*`、`.setup-benefit*`），新增 `.tasks-*`。`tasksAvailable` 现在只看平台（`supportsAgentTasks`），`showTasksOffer` 的公式不变；`leaveRemote()` 离开前仍保证 `rows` 已加载（示意图要用）。
+- **文字版**：`onboarding/text.rs`——删除 `TaskAgent` / `TextDeps::task_agents` / `tasks_question_applies`；`step_background` 先打印标题与一句话，再由 `tasks_overview` 打印「渠道 / Agent」两行（读 `channel_rows()` 与 `scan()`；Agent 一侧用 `AgentKind::parse` + `agent_launch::launch_supported` 滤掉 Antigravity，`mode != none` 算已接入；`overview_side` 拼「已配的；配置后可用：其余」，一边全没有写「暂无」），然后问「允许？」。登录项、保活、`ensure_daemon` 的顺序不变。
+- **后端**：删除只服务于向导的 `AgentStart::is_set_up` 与 `blockers`（含各自的测试），`agent_start.rs` 的文档注释不再提向导。IM 里 `/new` 被拒的回复（`inbound.rs`、`fork.rs` 两处）与 `task_launch.rs` 的注释改成「允许…」的措辞。
+- **i18n**：`setup.tasks.*` 重写（title / lead / channels / agents / flow / dimNote / later / enable；`reasons.*` 留给设置页 `startBlockers`），`setup.done.tasks*` 与 `switchBLocked` 改为「允许 / 暂不允许」，`settings.agentTasks.*`（开关名、说明、确认弹窗标题与按钮、保活锁定提示）改名；中英同步。
+- **测试**：vitest `SetupView.test.ts`（「the Agent-task screen」重写：只问不查、点亮 / 灰色与顺序、没渠道没 Agent 照样出现、按保存值而非窗口副本、允许 / 暂不允许 / 步骤条与完成页的往返；完成页「没有 Agent 也有这一行」）、`ChannelsTab.test.ts` / `IosChannelCard.test.ts` / `SettingsOverlays.test.ts` 的新措辞，`setup.testkit.ts` 去掉 `workspace` / `readiness`；Rust `onboarding/text/tests.rs`（出现条件、两行摘要的分组与顺序、没渠道没 Agent 照样问、中文）与 `agent_start.rs`。
+- **验证**：`./scripts/install.sh` 后用隔离环境（临时 HOME + `ASKHUMAN_HOME` 0700 + `ASKHUMAN_NO_KEYCHAIN=1`）打开真实向导窗口看确认页（有渠道 / Agent 点亮、一个都没有两种）、完成页与设置里渠道卡片的开关行（暗色，必要时浅色 / 英文），再用 pty 跑文字版（中英文）。

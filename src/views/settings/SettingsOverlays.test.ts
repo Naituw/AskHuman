@@ -49,7 +49,7 @@ describe("the Agent-task confirmation", () => {
   it("names the feature after the phone as well as IM", () => {
     provide();
     const wrapper = mountOverlays();
-    expect(wrapper.get("h2").text()).toBe('Enable "Create Agent tasks from phone or IM"?');
+    expect(wrapper.get("h2").text()).toBe('Allow creating Agent tasks from phone or IM?');
   });
 
   it("lists the resident daemon and the resources it uses, and nothing about an IM bot without one", () => {
@@ -85,6 +85,6 @@ describe("the Agent-task confirmation", () => {
   it("speaks Chinese when the interface is Chinese", () => {
     i18n.global.locale.value = "zh";
     provide();
-    expect(mountOverlays().get("h2").text()).toBe("开启「从手机 / IM 创建 Agent 任务」？");
+    expect(mountOverlays().get("h2").text()).toBe("允许从手机 / IM 创建 Agent 任务？");
   });
 });

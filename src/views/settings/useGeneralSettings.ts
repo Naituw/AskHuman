@@ -74,7 +74,7 @@ export function useGeneralSettings(core: SettingsCore) {
 
   // 守护进程生命周期二态（activity/keepalive）。仅持久化；daemon 与宿主监听 config 变化后自行
   // 换挡（保活→立即拉起 + 装开机自启登录项 + 不空闲退出；见 src-tauri daemon / app::gui_host）。
-  // 「从手机 / IM 创建 Agent 任务」开启期间锁定为保活（控件已禁用，这里再兜底一次）。
+  // 「允许从手机 / IM 创建 Agent 任务」开启期间锁定为保活（控件已禁用，这里再兜底一次）。
   async function changeDaemonLifecycle(mode: DaemonLifecycleMode) {
     if (!config.value || config.value.agentTasks.enabled) return;
     config.value.general.daemonLifecycle = mode;

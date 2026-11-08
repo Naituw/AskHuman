@@ -354,7 +354,7 @@ daemon 先把 lifecycle event 应用到 AgentRegistry，再匹配 pending：
 
 workspace 动态状态放 `agent-workspaces.json`，launch record 放短时私有 state 目录。
 
-设置「高级 → 从手机 / IM 创建 Agent 任务」（2026-07-25 前在「实验」Tab；2026-11-08 前叫「从 IM 创建 Agent 任务」，改名是因为 iPhone App 的「新任务」走的是同一个开关）包含：
+设置「高级 → 允许从手机 / IM 创建 Agent 任务」（2026-07-25 前在「实验」Tab；2026-11-08 前叫「从 IM 创建 Agent 任务」，改名是因为 iPhone App 的「新任务」走的是同一个开关；同日又加了「允许」，向导里也只问「允不允许」）包含：
 
 - enabled；说明开启会强制 daemon keepalive / 登录自启；
 - 权限选择方式三态；YOLO 持久选项有醒目风险提示；

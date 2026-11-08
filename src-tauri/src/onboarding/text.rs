@@ -8,11 +8,12 @@
 //! The flow never blocks on the optional verifications (those exist only in the GUI) and an abort
 //! (end of input, Ctrl-C) keeps whatever was already applied.
 
+use crate::agents::AgentKind;
 use crate::cli::{cfgio, channel_cmd};
 use crate::config::{AppConfig, CollaborationStyle, DaemonLifecycleMode, MenuBarIconMode};
 use crate::i18n::Lang;
 use crate::integrations::agent_mode::Mode;
-use crate::integrations::{agent_launch, agent_start, login_item};
+use crate::integrations::{agent_launch, login_item};
 use crate::onboarding::apply::{self, ApplyResult, Selection};
 use crate::onboarding::channels::{self, ChannelStatus};
 use crate::onboarding::detect::{self, AgentScanRow};
@@ -30,16 +31,6 @@ pub trait TextIo {
     /// Show `prompt` and read one line. End of input is an error: a flow that cannot be answered
     /// must stop, never loop.
     fn ask(&mut self, prompt: &str) -> Result<String, String>;
-}
-
-/// One Agent as step 3 sees it when it decides whether to ask about Agent tasks.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct TaskAgent {
-    pub label: String,
-    /// Whether a task can be started on it now: the verdict the phone and IM act on.
-    pub startable: bool,
-    /// What keeps it from starting, in the wizard's language; empty when it can.
-    pub reasons: Vec<String>,
 }
 
 /// Everything the flow does to the machine.
@@ -63,9 +54,6 @@ pub trait TextDeps {
     fn login_item(&mut self, install: bool) -> Result<(), String>;
     /// Whether this platform can start Agent tasks from the phone or IM (a supported terminal).
     fn agent_tasks_supported(&mut self) -> bool;
-    /// Which Agents can start a task on this computer now (the ones that can launch at all), with
-    /// what keeps each of the others from it. May take a moment: it looks the Agents up.
-    fn task_agents(&mut self) -> Vec<TaskAgent>;
     /// Install the daemon's own login item. Settings does this before it saves the Agent-task
     /// switch, and a failure there leaves the feature off.
     fn install_daemon_login_item(&mut self) -> Result<(), String>;
@@ -880,55 +868,92 @@ impl Flow<'_> {
 
     // ——— step 3: background and startup ———
 
-    /// Whether step 3 asks about Agent tasks. Always when they are already on (they can be switched
-    /// off); otherwise only when an Agent can start a task now, which it checks here and says: a
-    /// switch that could not work yet would only be taken back. When no Agent can, the reasons
-    /// (of the Agents the person has set up) are shown instead of the question, and when none is
-    /// set up there is nothing to explain, only that. A remote channel is not a condition: it is
-    /// set up on its own and may come later, and the switch has to be offered while the person
-    /// is here.
-    fn tasks_question_applies(&mut self, already_on: bool) -> bool {
-        if already_on {
-            return true;
+    /// The two lines under the Agent-task question: the remote channels and the Agents it covers,
+    /// those already set up first and the rest marked as usable once they are. Nothing is checked
+    /// here: allowing is a permission, and whatever is not set up yet works as soon as it is.
+    fn tasks_overview(&mut self, config: &AppConfig) {
+        // The phone app first (it is the one with a "New task" button), then the IM channels.
+        let mut ready_channels = Vec::new();
+        let mut later_channels = Vec::new();
+        let ios = self.t("iOS app", "iOS App");
+        if config.channels.ios.enabled {
+            ready_channels.push(ios);
+        } else {
+            later_channels.push(ios);
         }
-        self.say(
-            "Checking which Agents can start a task from this computer…",
-            "正在检查这台电脑上哪些 Agent 能启动任务……",
-        );
-        let agents = self.deps.task_agents();
-        if agents.is_empty() {
-            self.say(
-                "  No Agent is connected yet, so a task cannot be started from the phone or IM.",
-                "  还没有接入任何 Agent，暂时没法从手机 / IM 新建任务。",
-            );
-            return false;
-        }
-        let names: Vec<&str> = agents
-            .iter()
-            .filter(|agent| agent.startable)
-            .map(|agent| agent.label.as_str())
-            .collect();
-        if !names.is_empty() {
-            let names = names.join(&self.t(", ", "、"));
-            self.say(
-                &format!("  Can start a task from the phone or IM: {names}."),
-                &format!("  能从手机 / IM 启动任务的 Agent：{names}。"),
-            );
-            return true;
-        }
-        self.say(
-            "  Starting a task from the phone or IM needs an Agent that can start one on this computer, and none can yet:",
-            "  从手机 / IM 新建任务，这台电脑上得先有一个能启动的 Agent，现在还没有：",
-        );
-        for agent in &agents {
-            for reason in &agent.reasons {
-                self.say(
-                    &format!("    • {}: {reason}", agent.label),
-                    &format!("    • {}：{reason}", agent.label),
-                );
+        let rows = self.deps.channel_rows();
+        for id in channels::ORDER {
+            let title = channels::title(id, self.lang).to_string();
+            if rows.iter().any(|row| row.id == id && row.enabled) {
+                ready_channels.push(title);
+            } else {
+                later_channels.push(title);
             }
         }
-        false
+        let mut ready_agents = Vec::new();
+        let mut later_agents = Vec::new();
+        for row in self.deps.scan() {
+            // An Agent with no way to start a task (Antigravity) is not part of the picture.
+            if !AgentKind::parse(&row.id).is_some_and(agent_launch::launch_supported) {
+                continue;
+            }
+            if Mode::parse(&row.mode).is_some_and(|mode| mode != Mode::None) {
+                ready_agents.push(row.title);
+            } else {
+                later_agents.push(row.title);
+            }
+        }
+        let channels_line = self.overview_side(
+            &ready_channels,
+            &later_channels,
+            "usable once set up",
+            "配置后可用",
+        );
+        let agents_line = self.overview_side(
+            &ready_agents,
+            &later_agents,
+            "usable once connected",
+            "接入后可用",
+        );
+        let channels_label = self.t("Channels:", "渠道：");
+        let agents_label = self.t("Agents:", "Agent：");
+        let width = cells(&channels_label).max(cells(&agents_label)) + 1;
+        self.io.say(&format!(
+            "  {}{channels_line}",
+            pad_cells(&channels_label, width)
+        ));
+        self.io.say(&format!(
+            "  {}{agents_line}",
+            pad_cells(&agents_label, width)
+        ));
+    }
+
+    /// One side of the overview: "Feishu, Slack; usable once set up: Telegram". The ones in place
+    /// come first; with none, it says so.
+    fn overview_side(
+        &self,
+        ready: &[String],
+        later: &[String],
+        later_en: &str,
+        later_zh: &str,
+    ) -> String {
+        let (comma, semicolon, colon, nothing, later_label) = match self.lang {
+            Lang::En => (", ", "; ", ": ", "none yet", later_en),
+            Lang::Zh => ("、", "；", "：", "暂无", later_zh),
+        };
+        let ready_text = if ready.is_empty() {
+            nothing.to_string()
+        } else {
+            ready.join(comma)
+        };
+        if later.is_empty() {
+            ready_text
+        } else {
+            format!(
+                "{ready_text}{semicolon}{later_label}{colon}{}",
+                later.join(comma)
+            )
+        }
     }
 
     fn step_background(&mut self) -> Result<(), String> {
@@ -971,41 +996,48 @@ impl Flow<'_> {
             }
         }
 
-        // Creating Agent tasks from the phone or IM comes before "keep running": turning it on pins
-        // the daemon resident, so there is nothing left to ask about that.
+        // Allowing Agent tasks to be created from the phone or IM comes before "keep running":
+        // allowing it pins the daemon resident, so there is nothing left to ask about that.
         let mut tasks_started = false;
         if self.deps.agent_tasks_supported() {
             let current = config.agent_tasks.enabled;
-            if self.tasks_question_applies(current) {
-                let wanted = self.yes_no(
-                    "Create Agent tasks from your phone or IM (\"New task\" in the iPhone app, /new in IM, !new in Slack)? It keeps AskHuman running in the background and adds a login item.",
-                    "从手机 / IM 创建 Agent 任务（iPhone App 里点「新任务」，IM 里发 /new，Slack 里发 !new）？开启后 AskHuman 会保持后台常驻，并添加开机自启项。",
-                    current,
-                )?;
-                if wanted && !current {
-                    // Settings installs the daemon's login item before it saves the switch; so does
-                    // this flow, and a failure leaves the feature off.
-                    match self.deps.install_daemon_login_item() {
-                        Ok(()) => {
-                            config.agent_tasks.enabled = true;
-                            changed = true;
-                            tasks_started = true;
-                            if !any_remote {
-                                self.say(
-                                    "  No remote channel is set up yet: add an IM channel or the iOS app in Settings, and it works from there.",
-                                    "  还没有配置远程渠道：之后到「设置」里添加 IM 渠道或 iOS App，就能用了。",
-                                );
-                            }
+            // A permission, not a check: the question says what it covers and asks. A remote
+            // channel is not a condition either: it is set up on its own and may come later, and
+            // this is the one moment the person is asked.
+            self.blank();
+            self.say(
+                "Allow Agent tasks to be created from your phone or IM?",
+                "要允许从手机 / IM 远程创建 Agent 任务吗？",
+            );
+            self.say(
+                "If you allow it, the channels you chose can create tasks for these Agents remotely.",
+                "允许后，你选的这些渠道就能远程创建这些 Agent 的任务。",
+            );
+            self.tasks_overview(&config);
+            let wanted = self.yes_no("Allow it?", "允许？", current)?;
+            if wanted && !current {
+                // Settings installs the daemon's login item before it saves the switch; so does
+                // this flow, and a failure leaves the feature off.
+                match self.deps.install_daemon_login_item() {
+                    Ok(()) => {
+                        config.agent_tasks.enabled = true;
+                        changed = true;
+                        tasks_started = true;
+                        if !any_remote {
+                            self.say(
+                                "  No remote channel is set up yet: add an IM channel or the iOS app in Settings, and it works from there.",
+                                "  还没有配置远程渠道：之后到「设置」里添加 IM 渠道或 iOS App，就能用了。",
+                            );
                         }
-                        Err(error) => self.say(
-                            &format!("  ✗ Could not set up the background login item: {error}. Agent tasks stay off."),
-                            &format!("  ✗ 无法设置后台登录项：{error}。Agent 任务保持关闭。"),
-                        ),
                     }
-                } else if !wanted && current {
-                    config.agent_tasks.enabled = false;
-                    changed = true;
+                    Err(error) => self.say(
+                        &format!("  ✗ Could not set up the background login item: {error}. Agent tasks stay off."),
+                        &format!("  ✗ 无法设置后台登录项：{error}。Agent 任务保持关闭。"),
+                    ),
                 }
+            } else if !wanted && current {
+                config.agent_tasks.enabled = false;
+                changed = true;
             }
         }
 
@@ -1111,8 +1143,8 @@ impl Flow<'_> {
         }
         if config.agent_tasks.enabled {
             background.push(self.t(
-                "Agent tasks from phone or IM",
-                "可从手机 / IM 创建 Agent 任务",
+                "Agent tasks allowed from phone or IM",
+                "已允许从手机 / IM 创建 Agent 任务",
             ));
         }
         let none = self.t("none", "无");
@@ -1150,12 +1182,12 @@ impl Flow<'_> {
             "Next time, just use your Agent as usual. Run `AskHuman setup` any time to change this.",
             "下次直接在 Agent 里使用即可；随时运行 `AskHuman setup` 重新调整。",
         );
-        // Left off (declined, or no Agent could start one yet): say where to turn it on later. The
-        // switch sits on each remote channel's card, so it is found where a channel is added.
+        // Left off: say where to allow it later. The switch sits on each remote channel's card, so it
+        // is found where a channel is added.
         if self.deps.agent_tasks_supported() && !config.agent_tasks.enabled {
             self.say(
-                "To start Agent tasks from your phone or IM later, turn on \"Create Agent tasks from phone or IM\" in Settings, on a remote channel's card or under Advanced.",
-                "想以后在手机 / IM 里新建 Agent 任务：到「设置」里开启「从手机 / IM 创建 Agent 任务」，在任一远程渠道的卡片里，或「高级」里都有。",
+                "To allow creating Agent tasks from your phone or IM later, turn on \"Allow creating Agent tasks from phone or IM\" in Settings, on a remote channel's card or under Advanced.",
+                "想以后允许从手机 / IM 创建 Agent 任务：到「设置」里打开「允许从手机 / IM 创建 Agent 任务」，在任一远程渠道的卡片里，或「高级」里都有。",
             );
         }
     }
@@ -1263,25 +1295,6 @@ impl TextDeps for RealDeps {
     fn agent_tasks_supported(&mut self) -> bool {
         // The same platforms as the settings page (a terminal the daemon can drive).
         cfg!(any(target_os = "macos", target_os = "windows"))
-    }
-
-    fn task_agents(&mut self) -> Vec<TaskAgent> {
-        // The verdict the phone, IM and Settings act on, so this flow cannot call an Agent
-        // unstartable that the phone starts. Read afresh: step 1 may just have connected one.
-        // Only the Agents the person has set up are listed, as in the wizard window.
-        agent_start::judge(agent_launch::all_readiness_fresh())
-            .into_iter()
-            .filter(agent_start::AgentStart::is_set_up)
-            .map(|agent| TaskAgent {
-                label: agent.readiness.label.clone(),
-                startable: agent.startable,
-                reasons: if agent.startable {
-                    Vec::new()
-                } else {
-                    agent_start::blockers(&agent.readiness, self.lang)
-                },
-            })
-            .collect()
     }
 
     fn install_daemon_login_item(&mut self) -> Result<(), String> {

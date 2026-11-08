@@ -884,99 +884,88 @@
   font-style: normal;
   color: var(--text-secondary);
 }
-/* One entry of a value that lists several, each on a line of its own. */
-.check-line {
-  flex: 1 0 100%;
-}
 .check-adjust {
   margin: var(--space-2) 0 0;
   text-align: right;
 }
-/* A row that points at something still missing: an orange "!" instead of the tick. */
-.check-item.warn .check-icon {
-  background: color-mix(in srgb, var(--accent-orange) 22%, transparent);
-}
-.check-item.warn .check-icon::after {
-  content: "!";
-  top: 0;
-  left: 0;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  box-sizing: border-box;
-  width: 20px;
-  height: 20px;
-  border: 0;
-  transform: none;
-  font-size: 12px;
-  font-weight: 700;
-  color: var(--accent-orange);
-}
-.theme-light .check-item.warn .check-icon::after {
-  color: color-mix(in srgb, var(--accent-orange) 70%, #000);
-}
-/* How to fix what the rows above report. */
-.check-hint {
-  margin: var(--space-2) 0 0;
-  font-size: 12px;
-  line-height: 1.5;
-  color: var(--text-secondary);
-}
 
 /* ---------- Agent-task offer (docs/specs/onboarding.md D25) ---------- */
-.setup-header-glyph.warn {
-  background: color-mix(in srgb, var(--accent-orange) 18%, transparent);
-  color: var(--accent-orange);
+/* Who can create tasks for whom: the channels on the left, an arrow, the Agents on the right, one
+   badge to a row. What is not set up yet is greyed out, not hidden. */
+.tasks-flow {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 88px minmax(0, 1fr);
+  align-items: center;
+  column-gap: var(--space-3);
 }
-.theme-light .setup-header-glyph.warn {
-  color: color-mix(in srgb, var(--accent-orange) 70%, #000);
+.tasks-col {
+  min-width: 0;
 }
-/* What it does, where it runs, what it costs: three short rows, the cost last and quieter. */
-.setup-benefits {
+.tasks-col-title {
+  margin: 0 0 var(--space-2);
+  font-size: 11.5px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  color: var(--text-tertiary);
+  text-align: center;
+}
+.tasks-list {
   display: flex;
   flex-direction: column;
+  gap: 8px;
   margin: 0;
   padding: 0;
   list-style: none;
 }
-.setup-benefit {
+.tasks-item {
   display: flex;
-  align-items: flex-start;
-  gap: 10px;
-  padding: 9px 0;
-}
-.setup-benefit + .setup-benefit {
-  border-top: var(--hairline) solid var(--border);
-}
-.setup-benefit-dot {
-  flex: 0 0 20px;
-  display: inline-flex;
   align-items: center;
-  justify-content: center;
-  width: 20px;
-  height: 20px;
-  margin-top: 1px;
-  border-radius: 50%;
-  background: color-mix(in srgb, var(--accent) 18%, transparent);
-  color: var(--accent);
-  font-size: 12px;
-  font-weight: 700;
-}
-.setup-benefit.cost .setup-benefit-dot {
+  gap: 10px;
+  min-width: 0;
+  padding: 5px 12px 5px 6px;
+  border-radius: 13px;
   background: var(--bg-elevated);
-  color: var(--text-secondary);
+  transition: opacity 0.2s ease;
 }
-.setup-benefit-title {
-  margin: 0;
+.tasks-item-label {
+  min-width: 0;
+  overflow: hidden;
   font-size: 13px;
-  line-height: 1.55;
+  font-weight: 500;
   color: var(--text-primary);
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
-.setup-benefit-note {
-  margin: 0;
-  font-size: 12px;
-  line-height: 1.5;
-  color: var(--text-secondary);
+.tasks-item.off {
+  opacity: 0.38;
+}
+.tasks-item.off .brand-badge {
+  filter: grayscale(1);
+}
+.tasks-arrow {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  color: var(--accent);
+}
+.tasks-arrow-label {
+  font-size: 11px;
+  font-weight: 600;
+  white-space: nowrap;
+}
+.tasks-arrow svg {
+  width: 100%;
+  height: 12px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.6;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+/* Two classes: `.setup-fine` below resets the margin and would win at one. */
+.setup-fine.tasks-note {
+  margin-top: var(--space-4);
 }
 /* A line of fine print under a card. */
 .setup-fine {

@@ -374,7 +374,7 @@ describe("IosChannelCard", () => {
       const wrapper = mountCard();
       await flushPromises();
       const row = wrapper.get('[data-testid="agent-tasks-row"]');
-      expect(row.text()).toContain("Create Agent tasks from phone or IM");
+      expect(row.text()).toContain("Allow creating Agent tasks from phone or IM");
       expect(row.text()).toContain("One switch for all channels");
       const html = wrapper.html();
       expect(html.indexOf('data-testid="agent-tasks-row"')).toBeGreaterThan(html.indexOf("ios-status"));
@@ -399,7 +399,7 @@ describe("IosChannelCard", () => {
       const wrapper = mountCard();
       await flushPromises();
       expect(wrapper.get<HTMLInputElement>('[data-testid="agent-tasks-switch"]').element.checked).toBe(true);
-      expect(wrapper.get('[data-testid="agent-tasks-row"]').text()).toContain("On, for all channels.");
+      expect(wrapper.get('[data-testid="agent-tasks-row"]').text()).toContain("Allowed, for all channels.");
       await wrapper.get('[data-testid="agent-tasks-manage"]').trigger("click");
       expect(activeTab.value).toBe("advanced");
       wrapper.unmount();
@@ -457,7 +457,7 @@ describe("IosChannelCard", () => {
       i18n.global.locale.value = "zh";
       const wrapper = mountCard();
       await flushPromises();
-      expect(wrapper.get('[data-testid="agent-tasks-row"]').text()).toContain("从手机 / IM 创建 Agent 任务");
+      expect(wrapper.get('[data-testid="agent-tasks-row"]').text()).toContain("允许从手机 / IM 创建 Agent 任务");
       expect(wrapper.get('[data-testid="agent-tasks-row"]').text()).toContain("所有渠道共用这一个开关");
       wrapper.unmount();
     });

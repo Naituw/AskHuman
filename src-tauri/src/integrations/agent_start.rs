@@ -1,6 +1,6 @@
 //! Whether a task can be started on an Agent right now: the one rule behind the phone's "New task"
-//! page, IM `/new`, the Settings readiness matrix and the setup wizard (window and text), so that
-//! no surface can call an Agent unstartable while another one starts it.
+//! page, IM `/new`, the Settings readiness matrix and `AskHuman doctor`, so that no surface can
+//! call an Agent unstartable while another one starts it.
 //!
 //! An Agent is judged by the way it would be started. Codex and Cursor have two routes (their
 //! desktop app and the CLI in a terminal) and whichever their launch status resolves to counts: a
@@ -14,7 +14,6 @@ use super::agent_launch::AgentReadiness;
 use crate::agents::AgentKind;
 use crate::codex_desktop::{self, LaunchTarget};
 use crate::cursor_desktop;
-use crate::i18n::Lang;
 
 /// The route a task on `item` would run on, or `None` when none can be started now.
 pub fn route(
@@ -54,50 +53,7 @@ pub fn startable_now(item: &AgentReadiness) -> bool {
     }
 }
 
-/// Why a task cannot be started on `item`, in plain words; empty when one can be (or the family
-/// cannot launch at all, which is nothing to fix). Codex and Cursor have two routes, so each is
-/// explained by both of them (their launch status); every other family has the CLI alone and is
-/// explained by the conditions it misses.
-pub fn blockers(item: &AgentReadiness, lang: Lang) -> Vec<String> {
-    if !item.launch_supported || startable_now(item) {
-        return Vec::new();
-    }
-    match item.kind {
-        AgentKind::Codex => vec![codex_desktop::launch_status(false).description(lang)],
-        AgentKind::Cursor => vec![cursor_desktop::launch_status(false).description(lang)],
-        _ => {
-            let (label, command) = (&item.label, &item.command);
-            let pick = |en: String, zh: String| match lang {
-                Lang::En => en,
-                Lang::Zh => zh,
-            };
-            let mut reasons = Vec::new();
-            if !item.binary_ready {
-                reasons.push(pick(
-                    format!(
-                        "`{command}` was not found; install the {label} command-line tool first"
-                    ),
-                    format!("没找到 {command} 命令，需要先安装 {label} 的命令行工具"),
-                ));
-            }
-            if !item.lifecycle_ready {
-                reasons.push(pick(
-                    "AskHuman's status tracking is not installed yet, or needs an update (Settings → Agents)".into(),
-                    "AskHuman 的状态追踪还没装好，或需要更新（在「设置 → Agent」里处理）".into(),
-                ));
-            }
-            if !item.integration_ready {
-                reasons.push(pick(
-                    "the AskHuman integration is not enabled".into(),
-                    "AskHuman 集成未启用".into(),
-                ));
-            }
-            reasons
-        }
-    }
-}
-
-/// One Agent's readiness together with the verdict, as Settings and the wizard read it. The
+/// One Agent's readiness together with the verdict, as Settings and `doctor` read it. The
 /// readiness fields stay where they were; the rest is added beside them.
 #[derive(Clone, Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -111,16 +67,6 @@ pub struct AgentStart {
     /// Codex and Cursor: the launch status behind the verdict (both routes and why each is
     /// unavailable), in the shape of `codex_launch_status` / `cursor_launch_status`.
     pub launch: Option<serde_json::Value>,
-}
-
-impl AgentStart {
-    /// Whether the person has set this Agent up for a task to start on: AskHuman is integrated
-    /// with it and its family can launch at all. The wizard explains only these. An Agent that is
-    /// not integrated is not theirs to fix there (it was never asked for), and one with no launch
-    /// path (Antigravity) will never start.
-    pub fn is_set_up(&self) -> bool {
-        self.readiness.launch_supported && self.readiness.integration_mode != "none"
-    }
 }
 
 /// Judges `items`. The launch statuses are read only when Codex or Cursor is among them, and from
@@ -251,52 +197,6 @@ mod tests {
             route(&item(AgentKind::Antigravity, true), &codex, &cursor),
             None
         );
-    }
-
-    #[test]
-    fn the_other_families_are_explained_by_the_conditions_they_miss() {
-        let mut claude = item(AgentKind::Claude, false);
-        claude.command = "claude".into();
-        let english = blockers(&claude, Lang::En);
-        assert_eq!(english.len(), 3, "{english:?}");
-        assert!(english[0].contains("`claude` was not found"), "{english:?}");
-        assert!(english[0].contains("Claude Code"), "{english:?}");
-        let chinese = blockers(&claude, Lang::Zh);
-        assert!(chinese[0].contains("没找到 claude 命令"), "{chinese:?}");
-
-        // Only what is missing is named.
-        claude.binary_ready = true;
-        claude.lifecycle_ready = true;
-        let only_integration = blockers(&claude, Lang::En);
-        assert_eq!(
-            only_integration,
-            vec!["the AskHuman integration is not enabled"]
-        );
-
-        // An Agent that can start a task has nothing to explain, and neither has one that cannot
-        // launch at all: there is nothing the person can fix.
-        assert!(blockers(&item(AgentKind::Claude, true), Lang::En).is_empty());
-        assert!(blockers(&item(AgentKind::Antigravity, false), Lang::En).is_empty());
-    }
-
-    #[test]
-    fn only_an_integrated_agent_that_can_launch_counts_as_set_up() {
-        let verdict = |item: AgentReadiness| AgentStart {
-            startable: false,
-            start_route: None,
-            launch: None,
-            readiness: item,
-        };
-        assert!(verdict(item(AgentKind::Claude, false)).is_set_up());
-        assert!(verdict(item(AgentKind::Cursor, false)).is_set_up());
-
-        // Not integrated: the person never asked for it, so a wizard has nothing to say about it.
-        let mut pi = item(AgentKind::Pi, false);
-        pi.integration_mode = "none".into();
-        assert!(!verdict(pi).is_set_up());
-
-        // Integrated, but there is no way to launch it.
-        assert!(!verdict(item(AgentKind::Antigravity, true)).is_set_up());
     }
 
     #[test]

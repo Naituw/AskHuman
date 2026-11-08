@@ -1,5 +1,5 @@
 <script setup lang="ts">
-// 设置页根级弹层：「从手机 / IM 创建 Agent 任务」开启确认 + 工作目录管理面板。
+// 设置页根级弹层：「允许从手机 / IM 创建 Agent 任务」的确认 + 工作目录管理面板。
 // 与实验 tab 逻辑同源（状态在 useAgentTasks），但渲染在 .settings 根层以覆盖整页。
 import { computed } from "vue";
 import { useI18n } from "vue-i18n";
@@ -38,7 +38,7 @@ const imBotInUse = computed(() => {
 </script>
 
 <template>
-  <!-- 开启「从手机 / IM 创建 Agent 任务」前的副作用确认弹层 -->
+  <!-- 允许「从手机 / IM 创建 Agent 任务」前的副作用确认弹层 -->
   <div v-if="agentTasksConfirmOpen" class="workspace-panel-backdrop">
     <section
       class="confirm-dialog"

@@ -1,7 +1,7 @@
 <script setup lang="ts">
-// Wizard page 3: what was set up (including whether Agent tasks can start from the phone or IM —
-// decided on the offer screen, only reported here), the background choices (launch at login, keep
-// running), and how to use it from here on (docs/specs/onboarding.md D8, D12, D19, D25).
+// Wizard page 3: what was set up (including whether Agent tasks may be created from the phone or
+// IM — decided on the offer screen, only reported here), the background choices (launch at login,
+// keep running), and how to use it from here on (docs/specs/onboarding.md D8, D12, D19, D25).
 import { computed, onMounted } from "vue";
 import { useI18n } from "vue-i18n";
 import { openSettings } from "../../lib/ipc";
@@ -32,7 +32,6 @@ const {
   backgroundBLocked,
   tasksWanted,
   showTasksRow,
-  showTasksTip,
   goto,
   adoptSavedConfig,
   finishing,
@@ -163,7 +162,7 @@ onMounted(async () => {
             <span class="check-icon" aria-hidden="true"></span>
             <span class="check-label">{{ t("setup.done.tasks") }}</span>
             <span class="check-value">
-              <!-- With no channel yet the feature is on but has nothing to start from: say so. -->
+              <!-- With no channel yet it is allowed but has nothing to start from: say so. -->
               <span v-if="tasksWanted" data-testid="summary-tasks-state">{{
                 hasRemoteChannel ? t("setup.done.tasksOn") : t("setup.done.tasksOnNoChannel")
               }}</span>
@@ -256,18 +255,6 @@ onMounted(async () => {
       <section class="setup-tip" data-testid="done-next">
         <p class="setup-tip-title">{{ t("setup.done.nextTitle") }}</p>
         <p class="setup-tip-body">{{ t("setup.done.nextBody") }}</p>
-        <!-- Where the Agent-task offer is not available yet, say where to turn it on later. -->
-        <p v-if="showTasksTip" class="setup-tip-body" data-testid="done-tasks-tip">
-          {{ t("setup.done.tasksTip") }}
-          <a
-            class="link"
-            href="#"
-            data-testid="done-tasks-tip-link"
-            @click.prevent="openSettings('advanced')"
-          >
-            {{ t("setup.done.tasksTipLink") }} ↗
-          </a>
-        </p>
       </section>
     </div>
   </div>

@@ -184,7 +184,7 @@ describe("ChannelsTab", () => {
       expect(
         (second.get('[data-testid="agent-tasks-switch"]').element as HTMLInputElement).checked,
       ).toBe(true);
-      expect(second.text()).toContain("On, for all channels.");
+      expect(second.text()).toContain("Allowed, for all channels.");
     });
 
     it("is not offered where the platform cannot start Agent tasks", async () => {
@@ -199,7 +199,7 @@ describe("ChannelsTab", () => {
       const { wrapper, config } = mountTab({ agentTasks: true });
       config.value!.channels.feishu.enabled = true;
       await nextTick();
-      expect(rows(wrapper)[0].text()).toContain("从手机 / IM 创建 Agent 任务");
+      expect(rows(wrapper)[0].text()).toContain("允许从手机 / IM 创建 Agent 任务");
     });
   });
 });

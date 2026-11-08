@@ -14,15 +14,6 @@ export function isIntegrated(row: SetupAgentRow): boolean {
   return row.mode !== "none";
 }
 
-/**
- * An integrated Agent a task could be started on. Antigravity has no New Task path at all (the
- * backend's `launch_supported`), so integrating only it never makes the Agent-task offer worth
- * showing.
- */
-export function canStartTasks(row: SetupAgentRow): boolean {
-  return isIntegrated(row) && row.id !== "antigravity";
-}
-
 /** A row that cannot be changed: its state is unreadable, or the Agent is too old to integrate. */
 export function isBlocked(row: SetupAgentRow): boolean {
   return !!row.statusError || row.delivery === "unsupportedVersion";
