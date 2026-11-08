@@ -802,44 +802,68 @@ private struct SendBar: View {
     ///
     /// On the floating bar `CountAndButtons` lays them out: side by side while there is room for both, at the height of the
     /// tallest of them with each taking all of it (so that the chip and the capsules beside it are one height), and the
-    /// count above the buttons when there is not. The accessibility text sizes always stack them. The classic bar is a plain
-    /// row, whose buttons keep their own height whatever the count does.
+    /// count above the buttons when there is not. The classic bar does the same with what a plain stack can do: a row while
+    /// the count (and the hint under it) and the buttons fit side by side at the width each asks for, and the count above
+    /// the buttons when they do not, "Send" taking the rest of the width. (Left to a stack's own division of a width the
+    /// count was squeezed to "An-/swered 0/3" on three lines, then to "A", and with the notes' button in the row to nothing.)
+    /// The accessibility text sizes always stack them. On the classic bar the buttons keep their own height whatever the
+    /// count does.
     @ViewBuilder
     private var controls: some View {
         if BottomBar.floats, !stacked {
             CountAndButtons() {
                 adaptiveCountChip
-                buttons
+                buttons()
             }
+        } else if stacked {
+            stackedControls
         } else {
-            let layout = stacked ? AnyLayout(VStackLayout(alignment: .leading, spacing: 10)) : AnyLayout(HStackLayout(spacing: 12))
-            layout {
-                statusBlock
-                if !stacked { Spacer(minLength: 8) }
-                buttons
-                    // "Send and go away" is the longest thing the row ever says. Left to the stack's even split, the count gets
-                    // room it does not need and the words are cut ("Send and go…") on the classic bar; with the priority the
-                    // buttons are sized first and only the count gives way.
-                    .layoutPriority(composer.directive == nil ? 0 : 1)
+            ViewThatFits(in: .horizontal) {
+                classicRow
+                stackedControls
             }
-            .fixedSize(horizontal: false, vertical: true)
         }
     }
 
+    /// The classic bar's row: the count on the left, the buttons on the right, at least 12 pt between them (the least
+    /// `CountAndButtons` leaves on the floating bar).
+    private var classicRow: some View {
+        HStack(spacing: 0) {
+            statusBlock
+            Spacer(minLength: 12)
+            buttons()
+                // "Send and go away" is the longest thing the row ever says. It is only chosen when everything fits at the width
+                // each part asks for, so nothing is squeezed; the priority keeps it that way for a width that is off by a point.
+                .layoutPriority(composer.directive == nil ? 0 : 1)
+        }
+        .fixedSize(horizontal: false, vertical: true)
+    }
+
+    /// The count above the buttons: what the accessibility text sizes always show, and what the classic bar shows when
+    /// the row does not fit. The buttons have the whole width, and "Send" takes what the others leave of it.
+    private var stackedControls: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            statusBlock
+            buttons(fillsRow: true)
+        }
+        .fixedSize(horizontal: false, vertical: true)
+    }
+
     /// The row of buttons: the quick-reply menu, "Annotations", "Next", "Send". On the floating bar `ButtonRow` makes all
-    /// but "Send" circles as tall as "Send" (and so as wide), whatever the text size makes that.
+    /// but "Send" circles as tall as "Send" (and so as wide), whatever the text size makes that. On the classic bar
+    /// `fillsRow` lets "Send" take the width the others leave (above the buttons the count has a row of its own).
     @ViewBuilder
-    private var buttons: some View {
+    private func buttons(fillsRow: Bool = false) -> some View {
         if BottomBar.floats {
-            ButtonRow { buttonItems }
+            ButtonRow { buttonItems(fillsRow: fillsRow) }
         } else {
-            HStack(spacing: 12) { buttonItems }
+            HStack(spacing: 12) { buttonItems(fillsRow: fillsRow) }
         }
     }
 
     /// The buttons themselves, the main one last (`ButtonRow` relies on that).
     @ViewBuilder
-    private var buttonItems: some View {
+    private func buttonItems(fillsRow: Bool) -> some View {
         // Sending waits until the last question was on screen; until then the button leads
         // there. After that "Send" takes the main place, and "Next" stays beside it while there
         // are questions below the screen, as the popup's "Next" does until it reaches the last.
@@ -855,7 +879,7 @@ private struct SendBar: View {
         if composer.hasReachedEnd, moreBelow {
             nextIconButton.transition(.opacity.combined(with: .scale(scale: 0.92)))
         }
-        primaryButton
+        primaryButton(fillsRow: fillsRow)
     }
 
     /// Set on what sits in the row beside the buttons, to be as tall as the row.
@@ -940,7 +964,7 @@ private struct SendBar: View {
     /// "Next" until the last question was reached, then "Send" in the same place. It is one button, so
     /// that on the glass bar the capsule stays and only the words change, rather than one capsule
     /// going and another coming.
-    private var primaryButton: some View {
+    private func primaryButton(fillsRow: Bool) -> some View {
         let reached = composer.hasReachedEnd
         let label: LocalizedStringKey = reached ? (busy ? "Sending…" : sendTitle) : "Next question"
         return Button(action: reached ? onSend : onNext) {
@@ -962,7 +986,7 @@ private struct SendBar: View {
                 }
             }
             // On the floating bar `ButtonRow` gives it what the circles leave of the row, as tall as the row.
-            .frame(minWidth: 84, maxWidth: stacked || BottomBar.floats ? .infinity : nil, maxHeight: BottomBar.floats ? .infinity : nil)
+            .frame(minWidth: 84, maxWidth: stacked || fillsRow || BottomBar.floats ? .infinity : nil, maxHeight: BottomBar.floats ? .infinity : nil)
         }
         .barPrimaryButton()
         .disabled(reached ? !enabled : (ended || sendingState))
