@@ -359,18 +359,29 @@ describe("IosChannelCard", () => {
     wrapper.unmount();
   });
 
-  describe("new Agent tasks from the app", () => {
+  describe("the app's New task needs the Agent-task switch", () => {
     beforeEach(() => {
       iosOp.mockResolvedValue({ kind: "state", state: gateway() });
     });
 
-    it("says the app's New task is off here, and offers to turn it on", async () => {
+    it("says up top that New task cannot work yet, and offers to turn it on", async () => {
       const wrapper = mountCard();
       await flushPromises();
-      expect(wrapper.get('[data-testid="ios-tasks-state"]').text()).toBe("Off");
-      expect(wrapper.get('[data-testid="ios-tasks-state"]').classes()).not.toContain("ok");
-      expect(wrapper.get('[data-testid="ios-tasks-desc"]').text()).toContain("turned off");
+      expect(wrapper.get('[data-testid="ios-tasks-callout"]').text()).toContain("does not work yet");
       expect(wrapper.get('[data-testid="ios-tasks-enable"]').text()).toBe("Turn on…");
+      wrapper.unmount();
+    });
+
+    it("sits above the connection form, right under the status", async () => {
+      const wrapper = mountCard();
+      await flushPromises();
+      const html = wrapper.html();
+      expect(html.indexOf('data-testid="ios-tasks-callout"')).toBeGreaterThan(
+        html.indexOf("ios-status"),
+      );
+      expect(html.indexOf('data-testid="ios-tasks-callout"')).toBeLessThan(
+        html.indexOf("ios-section-title"),
+      );
       wrapper.unmount();
     });
 
@@ -385,23 +396,21 @@ describe("IosChannelCard", () => {
       wrapper.unmount();
     });
 
-    it("shows it on, without a button, once the feature is enabled", async () => {
+    it("says nothing once the feature is enabled", async () => {
       config.value.agentTasks.enabled = true;
       const wrapper = mountCard();
       await flushPromises();
-      expect(wrapper.get('[data-testid="ios-tasks-state"]').text()).toBe("On");
-      expect(wrapper.get('[data-testid="ios-tasks-state"]').classes()).toContain("ok");
-      expect(wrapper.get('[data-testid="ios-tasks-desc"]').text()).toContain("New task");
+      expect(wrapper.find('[data-testid="ios-tasks-callout"]').exists()).toBe(false);
       expect(wrapper.find('[data-testid="ios-tasks-enable"]').exists()).toBe(false);
       wrapper.unmount();
     });
 
-    it("has no such section where Agent tasks are not supported, or while the channel is off", async () => {
+    it("says nothing where Agent tasks are not supported, or while the channel is off", async () => {
       supportsAgentTasks = false;
       provideContext();
       const unsupported = mountCard();
       await flushPromises();
-      expect(unsupported.find('[data-testid="ios-tasks-state"]').exists()).toBe(false);
+      expect(unsupported.find('[data-testid="ios-tasks-callout"]').exists()).toBe(false);
       unsupported.unmount();
 
       supportsAgentTasks = true;
@@ -409,7 +418,7 @@ describe("IosChannelCard", () => {
       config.value.channels.ios.enabled = false;
       const off = mountCard();
       await flushPromises();
-      expect(off.find('[data-testid="ios-tasks-state"]').exists()).toBe(false);
+      expect(off.find('[data-testid="ios-tasks-callout"]').exists()).toBe(false);
       off.unmount();
     });
 
@@ -417,7 +426,7 @@ describe("IosChannelCard", () => {
       i18n.global.locale.value = "zh";
       const wrapper = mountCard();
       await flushPromises();
-      expect(wrapper.get('[data-testid="ios-tasks-state"]').text()).toBe("未开启");
+      expect(wrapper.get('[data-testid="ios-tasks-callout"]').text()).toContain("现在用不了");
       expect(wrapper.get('[data-testid="ios-tasks-enable"]').text()).toBe("开启…");
       wrapper.unmount();
     });

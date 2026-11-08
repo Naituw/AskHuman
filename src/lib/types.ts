@@ -1629,6 +1629,8 @@ export interface SetupStatus {
   trayAvailable: boolean;
   /** A Dev Instance must not change the everyday Agent integration. */
   everydayIntegrationsReadOnly: boolean;
+  /** The wizard's phone-task offer was turned down ("Not now"): a rerun does not offer it again. */
+  phoneTasksDeclined: boolean;
 }
 
 /** Why an Agent counts as installed on this machine. */

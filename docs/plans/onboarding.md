@@ -66,7 +66,7 @@
 pub struct OnboardingDecisions { pub skipped: Vec<String>, pub background_decided: bool }
 ```
 
-- 读取规范化：`skipped` 只保留 `"agents"` / `"remote"`，去重；字段缺失 = 空集 / `false`。
+- 读取规范化：`skipped` 只保留 `SKIPPABLE_DOMAINS`（`"agents"` / `"remote"`；第 10 轮起另有 `"phoneTasks"`，它只记「手机任务」邀请被拒绝，不属于三个域），去重；字段缺失 = 空集 / `false`。
 - 旧字段 `im_tip_dismissed` 保留：只读兼容，`update` 回写时原值保留，新代码不再写它。
 - 新增 `pub fn update(f: impl FnOnce(&mut UiState))`：进程内静态 `Mutex` 串行化 load、mutate、save（保存沿用现有 best-effort）。跨进程（CLI / GUI Host / 弹窗进程）不加文件锁：写入全部由用户手动触发、低频、单字段，与现有 `im_tip_dismissed` 同一口径。
 
@@ -85,7 +85,8 @@ pub fn gather() -> Evidence;                      // 读真实机器
 pub fn decided() -> Decided;                      // derive(&gather())
 pub fn agents_decided() -> bool;                  // 短路：skipped → 集成 → 历史
 pub fn remote_decided() -> bool;
-pub fn mark_skipped(domain: &str);                // 只接受 "agents" | "remote"；幂等
+pub fn mark_skipped(domain: &str);                // 只接受 SKIPPABLE_DOMAINS（"agents" | "remote" | "phoneTasks"）；幂等
+pub fn phone_tasks_declined() -> bool;            // skipped ∋ "phoneTasks"（第 10 轮）
 pub fn mark_background_decided();
 pub fn login_item_gate_open() -> bool;            // instance_has_login_item() || background_decided
 ```
@@ -300,12 +301,12 @@ Rust 单测（均不碰真实 HOME / 钥匙串）：
 
 | 命令 | 参数 → 返回 | 说明 |
 |---|---|---|
-| `setup_status` | → `SetupStatus` | `{ agentsDecided, remoteDecided, backgroundDecided, loginItemInstalled, loginItemAvailable, trayAvailable, everydayIntegrationsReadOnly }`；`trayAvailable = tray_supported()`；`loginItemAvailable = trayAvailable && !is_dev_instance_context()`；`loginItemInstalled = instance_has_login_item()` |
+| `setup_status` | → `SetupStatus` | `{ agentsDecided, remoteDecided, backgroundDecided, loginItemInstalled, loginItemAvailable, trayAvailable, everydayIntegrationsReadOnly, phoneTasksDeclined }`；`trayAvailable = tray_supported()`；`loginItemAvailable = trayAvailable && !is_dev_instance_context()`；`loginItemInstalled = instance_has_login_item()` |
 | `setup_agents_scan` | → `AgentScanRow[]` | §1.4 |
 | `setup_env_check` | → `EnvReport` | §1.6 |
 | `setup_apply_agents` | `selections` → `ApplyResult[]` | §1.5；结束后 `refresh_integration_updates(&app)` |
 | `setup_channel_status` | → `{ id, enabled, configured, connected: bool \| null }[]` | `enabled` / `configured` 来自 `channel_cmd::is_enabled` / `is_configured`；`connected` 来自不启动 daemon 的状态查询里的 `im_connections`（daemon 未运行 = `null`） |
-| `setup_skip` | `domain: "agents" \| "remote"` | `mark_skipped` + emit |
+| `setup_skip` | `domain: "agents" \| "remote" \| "phoneTasks"` | `mark_skipped` + emit |
 | `setup_finish` | — | `mark_background_decided()`；读磁盘配置，`menuBarIcon == always` 则 `ensure_installed()`；Agent 域仍未决 → `mark_skipped("agents")`；刷新托盘 + emit。不改 `config.json`（T4） |
 | `setup_login_item_enable` | — | §1.3 |
 | `open_setup` | `page: Option<String>` | `route_open_window(Setup, …)`；弹窗进程也经此命令打开 |
@@ -497,7 +498,7 @@ vitest：三个按钮的状态机（成功 / 失败 / 超时 / 取消）与「�
 
 ## 9. 增补：从手机 / IM 创建 Agent 任务开关（D25，2026-11-08）
 
-四期落地之后的一次增补（spec 第 9 轮），不改 P1–P4 已有的结构，只补完成页与文字版的一个开关和发现路径：
+四期落地之后的一次增补（spec 第 9 轮），不改 P1–P4 已有的结构，只补完成页与文字版的一个开关和发现路径。第 10 轮（用户反馈「开关放在下面根本看不见」）把 GUI 里的开关改成独立确认页，见本节末尾的「第 10 轮」；下面三条中凡写到「开关 C / C 行」的是第 9 轮的做法，GUI 部分已被第 10 轮取代，文字版与 Rust 部分不变：
 
 - **前端**：`useSetup.ts`（开关 A / B / C 是「碰过才算」的选择，没碰就跟随已保存的值；`hasRemoteChannel` = IM ∨ iOS；`showBackgroundB` / `showBackgroundC` / `backgroundBLocked` / `showTasksTip`；`adoptSavedConfig()` 在完成页挂载与 `finish()` 时重读已保存的配置）、`DonePage.vue`（C 行与 IM 机器人说明、B 联动、摘要里的 iOS 小标签、提示卡片的「打开设置页」链接）、`IosChannelCard.vue`（卡片底部「在 App 里新建 Agent 任务」块）、`SettingsOverlays.vue`（确认弹窗的 IM 机器人条件项）、i18n（`settings.agentTasks.*`、`settings.experimental.ios.tasks*`、`setup.done.switchB* / switchC* / tasksTip*`）。
 - **Rust**：`onboarding/text.rs`（`TextDeps` 新增 `agent_tasks_supported` / `install_daemon_login_item` / `ensure_daemon`；`step_background` 先问 C 再问 B；`summary()` 列出 iOS 渠道、Agent 任务与结尾提示）；IM 里 `/new` 被拒的回复改名（`daemon/runtime/inbound.rs`、`fork.rs`）。
@@ -505,3 +506,16 @@ vitest：三个按钮的状态机（成功 / 失败 / 超时 / 取消）与「�
 - **测试**：vitest `SetupView.test.ts`、`IosChannelCard.test.ts`、`SettingsOverlays.test.ts`；Rust `onboarding/text/tests.rs`（`FakeDeps` 默认 `tasks_supported = false`，旧用例不变）。
 - **协议号**：无 IPC 变更，不动。
 - **遗留**：§7 风险里提到的「窗口获得焦点时重新 `getSettings()`」并没有实现，本轮只在完成页处理（D25 ⑥）；`saveChannel` / `applyAgents` 等其他保存点仍是整份写入、最后写入者胜出。
+
+### 第 10 轮：独立确认页（D25 重写，2026-11-08）
+
+GUI 里的开关 C 换成「远程回答」步骤里的一屏，开启后即时体检；不改 IPC、不改后端接口（`SetupStatus` 是 Tauri 命令载荷，不是 IPC 协议，不动 `PROTOCOL_VERSION`）。
+
+- **页面与状态**：`useSetup.ts` 新增 `tasks` 页（`SetupPage = SetupStep | "tasks"`，`SETUP_PAGES` 仍是三个步骤，`stepOf(page)` 把 `tasks` 归到 `remote`，`parsePage` 只认三个步骤）；`choiceTasks` 是「碰过才算」的选择（`null` = 没答），`tasksWanted` / `tasksSavedOn` / `tasksAvailable`（平台支持 ∧ 远程渠道 ∧ 有已集成 Agent）/ `showTasksRow`（可提供 ∨ 已开）/ `showTasksOffer`（可提供 ∧ 未开 ∧ 没答 ∧ 没被拒绝过）/ `phoneTasksDeclined`（来自 `SetupStatus`）；`leaveRemote()`（重读已保存的配置与状态后，`showTasksOffer ? goto("tasks") : goto("done")`）由远程回答页的「继续」与 `skipRemote()` 共用；`wantTasks()` / `declineTasks()`（先跳到完成页，再 `setupSkip("phoneTasks")`，失败也不拦）；`finish()` 只在 `choiceTasks !== null` 时写 `agentTasks.enabled`；`backgroundBLocked = tasksWanted`。
+- **体检**：`useTasksCheck.ts`（`agentTaskWorkspaces(true)` 去掉隐藏项、`agentTaskReadiness()` 里 `readinessState === "ready"` 的；两个读取各自失败各自显示「没能检查」；首次运行才显示「正在检查」，后续运行（窗口重新获得焦点，`force: true` 重新查 CLI）静默换结果）。`TasksPage.vue`：未开启时是问题页（两行好处、代价行、IM 机器人行），开启后是结果页（三行 + 缺项提示 + [去添加项目] / [去检查 Agent] + 「不想开启了？」链接），页脚按钮见 spec D25。
+- **完成页**：`DonePage.vue` 摘要卡新增「手机 / IM 新建任务」行（链接 `goto("tasks")`），删除「后台与启动」卡里的开关 C 与 IM 机器人说明。
+- **iOS 卡片**：`IosChannelCard.vue` 去掉底部状态块，在状态行下方加提示条（`supportsAgentTasks && !tasksOn`），按钮仍是 `agentTasksConfirmOpen = true`；`settings.css` 的 `.ios-tasks-callout*`。
+- **「暂不开启」的记忆**：`uistate.rs` 的 `SKIPPABLE_DOMAINS` 加 `phoneTasks`；`onboarding/state.rs` 的 `DOMAIN_PHONE_TASKS` / `phone_tasks_declined()`（`derive` 不看它）；`onboarding/commands.rs` 的 `SetupStatus.phone_tasks_declined`（`build_status` 新增一个参数）。`hint.rs` 里「每个提示域都在 `SKIPPABLE_DOMAINS` 里」的测试方向不变（反方向不要求）。
+- **i18n**：`setup.tasks.*`（新），`setup.done.tasks*`（新）；删除 `setup.done.switchC*` 与 `settings.experimental.ios.tasksTitle / tasksTag* / tasksOn / tasksOff`，新增 `settings.experimental.ios.tasksCallout`。
+- **测试**：vitest `SetupView.test.ts`（「the Agent-task offer」与完成页的「the Agent-task row」两组）、`IosChannelCard.test.ts`；Rust `state.rs`（`phoneTasks` 记入 `skipped` 且不影响三个域，含隔离 HOME 子进程用例）、`commands.rs`（`SetupStatus` 的字段与 camelCase 键）。
+- **验证**：`./scripts/install.sh` 后在隔离环境（临时 HOME + `ASKHUMAN_HOME`，iOS 渠道已启用、一家 Agent 已集成）里打开真实向导窗口：确认页 → 暂不开启 / 开启 → 体检的有项目 / 没项目两种结果 → 完成页摘要行 → 点「完成」后的落盘值；iOS 卡片的提示条。

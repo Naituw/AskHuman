@@ -47,12 +47,24 @@ import {
 } from "./channelDefs";
 import { createProbes } from "./useProbe";
 
-export type SetupPage = "agents" | "remote" | "done";
-export const SETUP_PAGES: readonly SetupPage[] = ["agents", "remote", "done"];
+/** The steps the bar shows, in order. */
+export const SETUP_PAGES = ["agents", "remote", "done"] as const;
+export type SetupStep = (typeof SETUP_PAGES)[number];
+/**
+ * `tasks` is a screen inside the remote step: the offer to start Agent tasks from the phone or IM
+ * (docs/specs/onboarding.md D25). It is reached from that step or from the Done page's summary
+ * line, never from a URL or an event (`parsePage` only knows the steps).
+ */
+export type SetupPage = SetupStep | "tasks";
 
 /** A page name from a URL or an event; anything unknown starts at the first page. */
-export function parsePage(raw: string | null | undefined): SetupPage {
-  return SETUP_PAGES.includes(raw as SetupPage) ? (raw as SetupPage) : "agents";
+export function parsePage(raw: string | null | undefined): SetupStep {
+  return (SETUP_PAGES as readonly string[]).includes(raw ?? "") ? (raw as SetupStep) : "agents";
+}
+
+/** The step a page belongs to: the bar highlights it. */
+export function stepOf(page: SetupPage): SetupStep {
+  return page === "tasks" ? "remote" : page;
 }
 
 /** The per-Agent features the Done page summarises. */
@@ -288,17 +300,29 @@ export function createSetup(initialPage: SetupPage = "agents") {
     } catch {
       /* the popup hint may show once more; nothing else depends on it */
     }
-    await refreshStatus();
-    goto("done");
+    await leaveRemote();
+  }
+
+  /**
+   * Leave the remote step: to the Agent-task offer when it applies now, else to Done. The iOS app
+   * is set up in a Settings window and an IM channel may have changed too, so what applies is
+   * decided from what is saved at this moment, not from the copy this window loaded.
+   */
+  async function leaveRemote() {
+    await adoptSavedConfig();
+    await Promise.all([refreshChannelStatus(), refreshStatus()]);
+    if (!rowsLoaded.value) await scanAgents(true);
+    goto(showTasksOffer.value ? "tasks" : "done");
   }
 
   // ===== Page 3: Done =====
-  // Each switch follows what is saved until the person touches it (`null` = untouched), so a
-  // change another window makes in the meantime (Settings → the iOS card's "Turn on…") is neither
-  // hidden from this page nor undone when it finishes.
+  // Each switch (and the Agent-task choice made on the offer screen) follows what is saved until
+  // the person touches it (`null` = untouched), so a change another window makes in the meantime
+  // (Settings → the iOS card's "Turn on…") is neither hidden from this page nor undone when it
+  // finishes.
   const choiceA = ref<boolean | null>(null);
   const choiceB = ref<boolean | null>(null);
-  const choiceC = ref<boolean | null>(null);
+  const choiceTasks = ref<boolean | null>(null);
   /** A: the menu-bar icon stays and starts at login. */
   const backgroundA = computed({
     get: () => choiceA.value ?? config.value?.general.menuBarIcon === "always",
@@ -313,11 +337,15 @@ export function createSetup(initialPage: SetupPage = "agents") {
       choiceB.value = value;
     },
   });
-  /** C: the phone / IM may start Agent tasks (`agentTasks.enabled`); it pins B on. */
-  const backgroundC = computed({
-    get: () => choiceC.value ?? config.value?.agentTasks?.enabled === true,
+  /**
+   * The phone / IM may start Agent tasks (`agentTasks.enabled`). It is decided on the offer
+   * screen; on, it pins B on.
+   */
+  const tasksSavedOn = computed(() => config.value?.agentTasks?.enabled === true);
+  const tasksWanted = computed({
+    get: () => choiceTasks.value ?? tasksSavedOn.value,
     set: (value: boolean) => {
-      choiceC.value = value;
+      choiceTasks.value = value;
     },
   });
   const finishing = ref(false);
@@ -363,16 +391,32 @@ export function createSetup(initialPage: SetupPage = "agents") {
   /** Switch B is only offered once a remote channel is on. */
   const showBackgroundB = computed(() => hasRemoteChannel.value);
   /**
-   * Switch C starts Agent tasks from the phone or IM: it needs a remote channel to start them from,
-   * an Agent to start, and a platform with a supported terminal.
+   * Starting Agent tasks from the phone or IM can be offered: it needs a remote channel to start
+   * them from, an Agent to start, and a platform with a supported terminal.
    */
-  const showBackgroundC = computed(
+  const tasksAvailable = computed(
     () => supportsAgentTasks && hasRemoteChannel.value && rows.value.some(isIntegrated),
   );
-  /** The Agent-task feature pins B on: by this page's own switch C, else by what is saved. */
-  const backgroundBLocked = computed(() =>
-    showBackgroundC.value ? backgroundC.value : config.value?.agentTasks?.enabled === true,
+  /** The summary line on the Done page: where the feature is on offer, and wherever it is on. */
+  const showTasksRow = computed(() => tasksAvailable.value || tasksSavedOn.value);
+  /** The person turned the offer down on an earlier run of the wizard. */
+  const phoneTasksDeclined = computed(() => status.value?.phoneTasksDeclined === true);
+  /**
+   * The offer screen: on offer, and not answered yet (here, on an earlier run, or by turning the
+   * feature on in Settings).
+   */
+  const showTasksOffer = computed(
+    () =>
+      tasksAvailable.value &&
+      !tasksSavedOn.value &&
+      choiceTasks.value === null &&
+      !phoneTasksDeclined.value,
   );
+  /**
+   * The Agent-task feature pins B on: by the choice made on the offer screen, else by what is
+   * saved.
+   */
+  const backgroundBLocked = computed(() => tasksWanted.value);
   /** What B's switch shows: on while pinned, otherwise the person's choice (or the saved mode). */
   const backgroundBChecked = computed({
     get: () => backgroundBLocked.value || backgroundB.value,
@@ -382,12 +426,29 @@ export function createSetup(initialPage: SetupPage = "agents") {
   });
   /** Nothing offers the feature yet: the page says where to turn it on later. */
   const showTasksTip = computed(
-    () =>
-      supportsAgentTasks &&
-      rowsLoaded.value &&
-      !showBackgroundC.value &&
-      config.value?.agentTasks?.enabled !== true,
+    () => supportsAgentTasks && rowsLoaded.value && !tasksAvailable.value && !tasksSavedOn.value,
   );
+
+  /** "Turn on": recorded here, saved with the rest of the settings when the wizard finishes. */
+  function wantTasks() {
+    tasksWanted.value = true;
+  }
+
+  /**
+   * "Not now": the feature stays off, and a rerun of the wizard does not ask again (Settings →
+   * Advanced still has it).
+   */
+  async function declineTasks() {
+    tasksWanted.value = false;
+    // Move on first: the screen must not flip back to the question while the answer is stored.
+    goto("done");
+    try {
+      await setupSkip("phoneTasks");
+    } catch {
+      /* the offer may come once more on a rerun; nothing else depends on it */
+    }
+    await refreshStatus();
+  }
 
   /**
    * Replace this window's copy of the settings with what is saved now. Another window can change
@@ -415,8 +476,9 @@ export function createSetup(initialPage: SetupPage = "agents") {
   /**
    * Done: save the background choices, record the decision (and the login item), close.
    * The page only moves a menu-bar icon that is `always` (to `active`) or turns it on; it never
-   * picks `off`. Turning C on also pins the daemon resident; saving does the rest (Settings'
-   * `save_settings` installs the daemon's login item and makes sure it is running).
+   * picks `off`. Turning Agent tasks on (the offer screen's choice) also pins the daemon
+   * resident; saving does the rest (Settings' `save_settings` installs the daemon's login item
+   * and makes sure it is running).
    */
   async function finish() {
     if (!config.value || finishing.value) return;
@@ -430,10 +492,10 @@ export function createSetup(initialPage: SetupPage = "agents") {
         if (backgroundA.value) cfg.general.menuBarIcon = "always";
         else if (cfg.general.menuBarIcon === "always") cfg.general.menuBarIcon = "active";
       }
-      // B reads C's switch, so decide both from the switches before either is written.
-      const tasksOn = backgroundC.value;
+      // B reads the Agent-task choice, so decide both before either is written. Only what the
+      // person answered on the offer screen is written; otherwise the saved value stays.
       const keepRunning = backgroundBLocked.value || backgroundB.value;
-      if (showBackgroundC.value) cfg.agentTasks.enabled = tasksOn;
+      if (choiceTasks.value !== null) cfg.agentTasks.enabled = choiceTasks.value;
       if (showBackgroundB.value) {
         cfg.general.daemonLifecycle = keepRunning ? "keepalive" : "activity";
       }
@@ -514,19 +576,27 @@ export function createSetup(initialPage: SetupPage = "agents") {
     closeChannel,
     saveChannel,
     skipRemote,
+    leaveRemote,
     canProbeChannel,
     channelOpsFor: (id: ChannelId) => channelOps(id, channels),
     // Optional checks
     probes,
     agentProbeAvailable,
+    // Agent tasks from the phone or IM (the offer screen, and the Done page's summary line)
+    tasksWanted,
+    tasksSavedOn,
+    tasksAvailable,
+    showTasksRow,
+    showTasksOffer,
+    phoneTasksDeclined,
+    wantTasks,
+    declineTasks,
     // Done
     backgroundA,
     backgroundBChecked,
-    backgroundC,
     iosEnabled,
     hasRemoteChannel,
     showBackgroundB,
-    showBackgroundC,
     backgroundBLocked,
     showTasksTip,
     adoptSavedConfig,

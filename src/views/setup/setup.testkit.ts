@@ -1,6 +1,9 @@
 // Data builders for the setup wizard's tests: an Agent row, the settings payload the wizard loads,
 // the setup status and the per-channel status rows. Plain data only; each test file owns its mocks.
 import type {
+  AgentKind,
+  AgentTaskReadiness,
+  AgentTaskWorkspace,
   AppConfig,
   SecretsPresent,
   SettingsPayload,
@@ -37,6 +40,45 @@ export function status(over: Partial<SetupStatus> = {}): SetupStatus {
     loginItemAvailable: true,
     trayAvailable: true,
     everydayIntegrationsReadOnly: false,
+    phoneTasksDeclined: false,
+    ...over,
+  };
+}
+
+/** A saved project the phone could pick; the label is the folder's name. */
+export function workspace(
+  path: string,
+  over: Partial<AgentTaskWorkspace> = {},
+): AgentTaskWorkspace {
+  return {
+    path,
+    label: path.split("/").pop() ?? path,
+    lastUsedAt: 1_700_000_000,
+    agents: ["claude"],
+    pinned: false,
+    hidden: false,
+    ...over,
+  };
+}
+
+/** An Agent that can start a task (CLI found, lifecycle and integration in place). */
+export function readiness(
+  kind: AgentKind,
+  over: Partial<AgentTaskReadiness> = {},
+): AgentTaskReadiness {
+  return {
+    kind,
+    label: kind === "claude" ? "Claude Code" : kind[0].toUpperCase() + kind.slice(1),
+    command: kind,
+    executable: `/usr/local/bin/${kind}`,
+    version: null,
+    binaryReady: true,
+    lifecycleReady: true,
+    integrationReady: true,
+    integrationMode: "cli",
+    ready: true,
+    launchSupported: true,
+    diagnostics: [],
     ...over,
   };
 }

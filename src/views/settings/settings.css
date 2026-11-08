@@ -1390,9 +1390,27 @@
   font-weight: 600;
   color: var(--text-primary);
 }
-/* The title shares a row with a tag and a button: no bottom margin, so the three centre on one line. */
-.ios-tasks-head .ios-section-title {
+/* The app's "New task" cannot work until the Agent-task switch is on: the card says so up top. */
+.ios-tasks-callout {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  margin: 0 0 var(--space-3);
+  padding: 9px 12px;
+  border: var(--hairline) solid color-mix(in srgb, var(--accent-orange) 30%, transparent);
+  border-radius: 10px;
+  background: color-mix(in srgb, var(--accent-orange) 10%, transparent);
+}
+.ios-tasks-callout-text {
+  flex: 1 1 auto;
+  min-width: 0;
   margin: 0;
+  font-size: 12.5px;
+  line-height: 1.5;
+  color: var(--text-primary);
+}
+.ios-tasks-callout .btn {
+  flex: 0 0 auto;
 }
 .ios-ports {
   display: grid;

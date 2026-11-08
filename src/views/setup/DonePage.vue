@@ -1,7 +1,7 @@
 <script setup lang="ts">
-// Wizard page 3: what was set up, the background choices (launch at login, keep running, start
-// Agent tasks from the phone or IM), and how to use it from here on
-// (docs/specs/onboarding.md D8, D12, D19, D25).
+// Wizard page 3: what was set up (including whether Agent tasks can start from the phone or IM —
+// decided on the offer screen, only reported here), the background choices (launch at login, keep
+// running), and how to use it from here on (docs/specs/onboarding.md D8, D12, D19, D25).
 import { computed, onMounted } from "vue";
 import { useI18n } from "vue-i18n";
 import { openSettings } from "../../lib/ipc";
@@ -26,14 +26,14 @@ const {
   capabilities,
   backgroundA,
   backgroundBChecked,
-  backgroundC,
   iosEnabled,
   hasRemoteChannel,
-  hasEnabledChannel,
   showBackgroundB,
-  showBackgroundC,
   backgroundBLocked,
+  tasksWanted,
+  showTasksRow,
   showTasksTip,
+  goto,
   adoptSavedConfig,
   finishing,
   finishError,
@@ -153,6 +153,33 @@ onMounted(async () => {
             </span>
           </li>
 
+          <!-- Reported here, decided on the offer screen: one tap on the link goes back to it. -->
+          <li
+            v-if="showTasksRow"
+            class="check-item"
+            :class="{ none: !tasksWanted }"
+            data-testid="summary-tasks"
+          >
+            <span class="check-icon" aria-hidden="true"></span>
+            <span class="check-label">{{ t("setup.done.tasks") }}</span>
+            <span class="check-value">
+              <span v-if="tasksWanted" data-testid="summary-tasks-state">{{
+                t("setup.done.tasksOn")
+              }}</span>
+              <span v-else class="check-none" data-testid="summary-tasks-state">{{
+                t("setup.done.tasksOff")
+              }}</span>
+              <a
+                class="link"
+                href="#"
+                data-testid="summary-tasks-link"
+                @click.prevent="goto('tasks')"
+              >
+                {{ tasksWanted ? t("setup.done.tasksChange") : t("setup.done.tasksEnable") }} →
+              </a>
+            </span>
+          </li>
+
           <li v-if="capabilities.length > 0" class="check-item" data-testid="summary-capabilities">
             <span class="check-icon" aria-hidden="true"></span>
             <span class="check-label">{{ t("setup.done.capabilitiesTitle") }}</span>
@@ -206,21 +233,6 @@ onMounted(async () => {
             <span class="track"></span>
           </label>
         </div>
-        <!-- C comes before B: turning it on pins B, which then reads as locked right below it. -->
-        <div v-if="showBackgroundC" class="setup-switch-row">
-          <div class="setup-switch-text">
-            <p class="setup-switch-label">{{ t("setup.done.switchC") }}</p>
-            <p class="setup-switch-desc">{{ t("setup.done.switchCDesc") }}</p>
-            <!-- The IM bot note only applies when an IM bot is on; a phone-only setup has none. -->
-            <p v-if="hasEnabledChannel" class="setup-switch-desc" data-testid="switch-c-bot">
-              {{ t("setup.done.switchCBot") }}
-            </p>
-          </div>
-          <label class="switch">
-            <input v-model="backgroundC" type="checkbox" data-testid="switch-c" />
-            <span class="track"></span>
-          </label>
-        </div>
         <div v-if="showBackgroundB" class="setup-switch-row">
           <div class="setup-switch-text">
             <p class="setup-switch-label">{{ t("setup.done.switchB") }}</p>
@@ -243,7 +255,7 @@ onMounted(async () => {
       <section class="setup-tip" data-testid="done-next">
         <p class="setup-tip-title">{{ t("setup.done.nextTitle") }}</p>
         <p class="setup-tip-body">{{ t("setup.done.nextBody") }}</p>
-        <!-- Where C is not offered yet, say where to turn the feature on later. -->
+        <!-- Where the Agent-task offer is not available yet, say where to turn it on later. -->
         <p v-if="showTasksTip" class="setup-tip-body" data-testid="done-tasks-tip">
           {{ t("setup.done.tasksTip") }}
           <a

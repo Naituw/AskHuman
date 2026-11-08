@@ -1,5 +1,6 @@
 <script setup lang="ts">
-// Setup wizard window shell (docs/specs/onboarding.md): a clickable step bar over three pages.
+// Setup wizard window shell (docs/specs/onboarding.md): a clickable step bar over three pages (the
+// remote step also has a screen of its own for the Agent-task offer, D25).
 // The window is a global singleton; a second entry point focuses it and moves it to the page it
 // asks for (`?page=` on a fresh window, `setup-goto-page` on an open one).
 import { computed, onBeforeUnmount, onMounted } from "vue";
@@ -11,7 +12,8 @@ import type { SetupProbeResult, ThemeMode, UiLanguage } from "../lib/types";
 import AgentsPage from "./setup/AgentsPage.vue";
 import DonePage from "./setup/DonePage.vue";
 import RemotePage from "./setup/RemotePage.vue";
-import { SETUP_PAGES, createSetup, parsePage, type SetupPage } from "./setup/useSetup";
+import TasksPage from "./setup/TasksPage.vue";
+import { SETUP_PAGES, createSetup, parsePage, stepOf, type SetupStep } from "./setup/useSetup";
 import "./settings/settings.css";
 import "./setup/setup.css";
 
@@ -20,10 +22,12 @@ const { t } = useI18n();
 const setup = createSetup(parsePage(new URLSearchParams(window.location.search).get("page")));
 const { config, page, status, goto, load, refreshStatus, scanAgents, probes } = setup;
 
-const currentIndex = computed(() => SETUP_PAGES.indexOf(page.value));
+/** The step the current page belongs to: the Agent-task offer sits inside the remote step. */
+const activeStep = computed(() => stepOf(page.value));
+const currentIndex = computed(() => SETUP_PAGES.indexOf(activeStep.value));
 
 /** A step the user already settled (set up or skipped) gets a check instead of its number. */
-function stepDone(name: SetupPage): boolean {
+function stepDone(name: SetupStep): boolean {
   if (name === "agents") return status.value?.agentsDecided === true;
   if (name === "remote") return status.value?.remoteDecided === true;
   return false;
@@ -89,14 +93,14 @@ onMounted(async () => {
             <button
               type="button"
               class="setup-step"
-              :class="{ active: page === name, done: stepDone(name) }"
-              :aria-current="page === name ? 'step' : undefined"
+              :class="{ active: activeStep === name, done: stepDone(name) }"
+              :aria-current="activeStep === name ? 'step' : undefined"
               :data-testid="`step-${name}`"
               @click="goto(name)"
             >
               <span class="setup-step-dot">
                 <svg
-                  v-if="stepDone(name) && page !== name"
+                  v-if="stepDone(name) && activeStep !== name"
                   class="setup-step-check"
                   viewBox="0 0 12 12"
                   aria-hidden="true"
@@ -113,6 +117,7 @@ onMounted(async () => {
     </header>
     <AgentsPage v-if="page === 'agents'" />
     <RemotePage v-else-if="page === 'remote'" />
+    <TasksPage v-else-if="page === 'tasks'" />
     <DonePage v-else />
   </div>
 </template>

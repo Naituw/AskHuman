@@ -20,6 +20,9 @@ use crate::uistate;
 
 pub const DOMAIN_AGENTS: &str = "agents";
 pub const DOMAIN_REMOTE: &str = "remote";
+/// The wizard's offer to start Agent tasks from the phone or IM. Not one of the three decided
+/// domains: declining it only keeps a rerun of the wizard from offering it again.
+pub const DOMAIN_PHONE_TASKS: &str = "phoneTasks";
 
 /// Everything the three "decided" flags are derived from.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
@@ -111,8 +114,13 @@ pub fn remote_decided() -> bool {
         || any_channel_enabled(&AppConfig::load_without_secrets())
 }
 
-/// Record that the user skipped or dismissed a domain. Only `"agents"` and `"remote"` are
-/// accepted; idempotent.
+/// Whether the user turned the wizard's phone-task offer down ("Not now").
+pub fn phone_tasks_declined() -> bool {
+    uistate::load().onboarding.is_skipped(DOMAIN_PHONE_TASKS)
+}
+
+/// Record that the user skipped or dismissed a domain. Only `"agents"`, `"remote"` and
+/// `"phoneTasks"` are accepted; idempotent.
 pub fn mark_skipped(domain: &str) {
     if !uistate::SKIPPABLE_DOMAINS.contains(&domain) {
         return;
@@ -239,6 +247,15 @@ mod tests {
     }
 
     #[test]
+    fn declining_the_phone_task_offer_decides_none_of_the_domains() {
+        let evidence = Evidence {
+            skipped: vec![DOMAIN_PHONE_TASKS.to_string()],
+            ..ev()
+        };
+        assert_eq!(derive(&evidence), Decided::default());
+    }
+
+    #[test]
     fn channel_domain_ignores_agent_state() {
         // A user with integrated Agents and a manual-only history still sees the remote hint
         // until a channel is enabled or the hint is dismissed.
@@ -292,6 +309,20 @@ mod tests {
 
         mark_skipped("remote");
         assert!(remote_decided());
+
+        // Turning the phone-task offer down is remembered too, and decides none of the domains.
+        assert!(!phone_tasks_declined());
+        mark_skipped("phoneTasks");
+        mark_skipped("phoneTasks");
+        assert!(phone_tasks_declined());
+        assert_eq!(
+            uistate::load().onboarding.skipped,
+            vec![
+                "agents".to_string(),
+                "remote".to_string(),
+                "phoneTasks".to_string()
+            ]
+        );
 
         // A choice about the background opens the login-item gate.
         mark_background_decided();

@@ -39,6 +39,9 @@ pub struct SetupStatus {
     pub tray_available: bool,
     /// A Dev Instance must not change the everyday Agent integration.
     pub everyday_integrations_read_only: bool,
+    /// The wizard's offer to start Agent tasks from the phone or IM was turned down ("Not now"):
+    /// a rerun of the wizard does not offer it again.
+    pub phone_tasks_declined: bool,
 }
 
 /// Pure assembly of [`SetupStatus`]; the inputs are what the command reads from the machine.
@@ -48,6 +51,7 @@ pub fn build_status(
     tray_available: bool,
     dev_instance_context: bool,
     everyday_integrations_read_only: bool,
+    phone_tasks_declined: bool,
 ) -> SetupStatus {
     SetupStatus {
         agents_decided: decided.agents,
@@ -57,6 +61,7 @@ pub fn build_status(
         login_item_available: tray_available && !dev_instance_context,
         tray_available,
         everyday_integrations_read_only,
+        phone_tasks_declined,
     }
 }
 
@@ -70,6 +75,7 @@ pub async fn setup_status() -> Result<SetupStatus, String> {
             crate::dev_instance::is_dev_instance_context(),
             // Same decision as `get_settings`: when it cannot be made, the write path refuses too.
             crate::integrations::mutation_lock::everyday_changes_blocked().unwrap_or(true),
+            state::phone_tasks_declined(),
         ))
     })
     .await
@@ -124,7 +130,8 @@ pub async fn setup_channel_status() -> Result<Vec<ChannelStatus>, String> {
     .await
 }
 
-/// The user passed on a step on purpose (`agents` | `remote`).
+/// The user passed on a step on purpose (`agents` | `remote`), or turned the phone-task offer
+/// down (`phoneTasks`).
 #[tauri::command]
 pub async fn setup_skip(app: AppHandle, domain: String) -> Result<(), String> {
     blocking(move || {
@@ -240,7 +247,7 @@ mod tests {
 
     #[test]
     fn the_status_carries_the_three_decisions_and_the_machine_facts() {
-        let status = build_status(decided(true, false, true), true, true, false, false);
+        let status = build_status(decided(true, false, true), true, true, false, false, true);
         assert_eq!(
             status,
             SetupStatus {
@@ -251,13 +258,14 @@ mod tests {
                 login_item_available: true,
                 tray_available: true,
                 everyday_integrations_read_only: false,
+                phone_tasks_declined: true,
             }
         );
     }
 
     #[test]
     fn a_dev_instance_has_no_login_item_to_offer() {
-        let status = build_status(decided(false, false, false), false, true, true, true);
+        let status = build_status(decided(false, false, false), false, true, true, true, false);
         assert!(status.tray_available);
         assert!(!status.login_item_available);
         assert!(status.everyday_integrations_read_only);
@@ -265,7 +273,14 @@ mod tests {
 
     #[test]
     fn no_tray_means_no_login_item_either() {
-        let status = build_status(decided(false, false, false), false, false, false, false);
+        let status = build_status(
+            decided(false, false, false),
+            false,
+            false,
+            false,
+            false,
+            false,
+        );
         assert!(!status.tray_available);
         assert!(!status.login_item_available);
     }
@@ -278,6 +293,7 @@ mod tests {
             true,
             false,
             false,
+            false,
         ))
         .unwrap();
         for key in [
@@ -288,6 +304,7 @@ mod tests {
             "loginItemAvailable",
             "trayAvailable",
             "everydayIntegrationsReadOnly",
+            "phoneTasksDeclined",
         ] {
             assert!(value.get(key).is_some(), "missing {key}");
         }

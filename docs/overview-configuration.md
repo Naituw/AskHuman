@@ -33,7 +33,7 @@
 - `channels.ios`（实验，设置「实验」Tab 的 iOS 渠道卡）：`enabled`、`host`、`port`（TLS，默认 8883）、`wsPort`（WSS，默认 8084）、`username`（只含字母数字，同时是话题命名空间 `ah/{username}/`）、`password`（进钥匙串）、`relayUrl`、`macName`（留空取电脑名）、`alertAfterSecs`（手机没在看某个提问时，Mac 键盘 / 鼠标空闲满多少秒才推送通知，默认 900，`0` = 立即，上限 86400；改它不会重连 broker）；隐藏的 `insecureLocal` 只给回环测试 broker 用（对非回环地址无效）。手机配对、关注集、推送句柄与流量计数不在 `AppConfig`，存于 `~/.askhuman/ios/`
 - `channels.autoActivation`：IM 渠道按需发送，默认 `false`
 - `channels.autoEndWatch`：切离活跃 IM 后自动结束该渠道 watch，默认 `true`，仅在 `autoActivation` 开启时生效
-- `agentTasks.enabled`：从手机（iPhone App 的「新任务」）/ IM（`/new`）创建电脑端 Agent 任务，默认 `false`；开启会强制 `daemonLifecycle=keepalive` 并同步 daemon 登录项。入口在设置「高级」Tab（2026-07-25 从「实验」转正）；iOS 渠道卡片底部与 `AskHuman setup` 向导完成页（文字版同）也能开启，效果相同（`docs/specs/onboarding.md` D25）
+- `agentTasks.enabled`：从手机（iPhone App 的「新任务」）/ IM（`/new`）创建电脑端 Agent 任务，默认 `false`；开启会强制 `daemonLifecycle=keepalive` 并同步 daemon 登录项。入口在设置「高级」Tab（2026-07-25 从「实验」转正）；iOS 渠道卡片顶部的提示条与 `AskHuman setup` 向导（GUI 在远程回答之后有一屏确认页，开启后当场检查手机上能看到的项目与 Agent；文字版是同一个问题）也能开启，效果相同（`docs/specs/onboarding.md` D25）
 - `agentTasks.permissionPrompt`：`ask|agent-default|yolo`，默认 `ask`
 - `agentTasks.cursorMax.{policy, plan}`：Cursor Max 模式控制。`policy` 为 `enforce-off`（默认，创建任务时强制关闭 Max）或 `inherit`（沿用 Cursor 当前设置，不干预）；`plan` 为 `auto`（默认，读 Cursor 的本地数据判断）、`legacy` 或 `token-based`（新计划无 Max，全部隐藏且不干预）；每次启动读取，改后立即生效
 - `experimental.enabled`：显示实验区，默认 `false`（当前实验区里是 iOS 渠道卡；`channel list` 与帮助也只在它开启时列出 `ios`）
@@ -50,7 +50,7 @@
 Agent 任务的 workspace 索引独立存于 `~/.askhuman/agent-workspaces.json`，一次性启动记录存于
 `~/.askhuman/state/agent-launches/`；二者都不是 `AppConfig`。
 
-轻量界面状态（设置向导里用户明确跳过的域与对「后台」做过选择的标记，即 `onboarding` 字段；
+轻量界面状态（设置向导里用户明确跳过的域（及拒绝「手机任务」邀请的记录）与对「后台」做过选择的标记，即 `onboarding` 字段；
 旧弹窗「配置 IM 渠道」小条的已关闭标记 `imTipDismissed` 只读保留、仍算「远程回答已跳过」）独立存于
 `~/.askhuman/ui-state.json`（`src-tauri/src/uistate.rs`）：读失败视为默认、写失败静默，
 与用户配置分离以免互相触发保存/迁移逻辑。向导的其余状态都从机器现状推导，不落盘

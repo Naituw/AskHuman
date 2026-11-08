@@ -1,6 +1,7 @@
 <script setup lang="ts">
 // Wizard page 2: remote answering (docs/specs/onboarding.md D10, D18, D19, D22). One tile per IM
-// channel with its state; one channel's detail form at a time.
+// channel with its state; one channel's detail form at a time. Leaving the page goes on to the
+// Agent-task offer when it applies (D25), else to Done.
 import { computed } from "vue";
 import { useI18n } from "vue-i18n";
 import { openSettings } from "../../lib/ipc";
@@ -26,7 +27,7 @@ const {
   channelIssueText,
   openChannel,
   skipRemote,
-  goto,
+  leaveRemote,
 } = ctx;
 
 const openDef = computed<ChannelDef | undefined>(() =>
@@ -170,7 +171,7 @@ function needs(def: ChannelDef): string {
         class="btn btn-primary btn-lg"
         type="button"
         data-testid="remote-continue"
-        @click="goto('done')"
+        @click="leaveRemote"
       >
         {{ t("setup.common.continue") }}
       </button>

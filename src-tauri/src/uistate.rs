@@ -11,7 +11,9 @@ use std::sync::Mutex;
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", default)]
 pub struct OnboardingDecisions {
-    /// Domains the user explicitly skipped or dismissed: only `"agents"` and `"remote"`.
+    /// Domains the user explicitly skipped or dismissed: `"agents"`, `"remote"`, and
+    /// `"phoneTasks"` (the wizard's offer to start Agent tasks from the phone or IM was declined;
+    /// it only keeps a rerun of the wizard from asking again).
     pub skipped: Vec<String>,
     /// The user made a choice about the menu-bar / login-item behaviour (the wizard's "完成", an
     /// explicit `menuBarIcon` change, or the Settings "启用" button).
@@ -19,7 +21,7 @@ pub struct OnboardingDecisions {
 }
 
 /// The domains that can appear in [`OnboardingDecisions::skipped`].
-pub const SKIPPABLE_DOMAINS: [&str; 2] = ["agents", "remote"];
+pub const SKIPPABLE_DOMAINS: [&str; 3] = ["agents", "remote", "phoneTasks"];
 
 impl OnboardingDecisions {
     /// Drop unknown domains and duplicates (keeps first-seen order).

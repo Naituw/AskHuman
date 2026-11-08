@@ -271,8 +271,11 @@ export const setupApplyAgents = (selections: SetupSelection[]) =>
 export const setupChannelStatus = () =>
   invoke<SetupChannelStatus[]>("setup_channel_status");
 
-/** Record that the user passed on a wizard step on purpose (it stops being offered). */
-export const setupSkip = (domain: "agents" | "remote") =>
+/**
+ * Record that the user passed on a wizard step on purpose (it stops being offered); `phoneTasks`
+ * is the Agent-task offer turned down with "Not now".
+ */
+export const setupSkip = (domain: "agents" | "remote" | "phoneTasks") =>
   invoke<void>("setup_skip", { domain });
 
 /** The wizard's last page: records the background choice and settles anything still open. */

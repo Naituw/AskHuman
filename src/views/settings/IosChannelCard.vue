@@ -164,6 +164,22 @@ function pushWarning(phone: IosPhone): string {
       </p>
       <p v-if="trafficText" class="card-desc ios-traffic" :class="trafficLevelNow">{{ trafficText }}</p>
       <p v-if="trafficWarning" class="ios-traffic-warning" :class="trafficLevelNow">{{ trafficWarning }}</p>
+      <!-- The app's "New task" needs the Agent-task switch on this Mac: say so first, where the phone is set up. -->
+      <div
+        v-if="supportsAgentTasks && !tasksOn"
+        class="ios-tasks-callout"
+        data-testid="ios-tasks-callout"
+      >
+        <p class="ios-tasks-callout-text">{{ t("settings.experimental.ios.tasksCallout") }}</p>
+        <button
+          class="btn"
+          type="button"
+          data-testid="ios-tasks-enable"
+          @click="agentTasksConfirmOpen = true"
+        >
+          {{ t("settings.experimental.ios.tasksEnable") }}
+        </button>
+      </div>
       <hr class="divider" />
 
       <p class="ios-section-title">{{ t("settings.experimental.ios.connectionTitle") }}</p>
@@ -369,38 +385,6 @@ function pushWarning(phone: IosPhone): string {
           </button>
         </li>
       </ul>
-
-      <!-- The app's "New task" needs the Agent-task switch on this Mac; say so where the phone is set up. -->
-      <template v-if="supportsAgentTasks">
-        <hr class="divider" />
-        <div class="row ios-tasks-head">
-          <p class="ios-section-title">{{ t("settings.experimental.ios.tasksTitle") }}</p>
-          <span class="status-tag" :class="{ ok: tasksOn }" data-testid="ios-tasks-state">
-            {{
-              tasksOn
-                ? t("settings.experimental.ios.tasksTagOn")
-                : t("settings.experimental.ios.tasksTagOff")
-            }}
-          </span>
-          <span class="spacer"></span>
-          <button
-            v-if="!tasksOn"
-            class="btn"
-            type="button"
-            data-testid="ios-tasks-enable"
-            @click="agentTasksConfirmOpen = true"
-          >
-            {{ t("settings.experimental.ios.tasksEnable") }}
-          </button>
-        </div>
-        <p class="card-desc" data-testid="ios-tasks-desc">
-          {{
-            tasksOn
-              ? t("settings.experimental.ios.tasksOn")
-              : t("settings.experimental.ios.tasksOff")
-          }}
-        </p>
-      </template>
     </template>
   </div>
 
