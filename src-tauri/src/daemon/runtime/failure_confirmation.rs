@@ -9,6 +9,12 @@ use std::path::PathBuf;
 /// How long a card waits for an answer, and how long a saved card stays worth bringing back.
 const CARD_LIFETIME: Duration = Duration::from_secs(86400);
 const MAX_CARDS: usize = 256;
+/// How many failed turns the daemon remembers having dealt with. An entry is a few dozen bytes; the
+/// bound only keeps the record from growing for as long as the daemon runs.
+const MAX_HANDLED: usize = 512;
+/// Sits next to the card record but apart from it: that one empties out as cards are answered,
+/// while the point of this one is to outlive them.
+const HANDLED_FILE: &str = "failure-turns.json";
 
 #[derive(Default)]
 pub(super) struct Cards {
@@ -16,6 +22,8 @@ pub(super) struct Cards {
     /// Where unanswered cards are kept so a replacement daemon can bring them back; without a file
     /// the table lives in memory only.
     file: Option<PathBuf>,
+    /// Where the failed turns already dealt with are kept; without a file they live in memory only.
+    handled_file: Option<PathBuf>,
     /// Set once the daemon is shutting down. Its requests are then cancelled for this process only,
     /// and that must not erase the cards the successor is going to restore.
     frozen: AtomicBool,
@@ -27,6 +35,46 @@ struct Inner {
     seen: VecDeque<String>,
     /// Cards waiting for an answer, as persisted: one per session.
     saved: HashMap<(AgentKind, String), Saved>,
+    /// Failed native turns the daemon has already dealt with, oldest first. A turn is named by its
+    /// native ID, not by the result the registry minted for it: the registry gives the same failed
+    /// turn a new result ID every time it accepts it afresh, which happens once it has forgotten
+    /// the session and a poll reads the turn again.
+    handled: VecDeque<Handled>,
+}
+
+impl Inner {
+    /// `true` when `handled` was not remembered yet. The oldest entries make room for new ones.
+    fn handle(&mut self, handled: Handled) -> bool {
+        if self.handled.contains(&handled) {
+            return false;
+        }
+        self.handled.push_back(handled);
+        while self.handled.len() > MAX_HANDLED {
+            self.handled.pop_front();
+        }
+        true
+    }
+}
+
+/// A failed native turn of a session, as the daemon names it.
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct Handled {
+    kind: AgentKind,
+    sid: String,
+    turn: String,
+}
+
+#[derive(Serialize, Deserialize)]
+struct HandledFile {
+    turns: Vec<HandledTurn>,
+}
+
+#[derive(Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct HandledTurn {
+    kind: String,
+    session_id: String,
+    turn_id: String,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -72,16 +120,70 @@ struct Pending {
 impl Cards {
     /// A table that keeps its unanswered cards in `file` and starts with the ones found there.
     pub(super) fn persistent(file: PathBuf) -> Self {
+        let handled_file = file.with_file_name(HANDLED_FILE);
         let cards = Self {
             inner: Mutex::new(Inner {
                 saved: load(&file, now_ms()),
+                handled: load_handled(&handled_file),
                 ..Inner::default()
             }),
             file: Some(file),
+            handled_file: Some(handled_file),
             frozen: AtomicBool::new(false),
         };
         cards.persist(&cards.inner.lock().unwrap());
         cards
+    }
+
+    /// Whether this is the first time the failure of `turn` reaches the daemon. The turn is
+    /// remembered either way, so a failure is dealt with once however often it is read again.
+    fn first_sight(&self, kind: AgentKind, sid: &str, turn: &str) -> bool {
+        let mut inner = self.inner.lock().unwrap();
+        let fresh = inner.handle(Handled {
+            kind,
+            sid: sid.into(),
+            turn: turn.into(),
+        });
+        if fresh {
+            self.persist_handled(&inner);
+        }
+        fresh
+    }
+
+    /// Counts failures the registry already holds as dealt with. Whoever recorded them has been
+    /// through `first_sight` already, unless it predates the ledger: this keeps those from coming
+    /// back as new failures once the registry forgets their sessions.
+    fn adopt(&self, turns: Vec<(AgentKind, String, String)>) {
+        let mut inner = self.inner.lock().unwrap();
+        let mut added = false;
+        for (kind, sid, turn) in turns {
+            added |= inner.handle(Handled { kind, sid, turn });
+        }
+        if added {
+            self.persist_handled(&inner);
+        }
+    }
+
+    /// Best-effort: a failed write only costs the protection across a restart.
+    fn persist_handled(&self, inner: &Inner) {
+        let Some(file) = &self.handled_file else {
+            return;
+        };
+        let turns = inner
+            .handled
+            .iter()
+            .map(|handled| HandledTurn {
+                kind: handled.kind.as_str().into(),
+                session_id: handled.sid.clone(),
+                turn_id: handled.turn.clone(),
+            })
+            .collect();
+        let _ = serde_json::to_vec_pretty(&HandledFile { turns })
+            .map_err(std::io::Error::other)
+            .and_then(|bytes| {
+                crate::integrations::hook_edit::atomic_write_private(file, &bytes)
+                    .map_err(std::io::Error::other)
+            });
     }
 
     /// Registers the card for `result`: its cancel handle and creation time, or `None` when that
@@ -349,6 +451,29 @@ fn load(file: &std::path::Path, now: u64) -> HashMap<(AgentKind, String), Saved>
         .collect()
 }
 
+fn load_handled(file: &std::path::Path) -> VecDeque<Handled> {
+    let Ok(text) = std::fs::read_to_string(file) else {
+        return VecDeque::new();
+    };
+    let Ok(parsed) = serde_json::from_str::<HandledFile>(&text) else {
+        return VecDeque::new();
+    };
+    let mut inner = Inner::default();
+    for turn in parsed.turns {
+        let Some(kind) = AgentKind::parse(&turn.kind) else {
+            continue;
+        };
+        if !turn.session_id.is_empty() && !turn.turn_id.is_empty() {
+            inner.handle(Handled {
+                kind,
+                sid: turn.session_id,
+                turn: turn.turn_id,
+            });
+        }
+    }
+    inner.handled
+}
+
 /// Atomic and best-effort: a failed write only costs the restoration of a card.
 fn write(file: &std::path::Path, cards: Vec<SavedCard>) -> std::io::Result<()> {
     if cards.is_empty() {
@@ -427,6 +552,35 @@ pub(super) fn enabled(kind: AgentKind, sid: &str) -> bool {
         || source.contains(crate::integrations::agent_lifecycle::MARKER)
 }
 
+/// Each failed native turn is dealt with once, however many times it is read. Some sources are
+/// polled for the latest turn of every session, and the registry hands the same failed turn a
+/// new result ID each time it accepts it afresh, so the result ID cannot tell a new failure from an
+/// old one read again; the native turn ID can. A result without one is taken as new.
+fn owes_card(cards: &Cards, kind: AgentKind, sid: &str, result: &TurnResult) -> bool {
+    result
+        .turn_id
+        .as_deref()
+        .filter(|turn| !turn.is_empty())
+        .is_none_or(|turn| cards.first_sight(kind, sid, turn))
+}
+
+/// The failed turns the registry holds a result for, as `(kind, session, turn)`.
+fn failed_turns(snapshot: &serde_json::Value) -> Vec<(AgentKind, String, String)> {
+    snapshot
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter_map(|record| {
+            let kind = AgentKind::parse(record["kind"].as_str()?)?;
+            let sid = record["sessionId"].as_str().filter(|sid| !sid.is_empty())?;
+            let result = &record["lastTurnResult"];
+            matches!(result["outcome"].as_str(), Some("failed" | "incomplete")).then_some(())?;
+            let turn = result["turnId"].as_str().filter(|turn| !turn.is_empty())?;
+            Some((kind, sid.into(), turn.into()))
+        })
+        .collect()
+}
+
 /// Only accepted observations enter here; an old round cannot cancel a new round's card.
 pub(super) fn observe(state: &Arc<ServerState>, kind: AgentKind, sid: &str, event: LifecycleEvent) {
     if state.closing.load(Ordering::SeqCst) {
@@ -439,11 +593,7 @@ pub(super) fn observe(state: &Arc<ServerState>, kind: AgentKind, sid: &str, even
         state.failure_confirmations.cancel(kind, sid);
         return;
     }
-    if event != LifecycleEvent::TurnEnd
-        || !enabled(kind, sid)
-        || !crate::development::session::native_binding_allowed(kind, sid)
-        || kind == AgentKind::Codex && crate::agents::delegated::marker_silenced(sid).is_some()
-    {
+    if event != LifecycleEvent::TurnEnd {
         return;
     }
     let Some(result) = state
@@ -453,6 +603,17 @@ pub(super) fn observe(state: &Arc<ServerState>, kind: AgentKind, sid: &str, even
     else {
         return;
     };
+    // Before the gates below: a failure that earned no card, say because the switch was off, is
+    // not a new one when it is read again later.
+    if !owes_card(&state.failure_confirmations, kind, sid, &result) {
+        return;
+    }
+    if !enabled(kind, sid)
+        || !crate::development::session::native_binding_allowed(kind, sid)
+        || kind == AgentKind::Codex && crate::agents::delegated::marker_silenced(sid).is_some()
+    {
+        return;
+    }
     if !current(state, kind, sid, &result.id) {
         return;
     }
@@ -480,6 +641,9 @@ pub(super) fn observe(state: &Arc<ServerState>, kind: AgentKind, sid: &str, even
 /// Brings back the cards the previous daemon had not seen answered. A card whose result is no
 /// longer the session's latest unhandled one is dropped: the user, or the Agent itself, moved on.
 pub(super) fn restore(state: &Arc<ServerState>) {
+    state
+        .failure_confirmations
+        .adopt(failed_turns(&state.agents.snapshot()));
     let pending = state.failure_confirmations.pending();
     state
         .failure_confirmations
@@ -776,6 +940,7 @@ fn start_card(state: &Arc<ServerState>, kind: AgentKind, sid: &str, result: Turn
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::agents::result::{Observation, TurnOutcome};
 
     #[tokio::test]
     async fn duplicate_results_and_old_cleanup_cannot_replace_a_new_card() {
@@ -1037,5 +1202,214 @@ mod tests {
             .unwrap()
             .attempt
             .is_none());
+    }
+
+    fn handled_file(directory: &tempfile::TempDir) -> PathBuf {
+        directory.path().join("state").join(HANDLED_FILE)
+    }
+
+    fn handled_entry(kind: &str, sid: &str, turn: &str) -> serde_json::Value {
+        serde_json::json!({"kind": kind, "sessionId": sid, "turnId": turn})
+    }
+
+    fn failure(id: &str, turn: Option<&str>) -> TurnResult {
+        TurnResult {
+            id: id.into(),
+            outcome: TurnOutcome::Failed,
+            source: Some("codexDesktop".into()),
+            turn_id: turn.map(Into::into),
+            reason: None,
+            summary: None,
+            at: 0,
+        }
+    }
+
+    /// What a Codex Desktop poll reports for a failed turn: its start, then its failure.
+    fn poll_failed_turn(registry: &AgentRegistry, sid: &str, turn: &str) -> TurnResult {
+        let start = Observation {
+            turn_id: Some(turn.into()),
+            ..Default::default()
+        };
+        let end = Observation {
+            turn_id: Some(turn.into()),
+            result: Some(failure("", Some(turn))),
+            ..Default::default()
+        };
+        for (event, observation) in [
+            (LifecycleEvent::TurnStart, &start),
+            (LifecycleEvent::TurnEnd, &end),
+        ] {
+            registry.apply_observed(
+                AgentKind::Codex,
+                event,
+                sid,
+                None,
+                None,
+                0,
+                Some(observation),
+            );
+        }
+        registry.last_turn_result(AgentKind::Codex, sid).unwrap()
+    }
+
+    #[test]
+    fn a_failed_turn_gets_one_card_however_often_it_is_read() {
+        let cards = Cards::default();
+        let codex = AgentKind::Codex;
+        assert!(owes_card(&cards, codex, "s", &failure("r1", Some("t1"))));
+        // The same turn again under a new result ID: how the registry takes it in afresh.
+        assert!(!owes_card(&cards, codex, "s", &failure("r2", Some("t1"))));
+        // A later turn, another session and another Agent are new failures.
+        assert!(owes_card(&cards, codex, "s", &failure("r3", Some("t2"))));
+        assert!(owes_card(
+            &cards,
+            codex,
+            "other",
+            &failure("r4", Some("t1"))
+        ));
+        assert!(owes_card(
+            &cards,
+            AgentKind::Cursor,
+            "s",
+            &failure("r5", Some("t1"))
+        ));
+        // Without a native turn there is nothing to tell two failures apart by.
+        for turn in [None, Some("")] {
+            assert!(owes_card(&cards, codex, "s", &failure("r6", turn)));
+            assert!(owes_card(&cards, codex, "s", &failure("r7", turn)));
+        }
+    }
+
+    #[test]
+    fn a_session_the_registry_forgot_does_not_make_its_old_failure_new() {
+        let cards = Cards::default();
+        let registry = AgentRegistry::new();
+        let first = poll_failed_turn(&registry, "s", "t1");
+        assert!(owes_card(&cards, AgentKind::Codex, "s", &first));
+        // While the registry remembers the session, polling the turn again changes nothing.
+        assert_eq!(poll_failed_turn(&registry, "s", "t1").id, first.id);
+        // Once it has forgotten it, the turn comes in as a failure with a result ID of its own.
+        let again = poll_failed_turn(&AgentRegistry::new(), "s", "t1");
+        assert_ne!(again.id, first.id);
+        assert!(!owes_card(&cards, AgentKind::Codex, "s", &again));
+        // A turn that really is new still is.
+        let next = poll_failed_turn(&AgentRegistry::new(), "s", "t2");
+        assert!(owes_card(&cards, AgentKind::Codex, "s", &next));
+    }
+
+    #[test]
+    fn handled_turns_outlive_the_daemon_and_the_cards() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = file(&directory);
+        let first = Cards::persistent(path.clone());
+        assert!(first.first_sight(AgentKind::Codex, "s", "t1"));
+        first.begin(AgentKind::Codex, "s", "r1").unwrap();
+        // Answering the card empties the card record, not the turns dealt with.
+        first.finish(AgentKind::Codex, "s", "r1");
+        assert!(!path.exists());
+        let second = Cards::persistent(path);
+        assert!(!second.first_sight(AgentKind::Codex, "s", "t1"));
+        assert!(second.first_sight(AgentKind::Codex, "s", "t2"));
+        assert!(!Cards::persistent(file(&directory)).first_sight(AgentKind::Codex, "s", "t2"));
+    }
+
+    #[test]
+    fn the_oldest_handled_turns_are_forgotten_first() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = file(&directory);
+        let cards = Cards::persistent(path.clone());
+        for index in 0..=MAX_HANDLED {
+            assert!(cards.first_sight(AgentKind::Codex, "s", &format!("t{index}")));
+        }
+        let last = format!("t{MAX_HANDLED}");
+        assert!(!cards.first_sight(AgentKind::Codex, "s", "t1"));
+        assert!(!cards.first_sight(AgentKind::Codex, "s", &last));
+        // The very first one made room for the rest.
+        assert!(cards.first_sight(AgentKind::Codex, "s", "t0"));
+        let record: HandledFile =
+            serde_json::from_slice(&std::fs::read(handled_file(&directory)).unwrap()).unwrap();
+        assert_eq!(record.turns.len(), MAX_HANDLED);
+        assert!(!Cards::persistent(path).first_sight(AgentKind::Codex, "s", &last));
+    }
+
+    #[test]
+    fn unusable_handled_entries_are_not_restored() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = file(&directory);
+        let record = handled_file(&directory);
+        std::fs::create_dir_all(record.parent().unwrap()).unwrap();
+        std::fs::write(
+            &record,
+            serde_json::json!({"turns": [
+                handled_entry("codex", "s", "t1"),
+                handled_entry("nobody", "s", "unknown-kind"),
+                handled_entry("codex", "", "no-session"),
+                handled_entry("codex", "s", ""),
+            ]})
+            .to_string(),
+        )
+        .unwrap();
+        let cards = Cards::persistent(path.clone());
+        assert_eq!(cards.inner.lock().unwrap().handled.len(), 1);
+        assert!(!cards.first_sight(AgentKind::Codex, "s", "t1"));
+        for garbage in ["", "not json", "{\"turns\":\"x\"}", "{}"] {
+            std::fs::write(&record, garbage).unwrap();
+            assert!(Cards::persistent(path.clone())
+                .inner
+                .lock()
+                .unwrap()
+                .handled
+                .is_empty());
+        }
+    }
+
+    #[test]
+    fn failures_already_on_record_are_adopted_as_handled() {
+        let snapshot = serde_json::json!([
+            {"kind": "codex", "sessionId": "failed", "state": "idle",
+                "lastTurnResult": {"id": "r1", "outcome": "failed", "turnId": "t1", "at": 1}},
+            {"kind": "cursor", "sessionId": "incomplete", "state": "ended",
+                "lastTurnResult": {"id": "r2", "outcome": "incomplete", "turnId": "t2", "at": 1}},
+            {"kind": "codex", "sessionId": "completed",
+                "lastTurnResult": {"id": "r3", "outcome": "completed", "turnId": "t3", "at": 1}},
+            {"kind": "codex", "sessionId": "no-turn",
+                "lastTurnResult": {"id": "r4", "outcome": "failed", "at": 1}},
+            {"kind": "codex", "sessionId": "no-result"},
+            {"kind": "nobody", "sessionId": "unknown-kind",
+                "lastTurnResult": {"id": "r5", "outcome": "failed", "turnId": "t5", "at": 1}},
+        ]);
+        let turns = failed_turns(&snapshot);
+        assert_eq!(
+            turns,
+            [
+                (AgentKind::Codex, "failed".into(), "t1".into()),
+                (AgentKind::Cursor, "incomplete".into(), "t2".into())
+            ]
+        );
+        let directory = tempfile::tempdir().unwrap();
+        let cards = Cards::persistent(file(&directory));
+        cards.adopt(turns);
+        assert!(!cards.first_sight(AgentKind::Codex, "failed", "t1"));
+        assert!(!cards.first_sight(AgentKind::Cursor, "incomplete", "t2"));
+        assert!(cards.first_sight(AgentKind::Codex, "completed", "t3"));
+        assert!(!Cards::persistent(file(&directory)).first_sight(AgentKind::Codex, "failed", "t1"));
+    }
+
+    #[test]
+    fn the_registry_snapshot_names_the_failed_turn() {
+        let registry = AgentRegistry::new();
+        poll_failed_turn(&registry, "s", "t1");
+        assert_eq!(
+            failed_turns(&registry.snapshot()),
+            [(AgentKind::Codex, "s".into(), "t1".into())]
+        );
+    }
+
+    #[test]
+    fn handled_turns_never_touch_the_disk_without_a_file() {
+        let cards = Cards::default();
+        assert!(cards.first_sight(AgentKind::Codex, "s", "t1"));
+        cards.adopt(vec![(AgentKind::Codex, "s".into(), "t2".into())]);
+        assert!(cards.handled_file.is_none());
     }
 }
