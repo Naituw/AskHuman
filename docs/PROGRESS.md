@@ -344,23 +344,22 @@ App 里用只读小铃铛标出「会通知你」。需求 [`docs/specs/ios-foll
   （Face ID；真实 Agent 的启动要用户批准）——列表行出现铃铛、详情页有一行说明；Mac 在用时做完应**不**推；停手满 60 秒才来一条；
   做完之前回到 Mac 敲键盘则不应补推；做完后铃铛消失（`state.json` 的 `followSet` 为空）。配置用后还原；不要用 `AskHuman help` 之类的词试命令。
 
-## 待验证：消息附注（在消息里选字写附注，随回答发给 Agent；Mac 与弹窗已验，iOS 回答页与直接提问写完后一次都没编译过）
+## 待真机验证：消息附注（在消息里选字写附注，随回答发给 Agent；Mac、弹窗与 iOS 模拟器已验，真机未验）
 
-需求 [`docs/specs/message-annotations.md`](specs/message-annotations.md)，计划与各期实施记录 [`docs/plans/message-annotations.md`](plans/message-annotations.md) §14。
-Mac（守护进程、CLI 输出、MCP、iOS 网关）、弹窗（P3，在真实弹窗里点过）、iOS 的协议 / 草稿 / 网页引擎 / 选字菜单 / 编辑面板（P4a、P4b，iOS 26.2 模拟器）已入库并验过。
-**P4c（回答页的清单、底栏的圆钮、历史）与 P5（直接提问把题干挪进消息区）是在机器严重换页时写的，用户选了「先不编译、不跑测试」，所以从未编译、从未运行**，
-窄屏（375 pt）底栏的宽度也只有估算，一次没量；P6 的文档已同步。
+需求 [`docs/specs/message-annotations.md`](specs/message-annotations.md)，计划与各期实施记录 [`docs/plans/message-annotations.md`](plans/message-annotations.md) §14（含 2026-11-08 的验证记录）。
+Mac（守护进程、CLI 输出、MCP、iOS 网关）、弹窗（在真实弹窗里点过）、iOS（协议、草稿、网页引擎、选字菜单、编辑面板、清单、底栏圆钮、历史、直接提问）都已入库；
+iOS 在 iPhone 17（402 pt）/ 26.2 与 iPhone SE（375 pt）/ 18.5 的模拟器上过了自动化。375 pt 底栏按需求 D21 实测：浮动栏达标（辅助字号下一行比边距宽 12 pt，用户接受）；
+经典栏原先计数被挤没，已按用户的选择改成「放不下就把计数挪到按钮行上方」。用户 2026-11-08 决定**先不出 TestFlight**，等他开口。
 
-下一步（机器恢复后一次做完，前一步没过不要往下）：
+下一步：
 
-1. `node scripts/machine-health.mjs` 退出码不是 2 之后：`xcodegen generate`；`swift test`（`ios/Packages/AskHumanKit`）；`xcodebuild build`，再跑 `ios/Tools/make-catalog.py` 重新生成 `Localizable.xcstrings`
-   （目录里还没有 11 条附注的中文）；修编译错误。
-2. 新建两台 iPhone SE（第三代）模拟器（iOS 26.2 验浮动栏、iOS 18.5 验经典栏）。先弄清 HEAD 上就失败的 5 条 `AskHumanBarUITests` 与
-   `AskHumanInputVisibilityUITests` 的那 1 条为什么失败，再跑带附注的 6 条，对照需求 §4.3 的估算；**不达标就回来找用户，不自己换方案**（D21）。
-3. 跑 `AskHumanAnnotationUITests`（9）、`AskHumanDirectAskUITests`（9）、`AnnotationE2ETests`（要 `AH_E2E_BIN`），英文与 zh-Hans；`vue-tsc --noEmit` 与整库 `vitest run`。
-4. P4b 的树上超时过的 `AskHumanRequestNavigationUITests.testManualReturnRestoresTheReadingPositionOfALongForm`：在 HEAD 与现在的树上各跑几遍再下结论；
-   若是真回归，从 `.sheet(item:)`、`AnnotatingWebView`、`notes.js`、`reveal` 里的 UIKit 滚动二分。
-5. 验完后问用户要不要出一版内部 TestFlight 上真机（计划 §7：P4c 之后问；用户没说要之前不出，做法见 `ios-testflight` 技能）。
+1. 用户要上真机时，出一版内部 TestFlight（技能 `ios-testflight`）。真机上看：375 pt 机型或辅助字号下的底栏、多词与跨块的拖选、系统选字菜单里的「添加附注」入口与句柄、
+   链接文字的菜单、整套手感。
+2. 模拟器上还欠的（机器不抖时再补，一次只开一台）：改完经典栏之后，浮动栏在 iPhone SE / 26.2 上复测 `AskHumanBarUITests`（`TEST_RUNNER_AH_UI_CONTINUE=1`，
+   `TEST_RUNNER_AH_UI_SHOTS` 收 `frames.txt`，对照需求 §4.3 的实测列）与附注用例；iOS 27.0 的对照（SE / 27.0 的测试运行器在内存吃紧时反复崩，一次没成功）；`AskHumanBarUITests` 的 zh-Hans。
+3. 与附注无关、HEAD 上就失败的 iOS 26.x 量法：`AskHumanBarUITests` 里 `answered-count` 量到的是文字（23–39 pt，断言要求 ≥ 40 pt）、`quick-reply-menu` 框 54 pt（断言要求约 50 pt 的圆）；
+   `AskHumanInputVisibilityUITests.testShortAnswerAndAttachmentFitWithAccessibilityText` 的键盘焦点事件。先在 27.0 上看是不是一样，再决定改断言的量法。
+4. 整库 `vitest run`（`vitest.config.ts` 没排除 `todo-sync-helper/build/**`，另一会话处理）与整库 `cargo test` 在本功能之后没有重跑。
 
 没有人在真环境里点过的：Windows / Linux 的真实弹窗；真实 macOS 弹窗里鼠标拖选（自动化的拖动不产生文字选区，只用过双击与三击）；浅色主题与 420 px 窄窗口的真实弹窗；
 真实输入法组词；「查看源码」模式重新定位、历史窗口里的附注、共享窗口的未答标记（只有单元测试）；iPhone 真机上的多词与跨块选区、系统选字菜单里的「添加附注」入口、整套手感；

@@ -427,14 +427,14 @@ P1 先于 P2 做：它只决定 P4 的路是否走得通，早知道比晚知道
 
 **没验证 / 未解决**：
 
-- **`AskHumanRequestNavigationUITests.testManualReturnRestoresTheReadingPositionOfALongForm`**：HEAD 上跑了一次，通过，返回后约 10 s 才看到位置恢复（15 s 的等待）；本期的树上两次（单跑一次、整批里一次）在 15 s 内都没等到，之后带诊断输出的一次被系统杀掉（测试运行器 `signal kill`）。正常情况下恢复不到 1 s，这几次慢到 10 s 以上，是因为当时机器在严重换页（交换区 20+ GiB、负载 300+，返回时要重新起一个网页进程，恢复要等页面排版完成）。这条用例的请求不可附注（`notes == nil`），本期加的代码对它按读代码是空操作（`engine.highlight(el, [])` 只做一次 `querySelectorAll`，选区没变就不发消息，`WebPage` 的新输入都是 nil / 空），所以更像余量不大的超时波动；**但样本只有 1 比 2，没有用对照实验证实**。机器恢复后在两棵树上各跑几遍再下结论；若是真回归，从 `.sheet(item:)`、`AnnotatingWebView`、`notes.js` 三处二分。
+- **`AskHumanRequestNavigationUITests.testManualReturnRestoresTheReadingPositionOfALongForm`**（2026-11-08 起不再是疑点：两台设备上都通过，见「验证记录」发现 1）：HEAD 上跑了一次，通过，返回后约 10 s 才看到位置恢复（15 s 的等待）；本期的树上两次（单跑一次、整批里一次）在 15 s 内都没等到，之后带诊断输出的一次被系统杀掉（测试运行器 `signal kill`）。正常情况下恢复不到 1 s，这几次慢到 10 s 以上，是因为当时机器在严重换页（交换区 20+ GiB、负载 300+，返回时要重新起一个网页进程，恢复要等页面排版完成）。这条用例的请求不可附注（`notes == nil`），本期加的代码对它按读代码是空操作（`engine.highlight(el, [])` 只做一次 `querySelectorAll`，选区没变就不发消息，`WebPage` 的新输入都是 nil / 空），所以更像余量不大的超时波动；**但样本只有 1 比 2，没有用对照实验证实**。机器恢复后在两棵树上各跑几遍再下结论；若是真回归，从 `.sheet(item:)`、`AnnotatingWebView`、`notes.js` 三处二分。
 - 新用例在 iOS 18.5 / 27.x 与 zh-Hans 上没跑；`swift test` 全包、`vue-tsc --noEmit`、整库 `vitest` 在本期改动之后没有重跑。
 - 多词、跨块选区的拖选没法在模拟器上自动化（P1 已记），只有 vitest 覆盖。
 - 真机。
 
 ### P4c iOS 回答页界面（2026-11-07，提交 `02ca4215`）
 
-**结论：代码写完并入库，但没有编译，也没有跑过任何测试。** 这一期是在机器严重换页（交换区 22 GiB 以上，另有别人的三台模拟器开着）时写的；用户在 AskHuman 里选了「先不编译、不跑测试：继续写 P4c / P5 的代码和 P6 文档，机器缓下来后再统一验证并查那条回归」。所以下面「验证」只有读代码与语法解析，**窄屏的数字一个也没量**，需求 §4.3 与 `ios-answer-flow.md` G14 里的宽度仍是估算。`PROTOCOL_VERSION` 不变（本期不碰协议）。
+**结论：代码写完并入库，但没有编译，也没有跑过任何测试。** 这一期是在机器严重换页（交换区 22 GiB 以上，另有别人的三台模拟器开着）时写的；用户在 AskHuman 里选了「先不编译、不跑测试：继续写 P4c / P5 的代码和 P6 文档，机器缓下来后再统一验证并查那条回归」。所以下面「验证」只有读代码与语法解析，**窄屏的数字一个也没量**，需求 §4.3 与 `ios-answer-flow.md` G14 里的宽度仍是估算。`PROTOCOL_VERSION` 不变（本期不碰协议）。**2026-11-08 已补验并实测窄屏，见本节末的「验证记录」；下面的「验证」「没验证」记的是写完当时的状态。**
 
 **与计划的差异**（都是计划没写死的实现细节；第 1、10 条请评审时留意）：
 
@@ -466,7 +466,7 @@ P1 先于 P2 做：它只决定 P4 的路是否走得通，早知道比晚知道
 
 ### P5 iOS 直接提问（2026-11-07，提交 `dd848e0d`）
 
-**结论：代码写完并入库，同样没有编译、没有跑过任何测试**（原因同 P4c）。`PROTOCOL_VERSION` 不变。
+**结论：代码写完并入库，同样没有编译、没有跑过任何测试**（原因同 P4c）。`PROTOCOL_VERSION` 不变。**2026-11-08 已补验（`AskHumanDirectAskUITests` 与 `DirectQuestionTests` 通过），见「验证记录」。**
 
 **与计划的差异**：
 
@@ -483,3 +483,55 @@ P1 先于 P2 做：它只决定 P4 的路是否走得通，早知道比晚知道
 ### P6 文档同步（2026-11-07）
 
 按需求 §8 与计划 §9 同步了：`docs/overview-popup-ui.md`（新增「消息附注」一节）、`docs/overview-ios.md`（消息附注一条、页面八个消息、直接提问挪题干、Mock 场景与启动选项、`answer_hash`、`Caps.annotations` / `annotatable`）、`docs/specs/ios-web-markdown.md`（U2 例外、W1、W6、§4、新增 W18）、`docs/specs/ios-answer-flow.md`（新增 G14、验收第 17 条、反馈记录；宽度写明是估算）、`docs/specs/strict-choice-and-structured-output.md`（新增 D6c：`[user_annotations]` 区块与 JSON 的 `user_annotations`）、`docs/specs/todo-whats-next.md`（附注与「结束本轮」不批准结束）、`docs/specs/mcp.md`、`docs/wiki/ios-setup.md` 与 `ios-setup.en.md`（各一条）。**与计划不同的一处**：`docs/overview.md` 里 What's next 那一条加了半句——带附注的「结束本轮」不算准许结束，只回 `[user_annotations]`——因为那一句原先只写「准许结束为 `[selected_options]`」，读起来像选了「结束本轮」就一定结束；其余没动。
+
+### 验证记录（2026-11-08，机器重启后补验 P4c / P5；提交 `c783aeae` 角标、`8a786624` 经典栏、`41007bcf` 测试，加本记录所在的文档提交）
+
+**结论：P4c 与 P5 不再是「没编译、没跑过」：应用与 UI 测试编过，自动化在 iOS 26.2 与 18.5 的模拟器上跑过。375 pt 窄屏底栏按 D21 实测——浮动栏达标（只有辅助字号下一行比两侧边距宽 12 pt，用户接受）；经典栏原先不达标（计数被挤没），用户选了「经典栏也学浮动栏：放不下就把计数挪到按钮行上方」，已改好并在 iOS 18.5 上重测通过。** P4b 留下的「阅读位置」用例没有再超时。两条用例是测试自己的假设错了，已修。`PROTOCOL_VERSION` 不变。没验的：真机、iOS 27.x、改完经典栏之后浮动栏在 SE / 26.2 上的复测（见「没验证」）。
+
+**条件**：机器 16 GiB；别的会话同时在跑 vitest、`rustc`、别的工程的 `xcodebuild archive` 和它们自己的模拟器，多次进入换页（交换区 6–22 GiB、负载 80–320），所以 UI 测试一次只开一台我自己的模拟器（`-parallel-testing-enabled NO -collect-test-diagnostics never`），每轮跑完就关机，用时不当数据看。设备：iPhone SE（第三代，375 pt）iOS 26.2（浮动栏）与 18.5（经典栏），iPhone 17（402 pt）iOS 26.2；没有 iOS 17（D17）。`AskHumanBarUITests` 加了两个环境变量：`TEST_RUNNER_AH_UI_CONTINUE=1`（一个断言失败后继续，把各状态的框收齐）与既有的 `TEST_RUNNER_AH_UI_SHOTS=<目录>`（截图，另写 `frames.txt`：逐态记下计数与各按钮的框）。
+
+**结果**：
+
+| 范围 | 设备 / 系统 | 结果 |
+|---|---|---|
+| `swift test`（`ios/Packages/AskHumanKit`） | — | 766 条通过 |
+| `vue-tsc --noEmit` | — | 0 错误 |
+| `vitest`（`--maxWorkers=2`；附注相关：引擎、`annotations.bundle`、`notesPage`、`PopupView.annotations`） | — | 通过；整库 `src` 没跑（见「没验证」） |
+| `AnnotationE2ETests`（真实 daemon，`AH_E2E_BIN` 指向已装的二进制） | — | 5/5 |
+| `AskHumanDirectAskUITests` | iPhone 17 / 26.2；SE / 18.5 | 9/9；9/9 |
+| `AskHumanWebUITests` | iPhone 17 / 26.2 | 15/15 |
+| `AskHumanRequestNavigationUITests` | iPhone 17 / 26.2；SE / 18.5 | 8/8；8/8 |
+| `AskHumanAnnotationUITests` | iPhone 17 / 26.2；SE / 18.5 | 首轮 7/9，两条失败改后重跑通过（发现 2、6）；9/9 |
+| `AskHumanBarUITests`（11 条：五档字号无附注、五档字号带 2 条附注、默认字号带 20 条附注） | SE / 18.5（经典栏，改排法之后） | 11/11 |
+| 同上 | iPhone 17 / 26.2 | 11 条都不过，原因是量法（发现 4），不是排法 |
+| `AskHumanInputVisibilityUITests` | iPhone 17 / 26.2；SE / 18.5 | 7 过 1 败 1 跳过（发现 4）；8 过 1 跳过 |
+| `AskHumanEndedUITests`、`AskHumanRequestConnectionUITests` | SE / 18.5 | 5/5、3/3 |
+| `AskHumanAwayUITests`、`AskHumanTodoPickUITests` | SE / 18.5 | 16/16、6/6 |
+| `AskHumanWebUITests` 的「取消面板什么也不留」 | SE / 18.5 | 通过 |
+| `ios/Tools/make-catalog.py` 重新生成 `Localizable.xcstrings` | — | 与已提交的一致，没有新键 |
+
+SE / 26.2 在改经典栏之前量过一轮（浮动栏各状态的框，数字在需求 §4.3 的实测列），改之后没有复测成（见「没验证」）。
+
+**发现**：
+
+1. **「阅读位置」用例没有再超时**：`AskHumanRequestNavigationUITests.testManualReturnRestoresTheReadingPositionOfALongForm` 在 iPhone 17 / 26.2 与 SE / 18.5 上都通过（8/8）。没有在 HEAD 上对照，但 P4b 时的超时发生在交换区 20 GiB 以上的换页期，不再当作回归。
+2. **`testATapOnARowGoesBackToThePassage` 的假设错了，不是功能的问题**：用例用 `isHittable` 判断目标词是否已在屏上，而高页面里网页离屏的文字也报「可点」，所以它从不滚动，在屏外的点上长按（「the menu of Omega has no entry for a note」）。改成按框判断（`inReach`：在导航栏之下、底栏之上）；iPhone 17 上两次、SE / 18.5 上都通过。
+3. **`testANoteIsWrittenOnASelectedWordAndComesBackForEditing` 的 `isEnabled` 断言在 iOS 18.5 上不成立**：那里 `annotation-commit` 这个标识落在一个 `Other` 容器上，容器从不报「不可用」，里面的按钮才是灰的（截图为证，功能没问题）。改成「按下去看」：没写字时点「Add」，面板还在、什么也没加。改后没有在 18.5 上重跑。
+4. **iOS 26.2 上 `AskHumanBarUITests` 与 `AskHumanInputVisibilityUITests` 的失败是量法问题，HEAD 上就有**（P4b 在干净 HEAD 的隔离工作树上对照过）：`answered-count` 的无障碍框是芯片里的文字（23–39 pt 宽），断言要求芯片不小于 40 pt；`quick-reply-menu` 的框 54 pt 宽，断言要求约 50 pt 的圆；`testShortAnswerAndAttachmentFitWithAccessibilityText` 报键盘焦点事件。18.5 上这些都过。所以 26.2 上的 `AskHumanBarUITests` 不当作过 / 不过的依据，浮动栏的尺寸看 `frames.txt` 里的框（SE / 26.2，改排法之前）。是否修这些断言的量法不属于本功能，记进 `docs/PROGRESS.md`。
+5. **底栏 375 pt（D21）**：浮动栏在 375 / 402 pt、五档字号与辅助字号下都不出界、不重叠、不撑高，除了辅助字号下带附注的那一行（附注钮 + 下一题 + 发送）比两侧边距宽 12 pt（用户接受）；经典栏原先在 375 pt 下计数被挤成三行碎片、再被挤没（带附注钮时），用户选了「放不下就把计数挪到按钮行上方」。数字见需求 §4.3，条目见 `ios-answer-flow.md` G14。
+6. **负载下的波动**：高负载（负载 70–200）时同一批用例多次出现「元素没出现」「长按菜单没弹出」：`testNotesOfAMessageDrawnAsPlainTextStayReachable`（`annotation-row-0 did not appear`）与 `testCancellingTheSheetKeepsNothing`（`request-title did not appear`）各一次，重跑通过；SE / 26.2 复测时 `testNotesStayWhenTheRequestIsLeftAndOpenedAgain` 与 `testSwipingARowDeletesTheNoteAndEditingGoesToTheEditor` 各败一次，当时负载 77–83，随后测试运行器死掉、`xcodebuild` 空等，没有在安静的机器上重跑；这两条在 iPhone 17 / 26.2 与 SE / 18.5 上都通过过。
+
+**与计划的差异**：
+
+1. **经典栏的计数排法**：`SendBar.controls` 里 `ViewThatFits { classicRow, stackedControls }`——一行放得下就一行，放不下就计数在上、按钮在下，「发送」吃满按钮行；经典栏的计数始终是完整的「Answered n/m」，没有短写法。计划没写，是 D21 实测不达标后用户选的。
+2. **角标画在玻璃容器之上**：`NotesButtonBounds` 偏好值 + `overlayPreferenceValue`。玻璃会洗淡压在圆钮上的那一角，SE / 26.2 的截图里看出来的；经典栏的角标仍是按钮自己的 `overlay`。
+3. **测试**：`AskHumanBarUITests` 对经典栏也要求计数不小于 40 pt 且不折行（宽 > 高 × 2.5），并加了 `AH_UI_CONTINUE`；`AskHumanAnnotationUITests` 失败时截图并转储界面树，「是否在屏上」按框判断；`AskHumanWebUITests` 的「没写字时 Add 不起作用」按下去看。
+
+**没验证**：
+
+- 真机：整套手感、系统选字菜单里的「添加附注」入口与句柄、多词与跨块的拖选（模拟器上的自动化拖动不产生文字选区）、链接文字的菜单、375 pt 真机上的底栏。
+- **改完经典栏之后，浮动栏在 SE / 26.2 上的复测**：排法按代码没变（同一段挪进 `controls`；`buttons()` 的默认参数让浮动栏走原来的路），改完之后在那台设备上有 3 条附注用例通过，但 `frames.txt` 没有重新量。三次想复测都撞上机器换页（负载 100–320，模拟器起不来或测试运行器死掉）。
+- iOS 27.x：SE / 27.0 的测试运行器在内存吃紧时反复崩溃，没有成功跑过一次；iOS 27.1 的运行时只支持 iPhone Duo。iOS 17（D17）不验。
+- 中文：`AskHumanBarUITests` 没有跑 zh-Hans；清单的中文由 `testTheListSpeaksChinese` 自己启动中文来测（过）；`Localizable.xcstrings` 里的 11 条中文靠 `make-catalog.py` 与已提交的文件一致来保证。附注的其余 UI 用例是英文写的。
+- 整库 `vitest run`（`vitest.config.ts` 没排除 `todo-sync-helper/build/**`，整库会把发布产物里的源码副本再跑一遍；用户说交给另一个会话）与整库 `cargo test`（本功能之后没有重跑）。
+- 真实 Agent 端到端（会调用模型，要用户授权）；Windows / Linux 的真实弹窗；浅色主题与 420 px 窄窗口的真实弹窗；真实输入法组词；「查看源码」模式重新定位、历史窗口里的附注、共享窗口的未答标记（只有单元测试）。
