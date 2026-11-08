@@ -719,6 +719,14 @@ private struct Pop: ViewModifier {
 
 // MARK: send bar
 
+/// Where the bar's round "Annotations" button is, in the bar's own space, for the badge that is drawn above the glass.
+private struct NotesButtonBounds: PreferenceKey {
+    static let defaultValue: Anchor<CGRect>? = nil
+    static func reduce(value: inout Anchor<CGRect>?, nextValue: () -> Anchor<CGRect>?) {
+        value = value ?? nextValue()
+    }
+}
+
 private struct SendBar: View {
     let item: InboxItem
     let composer: AnswerComposer
@@ -758,6 +766,22 @@ private struct SendBar: View {
                     if composer.directive != nil { DirectivePanel(composer: composer) }
                     controls
                 }
+            }
+            // The number on the corner of the "Annotations" button, above the glass container (inside it the glass would
+            // cover the part of the badge that is on the circle).
+            .overlayPreferenceValue(NotesButtonBounds.self) { anchor in
+                GeometryReader { proxy in
+                    if let anchor {
+                        let frame = proxy[anchor]
+                        Color.clear
+                            .frame(width: frame.width, height: frame.height)
+                            .overlay(alignment: .topTrailing) {
+                                AnnotationCountBadge(count: composer.annotations.count).offset(x: 4, y: -4)
+                            }
+                            .offset(x: frame.minX, y: frame.minY)
+                    }
+                }
+                .allowsHitTesting(false)
             }
         }
         .padding(.horizontal, 16)
@@ -993,8 +1017,10 @@ private struct SendBar: View {
             .disabled(ended || sendingState)
             .accessibilityLabel(Text("Annotations · \(count)"))
             .accessibilityIdentifier("annotations-button")
-            // After the button's own accessibility, so that the badge is not part of the button's frame.
-            .overlay(alignment: .topTrailing) { AnnotationCountBadge(count: count).offset(x: 4, y: -4) }
+            // The badge is not drawn from here: glass is drawn over anything that sits on it inside the bar's glass
+            // container, so the corner of the badge that is on the circle would be washed out. The bar draws it above
+            // the container, where this says the button is (`SendBar.body`).
+            .anchorPreference(key: NotesButtonBounds.self, value: .bounds) { $0 }
         } else {
             Button(action: onAnnotations) {
                 Image(systemName: "note.text")
