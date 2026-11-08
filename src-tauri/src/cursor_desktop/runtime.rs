@@ -1106,7 +1106,18 @@ mod tests {
     #[test]
     fn the_revision_covers_every_source_the_bridge_ships() {
         let mut every = Sha256::new();
-        for part in [BRIDGE, RENDERER, PREFLIGHT, RETENTION, RETENTION_PREFLIGHT] {
+        for part in [
+            BRIDGE,
+            RENDERER,
+            PREFLIGHT,
+            RETENTION,
+            RETENTION_PREFLIGHT,
+            STALL_POLICY,
+            STALL_RENDERER,
+            STALL_HOST,
+            STALL_ATTACH,
+            STALL_VERSION,
+        ] {
             every.update(part);
         }
         assert_eq!(adapter_revision(), format!("{:x}", every.finalize())[..16]);

@@ -365,6 +365,7 @@ mod tests {
         }
     }
 
+    #[cfg(unix)]
     #[test]
     fn fix_prefers_a_writable_dir_under_home() {
         let dirs = vec![
@@ -418,6 +419,7 @@ mod tests {
         assert!(fix.needs_path_edit);
     }
 
+    #[cfg(unix)]
     #[test]
     fn fix_quotes_awkward_paths() {
         let writable = |_: &Path| true;
