@@ -61,7 +61,7 @@ function setMode(mode: SetupAgentMode) {
           <span
             v-for="tag in tags"
             :key="tag.key"
-            class="setup-tag"
+            class="status-tag"
             :class="tag.tone"
             :data-testid="`agent-tag-${row.id}-${tag.key}`"
           >

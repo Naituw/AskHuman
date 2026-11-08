@@ -2,6 +2,7 @@
 // A small rounded tile with the mark of an Agent or channel on it (see brandBadges.ts).
 import { computed } from "vue";
 import { BADGES, FALLBACK_TILE, svgUrl } from "./brandBadges";
+import "./brandBadge.css";
 
 const props = withDefaults(
   defineProps<{

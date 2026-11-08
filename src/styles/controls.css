@@ -880,6 +880,38 @@ button.markdown-image-error { cursor: pointer; }
   background: #ff9f0a;
 }
 
+/* Status pill: the state of a whole card at a glance (an Agent's integration, a channel's
+   connection). Shared by the setup wizard and the Agents / Channels settings tabs. */
+.status-tag {
+  flex: 0 0 auto;
+  padding: 2px 8px;
+  border-radius: 10px;
+  background: var(--bg-elevated);
+  color: var(--text-secondary);
+  font-size: 11px;
+  line-height: 1.4;
+  white-space: nowrap;
+}
+.status-tag.ok {
+  color: var(--rec-badge-fg);
+  background: color-mix(in srgb, var(--rec-badge-fg) 14%, transparent);
+}
+.status-tag.warn {
+  color: var(--accent-orange);
+  background: color-mix(in srgb, var(--accent-orange) 16%, transparent);
+}
+.status-tag.err {
+  color: #ff453a;
+  background: color-mix(in srgb, #ff453a 14%, transparent);
+}
+/* Small orange text needs more weight on a light surface to stay readable. */
+.theme-light .status-tag.warn {
+  color: color-mix(in srgb, var(--accent-orange) 70%, #000);
+}
+.theme-light .status-tag.err {
+  color: color-mix(in srgb, #ff453a 82%, #000);
+}
+
 /* 结果文案 */
 .result {
   font-size: 12px;

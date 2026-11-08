@@ -9,6 +9,7 @@ import {
   CHANNEL_DEFS,
   channelDef,
   channelState,
+  channelTone,
   type ChannelDef,
   type ChannelState,
 } from "./channelDefs";
@@ -59,12 +60,6 @@ const list = computed<ListRow[]>(() =>
   }),
 );
 
-function tone(state: ChannelState): "ok" | "warn" | "muted" {
-  if (state === "connected" || state === "ready") return "ok";
-  if (state === "issue" || state === "incomplete") return "warn";
-  return "muted";
-}
-
 /** A field's label without its parenthetical alias ("ClientId（AppKey）" reads "ClientId"). */
 function shortLabel(key: string): string {
   return t(key).replace(/\s*[（(][^）)]*[）)]/g, "");
@@ -104,7 +99,7 @@ function needs(def: ChannelDef): string {
             v-for="row in list"
             :key="row.def.id"
             class="channel-tile"
-            :class="tone(row.state)"
+            :class="channelTone(row.state)"
             :data-testid="`channel-row-${row.def.id}`"
           >
             <div class="tile-head">
@@ -123,8 +118,8 @@ function needs(def: ChannelDef): string {
             <p v-if="row.issue" class="tile-note warn">{{ row.issue }}</p>
             <div class="tile-foot">
               <span
-                class="setup-tag"
-                :class="tone(row.state)"
+                class="status-tag"
+                :class="channelTone(row.state)"
                 :data-testid="`channel-state-${row.def.id}`"
               >
                 {{ t(`setup.remote.state.${row.state}`) }}

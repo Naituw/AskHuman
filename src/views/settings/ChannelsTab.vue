@@ -1,8 +1,10 @@
 <script setup lang="ts">
 // 「通信渠道」tab：弹窗渠道尺寸 + 飞书 / Telegram / 钉钉 / Slack 四家 IM 渠道配置卡
-// （含 R7 故障横幅、配置指南外链、连接测试与自动识别）。
+// （含 R7 故障横幅、配置指南外链、连接测试与自动识别）。每张卡的标题行（标志、名称、状态标签、
+// 开关）由 ChannelCardHead 画，见 docs/specs/settings-agents-channels-cards.md。
 import { computed } from "vue";
 import { useI18n } from "vue-i18n";
+import ChannelCardHead from "./ChannelCardHead.vue";
 import { useSettingsContext } from "./context";
 
 const { t } = useI18n();
@@ -13,6 +15,7 @@ const {
   SECRET_PLACEHOLDER,
   clearSecret,
   channelIssueText,
+  channelCardState,
   openChannelGuide,
   stepWidth,
   stepHeight,
@@ -46,22 +49,22 @@ const {
 } = ctx;
 // 父组件仅在 config 加载后渲染本 tab，这里可安全断言非空。
 const config = computed(() => ctx.config.value!);
+
+/** A card's switch: write through the shared config and save, as the old v-model + @change pair did. */
+function setEnabled(id: "popup" | "telegram" | "dingding" | "feishu" | "slack", enabled: boolean) {
+  config.value.channels[id].enabled = enabled;
+  void persist();
+}
 </script>
 
 <template>
   <div class="card">
-    <div class="row">
-      <p class="card-title">{{ t("settings.channels.popupTitle") }}</p>
-      <span class="spacer"></span>
-      <label class="switch">
-        <input
-          type="checkbox"
-          v-model="config.channels.popup.enabled"
-          @change="persist"
-        />
-        <span class="track"></span>
-      </label>
-    </div>
+    <ChannelCardHead
+      id="popup"
+      :title="t('settings.channels.popupTitle')"
+      :enabled="config.channels.popup.enabled"
+      @toggle="setEnabled('popup', $event)"
+    />
 
     <template v-if="config.channels.popup.enabled">
       <hr class="divider" />
@@ -142,21 +145,15 @@ const config = computed(() => ctx.config.value!);
     class="card channel-card channel-card-telegram"
     :class="{ 'settings-target-highlight': settingsTargetHighlight === 'channel-telegram' }"
   >
-    <div class="row">
-      <p class="card-title">{{ t("settings.channels.telegramTitle") }}</p>
-      <a class="link guide-link" href="#" @click.prevent="openChannelGuide('telegram')">
-        {{ t("settings.channels.setupGuide") }} ↗
-      </a>
-      <span class="spacer"></span>
-      <label class="switch">
-        <input
-          type="checkbox"
-          v-model="config.channels.telegram.enabled"
-          @change="persist"
-        />
-        <span class="track"></span>
-      </label>
-    </div>
+    <ChannelCardHead
+      id="telegram"
+      :title="t('settings.channels.telegramTitle')"
+      :enabled="config.channels.telegram.enabled"
+      :state="channelCardState('telegram')"
+      guide
+      @toggle="setEnabled('telegram', $event)"
+      @guide="openChannelGuide('telegram')"
+    />
     <!-- R7 渠道故障横幅：daemon 侧最近未恢复的错误（修复后自动消失） -->
     <p v-if="channelIssueText('telegram')" class="card-desc warn">
       {{ channelIssueText("telegram") }}
@@ -233,21 +230,15 @@ const config = computed(() => ctx.config.value!);
     class="card channel-card channel-card-dingtalk"
     :class="{ 'settings-target-highlight': settingsTargetHighlight === 'channel-dingding' }"
   >
-    <div class="row">
-      <p class="card-title">{{ t("settings.channels.dingtalkTitle") }}</p>
-      <a class="link guide-link" href="#" @click.prevent="openChannelGuide('dingding')">
-        {{ t("settings.channels.setupGuide") }} ↗
-      </a>
-      <span class="spacer"></span>
-      <label class="switch">
-        <input
-          type="checkbox"
-          v-model="config.channels.dingding.enabled"
-          @change="persist"
-        />
-        <span class="track"></span>
-      </label>
-    </div>
+    <ChannelCardHead
+      id="dingding"
+      :title="t('settings.channels.dingtalkTitle')"
+      :enabled="config.channels.dingding.enabled"
+      :state="channelCardState('dingding')"
+      guide
+      @toggle="setEnabled('dingding', $event)"
+      @guide="openChannelGuide('dingding')"
+    />
     <p v-if="channelIssueText('dingding')" class="card-desc warn">
       {{ channelIssueText("dingding") }}
     </p>
@@ -404,24 +395,16 @@ const config = computed(() => ctx.config.value!);
     class="card channel-card channel-card-feishu"
     :class="{ 'settings-target-highlight': settingsTargetHighlight === 'channel-feishu' }"
   >
-    <div class="row">
-      <p class="card-title">{{ t("settings.channels.feishuTitle") }}</p>
-      <span class="channel-recommended-badge">
-        {{ t("settings.channels.recommendedBadge") }}
-      </span>
-      <a class="link guide-link" href="#" @click.prevent="openChannelGuide('feishu')">
-        {{ t("settings.channels.setupGuide") }} ↗
-      </a>
-      <span class="spacer"></span>
-      <label class="switch">
-        <input
-          type="checkbox"
-          v-model="config.channels.feishu.enabled"
-          @change="persist"
-        />
-        <span class="track"></span>
-      </label>
-    </div>
+    <ChannelCardHead
+      id="feishu"
+      :title="t('settings.channels.feishuTitle')"
+      :enabled="config.channels.feishu.enabled"
+      :state="channelCardState('feishu')"
+      recommended
+      guide
+      @toggle="setEnabled('feishu', $event)"
+      @guide="openChannelGuide('feishu')"
+    />
     <p v-if="channelIssueText('feishu')" class="card-desc warn">
       {{ channelIssueText("feishu") }}
     </p>
@@ -537,21 +520,15 @@ const config = computed(() => ctx.config.value!);
     class="card channel-card channel-card-slack"
     :class="{ 'settings-target-highlight': settingsTargetHighlight === 'channel-slack' }"
   >
-    <div class="row">
-      <p class="card-title">{{ t("settings.channels.slackTitle") }}</p>
-      <a class="link guide-link" href="#" @click.prevent="openChannelGuide('slack')">
-        {{ t("settings.channels.setupGuide") }} ↗
-      </a>
-      <span class="spacer"></span>
-      <label class="switch">
-        <input
-          type="checkbox"
-          v-model="config.channels.slack.enabled"
-          @change="persist"
-        />
-        <span class="track"></span>
-      </label>
-    </div>
+    <ChannelCardHead
+      id="slack"
+      :title="t('settings.channels.slackTitle')"
+      :enabled="config.channels.slack.enabled"
+      :state="channelCardState('slack')"
+      guide
+      @toggle="setEnabled('slack', $event)"
+      @guide="openChannelGuide('slack')"
+    />
     <p v-if="channelIssueText('slack')" class="card-desc warn">
       {{ channelIssueText("slack") }}
     </p>

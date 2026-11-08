@@ -10,7 +10,9 @@ import {
   channelOps,
   channelSection,
   channelState,
+  channelTone,
   requiredFieldsFilled,
+  type ChannelState,
 } from "./channelDefs";
 import { config, secrets } from "./setup.testkit";
 
@@ -126,6 +128,22 @@ describe("channelState", () => {
 
   it("a fault on a channel that is off is not shown", () => {
     expect(channelState(row(false, true), true)).toBe("configuredOff");
+  });
+});
+
+describe("channelTone", () => {
+  it("is green while the channel works, orange when it needs a look, and quiet otherwise", () => {
+    const tones: Record<ChannelState, string> = {
+      unconfigured: "muted",
+      configuredOff: "muted",
+      incomplete: "warn",
+      ready: "ok",
+      connected: "ok",
+      issue: "warn",
+    };
+    for (const [state, tone] of Object.entries(tones)) {
+      expect(channelTone(state as ChannelState), state).toBe(tone);
+    }
   });
 });
 

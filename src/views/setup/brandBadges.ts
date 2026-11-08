@@ -18,6 +18,7 @@ import feishuSvg from "./logos/feishu.svg?raw";
 import phoneSvg from "./logos/phone.svg?raw";
 import slackSvg from "./logos/slack.svg?raw";
 import telegramSvg from "./logos/telegram.svg?raw";
+import windowSvg from "./logos/window.svg?raw";
 
 export interface BadgeSpec {
   /** CSS `background` of the tile. */
@@ -108,6 +109,12 @@ export const BADGES: Readonly<Record<string, BadgeSpec>> = {
     tile: "linear-gradient(180deg, #8f8f96, #5b5b61)",
     hairline: LIGHT_HAIRLINE,
     mark: { svg: phoneSvg, scale: 0.5, paint: WHITE },
+  },
+  // The local popup window, the one "channel" that is not a remote service (Settings → Channels).
+  popup: {
+    tile: "linear-gradient(180deg, #4da3ff, #0a6cdb)",
+    hairline: LIGHT_HAIRLINE,
+    mark: { svg: windowSvg, scale: 0.52, paint: WHITE },
   },
 };
 

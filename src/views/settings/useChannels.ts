@@ -12,12 +12,21 @@ import {
   feishuDetectWait,
   feishuTest,
   openPath,
+  setupChannelStatus,
   slackDetectPrepare,
   slackDetectWait,
   slackTest,
   telegramTest,
 } from "../../lib/ipc";
-import type { ChannelIssue } from "../../lib/types";
+import type { ChannelIssue, SetupChannelStatus } from "../../lib/types";
+import {
+  channelDef,
+  channelSection,
+  channelState,
+  requiredFieldsFilled,
+  type ChannelId,
+  type ChannelState,
+} from "../setup/channelDefs";
 import type { SettingsCore } from "./context";
 
 export function useChannels(core: SettingsCore) {
@@ -26,16 +35,35 @@ export function useChannels(core: SettingsCore) {
 
   // ===== 渠道健康（R7 渠道故障可见化）=====
   // daemon 侧渠道故障快照：渠道 tab 可见期间拉取并轻量轮询（修好后横幅自动消失——
-  // daemon 在配置变更 / 下一次成功操作后即清除记录）。
+  // daemon 在配置变更 / 下一次成功操作后即清除记录）。同一轮询也取各渠道的实时连接状态，
+  // 供渠道卡标题旁的状态标签使用。
   const channelIssues = ref<ChannelIssue[]>([]);
+  const channelLive = ref<SetupChannelStatus[]>([]);
   let channelHealthTimer: number | undefined;
 
   async function refreshChannelHealth() {
-    try {
-      channelIssues.value = await channelHealth();
-    } catch {
-      channelIssues.value = [];
-    }
+    // The two reads are independent: a failing one only loses its own half of the picture.
+    const [issues, live] = await Promise.all([
+      channelHealth().catch(() => [] as ChannelIssue[]),
+      setupChannelStatus().catch(() => [] as SetupChannelStatus[]),
+    ]);
+    channelIssues.value = issues;
+    channelLive.value = live;
+  }
+
+  /**
+   * What a channel card's status tag says: the saved settings (switch on, every required field
+   * filled), whether the daemon holds a live connection for it, and its last unrecovered error.
+   * `connected` is unknown (not "false") while no daemon runs, which reads as "enabled".
+   */
+  function channelCardState(id: ChannelId): ChannelState {
+    const def = channelDef(id);
+    const current = config.value;
+    if (!def || !current) return "unconfigured";
+    const enabled = channelSection(current, id).enabled === true;
+    const configured = requiredFieldsFilled(def, current, core.secretsPresent.value);
+    const connected = channelLive.value.find((row) => row.id === id)?.connected ?? null;
+    return channelState({ enabled, configured, connected }, channelIssueText(id) !== null);
   }
 
   /** 渠道卡错误横幅文案；无故障返回 null（不渲染）。 */
@@ -355,6 +383,7 @@ export function useChannels(core: SettingsCore) {
 
   return {
     channelIssueText,
+    channelCardState,
     openChannelGuide,
     stepWidth,
     stepHeight,

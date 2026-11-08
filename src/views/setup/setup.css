@@ -344,24 +344,9 @@
   transform: rotate(90deg);
 }
 
-/* ---------- Status tags and badges ---------- */
-.setup-tag {
-  flex: 0 0 auto;
-  padding: 2px 8px;
-  border-radius: 10px;
-  background: var(--bg-elevated);
-  color: var(--text-secondary);
-  font-size: 11px;
-  line-height: 1.4;
-}
-.setup-tag.ok {
-  color: var(--rec-badge-fg);
-  background: color-mix(in srgb, var(--rec-badge-fg) 14%, transparent);
-}
-.setup-tag.warn {
-  color: var(--accent-orange);
-  background: color-mix(in srgb, var(--accent-orange) 16%, transparent);
-}
+/* ---------- Recommended pill ---------- */
+/* The status tag (.status-tag) lives in styles/controls.css and the badge tile in brandBadge.css:
+   the Settings tabs use both as well. */
 .setup-recommended {
   padding: 1px 6px;
   border-radius: 8px;
@@ -369,46 +354,6 @@
   color: var(--rec-badge-fg);
   font-size: 10.5px;
   font-weight: 600;
-}
-
-.brand-badge {
-  --size: 38px;
-  flex: 0 0 auto;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: var(--size);
-  height: var(--size);
-  /* The iOS app's corner radius for an Agent tile. */
-  border-radius: calc(var(--size) * 0.3);
-  background: var(--badge-tile);
-  color: #fff;
-  box-shadow:
-    inset 0 0 0 0.5px var(--badge-hairline, rgba(255, 255, 255, 0.14)),
-    0 1px 3px rgba(0, 0, 0, 0.25);
-}
-.brand-badge.sm {
-  --size: 22px;
-}
-/* A one-colour mark: `--mark-paint` shows through the shape of the SVG. */
-.brand-mark {
-  width: calc(var(--size) * var(--mark-scale));
-  height: calc(var(--size) * var(--mark-scale));
-  background: var(--mark-paint, #fff);
-  -webkit-mask: var(--mark-url) center / contain no-repeat;
-  mask: var(--mark-url) center / contain no-repeat;
-}
-/* A mark in its own colours is shown as the image it is. */
-.brand-badge.own-colours .brand-mark {
-  background: var(--mark-url) center / contain no-repeat;
-  -webkit-mask: none;
-  mask: none;
-}
-.brand-glyph {
-  font-size: calc(var(--size) * 0.5);
-  font-weight: 700;
-  line-height: 1;
-  letter-spacing: -0.02em;
 }
 
 /* ---------- Tiles (Agents and channels) ---------- */
@@ -591,8 +536,7 @@
   color: var(--accent-orange);
 }
 /* Small orange text needs more weight on a light surface to stay readable. */
-.theme-light .tile-note.warn,
-.theme-light .setup-tag.warn {
+.theme-light .tile-note.warn {
   color: color-mix(in srgb, var(--accent-orange) 70%, #000);
 }
 .channel-tile .tile-foot {

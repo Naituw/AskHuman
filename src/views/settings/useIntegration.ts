@@ -33,6 +33,7 @@ import type {
 } from "../../lib/types";
 import { isMac, isWindows, supportsAgentTasks } from "../../lib/platform";
 import type { SettingsCore } from "./context";
+import { useAgentDetails } from "./useAgentDetails";
 
 const PI_MINIMUM_VERSION = "0.82.0";
 
@@ -596,7 +597,11 @@ tool_timeout_sec = 86400`,
     await Promise.all(AGENTS.map((a) => refreshMode(a.id)));
   }
 
+  // Which cards have their details open (and the rule that opens one when something needs the user).
+  const details = useAgentDetails(AGENTS, modes, modeReadError, piVersionLoading);
+
   return {
+    ...details,
     revealLabel,
     prompt,
     promptCopied,

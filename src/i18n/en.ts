@@ -667,6 +667,17 @@ export default {
         "Manual prompts and MCP examples do not install lifecycle tracking. Agent status, interject, and task launch require Automatic integration with tracking enabled below.",
       antigravityScope: "Shared family rules; CLI is the AskHuman transport. Client capabilities require separate validation.",
       retryStatus: "Retry reading status",
+      /** The fold under an Agent card's header: the remaining rows (rules, hooks, permissions, lifecycle…) live here. */
+      details: "Details",
+      /** Status tags in an Agent card's header (docs/specs/settings-agents-channels-cards.md). */
+      tag: {
+        integrated: "Integrated",
+        needsUpdate: "Update available",
+        cleanup: "Needs cleanup",
+        unsupportedVersion: "Version unsupported",
+        blocked: "Hooks blocked",
+        unreadable: "Can't read status",
+      },
       autoTitle: "Automatic integration",
       promptTitle: "Reference prompt",
       copy: "Copy",
@@ -853,6 +864,15 @@ export default {
         "When on, if an IM channel is no longer the active channel (e.g. you return to your computer and answer in the local popup, or send a message on another channel that switches the active slot away), all live watches on that channel are stopped automatically—no manual /unwatch needed. Only effective when On-demand IM delivery is enabled.",
       popupTitle: "Local popup",
       issueBanner: "⚠ Channel issue ({time}): {msg}",
+      /** Status tag beside a channel card's title (docs/specs/settings-agents-channels-cards.md). */
+      state: {
+        unconfigured: "Not set up",
+        configuredOff: "Off",
+        incomplete: "Incomplete",
+        ready: "Enabled",
+        connected: "Connected",
+        issue: "Problem",
+      },
       windowMode: "Question window mode",
       windowModeMerged: "Merged",
       windowModeIndependent: "Independent",

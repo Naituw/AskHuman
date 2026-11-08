@@ -25,8 +25,8 @@ const AGENT_IDS: Record<AgentId, true> = {
 };
 
 describe("badge registry", () => {
-  it("has a badge for every Agent, every guided channel and iOS", () => {
-    const ids = [...Object.keys(AGENT_IDS), ...CHANNEL_DEFS.map((def) => def.id), "ios"];
+  it("has a badge for every Agent, every guided channel, iOS and the local popup", () => {
+    const ids = [...Object.keys(AGENT_IDS), ...CHANNEL_DEFS.map((def) => def.id), "ios", "popup"];
     for (const id of ids) expect(BADGES[id], id).toBeDefined();
   });
 
@@ -61,7 +61,7 @@ describe("badge registry", () => {
   });
 
   it("paints a one-colour mark white on a coloured tile, and leaves a mark in its own colours alone on white", () => {
-    for (const id of ["cursor", "claude", "grok", "dingding", "ios"]) {
+    for (const id of ["cursor", "claude", "grok", "dingding", "ios", "popup"]) {
       expect(BADGES[id].mark.paint, id).toBe("#fff");
       expect(BADGES[id].tile, id).toContain("linear-gradient");
     }

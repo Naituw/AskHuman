@@ -1,7 +1,8 @@
-# Marks of the setup wizard's tiles
+# Marks of the badge tiles
 
-The setup wizard (`src/views/setup`) shows every Agent and every remote-answering channel on a small
-tile with the brand's mark on it, drawn the way the iOS app draws an Agent
+The setup wizard (`src/views/setup`) and the Agents and Channels tabs of the settings window show
+every Agent and every remote-answering channel on a small tile with the brand's mark on it, drawn
+the way the iOS app draws an Agent
 (`ios/AskHuman/Design/AgentBadge.swift`) and the way the README shows the products. The marks only
 identify the product a tile stands for; the names and marks belong to their owners and AskHuman is
 not affiliated with any of them.
@@ -21,6 +22,7 @@ imports them from there, so a logo exists once and both apps change together.
 | `dingtalk.svg` | DingTalk | [UIW Icons](https://github.com/uiwjs/icons) `dingding` | MIT (below) |
 | `feishu.svg` | Feishu / Lark | [Semi Design](https://github.com/DouyinFE/semi-design) `feishu_logo` (ByteDance's own icon set), each piece filled with the Feishu brand colors `#00d6b9`, `#163c9a` and `#3370ff` | MIT (below) |
 | `phone.svg` | the iPhone app | drawn for AskHuman | the project license |
+| `window.svg` | the local popup window | drawn for AskHuman | the project license |
 
 The sources are otherwise kept as published (only the `1em` size of the SVG Logos files was
 dropped, and the black fill of the one-colour marks was normalized so the tile can paint it through

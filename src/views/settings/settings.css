@@ -646,6 +646,24 @@
   line-height: 17px;
   white-space: nowrap;
 }
+/* 渠道卡标题行：标志 + 名称 + 状态标签；名称区可换行，窄窗口下标签落到名称下面而不是挤开开关。 */
+.channel-head .brand-badge {
+  --size: 36px;
+}
+.channel-id {
+  flex: 1 1 auto;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 4px var(--space-2);
+}
+.channel-head .card-title {
+  margin: 0;
+}
+.channel-head .guide-link {
+  margin-left: 0;
+}
 .release-notes {
   max-height: 220px;
   overflow-y: auto;
@@ -781,6 +799,82 @@
 }
 .agent-card .divider {
   margin: var(--space-2) 0;
+}
+/* Agent card header (always shown): badge, name with its status tags, the "Details" disclosure,
+   and the way to connect. It wraps in a narrow window: the segmented control drops below the name. */
+.agent-head {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--space-2) var(--space-3);
+}
+.agent-head .brand-badge {
+  --size: 36px;
+}
+.agent-id {
+  flex: 1 1 150px;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 3px;
+}
+.agent-name-row {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 4px var(--space-2);
+  min-width: 0;
+}
+.agent-card .agent-name-row .card-title {
+  margin: 0;
+}
+.agent-disclosure {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--text-secondary);
+  font: inherit;
+  font-size: 12px;
+  line-height: 16px;
+  cursor: default;
+}
+.agent-disclosure:hover {
+  color: var(--text-primary);
+}
+.agent-disclosure:focus-visible {
+  outline: none;
+  border-radius: 4px;
+  box-shadow: var(--focus-ring);
+}
+.agent-disclosure .caret {
+  display: inline-block;
+  width: 10px;
+  font-size: 13px;
+  text-align: center;
+  transition: transform 0.15s ease;
+}
+.agent-disclosure .caret.open {
+  transform: rotate(90deg);
+}
+.agent-head + .card-desc,
+.agent-head + .btn {
+  margin-top: var(--space-2);
+}
+/* A card that is only its header plus a line of text (not integrated, or unreadable) ends right
+   under that line: the card's own padding is enough. */
+.agent-card > .card-desc:last-child,
+.agent-card > .result:last-child {
+  margin-bottom: 0;
+}
+.agent-details {
+  margin-top: var(--space-3);
+}
+.agent-details > .divider:first-child {
+  margin-top: 0;
 }
 /* 文件路径：等宽小字，可断行 */
 .agent-path {

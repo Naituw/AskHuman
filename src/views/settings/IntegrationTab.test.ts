@@ -1,74 +1,17 @@
 import { mount, type VueWrapper } from "@vue/test-utils";
-import { ref } from "vue";
+import { nextTick, ref } from "vue";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { i18n } from "../../i18n";
 import type { AgentId, AgentModeStatus } from "../../lib/types";
+import { modeStatus } from "./integration.testkit";
 import IntegrationTab from "./IntegrationTab.vue";
+import { revealSettingsTarget } from "./reveal";
+import { useAgentDetails } from "./useAgentDetails";
 
 const useSettingsContext = vi.hoisted(() => vi.fn());
 
 vi.mock("./context", () => ({ useSettingsContext }));
 vi.mock("./CursorDesktopSettings.vue", () => ({ default: { template: '<div class="cursor-desktop-settings-stub" />' } }));
-
-function modeStatus(
-  overrides: Partial<AgentModeStatus> = {},
-): AgentModeStatus {
-  return {
-    mode: "cli",
-    needsUpdate: false,
-    ruleNeedsUpdate: false,
-    hookNeedsUpdate: false,
-    mcpNeedsUpdate: false,
-    rulePath: "~/.cursor/rules/askhuman.mdc",
-    ruleInstalled: true,
-    timeoutHookSupported: true,
-    timeoutHookInstalled: true,
-    timeoutHookNeedsUpdate: false,
-    recoveryHookInstalled: false,
-    permission: {
-      supported: false,
-      unsupportedReason: "native_permission_request_unsupported",
-      enabled: false,
-      configured: false,
-      outdated: false,
-      needsUpdate: false,
-      knownBlockedReason: null,
-      otherHandlersDetected: false,
-    },
-    permissionNeedsUpdate: false,
-    lifecycle: {
-      enabled: true,
-      preferenceConfigured: true,
-      installed: true,
-      outdated: false,
-      supported: true,
-      needsUpdate: false,
-      cleanupRequired: false,
-    },
-    stop: {
-      supported: true,
-      enabled: true,
-      installed: true,
-      outdated: false,
-      otherHandlersDetected: false,
-    },
-    delegated: { supported: false, enabled: false },
-    askQuestion: {
-      supported: false,
-      enabled: false,
-      installed: false,
-      outdated: false,
-    },
-    mcpSupported: true,
-    mcpConfigPath: "~/.cursor/mcp.json",
-    mcpConfigInstalled: false,
-    runtimeArtifactKind: "hook",
-    agentVersion: null,
-    minimumVersion: null,
-    versionSupported: true,
-    ...overrides,
-  };
-}
 
 function agentDefinition(id: AgentId, hasTimeoutHook: boolean) {
   return {
@@ -85,8 +28,15 @@ function agentDefinition(id: AgentId, hasTimeoutHook: boolean) {
 function settingsContext(
   agent: ReturnType<typeof agentDefinition>,
   status: AgentModeStatus,
+  piVersionProbing = false,
 ) {
+  const modes = ref({ [agent.id]: status } as Record<AgentId, AgentModeStatus>);
+  const modeReadError = ref<Partial<Record<AgentId, boolean>>>({});
+  const piVersionLoading = ref(piVersionProbing);
+  // The real fold state: the cards open and close exactly as they do in the settings window.
+  const details = useAgentDetails([agent], modes, modeReadError, piVersionLoading);
   return {
+    ...details,
     config: ref(null),
     revealLabel: "Reveal",
     prompt: ref(""),
@@ -97,9 +47,10 @@ function settingsContext(
     changeCollaborationStyle: vi.fn(),
     saveCustomCollaborationText: vi.fn(),
     AGENTS: [agent],
-    modes: ref({ [agent.id]: status }),
+    modes,
+    modeReadError,
     integrationLoading: ref(false),
-    piVersionLoading: ref(false),
+    piVersionLoading,
     modeBusy: ref({ [agent.id]: false }),
     modeMessage: ref<Record<string, string | null>>({ [agent.id]: null }),
     modeError: ref({ [agent.id]: false }),
@@ -141,9 +92,8 @@ describe("IntegrationTab", () => {
     status: AgentModeStatus,
     extras: { integrationLoading?: boolean; piVersionLoading?: boolean } = {},
   ) {
-    const context = settingsContext(agent, status);
+    const context = settingsContext(agent, status, extras.piVersionLoading === true);
     if (extras.integrationLoading) context.integrationLoading.value = true;
-    if (extras.piVersionLoading) context.piVersionLoading.value = true;
     useSettingsContext.mockReturnValue(context);
     const wrapper = mount(IntegrationTab, {
       global: { plugins: [i18n] },
@@ -625,6 +575,179 @@ describe("IntegrationTab", () => {
     expect(wrapper.find("#integration-antigravity .segmented").exists()).toBe(false);
     expect(wrapper.text()).toContain("state unreadable");
     expect(wrapper.text()).toContain(i18n.global.t("settings.integration.retryStatus"));
+  });
+
+  describe("card header and details", () => {
+    const hidden = (wrapper: VueWrapper, agent: AgentId) =>
+      (wrapper.get(`#agent-details-${agent}`).attributes("style") ?? "").includes("display: none");
+    const toggleOf = (wrapper: VueWrapper, agent: AgentId) =>
+      wrapper.get(`[data-testid="agent-details-toggle-${agent}"]`);
+    const tagOf = (wrapper: VueWrapper, agent: AgentId, key: string) =>
+      wrapper.find(`[data-testid="agent-tag-${agent}-${key}"]`);
+
+    it("shows the mark, the name, an Integrated tag and the mode switch, with the rows folded", () => {
+      const { wrapper } = mountAgent(agentDefinition("claude", true), modeStatus());
+      const card = wrapper.get("#integration-claude");
+      expect(card.find('.agent-head .brand-badge[data-badge="claude"]').exists()).toBe(true);
+      expect(card.get(".agent-head .card-title").text()).toBe("claude");
+      expect(tagOf(wrapper, "claude", "integrated").text()).toBe("Integrated");
+      expect(tagOf(wrapper, "claude", "needsUpdate").exists()).toBe(false);
+      expect(card.find(".agent-head .segmented").exists()).toBe(true);
+      expect(toggleOf(wrapper, "claude").text()).toContain("Details");
+      expect(toggleOf(wrapper, "claude").attributes("aria-expanded")).toBe("false");
+      expect(hidden(wrapper, "claude")).toBe(true);
+    });
+
+    it("opens and folds the details from the disclosure", async () => {
+      const { wrapper } = mountAgent(agentDefinition("claude", true), modeStatus());
+      await toggleOf(wrapper, "claude").trigger("click");
+      expect(toggleOf(wrapper, "claude").attributes("aria-expanded")).toBe("true");
+      expect(hidden(wrapper, "claude")).toBe(false);
+      await toggleOf(wrapper, "claude").trigger("click");
+      expect(toggleOf(wrapper, "claude").attributes("aria-expanded")).toBe("false");
+      expect(hidden(wrapper, "claude")).toBe(true);
+    });
+
+    it("keeps the rows in the DOM while folded, so a jump can still find them", () => {
+      const { wrapper } = mountAgent(agentDefinition("claude", true), modeStatus());
+      expect(hidden(wrapper, "claude")).toBe(true);
+      expect(wrapper.find("#lifecycle-claude").exists()).toBe(true);
+      expect(wrapper.get("#agent-details-claude").findAll(".agent-row").length).toBeGreaterThan(0);
+    });
+
+    it("opens a card by itself, and tags it, when an update is waiting", () => {
+      const { wrapper } = mountAgent(
+        agentDefinition("claude", true),
+        modeStatus({ needsUpdate: true, hookNeedsUpdate: true }),
+      );
+      expect(tagOf(wrapper, "claude", "needsUpdate").text()).toBe("Update available");
+      expect(toggleOf(wrapper, "claude").attributes("aria-expanded")).toBe("true");
+      expect(hidden(wrapper, "claude")).toBe(false);
+    });
+
+    it("keeps a card the user folded folded while the same update is still waiting", async () => {
+      const { wrapper } = mountAgent(
+        agentDefinition("claude", true),
+        modeStatus({ needsUpdate: true, hookNeedsUpdate: true }),
+      );
+      await toggleOf(wrapper, "claude").trigger("click");
+      expect(hidden(wrapper, "claude")).toBe(true);
+      // Still tagged: the need is visible without opening the card.
+      expect(tagOf(wrapper, "claude", "needsUpdate").exists()).toBe(true);
+    });
+
+    it("opens a Codex that is too old and tags the version", () => {
+      const { wrapper } = mountAgent(
+        agentDefinition("codex", false),
+        modeStatus({
+          mode: "mcp",
+          agentVersion: "0.140.0",
+          minimumVersion: "0.144.1",
+          versionSupported: false,
+        }),
+      );
+      expect(tagOf(wrapper, "codex", "unsupportedVersion").text()).toBe("Version unsupported");
+      expect(hidden(wrapper, "codex")).toBe(false);
+    });
+
+    it("does not judge Pi's version while the probe is still running", () => {
+      const { wrapper } = mountAgent(
+        agentDefinition("pi", true),
+        modeStatus({
+          mode: "cli",
+          mcpSupported: false,
+          runtimeArtifactKind: "extension",
+          versionSupported: false,
+          minimumVersion: "0.82.0",
+        }),
+        { piVersionLoading: true },
+      );
+      expect(tagOf(wrapper, "pi", "unsupportedVersion").exists()).toBe(false);
+      expect(hidden(wrapper, "pi")).toBe(true);
+    });
+
+    it("tags an Agent whose own policy keeps the hooks from running", () => {
+      const { wrapper } = mountAgent(
+        agentDefinition("claude", true),
+        modeStatus({
+          permission: {
+            supported: true,
+            unsupportedReason: null,
+            enabled: true,
+            configured: true,
+            outdated: false,
+            needsUpdate: false,
+            knownBlockedReason: "managed_hooks_disabled",
+            otherHandlersDetected: false,
+          },
+        }),
+      );
+      expect(tagOf(wrapper, "claude", "blocked").text()).toBe("Hooks blocked");
+    });
+
+    it("gives a not-integrated Agent a bare header: no tag, no details", () => {
+      const { wrapper } = mountAgent(agentDefinition("cursor", true), modeStatus({ mode: "none" }));
+      const card = wrapper.get("#integration-cursor");
+      expect(card.findAll(".status-tag")).toHaveLength(0);
+      expect(card.find('[data-testid="agent-details-toggle-cursor"]').exists()).toBe(false);
+      expect(card.find("#agent-details-cursor").exists()).toBe(false);
+      expect(card.find(".agent-head .segmented").exists()).toBe(true);
+    });
+
+    it("tags the leftovers of an earlier integration on a not-integrated Agent", () => {
+      const lifecycle = {
+        enabled: false,
+        preferenceConfigured: false,
+        installed: true,
+        outdated: false,
+        supported: true,
+        needsUpdate: true,
+        cleanupRequired: true,
+      };
+      const { wrapper } = mountAgent(
+        agentDefinition("cursor", true),
+        modeStatus({ mode: "none", lifecycle }),
+      );
+      expect(tagOf(wrapper, "cursor", "cleanup").text()).toBe("Needs cleanup");
+      expect(tagOf(wrapper, "cursor", "integrated").exists()).toBe(false);
+    });
+
+    it("tags an unreadable status and shows no details", () => {
+      const context = settingsContext(agentDefinition("antigravity", false), modeStatus({ mode: "none" }));
+      context.modeReadError.value = { antigravity: true };
+      Object.assign(context, { refreshMode: vi.fn() });
+      useSettingsContext.mockReturnValue(context);
+      const wrapper = mount(IntegrationTab, { global: { plugins: [i18n] } });
+      expect(tagOf(wrapper, "antigravity", "unreadable").text()).toBe("Can't read status");
+      expect(wrapper.find("#agent-details-antigravity").exists()).toBe(false);
+    });
+
+    it("opens the card when a jump to one of its rows announces itself", async () => {
+      const { wrapper } = mountAgent(agentDefinition("claude", true), modeStatus(), {});
+      expect(hidden(wrapper, "claude")).toBe(true);
+      // `attachTo`-less on purpose: the event bubbles through the component's own DOM.
+      await revealSettingsTarget(wrapper.get("#lifecycle-claude").element);
+      expect(hidden(wrapper, "claude")).toBe(false);
+      expect(toggleOf(wrapper, "claude").attributes("aria-expanded")).toBe("true");
+    });
+
+    it("lets a jump to a card that has nothing folded pass without effect", async () => {
+      const { wrapper } = mountAgent(agentDefinition("cursor", true), modeStatus({ mode: "none" }));
+      await expect(revealSettingsTarget(wrapper.get("#integration-cursor").element)).resolves.toBeUndefined();
+      expect(wrapper.find("#agent-details-cursor").exists()).toBe(false);
+    });
+
+    it("puts a status message under the header while folded and at the end of the details when open", async () => {
+      const { wrapper, context } = mountAgent(agentDefinition("claude", true), modeStatus());
+      context.modeMessage.value.claude = "Saved";
+      await nextTick();
+      const card = wrapper.get("#integration-claude");
+      expect(card.text().match(/Saved/g)).toHaveLength(1);
+      expect(card.get("#agent-details-claude").text()).not.toContain("Saved");
+      await toggleOf(wrapper, "claude").trigger("click");
+      expect(card.text().match(/Saved/g)).toHaveLength(1);
+      expect(card.get("#agent-details-claude").text()).toContain("Saved");
+    });
   });
 
 });

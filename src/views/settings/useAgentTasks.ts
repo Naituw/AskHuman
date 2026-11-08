@@ -15,6 +15,7 @@ import {
 import type { AgentKind, AgentTaskReadiness, AgentTaskWorkspace } from "../../lib/types";
 import { supportsAgentTasks } from "../../lib/platform";
 import type { SettingsCore } from "./context";
+import { revealSettingsTarget } from "./reveal";
 
 /** Agent 官方安装文档（readiness「CLI ×」跳转；新建任务窗口复用）。 */
 export const AGENT_INSTALL_DOCS: Record<AgentKind, string> = {
@@ -206,7 +207,10 @@ export function useAgentTasks(core: SettingsCore) {
   async function gotoSettingsTarget(target: string) {
     await nextTick();
     settingsTargetHighlight.value = target;
-    document.getElementById(target)?.scrollIntoView({ behavior: "smooth", block: "center" });
+    const el = document.getElementById(target);
+    // A target inside a folded card: open the card before scrolling to it.
+    await revealSettingsTarget(el);
+    el?.scrollIntoView({ behavior: "smooth", block: "center" });
     if (settingsTargetTimer) window.clearTimeout(settingsTargetTimer);
     settingsTargetTimer = window.setTimeout(() => {
       settingsTargetHighlight.value = "";

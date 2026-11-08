@@ -154,6 +154,13 @@ export function channelState(
   return row.configured ? "configuredOff" : "unconfigured";
 }
 
+/** The tone of a channel's status tag: green while it works, orange when it needs a look. */
+export function channelTone(state: ChannelState): "ok" | "warn" | "muted" {
+  if (state === "connected" || state === "ready") return "ok";
+  if (state === "issue" || state === "incomplete") return "warn";
+  return "muted";
+}
+
 /** What the generic form needs from the settings page's channel logic, per channel. */
 export interface ChannelOps {
   testing: Ref<boolean>;

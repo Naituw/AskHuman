@@ -1,10 +1,14 @@
 <script setup lang="ts">
 // 「Agent 集成」tab：自动集成（每家一张卡，CLI|MCP|未集成三态）+ 手动集成（参考提示词、
-// MCP 配置示例）。
+// MCP 配置示例）。每张卡的标题行常驻（标志、名称、状态标签、接入方式），其余各行折叠在「详情」里
+// （docs/specs/settings-agents-channels-cards.md）。
 import { isMac } from "../../lib/platform";
+import type { AgentId } from "../../lib/types";
+import BrandBadge from "../setup/BrandBadge.vue";
 import CodexDesktopSettings from "./CodexDesktopSettings.vue";
 import CursorDesktopSettings from "./CursorDesktopSettings.vue";
 import { useI18n } from "vue-i18n";
+import { agentTags, hasDetails, type AgentCardInput } from "./agentCard";
 import { useSettingsContext } from "./context";
 
 const { t } = useI18n();
@@ -51,7 +55,28 @@ const {
   copyMcpExample,
   copyPrompt,
   settingsTargetHighlight,
+  agentExpanded,
+  toggleAgentDetails,
+  openAgentDetails,
 } = useSettingsContext();
+
+function cardInput(id: AgentId): AgentCardInput {
+  return {
+    id,
+    status: modes.value[id],
+    readError: modeReadError?.value?.[id] === true,
+    versionLoading: id === "pi" && piVersionLoading.value,
+  };
+}
+const tagsOf = (id: AgentId) => agentTags(cardInput(id));
+/** An integrated card folds its rows into "Details"; a not-integrated one is only its header. */
+const detailsOf = (id: AgentId) => hasDetails(cardInput(id));
+/**
+ * The result of the last action on a card sits under its header, unless the card is open: then it
+ * sits at the bottom of the details, next to the rows the action came from.
+ */
+const messageUnderHeader = (id: AgentId) =>
+  !!modeMessage.value[id] && !(detailsOf(id) && agentExpanded.value[id]);
 </script>
 
 <template>
@@ -270,10 +295,36 @@ const {
     :key="a.id"
     class="card agent-card"
     :class="{ 'settings-target-highlight': settingsTargetHighlight === `integration-${a.id}` }"
+    @settings-reveal="openAgentDetails(a.id)"
   >
-    <div class="row agent-row">
-      <p class="card-title">{{ a.title }}</p>
-      <span class="spacer"></span>
+    <div class="agent-head">
+      <BrandBadge :id="a.id" :label="a.title" />
+      <div class="agent-id">
+        <div class="agent-name-row">
+          <p class="card-title">{{ a.title }}</p>
+          <span
+            v-for="tag in tagsOf(a.id)"
+            :key="tag.key"
+            class="status-tag"
+            :class="tag.tone"
+            :data-testid="`agent-tag-${a.id}-${tag.key}`"
+          >
+            {{ t(`settings.integration.tag.${tag.key}`) }}
+          </span>
+        </div>
+        <button
+          v-if="detailsOf(a.id)"
+          type="button"
+          class="agent-disclosure"
+          :aria-expanded="agentExpanded[a.id]"
+          :aria-controls="`agent-details-${a.id}`"
+          :data-testid="`agent-details-toggle-${a.id}`"
+          @click="toggleAgentDetails(a.id)"
+        >
+          <span class="caret" :class="{ open: agentExpanded[a.id] }" aria-hidden="true">›</span>
+          {{ t("settings.integration.details") }}
+        </button>
+      </div>
       <div v-if="!modeReadError?.[a.id]" class="segmented">
         <button
           v-if="a.hasCli"
@@ -334,7 +385,22 @@ const {
       </button>
     </div>
 
-    <template v-if="!modeReadError?.[a.id] && modes[a.id].mode !== 'none'">
+    <p
+      v-if="messageUnderHeader(a.id)"
+      class="result"
+      :class="modeError[a.id] ? 'err' : 'ok'"
+    >
+      {{ modeMessage[a.id] }}
+    </p>
+
+    <!-- Details: every row of the integrated card. Folded with v-show, not v-if, so a deep link or a
+         settings-search hit can still find its row in the DOM and then open the card. -->
+    <div
+      v-if="detailsOf(a.id)"
+      v-show="agentExpanded[a.id]"
+      :id="`agent-details-${a.id}`"
+      class="agent-details"
+    >
       <hr class="divider" />
 
       <p
@@ -629,9 +695,6 @@ const {
         </p>
       </template>
 
-    </template>
-
-    <template v-if="!modeReadError?.[a.id] && modes[a.id].mode !== 'none'">
       <hr class="divider" />
       <template v-if="modes[a.id].stop.supported">
         <div class="row agent-row">
@@ -867,18 +930,18 @@ const {
       <p class="card-desc agent-hint">
         {{ t(a.id === 'antigravity' ? "settings.integration.antigravityLifecycleUnsupported" : "settings.integration.lifecycleHint") }}
       </p>
-    </template>
 
-    <CodexDesktopSettings v-if="isMac && a.id === 'codex' && modes.codex.mode !== 'none'" />
-    <CursorDesktopSettings v-if="a.id === 'cursor' && modes.cursor.mode !== 'none'" />
+      <CodexDesktopSettings v-if="isMac && a.id === 'codex'" />
+      <CursorDesktopSettings v-if="a.id === 'cursor'" />
 
-    <p
-      v-if="modeMessage[a.id]"
-      class="result"
-      :class="modeError[a.id] ? 'err' : 'ok'"
-    >
-      {{ modeMessage[a.id] }}
-    </p>
+      <p
+        v-if="modeMessage[a.id] && agentExpanded[a.id]"
+        class="result"
+        :class="modeError[a.id] ? 'err' : 'ok'"
+      >
+        {{ modeMessage[a.id] }}
+      </p>
+    </div>
   </div>
   </template>
   </div>

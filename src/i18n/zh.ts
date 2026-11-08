@@ -655,6 +655,17 @@ export default {
         "手动提示词和 MCP 示例不会安装生命周期追踪；Agent 状态、插话与任务启动需要使用下方自动集成并开启追踪。",
       antigravityScope: "家族共享规则；CLI 指 AskHuman 调用方式。各客户端能力需分别验收。",
       retryStatus: "重新读取状态",
+      /** Agent 卡标题行下的折叠入口：其余各行（规则、Hook、权限、生命周期等）收在这里。 */
+      details: "详情",
+      /** Agent 卡标题行的状态标签（docs/specs/settings-agents-channels-cards.md）。 */
+      tag: {
+        integrated: "已集成",
+        needsUpdate: "有更新",
+        cleanup: "待清理",
+        unsupportedVersion: "版本不受支持",
+        blocked: "Hook 未生效",
+        unreadable: "无法读取状态",
+      },
       autoTitle: "自动集成",
       promptTitle: "参考提示词",
       copy: "复制",
@@ -838,6 +849,15 @@ export default {
         "开启后，当某个 IM 渠道不再是当前活跃渠道时（例如你回到电脑在本地弹窗作答，或在别的渠道发消息把活跃渠道切走），自动结束该渠道上的所有实时关注（watch），无需手动 /unwatch。仅在「按需发送」开启时生效。",
       popupTitle: "本地弹窗",
       issueBanner: "⚠ 渠道异常（{time}）：{msg}",
+      /** 渠道卡标题旁的状态标签（docs/specs/settings-agents-channels-cards.md）。 */
+      state: {
+        unconfigured: "未配置",
+        configuredOff: "未启用",
+        incomplete: "配置不完整",
+        ready: "已启用",
+        connected: "已连接",
+        issue: "异常",
+      },
       windowMode: "提问窗口模式",
       windowModeMerged: "合并窗口",
       windowModeIndependent: "独立窗口",

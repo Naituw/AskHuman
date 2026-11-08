@@ -5,6 +5,7 @@ import { useI18n } from "vue-i18n";
 import type { AppConfig } from "../../lib/types";
 import { isMac, supportsAgentTasks } from "../../lib/platform";
 import type { Tab } from "./context";
+import { revealSettingsTarget } from "./reveal";
 import { tabAllowed } from "./tabData";
 
 // 静态索引：每条 = 一个设置项（tab + 展示/锚定标题 + 参与匹配的额外文案）。标题文本
@@ -261,6 +262,8 @@ export function useSettingsSearch(deps: {
     const el = (anchor.classList.contains("label")
       ? (anchor.closest(".row") ?? anchor.closest(".card") ?? anchor)
       : (anchor.closest(".card") ?? anchor)) as HTMLElement;
+    // A hit inside a folded card: open the card first, or there is nothing to scroll to.
+    await revealSettingsTarget(el);
     el.scrollIntoView({ behavior: "smooth", block: "center" });
     el.classList.add("search-hit-highlight");
     window.setTimeout(() => el.classList.remove("search-hit-highlight"), 2200);
