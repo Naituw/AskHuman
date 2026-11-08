@@ -312,18 +312,6 @@ const messageUnderHeader = (id: AgentId) =>
             {{ t(`settings.integration.tag.${tag.key}`) }}
           </span>
         </div>
-        <button
-          v-if="detailsOf(a.id)"
-          type="button"
-          class="agent-disclosure"
-          :aria-expanded="agentExpanded[a.id]"
-          :aria-controls="`agent-details-${a.id}`"
-          :data-testid="`agent-details-toggle-${a.id}`"
-          @click="toggleAgentDetails(a.id)"
-        >
-          <span class="caret" :class="{ open: agentExpanded[a.id] }" aria-hidden="true">›</span>
-          {{ t("settings.integration.details") }}
-        </button>
       </div>
       <div v-if="!modeReadError?.[a.id]" class="segmented">
         <button
@@ -363,6 +351,28 @@ const messageUnderHeader = (id: AgentId) =>
         </button>
       </div>
     </div>
+
+    <!-- A full-width bar, not a small link: it is the only hint that an integrated card holds more settings. -->
+    <button
+      v-if="detailsOf(a.id)"
+      type="button"
+      class="agent-disclosure"
+      :aria-expanded="agentExpanded[a.id]"
+      :aria-controls="`agent-details-${a.id}`"
+      :data-testid="`agent-details-toggle-${a.id}`"
+      @click="toggleAgentDetails(a.id)"
+    >
+      <span class="agent-disclosure-label">{{ t("settings.integration.details") }}</span>
+      <span class="agent-disclosure-hint">{{ t("settings.integration.detailsHint") }}</span>
+      <svg
+        class="agent-disclosure-chevron"
+        :class="{ open: agentExpanded[a.id] }"
+        viewBox="0 0 16 16"
+        aria-hidden="true"
+      >
+        <path d="M4 6l4 4 4-4" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" />
+      </svg>
+    </button>
 
     <p v-if="a.id === 'antigravity'" class="card-desc">{{ t("settings.integration.antigravityScope") }}</p>
     <button v-if="modeReadError?.[a.id]" type="button" class="btn" @click="refreshMode(a.id)">{{ t("settings.integration.retryStatus") }}</button>

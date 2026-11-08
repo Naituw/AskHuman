@@ -669,6 +669,7 @@ export default {
       retryStatus: "Retry reading status",
       /** The fold under an Agent card's header: the remaining rows (rules, hooks, permissions, lifecycle…) live here. */
       details: "Details",
+      detailsHint: "Rules, hooks, permissions, lifecycle and more",
       /** Status tags in an Agent card's header (docs/specs/settings-agents-channels-cards.md). */
       tag: {
         integrated: "Integrated",
@@ -804,6 +805,13 @@ export default {
       readiness: "Agent readiness",
       ready: "Ready",
       notReady: "Not ready",
+      colBinary: "CLI",
+      colLifecycle: "Lifecycle",
+      colIntegration: "Integration",
+      readinessHint: "Click an orange × to fix it; a missing CLI opens the official installation guide.",
+      issueBinary: "CLI unavailable",
+      issueLifecycle: "Lifecycle tracking not ready",
+      issueIntegration: "Integration unavailable",
       openInstallDocs: "Open official installation guide",
       goToSetting: "Go to the corresponding setting",
       workspaces: "Workspaces",

@@ -608,6 +608,23 @@ describe("IntegrationTab", () => {
       expect(hidden(wrapper, "claude")).toBe(true);
     });
 
+    it("offers the details as a full-width bar under the header that says what is inside", async () => {
+      const { wrapper } = mountAgent(agentDefinition("claude", true), modeStatus());
+      const card = wrapper.get("#integration-claude");
+      const bar = toggleOf(wrapper, "claude");
+      // A bar of its own below the header, not a small link tucked into it.
+      expect(card.get(".agent-head").find('[data-testid="agent-details-toggle-claude"]').exists()).toBe(false);
+      expect(bar.element.parentElement).toBe(card.element);
+      expect(bar.classes()).toContain("agent-disclosure");
+      expect(bar.get(".agent-disclosure-label").text()).toBe("Details");
+      expect(bar.get(".agent-disclosure-hint").text()).toBe(
+        i18n.global.t("settings.integration.detailsHint"),
+      );
+      expect(bar.get(".agent-disclosure-chevron").classes()).not.toContain("open");
+      await bar.trigger("click");
+      expect(bar.get(".agent-disclosure-chevron").classes()).toContain("open");
+    });
+
     it("keeps the rows in the DOM while folded, so a jump can still find them", () => {
       const { wrapper } = mountAgent(agentDefinition("claude", true), modeStatus());
       expect(hidden(wrapper, "claude")).toBe(true);

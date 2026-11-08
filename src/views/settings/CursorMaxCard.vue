@@ -4,6 +4,7 @@
 import { computed, onMounted, ref } from "vue";
 import { useI18n } from "vue-i18n";
 import { agentTaskCursorPlan } from "../../lib/ipc";
+import BrandBadge from "../setup/BrandBadge.vue";
 import { useSettingsContext } from "./context";
 
 const { t } = useI18n();
@@ -40,12 +41,11 @@ onMounted(async () => {
 
 <template>
   <div class="card" data-testid="cursor-max-card">
-    <div class="row">
-      <div class="col">
-        <p class="card-title">{{ t("settings.cursorMax.title") }}</p>
-        <p class="card-desc">{{ t("settings.cursorMax.description") }}</p>
-      </div>
+    <div class="agent-card-title">
+      <BrandBadge id="cursor" :label="t('settings.cursorMax.title')" />
+      <p class="card-title">{{ t("settings.cursorMax.title") }}</p>
     </div>
+    <p class="card-desc">{{ t("settings.cursorMax.description") }}</p>
     <hr class="divider" />
     <div class="row">
       <span class="label">{{ t("settings.cursorMax.policy") }}</span>

@@ -4,6 +4,7 @@
 import { computed, ref } from "vue";
 import { useI18n } from "vue-i18n";
 import { permissionRulesPanel } from "../../lib/ipc";
+import BrandBadge from "../setup/BrandBadge.vue";
 import { useSettingsContext } from "./context";
 import type {
   PermissionRuleInfo,
@@ -256,7 +257,10 @@ const resetDescription = computed(() => {
 
 <template>
   <div class="card permission-rules-card">
-    <p class="card-title">{{ t("settings.permissionRules.title") }}</p>
+    <div class="agent-card-title">
+      <BrandBadge id="codex" :label="t('settings.permissionRules.title')" />
+      <p class="card-title">{{ t("settings.permissionRules.title") }}</p>
+    </div>
     <p class="card-desc">{{ t("settings.permissionRules.desc") }}</p>
     <div class="row">
       <span class="label">{{ t("settings.permissionRules.relaxedTitle") }}</span>

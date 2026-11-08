@@ -800,8 +800,8 @@
 .agent-card .divider {
   margin: var(--space-2) 0;
 }
-/* Agent card header (always shown): badge, name with its status tags, the "Details" disclosure,
-   and the way to connect. It wraps in a narrow window: the segmented control drops below the name. */
+/* Agent card header (always shown): badge, name with its status tags and the way to connect. It
+   wraps in a narrow window: the segmented control drops below the name. */
 .agent-head {
   display: flex;
   align-items: center;
@@ -829,36 +829,56 @@
 .agent-card .agent-name-row .card-title {
   margin: 0;
 }
+/* The "Details" bar: a full-width, button-looking row right under the header. A small text link was
+   too easy to miss, and a folded card then looked like it had nothing but its mode switch. */
 .agent-disclosure {
-  display: inline-flex;
+  display: flex;
   align-items: center;
-  gap: 2px;
-  padding: 0;
-  border: 0;
-  background: transparent;
+  gap: var(--space-2);
+  width: 100%;
+  min-height: 34px;
+  margin-top: var(--space-3);
+  padding: 0 var(--space-3);
+  border: var(--hairline) solid var(--control-border);
+  border-radius: var(--radius-md);
+  background: var(--control-bg);
   color: var(--text-secondary);
   font: inherit;
   font-size: 12px;
   line-height: 16px;
+  text-align: left;
   cursor: default;
+  box-shadow: var(--clickable-shadow);
 }
 .agent-disclosure:hover {
+  background: var(--control-hover-bg);
   color: var(--text-primary);
 }
 .agent-disclosure:focus-visible {
   outline: none;
-  border-radius: 4px;
-  box-shadow: var(--focus-ring);
+  box-shadow: var(--focus-ring), var(--clickable-shadow);
 }
-.agent-disclosure .caret {
-  display: inline-block;
-  width: 10px;
+.agent-disclosure-label {
+  flex: none;
   font-size: 13px;
-  text-align: center;
+  font-weight: 600;
+  color: var(--text-primary);
+}
+.agent-disclosure-hint {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.agent-disclosure-chevron {
+  flex: none;
+  width: 14px;
+  height: 14px;
   transition: transform 0.15s ease;
 }
-.agent-disclosure .caret.open {
-  transform: rotate(90deg);
+.agent-disclosure-chevron.open {
+  transform: rotate(180deg);
 }
 .agent-head + .card-desc,
 .agent-head + .btn {
@@ -884,30 +904,96 @@
   color: var(--text-secondary, #888);
   word-break: break-all;
 }
-.readiness-conditions {
+/* Agent readiness matrix (Advanced → create Agent tasks from IM): one row per Agent (badge, name,
+   overall tag) and one fixed-width column per condition, so every row lines up. A met condition is a
+   check; an unmet one is an orange cross button that goes to where it is fixed. */
+.readiness-matrix {
+  margin-top: var(--space-2);
+}
+.readiness-row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-height: 42px;
+}
+.readiness-row + .readiness-row:not(.readiness-head) {
+  border-top: var(--hairline) solid var(--border);
+}
+.readiness-head {
+  min-height: 20px;
+  color: var(--text-secondary);
+  font-size: 11px;
+}
+.readiness-agent {
+  flex: 1 1 auto;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 2px var(--space-2);
+}
+.readiness-agent .brand-badge {
+  --size: 28px;
+  margin-right: 2px;
+}
+.readiness-agent .label {
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--text-primary);
+}
+.readiness-cell {
+  flex: none;
+  width: 64px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  text-align: center;
+}
+.readiness-ok {
+  width: 16px;
+  height: 16px;
+  color: var(--accent-green);
+}
+.readiness-fix {
   display: inline-flex;
   align-items: center;
-  gap: 5px;
-  margin: 0;
-  white-space: nowrap;
-}
-.readiness-conditions button {
+  justify-content: center;
+  width: 24px;
+  height: 24px;
   padding: 0;
   border: 0;
-  background: transparent;
-  color: var(--accent);
-  font: inherit;
-  text-decoration: underline;
-  text-decoration-color: color-mix(in srgb, var(--accent) 55%, transparent);
-  text-underline-offset: 2px;
+  border-radius: 50%;
+  background: color-mix(in srgb, var(--accent-orange) 15%, transparent);
+  color: var(--accent-orange);
   cursor: pointer;
 }
-.readiness-conditions button:hover {
-  text-decoration-color: var(--accent);
+.readiness-fix:hover {
+  background: color-mix(in srgb, var(--accent-orange) 32%, transparent);
 }
-.readiness-separator {
-  color: var(--text-secondary);
-  opacity: 0.65;
+.readiness-fix:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring);
+}
+.readiness-fix svg {
+  width: 13px;
+  height: 13px;
+}
+.readiness-hint {
+  margin: var(--space-2) 0 0;
+}
+/* A card that belongs to one Agent (Cursor's Max mode, Codex's grants): a small badge in front of the
+   title; the description below keeps the card's full width. */
+.agent-card-title {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  margin-bottom: var(--space-1);
+}
+.agent-card-title .brand-badge {
+  --size: 24px;
+}
+.agent-card-title .card-title {
+  margin: 0;
 }
 .readiness-target-row {
   margin-right: -6px;

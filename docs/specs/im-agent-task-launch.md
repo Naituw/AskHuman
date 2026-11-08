@@ -462,3 +462,10 @@ workspace 动态状态放 `agent-workspaces.json`，launch record 放短时私�
   shell（安全软件扫描、nvm / conda 等）在本机负载高时 5 个并发探测实测 1.6–2.2 秒。现在查找限时放宽到 6
   秒，结果区分「没找到 / 没查完」，没查完只缓存 5 秒并沿用此前找到的路径（见 §4.2 末），daemon 在日志里留下
   失败详情；手机端 `choices()` 把工作区扫描与 Agent 探测并行，最坏耗时仍在手机 15 秒等待之内。
+- **2026-11-08**：「高级」里的 Agent 就绪列表换版式（见 `docs/specs/settings-agents-channels-cards.md` §8.1）。
+  先改成「徽标 + 名称 + 标签，只列缺的条件」，用户反馈更乱，又重做成一张对齐的矩阵：每家一行「徽标 + 名称 +
+  状态标签（已就绪 / 未就绪）」，固定三列 CLI / 生命周期 / 集成，满足为 ✓，缺失为可点的橙色 ×，
+  目标不变（官方安装文档 / 「Agents」页 lifecycle 行 / 对应 Agent 卡）。2026-08-19 条里「分别显示 CLI / Lifecycle /
+  Integration」仍成立（现在是三列），列头与提示文案走 i18n。顺带修了一个死链接：Agent 尚未集成时没有 lifecycle 行，
+  点「生命周期」的 × 以前没有反应，现在退到该 Agent 的卡片并高亮。就绪判定（`ready = binary ∧ lifecycle ∧
+  integration`）、刷新时机与 `/new` 的门控都不变。

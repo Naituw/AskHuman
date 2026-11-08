@@ -3,9 +3,11 @@
 // Only the task-launch card is limited to platforms with a supported terminal.
 import { computed } from "vue";
 import { useI18n } from "vue-i18n";
+import BrandBadge from "../setup/BrandBadge.vue";
 import { useSettingsContext } from "./context";
 import CursorMaxCard from "./CursorMaxCard.vue";
 import PermissionRulesCard from "./PermissionRulesCard.vue";
+import { readinessIssues, type ReadinessIssue } from "./readiness";
 
 const { t } = useI18n();
 const ctx = useSettingsContext();
@@ -26,6 +28,22 @@ const {
 } = ctx;
 // 父组件仅在 config 加载后渲染本 tab，这里可安全断言非空。
 const config = computed(() => ctx.config.value!);
+
+// What each Agent still lacks, worked out once per change rather than once per use in the template.
+const readinessRows = computed(() =>
+  taskReadiness.value.map((item) => ({ item, issues: readinessIssues(item) })),
+);
+const CONDITIONS: ReadinessIssue[] = ["binary", "lifecycle", "integration"];
+const COLUMN_TEXT: Record<ReadinessIssue, string> = {
+  binary: "settings.agentTasks.colBinary",
+  lifecycle: "settings.agentTasks.colLifecycle",
+  integration: "settings.agentTasks.colIntegration",
+};
+const ISSUE_TEXT: Record<ReadinessIssue, string> = {
+  binary: "settings.agentTasks.issueBinary",
+  lifecycle: "settings.agentTasks.issueLifecycle",
+  integration: "settings.agentTasks.issueIntegration",
+};
 </script>
 
 <template>
@@ -165,36 +183,55 @@ const config = computed(() => ctx.config.value!);
         <span class="permission-state-spinner" aria-hidden="true"></span>
         <p>{{ t("common.loading") }}</p>
       </div>
-      <div v-for="item in taskReadiness" :key="item.kind" class="row agent-row">
-        <span class="label">{{ item.label }}</span>
-        <span class="badge"><span class="dot" :class="item.ready ? 'on' : 'off'"></span>{{ item.ready ? t("settings.agentTasks.ready") : t("settings.agentTasks.notReady") }}</span>
-        <span class="spacer"></span>
-        <span class="card-desc readiness-conditions">
-          <span v-if="item.binaryReady">CLI ✓</span>
-          <button
-            v-else
-            type="button"
-            :title="t('settings.agentTasks.openInstallDocs')"
-            @click="openReadinessIssue(item.kind, 'binary')"
-          >CLI ×</button>
-          <span class="readiness-separator">·</span>
-          <span v-if="item.lifecycleReady">Lifecycle ✓</span>
-          <button
-            v-else
-            type="button"
-            :title="t('settings.agentTasks.goToSetting')"
-            @click="openReadinessIssue(item.kind, 'lifecycle')"
-          >Lifecycle ×</button>
-          <span class="readiness-separator">·</span>
-          <span v-if="item.integrationReady">Integration ✓</span>
-          <button
-            v-else
-            type="button"
-            :title="t('settings.agentTasks.goToSetting')"
-            @click="openReadinessIssue(item.kind, 'integration')"
-          >Integration ×</button>
-        </span>
+      <!-- A matrix: one row per Agent (badge, name, overall tag), one fixed column per condition. A met
+           condition is a check; an unmet one is an orange cross that goes to where it is fixed. -->
+      <div v-if="readinessRows.length > 0" class="readiness-matrix" data-testid="readiness-matrix">
+        <div class="readiness-row readiness-head" aria-hidden="true">
+          <span class="readiness-agent"></span>
+          <span v-for="cond in CONDITIONS" :key="cond" class="readiness-cell">{{ t(COLUMN_TEXT[cond]) }}</span>
+        </div>
+        <div
+          v-for="{ item, issues } in readinessRows"
+          :key="item.kind"
+          class="readiness-row"
+          :data-testid="`readiness-${item.kind}`"
+        >
+          <div class="readiness-agent">
+            <BrandBadge :id="item.kind" :label="item.label" />
+            <span class="label">{{ item.label }}</span>
+            <span
+              class="status-tag"
+              :class="item.ready ? 'ok' : 'warn'"
+              :data-testid="`readiness-tag-${item.kind}`"
+            >{{ item.ready ? t("settings.agentTasks.ready") : t("settings.agentTasks.notReady") }}</span>
+          </div>
+          <span v-for="cond in CONDITIONS" :key="cond" class="readiness-cell">
+            <button
+              v-if="issues.includes(cond)"
+              type="button"
+              class="readiness-fix"
+              :aria-label="`${item.label}: ${t(ISSUE_TEXT[cond])}`"
+              :title="`${t(ISSUE_TEXT[cond])} · ${cond === 'binary' ? t('settings.agentTasks.openInstallDocs') : t('settings.agentTasks.goToSetting')}`"
+              :data-testid="`readiness-issue-${item.kind}-${cond}`"
+              @click="openReadinessIssue(item.kind, cond)"
+            >
+              <svg viewBox="0 0 16 16" aria-hidden="true">
+                <path d="M5 5l6 6M11 5l-6 6" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" />
+              </svg>
+            </button>
+            <svg
+              v-else
+              class="readiness-ok"
+              viewBox="0 0 16 16"
+              role="img"
+              :aria-label="`${item.label}: ${t(COLUMN_TEXT[cond])}`"
+            >
+              <path d="M3.5 8.5l3 3 6-7" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" />
+            </svg>
+          </span>
+        </div>
       </div>
+      <p v-if="readinessRows.length > 0" class="card-desc readiness-hint">{{ t("settings.agentTasks.readinessHint") }}</p>
       <hr class="divider" />
       <div class="row">
         <div class="col">

@@ -15,9 +15,10 @@ import {
 import type { AgentKind, AgentTaskReadiness, AgentTaskWorkspace } from "../../lib/types";
 import { supportsAgentTasks } from "../../lib/platform";
 import type { SettingsCore } from "./context";
+import type { ReadinessIssue } from "./readiness";
 import { revealSettingsTarget } from "./reveal";
 
-/** Agent 官方安装文档（readiness「CLI ×」跳转；新建任务窗口复用）。 */
+/** Each Agent's official install guide: the readiness "CLI unavailable" link opens it, and the New Task window reuses it. */
 export const AGENT_INSTALL_DOCS: Record<AgentKind, string> = {
   claude: "https://docs.anthropic.com/en/docs/claude-code/getting-started",
   codex: "https://developers.openai.com/codex/cli/",
@@ -198,7 +199,6 @@ export function useAgentTasks(core: SettingsCore) {
     });
   }
 
-  type ReadinessIssue = "binary" | "lifecycle" | "integration";
   const settingsTargetHighlight = ref("");
   let settingsTargetTimer: number | undefined;
 

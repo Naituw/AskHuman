@@ -657,6 +657,7 @@ export default {
       retryStatus: "重新读取状态",
       /** Agent 卡标题行下的折叠入口：其余各行（规则、Hook、权限、生命周期等）收在这里。 */
       details: "详情",
+      detailsHint: "规则、Hook、权限、生命周期等设置",
       /** Agent 卡标题行的状态标签（docs/specs/settings-agents-channels-cards.md）。 */
       tag: {
         integrated: "已集成",
@@ -790,6 +791,13 @@ export default {
       readiness: "Agent 就绪状态",
       ready: "已就绪",
       notReady: "未就绪",
+      colBinary: "CLI",
+      colLifecycle: "生命周期",
+      colIntegration: "集成",
+      readinessHint: "点击橙色 × 前往修复；CLI 不可用时会打开官方安装文档。",
+      issueBinary: "CLI 不可用",
+      issueLifecycle: "生命周期追踪未就绪",
+      issueIntegration: "集成不可用",
       openInstallDocs: "打开官方安装文档",
       goToSetting: "前往对应设置项",
       workspaces: "工作目录",
