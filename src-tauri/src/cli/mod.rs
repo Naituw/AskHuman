@@ -4,6 +4,7 @@ pub mod away_cmd;
 pub mod cfgio;
 pub mod channel_cmd;
 pub mod config_cmd;
+mod cursor_cmd;
 pub mod debug_cmd;
 pub mod dev_cmd;
 pub mod doctor;
@@ -83,6 +84,16 @@ const ASK_LEADING_FLAGS: &[&str] = &[
 
 /// 入口分发：在创建任何窗口前按 argv 分流。
 pub fn dispatch() {
+    let mut cursor_args = std::env::args_os().skip(1);
+    if cursor_args.next().as_deref() == Some(std::ffi::OsStr::new("cursor")) {
+        match cursor_cmd::run(cursor_args.collect()) {
+            Ok(code) => exit(code),
+            Err(error) => {
+                eprintln!("AskHuman: {error:#}");
+                exit(1);
+            }
+        }
+    }
     let raw_argv = match crate::development::routing::prepare(std::env::args().collect()) {
         Ok(argv) => argv,
         Err(error) => {
