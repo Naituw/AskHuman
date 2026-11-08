@@ -2827,18 +2827,25 @@ pub async fn agent_task_cursor_plan() -> crate::agents::cursor_max::Detected {
         .unwrap_or(crate::agents::cursor_max::Detected::Unknown)
 }
 
+/// What each Agent lacks before a task can start on it, with the verdict the phone and IM use
+/// (`startable`, the route it would run on, and Codex's / Cursor's launch status) beside the
+/// readiness fields, so Settings and the setup wizard cannot disagree with them.
 #[tauri::command]
 pub async fn agent_task_readiness(
     kind: Option<String>,
     force: Option<bool>,
-) -> Result<Vec<crate::integrations::agent_launch::AgentReadiness>, String> {
+) -> Result<Vec<crate::integrations::agent_start::AgentStart>, String> {
     let parsed = match kind {
         Some(name) => Some(parse_agent_kind(&name)?),
         None => None,
     };
     let force = force.unwrap_or(false);
     tokio::task::spawn_blocking(move || {
-        crate::integrations::agent_launch::collect_readiness(parsed, force)
+        // The forced read refreshes the probe cache; the launch statuses behind the verdict are
+        // then read from that cache instead of looking the CLIs up a second time.
+        crate::integrations::agent_start::judge(
+            crate::integrations::agent_launch::collect_readiness(parsed, force),
+        )
     })
     .await
     .map_err(|e| e.to_string())

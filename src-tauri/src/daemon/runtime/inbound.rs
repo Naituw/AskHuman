@@ -704,15 +704,26 @@ pub(super) async fn start_new_task_flow(
         let _ = reply_channel_text(channel_id, config, text).await;
         return;
     }
-    let (workspaces, readiness) = tokio::task::spawn_blocking(|| {
+    let probed = tokio::task::spawn_blocking(|| {
         (
             crate::agents::workspaces::refresh(),
             // Only families `/new` can start: the diagnostics below are shown to the user.
             crate::integrations::agent_launch::launchable_readiness(),
+            crate::codex_desktop::launch_status(false),
+            crate::cursor_desktop::launch_status(false),
         )
     })
     .await
-    .unwrap_or_default();
+    .ok();
+    let Some((workspaces, readiness, codex_status, cursor_status)) = probed else {
+        let _ = reply_channel_text(
+            channel_id,
+            config,
+            "Failed to check this Mac's workspaces and Agents",
+        )
+        .await;
+        return;
+    };
     if workspaces.is_empty() {
         let text = match lang {
             Lang::Zh => {
@@ -725,16 +736,22 @@ pub(super) async fn start_new_task_flow(
         let _ = reply_channel_text(channel_id, config, text).await;
         return;
     }
-    let diagnostics = readiness
-        .iter()
-        .flat_map(|item| item.diagnostics.clone())
-        .collect::<Vec<_>>()
-        .join("\n");
-    let ready: Vec<_> = readiness.into_iter().filter(|item| item.ready).collect();
-    if ready.is_empty()
-        && !crate::codex_desktop::available(&config.codex_desktop)
-        && !crate::cursor_desktop::launch_status(false).desktop_available
-    {
+    // The one rule every surface shares decides whether there is anything to pick; Codex and
+    // Cursor have a route besides the CLI, so their routes explain a miss, not the CLI's lines.
+    let startable = readiness.iter().any(|item| {
+        crate::integrations::agent_start::startable(item, &codex_status, &cursor_status)
+    });
+    if !startable {
+        let diagnostics = readiness
+            .iter()
+            .map(|item| match item.kind {
+                AgentKind::Codex => codex_status.description(lang),
+                AgentKind::Cursor => cursor_status.description(lang),
+                _ => item.diagnostics.join("\n"),
+            })
+            .filter(|text| !text.is_empty())
+            .collect::<Vec<_>>()
+            .join("\n");
         let title = match lang {
             Lang::Zh => "没有已就绪的 Agent。",
             Lang::En => "No Agent is ready.",
@@ -924,10 +941,8 @@ pub(super) async fn continue_task_picker(
             let cursor_status = crate::cursor_desktop::launch_status(false);
             let options = crate::integrations::agent_launch::launchable_readiness()
                 .into_iter()
-                .filter(|item| match item.kind {
-                    AgentKind::Codex => codex_status.target.is_some(),
-                    AgentKind::Cursor => cursor_status.target.is_some(),
-                    _ => item.ready,
+                .filter(|item| {
+                    crate::integrations::agent_start::startable(item, &codex_status, &cursor_status)
                 })
                 .map(|item| crate::select::SelectOption {
                     id: item.kind.as_str().to_string(),
@@ -982,11 +997,9 @@ pub(super) async fn continue_task_picker(
             let Some(kind) = AgentKind::parse(&payload.kind) else {
                 return;
             };
-            let ready = match kind {
-                AgentKind::Codex => crate::codex_desktop::launch_status(false).target.is_some(),
-                AgentKind::Cursor => crate::cursor_desktop::launch_status(false).target.is_some(),
-                _ => crate::integrations::agent_launch::readiness(kind).ready,
-            };
+            let ready = crate::integrations::agent_start::startable_now(
+                &crate::integrations::agent_launch::readiness(kind),
+            );
             if !ready {
                 let _ =
                     reply_channel_text(channel_id, config, "Selected task location is unavailable")

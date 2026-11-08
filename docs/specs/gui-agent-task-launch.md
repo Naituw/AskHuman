@@ -120,6 +120,9 @@ IM `/new` 已支持从四种 IM 选择 workspace / Agent / 权限并在 macOS �
   切到 popup；顺带添加托盘入口。
 - **2026-08-19**：Lifecycle readiness 修复入口改到「Agents」Tab 对应 Agent 卡内的 lifecycle 行；
   自动集成首次启用默认开启 lifecycle，用户显式关闭后仍会保持 readiness 不通过。
+- **2026-11-08**：G4 的 Agent 判定在后端收成全局唯一的「能不能启动」（`integrations/agent_start.rs`，手机、IM、向导、设置页共用）：
+  Codex 看桌面 App / 终端、Cursor 看 Agents 窗口 / 终端（偏好只决定谁优先，另一条可用就改用另一条）、其余 Agent 仍是 `agent_launch::readiness`。
+  本表单本来就按 Codex / Cursor 的启动状态判断可选，所以行为不变，只是与别处的结论现在必然一致。
 
 
 ## 8. 桌面新建任务设置与 iOS 对齐（2026-11-06）

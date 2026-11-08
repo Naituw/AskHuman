@@ -6,6 +6,7 @@ import { flushPromises, mount } from "@vue/test-utils";
 import { ref } from "vue";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { i18n } from "../../i18n";
+import type { CursorLaunchStatus } from "../../lib/ipc";
 import type { AgentKind, AgentTaskReadiness, AppConfig } from "../../lib/types";
 import AdvancedTab from "./AdvancedTab.vue";
 import type { ReadinessIssue } from "./readiness";
@@ -277,6 +278,195 @@ describe("AdvancedTab: Agent readiness", () => {
     expect(wrapper.find(".readiness-matrix").exists()).toBe(false);
     expect(wrapper.find(".readiness-hint").exists()).toBe(false);
     expect(wrapper.find(".settings-section-loading").exists()).toBe(true);
+  });
+});
+
+// The verdict on each row is the backend's (`startable`): the one the phone and IM act on, which also
+// counts Codex's Desktop App and Cursor's Agents window. Such an Agent starts without its CLI, so the
+// CLI's own columns are not crosses to fix.
+describe("AdvancedTab: Agents that start in their app or window", () => {
+  const CODEX_APP: AgentTaskReadiness = {
+    ...agent("codex", "Codex", ["binary", "lifecycle"]),
+    startable: true,
+    startRoute: "desktop",
+  };
+  const CURSOR_WINDOW: AgentTaskReadiness = {
+    ...agent("cursor", "Cursor", ["binary"]),
+    startable: true,
+    startRoute: "desktop",
+  };
+
+  beforeEach(() => {
+    document.body.innerHTML = '<div class="settings"></div>';
+    i18n.global.locale.value = "en";
+    useSettingsContext.mockReset();
+  });
+
+  afterEach(() => {
+    document.body.innerHTML = "";
+  });
+
+  it("is Ready with the place it starts in, although its CLI is missing", async () => {
+    const { wrapper } = mountTab([agent("claude", "Claude Code"), CODEX_APP, CURSOR_WINDOW]);
+    await flushPromises();
+
+    // A ready CLI needs no place named: the row is plainly Ready.
+    expect(wrapper.get('[data-testid="readiness-tag-claude"]').text()).toBe("Ready");
+    const codex = wrapper.get('[data-testid="readiness-tag-codex"]');
+    expect(codex.text()).toBe("Ready · Desktop App");
+    expect(codex.classes()).toEqual(expect.arrayContaining(["status-tag", "ok"]));
+    expect(wrapper.get('[data-testid="readiness-tag-cursor"]').text()).toBe("Ready · Agents window");
+  });
+
+  it("shows the CLI's own conditions as dashes rather than crosses to fix", async () => {
+    const { wrapper } = mountTab([CODEX_APP]);
+    await flushPromises();
+
+    const row = wrapper.get('[data-testid="readiness-codex"]');
+    expect(row.findAll(".readiness-cell").map((cell) => cell.text())).toEqual(["–", "–", ""]);
+    expect(row.find(".readiness-fix").exists()).toBe(false);
+    const skipped = row.get('[data-testid="readiness-skip-codex-binary"]');
+    expect(skipped.attributes("title")).toBe(i18n.global.t("settings.agentTasks.cliNotNeeded"));
+    expect(skipped.attributes("aria-label")).toContain("Codex: CLI");
+    // What is met is still a check: the integration is needed by the app route too.
+    expect(row.findAll(".readiness-ok")).toHaveLength(1);
+  });
+
+  it("keeps a missing integration as a cross: the app or window route needs it as well", async () => {
+    const odd: AgentTaskReadiness = {
+      ...agent("cursor", "Cursor", ["binary", "integration"]),
+      startable: true,
+      startRoute: "desktop",
+    };
+    const { wrapper } = mountTab([odd]);
+    await flushPromises();
+
+    expect(wrapper.find('[data-testid="readiness-issue-cursor-integration"]').exists()).toBe(true);
+    expect(wrapper.find('[data-testid="readiness-skip-cursor-integration"]').exists()).toBe(false);
+    expect(wrapper.find('[data-testid="readiness-skip-cursor-binary"]').exists()).toBe(true);
+  });
+
+  it("leaves an Agent that starts through its CLI exactly as before", async () => {
+    const { wrapper } = mountTab([{ ...agent("claude", "Claude Code"), startable: true, startRoute: "terminal" }]);
+    await flushPromises();
+
+    expect(wrapper.get('[data-testid="readiness-tag-claude"]').text()).toBe("Ready");
+    expect(wrapper.find('[data-testid^="readiness-skip-"]').exists()).toBe(false);
+    expect(wrapper.findAll('[data-testid="readiness-claude"] .readiness-ok')).toHaveLength(3);
+  });
+
+  it("takes the backend's verdict over the CLI's: a ready CLI whose routes are all unusable is Not ready", async () => {
+    const { wrapper } = mountTab([{ ...agent("claude", "Claude Code"), startable: false, startRoute: null }]);
+    await flushPromises();
+
+    expect(wrapper.get('[data-testid="readiness-tag-claude"]').text()).toBe("Not ready");
+  });
+
+  it("says what the dashes mean only when such an Agent is listed", async () => {
+    const without = mountTab();
+    await flushPromises();
+    expect(without.wrapper.get(".readiness-hint").text()).not.toContain(
+      i18n.global.t("settings.agentTasks.outsideHint"),
+    );
+
+    const withOne = mountTab([...AGENTS, CODEX_APP]);
+    await flushPromises();
+    expect(withOne.wrapper.get(".readiness-hint").text()).toContain(
+      i18n.global.t("settings.agentTasks.outsideHint"),
+    );
+  });
+
+  it("speaks Chinese for the place it starts in", async () => {
+    const { wrapper } = mountTab([CODEX_APP, CURSOR_WINDOW]);
+    i18n.global.locale.value = "zh";
+    await flushPromises();
+
+    expect(wrapper.get('[data-testid="readiness-tag-codex"]').text()).toBe("就绪 · Desktop App");
+    expect(wrapper.get('[data-testid="readiness-tag-cursor"]').text()).toBe("就绪 · Agents 窗口");
+  });
+});
+
+// Starts in its app, with a launch status on it: still nothing to explain.
+const CODEX_APP_FOR_BLOCKERS: AgentTaskReadiness = {
+  ...agent("codex", "Codex", ["binary"]),
+  startable: true,
+  startRoute: "desktop",
+  launch: {
+    preference: "desktop",
+    target: "desktop",
+    desktopAvailable: true,
+    terminalAvailable: false,
+    desktopReason: null,
+    terminalReason: "cliNotDetected",
+    integrated: true,
+  },
+};
+
+// An Agent with two routes that has neither: the crosses only cover the CLI's side, so the row says
+// why in both routes' words (the backend's launch status).
+describe("AdvancedTab: why an Agent with two routes cannot start", () => {
+  const STUCK_LAUNCH: CursorLaunchStatus = {
+    preference: "terminal",
+    target: null,
+    desktopAvailable: false,
+    terminalAvailable: false,
+    desktopReason: "appNotRunning",
+    terminalReason: "cliNotDetected",
+    integrated: true,
+  };
+  const STUCK_CURSOR: AgentTaskReadiness = {
+    ...agent("cursor", "Cursor", ["binary", "lifecycle"]),
+    startable: false,
+    startRoute: null,
+    launch: STUCK_LAUNCH,
+  };
+
+  beforeEach(() => {
+    document.body.innerHTML = '<div class="settings"></div>';
+    i18n.global.locale.value = "en";
+    useSettingsContext.mockReset();
+  });
+
+  afterEach(() => {
+    document.body.innerHTML = "";
+  });
+
+  it("names what each route lacks, the preferred route first, under the Agent's row", async () => {
+    const { wrapper } = mountTab([STUCK_CURSOR]);
+    await flushPromises();
+
+    const item = wrapper.get('[data-testid="readiness-cursor"]');
+    const note = item.get('[data-testid="readiness-blockers-cursor"]');
+    expect(note.text()).toBe(
+      [
+        i18n.global.t("cursorDesktop.launch.reasons.cliNotDetected"),
+        i18n.global.t("cursorDesktop.launch.reasons.appNotRunning"),
+      ].join(i18n.global.t("desktop.reasonSeparator")),
+    );
+    // Part of the same item as the row, so the two stay together.
+    expect(item.find(".readiness-row").exists()).toBe(true);
+    expect(item.findAll(".readiness-fix").length).toBeGreaterThan(0);
+  });
+
+  it("puts the Desktop route first when that is the preference", async () => {
+    const { wrapper } = mountTab([{ ...STUCK_CURSOR, launch: { ...STUCK_LAUNCH, preference: "desktop" } }]);
+    await flushPromises();
+
+    const note = wrapper.get('[data-testid="readiness-blockers-cursor"]').text();
+    expect(note.indexOf(i18n.global.t("cursorDesktop.launch.reasons.appNotRunning"))).toBeLessThan(
+      note.indexOf(i18n.global.t("cursorDesktop.launch.reasons.cliNotDetected")),
+    );
+  });
+
+  it("says nothing for an Agent that can start, for one with the CLI alone, or without a launch status", async () => {
+    const { wrapper } = mountTab([
+      CODEX_APP_FOR_BLOCKERS,
+      agent("pi", "Pi", ["binary", "lifecycle", "integration"]),
+      { ...STUCK_CURSOR, launch: null },
+    ]);
+    await flushPromises();
+
+    expect(wrapper.find('[data-testid^="readiness-blockers-"]').exists()).toBe(false);
   });
 });
 

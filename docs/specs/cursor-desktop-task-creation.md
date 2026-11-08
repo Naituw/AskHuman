@@ -24,18 +24,24 @@
 | D3 | 实现完成后先给你验证计划，批准才做真实验证；若一次能覆盖，接受一次完成 |
 | D4 | GUI 进程经 IPC 请求 daemon：新增 `ClientMsg::CursorDesktop`，`PROTOCOL_VERSION` 4→5（与 Codex 同构） |
 | D5 | `cursorDesktop.launchPreference` 缺省为 `terminal`，真实验证通过后由你在设置里改为 `desktop` |
+| D6 | 2026-11-08：偏好**只决定优先走哪条路径**，不决定哪条能用。优先路径整体不可用而另一条整体可用时，自动改用另一条（两个方向对称，与 Codex 一致）；只要装了 Cursor Desktop 并满足 §3 的整体可用条件，Cursor 就算「能从手机 / IM 启动任务」。这改写了最初「终端不可用时不改用 Agents 窗口」的约束；「任务一旦开始，不得静默改走另一条路径」不变 |
 
 ## 3. 可用性与目标选择
 
-- 设置 `cursorDesktop.launchPreference`：`terminal`（默认）／`desktop`。与 Codex 的目标选择同构：偏好 Desktop 且可用→
-  Desktop；偏好 Desktop 但整体不可用→终端，状态文案说明原因（「新任务将使用 CLI（未检测到运行中的 Cursor）」）；
-  偏好终端→终端；终端本身不可用时，状态行如实说明，不会改用 Agents 窗口（与 Codex 不同：Agents 窗口是实验路线，只在被选中时使用）。
-  **任务一旦开始，不得静默改走另一条路径。**
+- 设置 `cursorDesktop.launchPreference`：`terminal`（默认）／`desktop`。它只决定**优先**走哪条路径（D6），与 Codex 的
+  目标选择同构，回退对称：优先路径整体可用→用它；优先路径整体不可用而另一条整体可用→自动改用另一条，状态文案说明原因
+  （偏好 Desktop：「新任务将使用 CLI（未检测到运行中的 Cursor）」；偏好终端：「新任务将使用 Cursor 的 Agents 窗口（未检测到 Cursor CLI）」）；
+  两条都不可用→状态行如实说明两条各自的障碍，此时没有新任务可启动。
+  **任务一旦开始，不得静默改走另一条路径**：回退只发生在选择阶段；已选定的路径在创建时核对失败，仍然拒绝并说明，
+  不会半路换一条。
+- 「能不能启动任务」只有一个判断（`integrations::agent_start`）：Cursor 看这里选出的目标是否存在，手机 App、IM `/new`、
+  向导、设置里的就绪状态都用它，不再各看各的（例如只装了 Cursor Desktop、没有 CLI，也能从手机新建 Cursor 任务）。
 - **整体可用**只做廉价的静态检测（表单状态行用它，不挂接 Cursor）：macOS；Cursor 集成模式不是 None 且生命周期追踪
   已安装；恰有一个原始 Cursor 进程；其 Inspector 开关可用（沿用既有检测，不新增对 Cursor 的写入）。
 - **逐任务条件**要挂接桥才能知道，所以到创建时才检查，不满足一律直接报错、不自动改走终端：恰有一个已打开的
-  Agents 窗口（「请先打开 Cursor 的 Agents 窗口」）；所选工作区的规范路径等于该窗口里某个未归档本地项目的目录
-  （「Agents 窗口里没有这个项目，请先在 Cursor 里添加，或把偏好改为 CLI」）。
+  Agents 窗口（「请先打开 Cursor 的 Agents 窗口再创建任务；或者改用 CLI 运行（需要已安装并启用 Cursor CLI）」）；
+  所选工作区的规范路径等于该窗口里某个未归档本地项目的目录
+  （「Agents 窗口里没有这个项目。请先在 Cursor 的 Agents 窗口添加该项目，或改用 CLI 运行」）。
 - GUI 表单、IM、iOS 都按同一目标选择；表单用与 Codex 相同的状态行。同一次任务重试复用操作 ID，
   不会重复创建。
 

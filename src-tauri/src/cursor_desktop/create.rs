@@ -578,17 +578,17 @@ pub(crate) fn reject_text(reason: &str, detail: Option<&str>, lang: Lang) -> Str
     };
     match (reason, lang) {
         ("noAgentsWindow" | "notAgentsWindow", Lang::Zh) => {
-            "请先打开 Cursor 的 Agents 窗口再创建任务；也可以在设置里把 Cursor 新任务的运行位置改为 CLI。".into()
+            "请先打开 Cursor 的 Agents 窗口再创建任务；或者改用 CLI 运行（需要已安装并启用 Cursor CLI）。".into()
         }
         ("noAgentsWindow" | "notAgentsWindow", Lang::En) => {
-            "Open Cursor's Agents window first, or set new Cursor tasks to run in the CLI in Settings.".into()
+            "Open Cursor's Agents window first, or run the task in the CLI (the Cursor CLI must be installed and enabled).".into()
         }
         ("multipleAgentsWindows", Lang::Zh) => "检测到多个 Agents 窗口，无法确定目标，请只保留一个再试。".into(),
         ("multipleAgentsWindows", Lang::En) => {
             "More than one Agents window is open, so there is no single target. Close the others and retry.".into()
         }
         ("projectNotFound", Lang::Zh) => with(
-            "Agents 窗口里没有这个项目。请先在 Cursor 的 Agents 窗口添加该项目，或把运行位置改为 CLI。",
+            "Agents 窗口里没有这个项目。请先在 Cursor 的 Agents 窗口添加该项目，或改用 CLI 运行。",
         ),
         ("projectNotFound", Lang::En) => with(
             "The Agents window does not know this project. Add it in Cursor's Agents window first, or run the task in the CLI.",

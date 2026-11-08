@@ -18,8 +18,9 @@ pub use crate::codex_desktop::LaunchTarget;
 #[serde(rename_all = "camelCase", default)]
 pub struct Config {
     pub suppress_background_completion_follow_up: bool,
-    /// Where new Cursor tasks run. Unlike Codex's, the default is the terminal: the Agents-window
-    /// route is experimental and only used once the user has chosen it.
+    /// Which route a new Cursor task tries first; the other one is the fallback, as for Codex.
+    /// Unlike Codex's, the default is the terminal: the Agents-window route is experimental, so
+    /// it goes first only once the user has chosen it.
     pub launch_preference: LaunchTarget,
 }
 

@@ -214,6 +214,7 @@ AskHuman/
         claude_hook.rs       Claude Code 超时 Hook 管理
         agent_lifecycle.rs   五家已适配 Agent 的生命周期管理（原生 Hook + Pi Extension；Antigravity 不支持）
         agent_launch.rs      Agent readiness、一次性启动记录与 Terminal.app / Windows Terminal helper
+        agent_start.rs       「这家 Agent 现在能不能启动任务」的唯一判定（CLI 就绪，或 Codex 桌面 App / Cursor Agents 窗口路线可用），手机 / IM / 向导 / 文字向导 / 设置页共用，并给出不能启动时的原因
         agent_rules.rs       Agent 全局 Rules 管理
         agent_subagent_guard.rs  Claude/Codex SubagentStart 提示 Hook
         agent_context_recovery.rs  集成 mode 托管的压缩恢复/会话绑定 Hook
@@ -325,7 +326,7 @@ CLI、Popup Host、GUI Host 与 Daemon 用同一份 NDJSON 消息类型（`Clien
 - 历史：`open_history`、`history_init`、`get_history`、`get_history_projects`、`history_count`、`trim_history`、`resolve_history_session_titles`、`delete_history_entries`、`clear_all_history`
 - Cursor / Claude 超时 Hook 与 Pi Extension：前两者保留专用命令；统一设置入口走 `agent_mode_*` 与 `agent_hook_reveal` / `open`
 - Agent Rules：`agent_rule_status` / `install` / `update` / `uninstall` / `reveal` / `open`
-- Agent 模式与配置文件：`agent_mode_status` / `set` / `update`、`mcp_config_reveal` / `open`、`agent_hook_reveal` / `open`、`mcp_command_path`（`agent_mode_status` 只聚合本地集成产物；Agent CLI 是否在 PATH / Pi 版本由 `agent_task_readiness` 负责）
+- Agent 模式与配置文件：`agent_mode_status` / `set` / `update`、`mcp_config_reveal` / `open`、`agent_hook_reveal` / `open`、`mcp_command_path`（`agent_mode_status` 只聚合本地集成产物；Agent CLI 是否在 PATH / Pi 版本由 `agent_task_readiness` 负责，它同时带上统一的「现在能不能启动任务」结论 `startable` / `startRoute`，见 `integrations/agent_start.rs`）
 - 渠道测试与识别：`telegram_test`；钉钉、飞书、Slack 各自的 `*_test` / `*_detect_prepare` / `*_detect_wait`；共用 `detect_cancel`
 - iOS 渠道（设置页「实验」Tab）：`ios_op`（状态 / 配对 / 撤销 / 重命名，经 IPC 的 `ClientMsg::Ios`）、`ios_test`、`ios_pair_qr`、`ios_connection_export` / `ios_connection_import`
 - iCloud 待办同步（设置页「实验」Tab 与待办窗口侧栏）：`todo_sync_*`（状态 / 启用 / 停用 / 立即同步 / 清除 / 修复，以及 iCloud 模式窗口用的项目列表、详情与移除；全部在阻塞线程上跑），见 `docs/overview-todo-sync.md`
@@ -370,9 +371,9 @@ Daemon 里的又一个渠道：手机上的 AskHuman App 回答问题、看 / �
 
 - `channels.autoActivation` 关闭时向所有启用 IM 投放，开启时以当前活跃槽为主；切槽会补推在途请求，watch 渠道仍会加入对应 Agent 新提问的投放并集。
 - 共享命令包括 `/new`、`/fork`、`/help`、`/here`、`/status`、`/watch`、`/unwatch`、`/msg`、`/msg-clear`、`/yolo`、`/diff`、`/stage`、`/transcript`、`/todo`、`/todo-rm` 和 `/todo-auto`；Slack 使用 `!` 作为可输入的备用前缀。
-- macOS 或 Windows 开启 `agentTasks` 后，`/new` 依次选择 workspace、已就绪 Agent 与权限，在新的 Terminal.app 或 Windows Terminal 窗口启动真实交互会话；Pi 没有内置权限模式，选中后跳过权限选择并固定使用 Agent 默认行为。Daemon 只负责启动前流程，之后复用 lifecycle/watch。
+- macOS 或 Windows 开启 `agentTasks` 后，`/new` 依次选择 workspace、能启动的 Agent 与权限（「能启动」只有一个判定，见 `integrations/agent_start.rs`：CLI 就绪，或 Codex 桌面 App / Cursor Agents 窗口路线可用；手机、IM、设置向导与设置页都用它），在新的 Terminal.app 或 Windows Terminal 窗口（或 Codex / Cursor 的桌面路线）启动真实交互会话；Pi 没有内置权限模式，选中后跳过权限选择并固定使用 Agent 默认行为。Daemon 只负责启动前流程，之后复用 lifecycle/watch。
 - macOS 与 Windows 本地 GUI 亦可创建任务（不要求开启 `agentTasks`）：待办窗口行内按钮与托盘「新建 Agent 任务」打开统一的新建任务窗口，就绪判定与启动链路与 `/new` 相同；见 `docs/specs/gui-agent-task-launch.md`。
-- Cursor 任务另有两项：① **Max 控制**（`agents/cursor_max`，规格 `docs/specs/cursor-max-control.md`）——旧按次计费计划里 Max 按 API 费率扣额度，所以 GUI 表单、`/new` 与 iOS 创建 Cursor 任务时默认强制关闭 Max（需要 Max 的模型拦截启动，GUI/iOS 可按任务打开「允许 Max」），启动后复查，新计划与「沿用 Cursor 设置」策略下不干预；② **Agents 窗口路线**（`cursor_desktop/`，规格 `docs/specs/cursor-desktop-task-creation.md`，实验）——`cursorDesktop.launchPreference` 为 `desktop` 时，新任务经 daemon 持有的私有桥在已打开的 Cursor Agents 窗口里创建并自动发送，所有核对在提交前闸门里完成，失败即拒绝，不会改走终端。
+- Cursor 任务另有两项：① **Max 控制**（`agents/cursor_max`，规格 `docs/specs/cursor-max-control.md`）——旧按次计费计划里 Max 按 API 费率扣额度，所以 GUI 表单、`/new` 与 iOS 创建 Cursor 任务时默认强制关闭 Max（需要 Max 的模型拦截启动，GUI/iOS 可按任务打开「允许 Max」），启动后复查，新计划与「沿用 Cursor 设置」策略下不干预；② **Agents 窗口路线**（`cursor_desktop/`，规格 `docs/specs/cursor-desktop-task-creation.md`，实验）——`cursorDesktop.launchPreference` 只决定两条路谁优先：首选路线用不了、另一条可用时自动改用另一条（装了 Cursor Desktop 即可启动，不必先改偏好；与 Codex 对称）；走 Agents 窗口时，新任务经 daemon 持有的私有桥在已打开的 Cursor Agents 窗口里创建并自动发送，所有核对在提交前闸门里完成，失败即拒绝，任务一旦开始不会静默改走另一条路。
 - Claude Code、Codex、Grok、Pi 的 Working/Idle 原生会话可通过 IM `/fork`、Agent 控制台或托盘立即分叉；源会话继续运行，新分支共用 cwd。继承标题的子会话在控制台、托盘和 IM 选择列表中前置显示直接父序号；watch 卡不增加 Fork 按钮，Cursor CLI 不支持；详见 `docs/specs/agent-session-fork.md`。
 - Agent 数字编号在 daemon 生命周期内稳定，供状态、关注、插话和 Git/会话导出共用；无参目标选择复用跨渠道单选卡模型。
 - Watch 订阅持久化并就地更新原卡；`/stage` 必须经过跨渠道 Confirm，不能直接执行暂存。

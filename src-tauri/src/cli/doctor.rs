@@ -335,14 +335,25 @@ fn render_text(
         yn(crate::integrations::agent_launch::terminal_available()),
         workspaces,
     ));
-    for item in crate::integrations::agent_launch::all_readiness() {
+    // `ready` is the CLI route's own verdict; `start` is the one the phone and IM act on, which
+    // also counts the Codex App and Cursor's Agents window (`integrations::agent_start`).
+    for item in
+        crate::integrations::agent_start::judge(crate::integrations::agent_launch::all_readiness())
+    {
+        let route = match item.start_route {
+            Some(crate::codex_desktop::LaunchTarget::Desktop) => "desktop",
+            Some(crate::codex_desktop::LaunchTarget::Terminal) => "terminal",
+            None => "no",
+        };
+        let item = item.readiness;
         out.push_str(&format!(
-            "  {:<8} ready={} cli={} lifecycle={} integration={}\n",
+            "  {:<8} ready={} cli={} lifecycle={} integration={} start={}\n",
             item.kind.as_str(),
             yn(item.ready),
             yn(item.binary_ready),
             yn(item.lifecycle_ready),
-            yn(item.integration_ready)
+            yn(item.integration_ready),
+            route,
         ));
     }
 
@@ -547,7 +558,8 @@ fn render_json(
         })
         .collect();
     let daemon = render_daemon_json(status, lang);
-    let task_readiness = crate::integrations::agent_launch::all_readiness();
+    let task_readiness =
+        crate::integrations::agent_start::judge(crate::integrations::agent_launch::all_readiness());
     let task_workspaces = crate::agents::workspaces::list()
         .into_iter()
         .filter(|workspace| !workspace.hidden && std::path::Path::new(&workspace.path).is_dir())

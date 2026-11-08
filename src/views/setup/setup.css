@@ -884,6 +884,10 @@
   font-style: normal;
   color: var(--text-secondary);
 }
+/* One entry of a value that lists several, each on a line of its own. */
+.check-line {
+  flex: 1 0 100%;
+}
 .check-adjust {
   margin: var(--space-2) 0 0;
   text-align: right;

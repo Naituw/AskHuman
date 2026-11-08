@@ -38,7 +38,8 @@ const statusText = computed(() => {
   }
   return detail.value ? t("cursorDesktop.error") : t(`cursorDesktop.${phase.value}`);
 });
-// Where new Cursor tasks run: the CLI in a terminal (default) or Cursor's Agents window.
+// Which route a new Cursor task tries first: the CLI in a terminal (default) or Cursor's Agents
+// window. The other one is the fallback when the first cannot be used.
 const launchStatus = ref<CursorLaunchStatus | null>(null);
 const launchSaving = ref(false);
 const launchChecking = ref(false);

@@ -5,13 +5,15 @@
 > 同日修订：用户看过成品后反馈「改完比之前更乱、更不直观；Agent 卡里的『详情』太小、容易找不到，像只剩一个开关」，据此重做
 > 「详情」入口（§3.2，D7）、就绪列表（§8.1，D8）与两张 Agent 专属卡的徽标位置（§8.2，D9），三处均经用户确认。
 > 随后用户选了一个跟进：不支持从 IM 启动的 Agent（Antigravity）在矩阵里显示灰色「暂不支持」（§8.1，D10）。
+> 2026-11-08 又一轮（用户在新设备上被向导先邀请「开启」、再告知「没有可以开启的 Agent」，见 `docs/specs/onboarding.md` D25 第 11 轮）：就绪矩阵改读全局统一的「能不能启动」判定（§8.5，D11），渠道卡片（Telegram / 钉钉 / 飞书 / Slack / iOS App）底部多一个「从手机 / IM 创建 Agent 任务」开关（§4.4，D12）。
 > 依赖 / 复用：`docs/specs/onboarding.md`（徽标 `BrandBadge`、状态标签、渠道状态判定 `channelState`、渠道注册表 `channelDefs`）。
 > 平台：macOS / Windows / Linux（纯前端，三端同一份）。
 > 影响面：`src/views/settings/`（`IntegrationTab.vue`、`ChannelsTab.vue`、`ChannelCardHead.vue`、`agentCard.ts`、
-> `useAgentDetails.ts`、`reveal.ts`、`useIntegration.ts`、`useChannels.ts`、`useSearch.ts`、`useAgentTasks.ts`、`settings.css`；
+> `useAgentDetails.ts`、`reveal.ts`、`useIntegration.ts`、`useChannels.ts`、`useSearch.ts`、`useAgentTasks.ts`、`AgentTasksSwitchRow.vue`、`settings.css`；
 > 「高级」页延伸：`AdvancedTab.vue`、`CursorMaxCard.vue`、`PermissionRulesCard.vue`、`readiness.ts`）、
 > `src/views/setup/`（`BrandBadge` 的样式随组件走、`channelTone`）、`src/styles/controls.css`（共用 `.status-tag`）、i18n。
-> **不改**：IPC / Rust / 配置字段；各页的信息架构（每一行、每个开关的含义、顺序与保存方式）；设置页的深链地址与搜索入口（`integration-<id>`、`lifecycle-<id>`、`channel-<id>`）。
+> **不改**：IPC / 配置字段；各页的信息架构（每一行、每个开关的含义、顺序与保存方式）；设置页的深链地址与搜索入口（`integration-<id>`、`lifecycle-<id>`、`channel-<id>`）。
+> 最初也不改 Rust；2026-11-08 的一轮是例外：后端 `agent_task_readiness` 多带 `startable` / `startRoute` / `launch`（additive，§8.5），其余仍是纯前端。
 
 ## 1. 背景与目标
 
@@ -37,6 +39,8 @@
 | D8 | 就绪列表（2026-11-08 反馈） | 上一版（徽标 + 名称 + 标签，缺的条件以蓝色下划线链接挂在名称下）行高不一、参差，被判「更乱」。改成**对齐的矩阵**：一家一行，固定三列「CLI / 生命周期 / 集成」，满足 ✓、缺失 ×（可点）。**否决**回到原来的一行小字（`CLI ✓ · Lifecycle ✓ …`）。 |
 | D9 | 两张 Agent 专属卡的徽标（2026-11-08 反馈） | 徽标缩成 24px，放进**标题那一行**；说明文字回到卡片整宽。**否决**上一版的「徽标在左、标题与说明缩进在右」（说明比其它卡窄，显得不齐）。 |
 | D10 | 不支持的 Agent 一行（2026-11-08，用户选的跟进） | `launchSupported = false` 的 Agent（目前只有 Antigravity：没有新任务 / Fork 路径，也没有生命周期追踪）在矩阵里不是「未就绪」加三个修不好的橙色 ×，而是**灰色「暂不支持」标签 + 三格灰色短横**，没有任何可点的东西；表格下提示一句说明。**否决**从矩阵里隐藏它：后端注释写明 `all_readiness` 有意把这类 family 也报出来，让设置页与 doctor 去解释它们（选择器才过滤）。 |
+| D11 | 矩阵读统一判定（2026-11-08，用户在新设备上反馈） | 总状态标签不再等于 `binary ∧ lifecycle ∧ integration`，而是后端 `agent_task_readiness` 返回的 `startable`（`integrations/agent_start.rs`；手机、IM、向导、文字版用同一个）：Codex 的桌面 App 或终端任一可用、Cursor 的 Agents 窗口或终端任一可用（偏好只决定谁优先）、其余 Agent 的 CLI 就绪。标签随路线变化（§8.5）。**否决**让矩阵继续用 CLI 就绪：那会在 Codex / Cursor 能用桌面路线时仍写「未就绪」，正是用户看到的前后矛盾。 |
+| D12 | 开关进渠道卡片（2026-11-08，用户让我设计） | 「从手机 / IM 创建 Agent 任务」是全局开关，不属于任何一个渠道，配渠道时又没人提醒它，容易漏。在每个**已启用**的远程渠道卡片展开内容的最底部放同一个开关（同一个设置、同一个确认弹窗，§4.4）。**否决**：在向导或设置里到处加提醒条；把它放进卡片标题行（标题行已有状态标签与启用开关，且渠道没启用时谈不上从它新建任务）。 |
 
 ## 3. Agents 卡
 
@@ -123,6 +127,15 @@
 
 加蓝底白色窗口的徽标（`popup`），**没有状态标签**——本地弹窗没有连接可报告；其余（开关、记住窗口尺寸、默认宽高）不变。
 
+### 4.4 渠道卡片里的 Agent 任务开关（D12，2026-11-08）
+
+`AgentTasksSwitchRow.vue`：同一个组件放在 Telegram / 钉钉 / 飞书 / Slack 四张卡**已启用**时展开内容的最底部（前面一道分隔线），`IosChannelCard.vue` 里也放一份（取代原来的顶部提示条）。卡片未启用或折叠时没有它。
+
+- **内容**：标题「从手机 / IM 创建 Agent 任务」+ 一个开关 + 一句说明（关：「开启后，在手机 App 或 IM 里就能选项目和 Agent，让这台电脑开一个新的 Agent 会话。所有渠道共用这一个开关。」；开：「已开启，所有渠道共用。」）。开关写 `agentTasks.enabled`，走 `toggleAgentTasks`——开启前仍是「强制保活并添加登录项」的确认弹窗，所以各处入口效果一致。
+- **开着时**：多一个「在「高级」里管理权限、工作目录和 Agent 就绪状态」链接（切到「高级」Tab）；若「高级」页已读出的就绪结果里没有任何 Agent 能启动，再多一行橙色警示（`agent-tasks-stuck`）。这行警示只读已加载的结果，**不**为它在渠道页里探测五家 Agent（`tabData.ts` 的懒加载约定不变）。
+- **平台不支持**（`supportsAgentTasks` 为假）时整行不渲染。
+- **测试**：`ChannelsTab.test.ts`（只在已启用的 IM 卡末尾出现、全局共用一个值、平台不支持时没有、中文）、`IosChannelCard.test.ts`。
+
 ## 5. 共享件
 
 - `BrandBadge` 的样式（`brandBadge.css`）随组件走，设置页引用即得；`brandBadges.ts` 仍是唯一的徽标注册表，新增 `popup`（`logos/window.svg`，来源见 `logos/NOTICE.md`）。
@@ -164,7 +177,7 @@
 [徽标28px] Codex       [未就绪]    ✓        ×         ✓
 ```
 
-- **行**：`徽标（28px）｜名称｜总状态标签`，标签 = 已就绪（绿）/ 未就绪（橙），即后端的 `ready`（`binary ∧ lifecycle ∧ integration`）。
+- **行**：`徽标（28px）｜名称｜总状态标签`，标签 = 已就绪（绿）/ 未就绪（橙）。最初它是后端的 `ready`（`binary ∧ lifecycle ∧ integration`）；2026-11-08 起读统一的「能不能启动」（D11，§8.5）。
   行高固定（42px），行间一条细线。
 - **列**：固定三列（各 64px，列头与每行的格子同宽，所以必然对齐）：CLI、生命周期、集成。顺序即修复顺序（`readinessIssues` 的顺序，纯函数，有单测）。
 - **格子**：满足 = 绿色 ✓（画出来的 SVG，不是文字；`role="img"`，`aria-label` = `名称: 列名`）；
@@ -184,7 +197,7 @@
 - 表格下方一行提示「点击橙色 × 前往修复；CLI 不可用时会打开官方安装文档」（`readinessHint`）。列头 `colBinary` / `colLifecycle` / `colIntegration`。
 - 窄窗口（480）：三列固定 64px 宽，英文「Integration」列头放得下；列与列之间不留间隙（64px 的单元格自己够开），省下的宽度全给名称列，
   使最长的一对（Antigravity + Unsupported）在最窄时仍在一行里。名称与标签放不下时仍允许标签换行（兜底）。
-- 不变：就绪判定、刷新时机、加载中的转圈（加载中且无数据时只有转圈，没有矩阵与提示）、`/new` 与手机端的门控——这里只是显示方式。
+- 不变：刷新时机、加载中的转圈（加载中且无数据时只有转圈，没有矩阵与提示）、`/new` 与手机端的门控——这里只是显示方式。就绪判定本身在 2026-11-08 改为全局统一的「能不能启动」（D11，§8.5）。
 
 **死链接修复**（上一版就存在的缺陷）：生命周期未就绪、而该 Agent 未集成时，目标 `lifecycle-<id>` 不在 DOM 里（它只存在于已集成卡的详情里，
 或「未集成但有遗留」的清理块里），点击没有任何反应。`gotoSettingsTarget(target, fallback?)` 现在在目标元素不存在时改去 `fallback`
@@ -212,3 +225,12 @@
   `aria-label` / `title`、点击把 `(kind, issue)` 交给 `openReadinessIssue`、提示行、中英文、加载中无矩阵、两张 Agent 专属卡的徽标在标题行内而说明在行外、其它卡不带徽标）、
   `useAgentTasks.test.ts`（缺 CLI 打开安装文档且不切标签；生命周期行存在则去该行；不存在则退到卡片；集成去卡片；无 fallback 保持原样；高亮 2.2 秒后清除）。
 - 视觉：深 / 浅色 × 560 / 480 × 中 / 英文；全部就绪、部分就绪、全部缺的 Pi、「暂不支持」的 Antigravity；Max 卡与 Codex 授权卡的标题行；点击 × 的三类跳转。
+
+### 8.5 矩阵读统一判定（D11，2026-11-08）
+
+后端 `agent_task_readiness` 现在在每家的就绪字段之外多带 `startable`（布尔）、`startRoute`（`terminal` / `desktop` / 空）与 `launch`（Codex / Cursor 两条路各自的状态），矩阵每一行只读这几项（`readiness.ts`：`isStartable`、`readinessState`、`readinessIssues`、`startsOutsideTheCli`、`startBlockers`）。
+
+- **标签**：能启动且走 CLI →「已就绪」；Codex 走桌面 App →「就绪 · Desktop App」；Cursor 走 Agents 窗口 →「就绪 · Agents 窗口」（都是绿色）；不能启动 →「未就绪」（橙）；`launchSupported = false` →「暂不支持」（灰，D10 不变）。读不到 `startable` 的旧后端回落到 `ready`。
+- **格子**：走桌面路线的 Agent，CLI 与生命周期两列画灰色短横（不需要，不是缺项；`title` 写「不需要：这条路径不经过 CLI」，`aria-label` 同），**集成**一列照常（桌面路线同样需要 AskHuman 集成）；列表里只要有这样一家，提示下面多一句「标「Desktop App」或「Agents 窗口」的 Agent 不用 CLI 启动，CLI 那一栏用不上（–），无需处理。」（`outsideHint`）。
+- **原因**：Codex / Cursor 两条路都不通时，该行下方多一行小字（`readiness-blockers-<kind>`），按偏好的先后写明各路缺什么（读 `launch` 里的 `desktopReason` / `terminalReason`，与 Agent 卡里的状态行是同一套文案）；其余 Agent 缺什么已经由 × 说明，不加；没有 `launch`（旧后端）也不加。行与原因包在同一个 `.readiness-item` 里，分隔线画在外层。
+- **不改**：列、顺序、× 的点击目标、刷新时机、加载态。

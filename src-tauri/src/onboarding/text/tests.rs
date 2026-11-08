@@ -70,6 +70,8 @@ struct FakeDeps {
     /// The platform can start Agent tasks from the phone or IM (off by default: most scripts are
     /// about something else, and this is what Linux looks like).
     tasks_supported: bool,
+    /// What `task_agents` reports: by default one Agent that can start a task.
+    task_agents: Vec<TaskAgent>,
     /// Installing the daemon's login item fails with this.
     daemon_login_item_error: Option<&'static str>,
     /// Every side effect, in order.
@@ -160,6 +162,11 @@ impl FakeDeps {
             configure_fails: false,
             test_fails: false,
             tasks_supported: false,
+            task_agents: vec![TaskAgent {
+                label: "Claude Code".to_string(),
+                startable: true,
+                reasons: Vec::new(),
+            }],
             daemon_login_item_error: None,
             calls: Vec::new(),
             applied: Vec::new(),
@@ -174,6 +181,26 @@ impl FakeDeps {
         deps.channel_mut("slack").enabled = true;
         deps.channel_mut("slack").configured = true;
         deps
+    }
+
+    /// No Agent can start a task, for the stated reasons.
+    fn with_blocked_agents(mut self) -> Self {
+        self.task_agents = vec![
+            TaskAgent {
+                label: "Claude Code".to_string(),
+                startable: false,
+                reasons: vec![
+                    "`claude` was not found; install the Claude Code command-line tool first"
+                        .to_string(),
+                ],
+            },
+            TaskAgent {
+                label: "Cursor".to_string(),
+                startable: false,
+                reasons: vec!["Cursor can't start a task: it is not running".to_string()],
+            },
+        ];
+        self
     }
 
     fn with_rows(mut self, rows: Vec<AgentScanRow>) -> Self {
@@ -317,6 +344,11 @@ impl TextDeps for FakeDeps {
 
     fn agent_tasks_supported(&mut self) -> bool {
         self.tasks_supported
+    }
+
+    fn task_agents(&mut self) -> Vec<TaskAgent> {
+        self.calls.push("task_agents".to_string());
+        self.task_agents.clone()
     }
 
     fn install_daemon_login_item(&mut self) -> Result<(), String> {
@@ -1083,8 +1115,8 @@ const TASKS_PROMPT: &str = "Create Agent tasks from your phone or IM";
 const KEEP_RUNNING_PROMPT: &str = "Keep AskHuman running in the background";
 
 #[test]
-fn agent_tasks_are_offered_only_with_a_remote_channel_an_agent_and_a_platform_that_runs_them() {
-    // Offered: Slack on, Cursor and Claude Code get integrated by step 1, the platform can run them.
+fn agent_tasks_are_offered_when_an_agent_can_start_one_and_the_platform_runs_them() {
+    // Offered: Slack on, an Agent that can start a task, a platform that runs them.
     let mut deps = FakeDeps::with_tasks_and_slack();
     let (_, io) = run_en(&mut deps, &["", "", "s", "", "n", "n"]);
     assert!(io.prompted(TASKS_PROMPT));
@@ -1092,25 +1124,142 @@ fn agent_tasks_are_offered_only_with_a_remote_channel_an_agent_and_a_platform_th
         io.prompted("!new in Slack"),
         "the question names how to start one from each place"
     );
+    // The check comes first, and says which Agents passed it.
+    assert!(deps.called("task_agents"));
+    let said = squeezed(&io.said());
+    assert!(
+        said.contains("Can start a task from the phone or IM: Claude Code."),
+        "{said}"
+    );
 
-    // No remote channel at all.
+    // No remote channel at all: still offered. A channel is set up in its own place and may come
+    // later, so this is the one moment the person is asked about the switch.
     let mut deps = FakeDeps::fresh();
     deps.tasks_supported = true;
-    let (_, io) = run_en(&mut deps, &["", "", "", ""]);
-    assert!(!io.prompted(TASKS_PROMPT));
-
-    // A channel but no Agent: nothing detected and nothing integrated.
-    let mut deps = FakeDeps::with_tasks_and_slack().with_rows(rows(&[], &[]));
-    let (_, io) = run_en(&mut deps, &["s", "s", "", "n"]);
-    assert!(!io.prompted(TASKS_PROMPT));
-    assert!(io.prompted(KEEP_RUNNING_PROMPT));
+    let (code, io) = run_en(&mut deps, &["", "", "", "", "n"]);
+    assert_eq!(code, 0, "{:?}", io.noted);
+    assert!(io.prompted(TASKS_PROMPT));
 
     // A platform without a supported terminal (Linux): the question is not there, the old one is.
     let mut deps = FakeDeps::with_tasks_and_slack();
     deps.tasks_supported = false;
     let (_, io) = run_en(&mut deps, &["", "", "s", "", "n"]);
     assert!(!io.prompted(TASKS_PROMPT));
+    assert!(
+        !deps.called("task_agents"),
+        "nothing to check where it cannot run"
+    );
     assert!(io.prompted(KEEP_RUNNING_PROMPT));
+}
+
+#[test]
+fn when_no_agent_can_start_a_task_the_reasons_replace_the_question() {
+    // A channel exists and the person would say yes, but nothing could start a task: asking would
+    // only turn on something that cannot work, so the flow says why and goes on.
+    let mut deps = FakeDeps::with_tasks_and_slack().with_blocked_agents();
+    let (code, io) = run_en(&mut deps, &["", "", "s", "", "n"]);
+    assert_eq!(code, 0, "{:?}", io.noted);
+    assert!(!io.prompted(TASKS_PROMPT));
+    assert!(!deps.config.agent_tasks.enabled);
+    assert!(!deps.called("daemon_login_item"));
+    let said = squeezed(&io.said());
+    assert!(said.contains("none can yet"), "{said}");
+    assert!(
+        said.contains("• Claude Code: `claude` was not found; install the Claude Code command-line tool first"),
+        "{said}"
+    );
+    assert!(
+        said.contains("• Cursor: Cursor can't start a task: it is not running"),
+        "{said}"
+    );
+    // Keeping AskHuman running is still the person's own choice, and the summary says where the
+    // switch is for later.
+    assert!(io.prompted(KEEP_RUNNING_PROMPT));
+    assert!(
+        said.contains("turn on \"Create Agent tasks from phone or IM\" in Settings"),
+        "{said}"
+    );
+
+    // The same, with no channel at all.
+    let mut deps = FakeDeps::fresh().with_blocked_agents();
+    deps.tasks_supported = true;
+    let (code, io) = run_en(&mut deps, &["", "", "", ""]);
+    assert_eq!(code, 0, "{:?}", io.noted);
+    assert!(!io.prompted(TASKS_PROMPT));
+    assert!(squeezed(&io.said()).contains("none can yet"));
+}
+
+#[test]
+fn when_no_agent_is_set_up_the_flow_says_so_and_does_not_ask() {
+    // Nothing is connected (step 1 was skipped on a new machine): there is no Agent to explain,
+    // and nothing for the question to turn on.
+    let mut deps = FakeDeps::with_tasks_and_slack();
+    deps.task_agents = Vec::new();
+    let (code, io) = run_en(&mut deps, &["", "", "s", "", "n"]);
+    assert_eq!(code, 0, "{:?}", io.noted);
+    assert!(!io.prompted(TASKS_PROMPT));
+    assert!(!deps.config.agent_tasks.enabled);
+    assert!(!deps.called("daemon_login_item"));
+    let said = squeezed(&io.said());
+    assert!(
+        said.contains(
+            "No Agent is connected yet, so a task cannot be started from the phone or IM."
+        ),
+        "{said}"
+    );
+    assert!(
+        !said.contains("none can yet"),
+        "no reasons to list for Agents nobody set up: {said}"
+    );
+    // The choice about keeping AskHuman running is still the person's own.
+    assert!(io.prompted(KEEP_RUNNING_PROMPT));
+}
+
+#[test]
+fn switching_agent_tasks_on_without_a_channel_pins_the_daemon_and_says_what_is_missing() {
+    let mut deps = FakeDeps::fresh();
+    deps.tasks_supported = true;
+    let (code, io) = run_en(&mut deps, &["", "", "", "", "y"]);
+    assert_eq!(code, 0, "{:?}", io.noted);
+    assert!(deps.config.agent_tasks.enabled);
+    assert_eq!(
+        deps.config.general.daemon_lifecycle,
+        DaemonLifecycleMode::KeepAlive,
+        "the feature needs a resident daemon whether or not a channel exists yet"
+    );
+    assert!(deps.called("ensure_daemon"));
+    assert!(!io.prompted(KEEP_RUNNING_PROMPT));
+    let said = squeezed(&io.said());
+    assert!(said.contains("No remote channel is set up yet"), "{said}");
+
+    // With a channel there is nothing to add.
+    let mut deps = FakeDeps::with_tasks_and_slack();
+    let (_, io) = run_en(&mut deps, &["", "", "s", "", "y"]);
+    assert!(!squeezed(&io.said()).contains("No remote channel is set up yet"));
+}
+
+#[test]
+fn the_reasons_no_agent_can_start_a_task_speak_chinese_when_asked_to() {
+    let mut deps = FakeDeps::with_tasks_and_slack().with_blocked_agents();
+    let mut io = FakeIo::new(&["", "", "s", "", "n"]);
+    assert_eq!(run(Lang::Zh, &mut io, &mut deps), 0);
+    let said = squeezed(&io.said());
+    assert!(
+        said.contains("正在检查这台电脑上哪些 Agent 能启动任务"),
+        "{said}"
+    );
+    assert!(
+        said.contains("这台电脑上得先有一个能启动的 Agent，现在还没有："),
+        "{said}"
+    );
+    assert!(
+        said.contains("• Claude Code：`claude` was not found"),
+        "{said}"
+    );
+    assert!(
+        said.contains("到「设置」里开启「从手机 / IM 创建 Agent 任务」"),
+        "{said}"
+    );
 }
 
 #[test]
@@ -1284,33 +1433,42 @@ fn the_summary_names_the_ios_app_among_the_remote_channels() {
 }
 
 #[test]
-fn the_summary_says_where_to_turn_agent_tasks_on_when_step_three_could_not_offer_them() {
-    // Supported, but no remote channel yet.
+fn the_summary_says_where_to_turn_agent_tasks_on_when_they_stay_off() {
+    const HINT: &str = "turn on \"Create Agent tasks from phone or IM\" in Settings";
+
+    // Offered and declined.
     let mut deps = FakeDeps::fresh();
     deps.tasks_supported = true;
-    let (_, io) = run_en(&mut deps, &["", "", "", ""]);
+    let (_, io) = run_en(&mut deps, &["", "", "", "", "n"]);
     let said = squeezed(&io.said());
+    assert!(said.contains(HINT), "{said}");
+    // The switch sits on each remote channel's card, so a channel added later is where to find it.
     assert!(
-        said.contains("turn on \"Create Agent tasks from phone or IM\" in Settings → Advanced"),
+        said.contains("on a remote channel's card or under Advanced"),
         "{said}"
     );
-    // Either of the two prerequisites may be the one that is missing, so it names both.
-    assert!(
-        said.contains("connect an Agent and set up a remote channel"),
-        "{said}"
-    );
+
+    // Not offered because no Agent could start one yet.
+    let mut deps = FakeDeps::fresh().with_blocked_agents();
+    deps.tasks_supported = true;
+    let (_, io) = run_en(&mut deps, &["", "", "", ""]);
+    assert!(squeezed(&io.said()).contains(HINT));
 
     // Not supported here: nothing to point at.
     let mut deps = FakeDeps::fresh();
     let (_, io) = run_en(&mut deps, &["", "", "", ""]);
-    assert!(!squeezed(&io.said()).contains("Settings → Advanced"));
+    assert!(!squeezed(&io.said()).contains(HINT));
 
-    // Already on: nothing to point at either.
+    // Already on: nothing to point at either (the question only asks whether to keep it).
     let mut deps = FakeDeps::fresh();
     deps.tasks_supported = true;
     deps.config.agent_tasks.enabled = true;
-    let (_, io) = run_en(&mut deps, &["", "", "", ""]);
-    assert!(!squeezed(&io.said()).contains("Settings → Advanced"));
+    let (_, io) = run_en(&mut deps, &["", "", "", "", ""]);
+    assert!(!squeezed(&io.said()).contains(HINT));
+    assert!(
+        !deps.called("task_agents"),
+        "a switch that is already on is not checked again, only asked about"
+    );
 }
 
 #[test]

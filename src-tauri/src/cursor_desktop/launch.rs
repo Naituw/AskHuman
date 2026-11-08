@@ -1,10 +1,11 @@
 //! Where a new Cursor task runs: the CLI in a terminal, or Cursor Desktop's Agents window.
 //!
-//! Same shape as the Codex choice (`codex_desktop::launch`): a preference, a cheap static check of
-//! what is available, and one resolved target per task that is never changed afterwards. Whether
-//! an Agents window is open and knows the project can only be found out by attaching to Cursor, so
-//! those conditions are checked when the task is created and refuse it there; they never turn into
-//! a silent switch to the terminal (docs/specs/cursor-desktop-task-creation.md §3).
+//! Same shape as the Codex choice (`codex_desktop::launch`): a preference that only says which
+//! route to try first, a cheap static check of what is available, and one resolved target per task
+//! that is never changed afterwards. Whether an Agents window is open and knows the project can
+//! only be found out by attaching to Cursor, so those conditions are checked when the task is
+//! created and refuse it there; they never turn into a silent switch to the other route
+//! (docs/specs/cursor-desktop-task-creation.md §3).
 
 use super::LaunchTarget;
 use crate::agents::AgentKind;
@@ -128,9 +129,10 @@ pub(crate) fn cli_reason(
     }
 }
 
-/// The route a preference resolves to, given what is available. Unlike Codex's, the fallback goes
-/// one way only: the Agents window is experimental, so it is used only when it was chosen, and a
-/// terminal that cannot be used is never replaced by it (docs/specs/cursor-desktop-task-creation.md §3).
+/// The route a preference resolves to, given what is available. The preference only decides which
+/// route goes first: when it cannot be used the other one is taken, exactly as for Codex
+/// (`codex_desktop::select_target`), so a Cursor that can run a task one way is never reported as
+/// unable to run it at all (docs/specs/cursor-desktop-task-creation.md §3).
 pub fn select_target(
     preference: LaunchTarget,
     desktop: bool,
@@ -138,6 +140,8 @@ pub fn select_target(
 ) -> Option<LaunchTarget> {
     match (preference, desktop, terminal) {
         (LaunchTarget::Desktop, true, _) => Some(LaunchTarget::Desktop),
+        (LaunchTarget::Terminal, _, true) => Some(LaunchTarget::Terminal),
+        (_, true, _) => Some(LaunchTarget::Desktop),
         (_, _, true) => Some(LaunchTarget::Terminal),
         _ => None,
     }
@@ -269,10 +273,10 @@ impl LaunchStatus {
             }
             return result.into();
         }
-        // The Agents window is no obstacle for a task that was never meant to go there.
+        // Neither route works: say why for both, the preferred one first.
         let obstacles = match self.preference {
             LaunchTarget::Desktop => [self.desktop_reason, self.terminal_reason],
-            LaunchTarget::Terminal => [None, self.terminal_reason],
+            LaunchTarget::Terminal => [self.terminal_reason, self.desktop_reason],
         };
         let mut reasons = Vec::new();
         for reason in obstacles.into_iter().flatten() {
@@ -383,14 +387,16 @@ mod tests {
     }
 
     #[test]
-    fn the_agents_window_is_used_only_when_it_was_chosen() {
+    fn the_preference_only_decides_which_route_goes_first() {
         use LaunchTarget::*;
         assert_eq!(select_target(Terminal, true, true), Some(Terminal));
         assert_eq!(select_target(Desktop, true, true), Some(Desktop));
         assert_eq!(select_target(Desktop, true, false), Some(Desktop));
         assert_eq!(select_target(Desktop, false, true), Some(Terminal));
-        // A terminal that cannot be used is not made up for by the experimental route.
-        assert_eq!(select_target(Terminal, true, false), None);
+        // The fallback goes both ways: a preferred route that cannot be used gives way to the other.
+        assert_eq!(select_target(Terminal, true, false), Some(Desktop));
+        assert_eq!(select_target(Terminal, false, true), Some(Terminal));
+        // Only when neither route can be used is there nowhere to run.
         assert_eq!(select_target(Terminal, false, false), None);
         assert_eq!(select_target(Desktop, false, false), None);
     }
@@ -410,6 +416,17 @@ mod tests {
         );
         let plain = status_from(LaunchTarget::Terminal, Some(AppNotRunning), None, true);
         assert_eq!(plain.description(Lang::En), "New tasks will use CLI");
+        // A CLI that cannot be used gives way to the Agents window, and the line says why.
+        let to_window = status_from(LaunchTarget::Terminal, None, Some(CliNotDetected), true);
+        assert_eq!(to_window.target, Some(LaunchTarget::Desktop));
+        assert_eq!(
+            to_window.description(Lang::Zh),
+            "新任务将使用 Cursor 的 Agents 窗口（未检测到 Cursor CLI）"
+        );
+        assert_eq!(
+            to_window.description(Lang::En),
+            "New tasks will use Cursor's Agents window (Cursor CLI was not detected)"
+        );
         let direct = status_from(LaunchTarget::Desktop, None, None, true);
         assert_eq!(
             direct.description(Lang::En),
@@ -426,17 +443,21 @@ mod tests {
             stuck.description(Lang::En),
             "Unable to start: Cursor is not running; Cursor CLI was not detected"
         );
-        // Whoever never chose the Agents window is told about the terminal only.
-        let terminal_only = status_from(
+        // Both routes are named whichever was preferred, the preferred one first.
+        let terminal_first = status_from(
             LaunchTarget::Terminal,
             Some(AppNotRunning),
             Some(CliNotDetected),
             true,
         );
-        assert_eq!(terminal_only.target, None);
+        assert_eq!(terminal_first.target, None);
         assert_eq!(
-            terminal_only.description(Lang::En),
-            "Unable to start: Cursor CLI was not detected"
+            terminal_first.description(Lang::En),
+            "Unable to start: Cursor CLI was not detected; Cursor is not running"
+        );
+        assert_eq!(
+            terminal_first.description(Lang::Zh),
+            "暂时无法启动：未检测到 Cursor CLI；未检测到运行中的 Cursor"
         );
     }
 

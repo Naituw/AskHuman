@@ -1,9 +1,11 @@
 <script setup lang="ts">
 // 「通信渠道」tab：弹窗渠道尺寸 + 飞书 / Telegram / 钉钉 / Slack 四家 IM 渠道配置卡
 // （含 R7 故障横幅、配置指南外链、连接测试与自动识别）。每张卡的标题行（标志、名称、状态标签、
-// 开关）由 ChannelCardHead 画，见 docs/specs/settings-agents-channels-cards.md。
+// 开关）由 ChannelCardHead 画，见 docs/specs/settings-agents-channels-cards.md。每张已启用的 IM 卡
+// 末尾有全局的「从手机 / IM 创建 Agent 任务」开关行（AgentTasksSwitchRow，与「高级」是同一个设置）。
 import { computed } from "vue";
 import { useI18n } from "vue-i18n";
+import AgentTasksSwitchRow from "./AgentTasksSwitchRow.vue";
 import ChannelCardHead from "./ChannelCardHead.vue";
 import { useSettingsContext } from "./context";
 
@@ -222,6 +224,8 @@ function setEnabled(id: "popup" | "telegram" | "dingding" | "feishu" | "slack", 
       >
         {{ telegramMessage }}
       </p>
+      <hr class="divider" />
+      <AgentTasksSwitchRow />
     </template>
   </div>
 
@@ -387,6 +391,8 @@ function setEnabled(id: "popup" | "telegram" | "dingding" | "feishu" | "slack", 
       <p class="card-desc" style="margin-top: 0">
         {{ t("settings.channels.convertTextToDocxHint") }}
       </p>
+      <hr class="divider" />
+      <AgentTasksSwitchRow />
     </template>
   </div>
 
@@ -512,6 +518,8 @@ function setEnabled(id: "popup" | "telegram" | "dingding" | "feishu" | "slack", 
       >
         {{ feishuMessage }}
       </p>
+      <hr class="divider" />
+      <AgentTasksSwitchRow />
     </template>
   </div>
 
@@ -642,6 +650,8 @@ function setEnabled(id: "popup" | "telegram" | "dingding" | "feishu" | "slack", 
       >
         {{ slackMessage }}
       </p>
+      <hr class="divider" />
+      <AgentTasksSwitchRow />
     </template>
   </div>
 

@@ -728,11 +728,20 @@ describe("setup wizard", () => {
     });
 
     it("offers only Skip while no channel is on, and Skip records the decision and moves on", async () => {
+      // Where no Agent task can start, there is no screen to stop at: Skip goes straight to Done.
+      platform.supportsAgentTasks = false;
       const w = await mountWizard("remote");
       expect(find(w, "remote-continue").exists()).toBe(false);
       await click(w, "remote-skip");
       expect(ipc.setupSkip).toHaveBeenCalledWith("remote");
       expect(find(w, "done-summary").exists()).toBe(true);
+    });
+
+    it("moves on to the Agent-task screen from Skip, which needs no channel", async () => {
+      const w = await mountWizard("remote");
+      await click(w, "remote-skip");
+      expect(ipc.setupSkip).toHaveBeenCalledWith("remote");
+      expect(find(w, "tasks-page").exists()).toBe(true);
     });
 
     it("offers Continue, without recording a skip, once a channel is on", async () => {
@@ -867,7 +876,7 @@ describe("setup wizard", () => {
     });
   });
 
-  describe("the Agent-task offer", () => {
+  describe("the Agent-task screen", () => {
     function enabledSlack() {
       channelRows = [channelRow("slack", { enabled: true, configured: true })];
     }
@@ -877,38 +886,66 @@ describe("setup wizard", () => {
       await click(w, find(w, "remote-continue").exists() ? "remote-continue" : "remote-skip");
     }
 
-    /** Arrive at the offer with an IM channel on, the default Agent and the default project. */
-    async function openOffer() {
+    /** Arrive at the screen with an IM channel on and the default Agent and project; the check has answered. */
+    async function openScreen() {
       enabledSlack();
       const w = await mountWizard("remote");
       await leaveRemoteStep(w);
       return w;
     }
 
-    /** Answer "Turn on" and wait for the pre-flight to finish. */
-    async function turnOn() {
-      const w = await openOffer();
-      await click(w, "tasks-enable");
-      return w;
-    }
+    const stage = (w: VueWrapper) => get(w, "tasks-page").attributes("data-stage");
 
-    it("is the screen after the remote step when a channel, an Agent and a platform allow it", async () => {
-      const w = await openOffer();
-      expect(find(w, "tasks-offer").exists()).toBe(true);
+    it("is the screen after the remote step when an Agent can start a task and the platform allows it", async () => {
+      const w = await openScreen();
+      expect(find(w, "tasks-page").exists()).toBe(true);
       expect(find(w, "done-summary").exists()).toBe(false);
       // It belongs to the remote step: the bar keeps showing that one.
       expect(get(w, "step-remote").classes()).toContain("active");
       expect(get(w, "step-done").classes()).not.toContain("active");
-      // Two plain buttons; arriving turns nothing on and checks nothing.
+      expect(stage(w)).toBe("ready");
       expect(text(w, "tasks-later")).toBe(message("setup.tasks.later"));
       expect(text(w, "tasks-enable")).toBe(message("setup.tasks.enable"));
-      expect(find(w, "tasks-check").exists()).toBe(false);
-      expect(ipc.agentTaskWorkspaces).not.toHaveBeenCalled();
-      expect(ipc.agentTaskReadiness).not.toHaveBeenCalled();
+      // Arriving turns nothing on.
+      expect(saves).toHaveLength(0);
+    });
+
+    it("needs no remote channel: Skip with nothing set up still lands on it, and the lead says so", async () => {
+      const w = await mountWizard("remote");
+      await click(w, "remote-skip");
+      expect(ipc.setupSkip).toHaveBeenCalledWith("remote");
+      expect(find(w, "tasks-page").exists()).toBe(true);
+      expect(text(w, "tasks-lead")).toBe(message("setup.tasks.leadNone"));
+      // No IM channel, so no IM bot to warn about.
+      expect(find(w, "tasks-bot").exists()).toBe(false);
+    });
+
+    it("checks first and asks second: Turn on waits for the check", async () => {
+      let release: (items: AgentTaskReadiness[]) => void = () => {};
+      ipc.agentTaskReadiness.mockImplementation(
+        () =>
+          new Promise<AgentTaskReadiness[]>((resolve) => {
+            release = resolve;
+          }),
+      );
+      const w = await openScreen();
+      expect(stage(w)).toBe("checking");
+      expect(find(w, "tasks-checking").exists()).toBe(true);
+      expect(find(w, "tasks-offer").exists()).toBe(false);
+      expect(isDisabled(w, "tasks-enable")).toBe(true);
+
+      release([readiness("claude")]);
+      await flushPromises();
+      expect(stage(w)).toBe("ready");
+      expect(find(w, "tasks-offer").exists()).toBe(true);
+      expect(isDisabled(w, "tasks-enable")).toBe(false);
+      // It read what the phone's page reads: the refreshed project list and the backend's verdicts.
+      expect(ipc.agentTaskWorkspaces).toHaveBeenCalledWith(true);
+      expect(ipc.agentTaskReadiness).toHaveBeenCalledWith(undefined);
     });
 
     it("says what it costs, and names the IM bot only when an IM channel is on", async () => {
-      const withBot = await openOffer();
+      const withBot = await openScreen();
       expect(text(withBot, "tasks-cost")).toContain(message("setup.tasks.cost"));
       expect(text(withBot, "tasks-bot")).toContain(message("setup.tasks.bot"));
       withBot.unmount();
@@ -926,6 +963,7 @@ describe("setup wizard", () => {
       ["only the iOS app is on", { ios: true }, false, "leadIos"],
       ["only an IM channel is on", {}, true, "leadIm"],
       ["both are on", { ios: true }, true, "leadBoth"],
+      ["nothing is set up yet", {}, false, "leadNone"],
     ])("words the lead for the way the phone starts a task when %s", async (_name, over, im, key) => {
       payload = settings(over);
       if (im) enabledSlack();
@@ -934,20 +972,13 @@ describe("setup wizard", () => {
       expect(text(w, "tasks-lead")).toBe(message(`setup.tasks.${key}`));
     });
 
-    it("is reached through Skip when the iOS app is the only remote channel", async () => {
-      payload = settings({ ios: true });
-      const w = await mountWizard("remote");
-      await click(w, "remote-skip");
-      expect(ipc.setupSkip).toHaveBeenCalledWith("remote");
-      expect(find(w, "tasks-offer").exists()).toBe(true);
-    });
-
     it("decides from what is saved when the step is left, not from what this window loaded", async () => {
       const w = await mountWizard("remote");
       // The iOS app is set up in a Settings window while the wizard stays open.
       payload = settings({ ios: true });
       await click(w, "remote-skip");
-      expect(find(w, "tasks-offer").exists()).toBe(true);
+      expect(find(w, "tasks-page").exists()).toBe(true);
+      expect(text(w, "tasks-lead")).toBe(message("setup.tasks.leadIos"));
     });
 
     it.each([
@@ -970,6 +1001,12 @@ describe("setup wizard", () => {
         },
       ],
       [
+        "only Antigravity is connected, which cannot start a task",
+        () => {
+          rowsValue = [row({ id: "antigravity", title: "Antigravity", mode: "mcp" })];
+        },
+      ],
+      [
         "the platform cannot run Agent tasks",
         () => {
           platform.supportsAgentTasks = false;
@@ -980,7 +1017,7 @@ describe("setup wizard", () => {
       arrange();
       const w = await mountWizard("remote");
       await click(w, "remote-continue");
-      expect(find(w, "tasks-offer").exists()).toBe(false);
+      expect(find(w, "tasks-page").exists()).toBe(false);
       expect(find(w, "done-summary").exists()).toBe(true);
     });
 
@@ -988,15 +1025,263 @@ describe("setup wizard", () => {
       const w = await mountWizard("remote");
       payload = settings({ ios: true, agentTasks: true, daemonLifecycle: "keepalive" });
       await click(w, "remote-skip");
-      expect(find(w, "tasks-offer").exists()).toBe(false);
+      expect(find(w, "tasks-page").exists()).toBe(false);
       expect(text(w, "summary-tasks-state")).toBe(message("setup.done.tasksOn"));
       await click(w, "finish");
       expect(saves[0].config.agentTasks).toMatchObject({ enabled: true });
     });
 
+    describe("what it checks", () => {
+      it("lists the Agents a task can start on, each with where it would run", async () => {
+        readinessValue = [
+          readiness("claude"),
+          // Neither has a CLI here, but the Codex app and Cursor's Agents window start the task: the
+          // phone lists them, so the wizard must too.
+          readiness("codex", { binaryReady: false, ready: false, startable: true, startRoute: "desktop" }),
+          readiness("cursor", { binaryReady: false, ready: false, startable: true, startRoute: "desktop" }),
+          // Not integrated, and one that cannot start tasks at all: neither is the person's to fix here.
+          readiness("grok", { integrationMode: "none", ready: false }),
+          readiness("antigravity", { launchSupported: false, ready: false }),
+        ];
+        const w = await openScreen();
+        expect(stage(w)).toBe("ready");
+        const listed = get(w, "tasks-startable")
+          .findAll('[data-testid^="tasks-startable-"]')
+          .map((chip) => chip.attributes("data-testid"));
+        expect(listed).toEqual(["tasks-startable-claude", "tasks-startable-codex", "tasks-startable-cursor"]);
+        expect(get(w, "tasks-startable-claude").get("em").text()).toBe(message("setup.tasks.route.terminal"));
+        expect(get(w, "tasks-startable-codex").get("em").text()).toBe(message("setup.tasks.route.codexApp"));
+        expect(get(w, "tasks-startable-cursor").get("em").text()).toBe(message("setup.tasks.route.cursorWindow"));
+        expect(find(w, "tasks-not-yet").exists()).toBe(false);
+      });
+
+      it("takes the backend's verdict over the CLI's, falling back to the CLI only without one", async () => {
+        // The CLI is ready but the backend says no route can start: that is the answer.
+        readinessValue = [readiness("claude", { ready: true, startable: false })];
+        const w = await openScreen();
+        expect(stage(w)).toBe("blocked");
+        w.unmount();
+        wrappers.length = 0;
+
+        // An older build gives no verdict: the CLI's readiness stands in for it.
+        readinessValue = [readiness("claude")];
+        const old = await openScreen();
+        expect(stage(old)).toBe("ready");
+      });
+
+      it("says quietly which set-up Agents cannot start yet, and why", async () => {
+        readinessValue = [
+          readiness("claude"),
+          readiness("cursor", {
+            ready: false,
+            binaryReady: false,
+            startable: false,
+            startRoute: null,
+            launch: {
+              preference: "terminal",
+              target: null,
+              desktopAvailable: false,
+              terminalAvailable: false,
+              desktopReason: "appNotRunning",
+              terminalReason: "cliNotDetected",
+              integrated: true,
+            },
+          }),
+        ];
+        const w = await openScreen();
+        // One Agent can start, so this is still an offer; the other is only mentioned.
+        expect(stage(w)).toBe("ready");
+        const note = text(w, "tasks-not-yet");
+        expect(note).toContain("Cursor");
+        expect(note).toContain(message("cursorDesktop.launch.reasons.cliNotDetected"));
+        expect(note).toContain(message("cursorDesktop.launch.reasons.appNotRunning"));
+        expect(isDisabled(w, "tasks-enable")).toBe(false);
+      });
+
+      it("shows the first three projects the phone can pick, then a count", async () => {
+        workspacesValue = [
+          workspace("/u/dev/alpha"),
+          workspace("/u/dev/beta"),
+          workspace("/u/dev/gamma"),
+          workspace("/u/dev/delta"),
+          workspace("/u/dev/stale", { hidden: true }),
+        ];
+        const w = await openScreen();
+        const projects = get(w, "tasks-projects");
+        expect(projects.findAll(".check-chip").map((chip) => chip.text())).toEqual(["alpha", "beta", "gamma"]);
+        expect(projects.get(".check-none").text()).toBe("1 more");
+      });
+
+      it("treats missing projects as a hint only: the offer stays", async () => {
+        workspacesValue = [workspace("/u/dev/stale", { hidden: true })];
+        const w = await openScreen();
+        expect(stage(w)).toBe("ready");
+        expect(text(w, "tasks-projects")).toBe(message("setup.tasks.projectsNone"));
+        expect(isDisabled(w, "tasks-enable")).toBe(false);
+      });
+
+      it("says it could not check, and nothing is wrong, when the reads fail", async () => {
+        ipc.agentTaskWorkspaces.mockRejectedValue(new Error("no index"));
+        ipc.agentTaskReadiness.mockRejectedValue(new Error("no shell"));
+        const w = await openScreen();
+        expect(stage(w)).toBe("unknown");
+        expect(text(w, "tasks-unknown")).toContain(message("setup.tasks.unknownAgents"));
+        expect(text(w, "tasks-projects")).toBe(message("setup.tasks.unknown"));
+        expect(find(w, "tasks-blocked").exists()).toBe(false);
+        // Nothing is known to be wrong, so the person can still decide.
+        expect(isDisabled(w, "tasks-enable")).toBe(false);
+      });
+
+      it("still reports the Agents when only the project read fails", async () => {
+        ipc.agentTaskWorkspaces.mockRejectedValue(new Error("no index"));
+        const w = await openScreen();
+        expect(stage(w)).toBe("ready");
+        expect(text(w, "tasks-projects")).toBe(message("setup.tasks.unknown"));
+        expect(find(w, "tasks-startable-claude").exists()).toBe(true);
+      });
+
+      it("looks again when the window is focused again, so what was fixed elsewhere shows up", async () => {
+        workspacesValue = [];
+        const w = await openScreen();
+        expect(text(w, "tasks-projects")).toBe(message("setup.tasks.projectsNone"));
+
+        // The person added a project in a Settings window and comes back.
+        workspacesValue = [workspace("/u/dev/alpha")];
+        window.dispatchEvent(new Event("focus"));
+        await flushPromises();
+        expect(text(w, "tasks-projects")).toBe("alpha");
+        // The Agents' CLIs are looked up again, not taken from the last lookup.
+        expect(ipc.agentTaskReadiness).toHaveBeenLastCalledWith({ force: true });
+      });
+
+      it("stops looking on focus once the screen is left", async () => {
+        const w = await openScreen();
+        await click(w, "tasks-enable");
+        const calls = ipc.agentTaskReadiness.mock.calls.length;
+        window.dispatchEvent(new Event("focus"));
+        await flushPromises();
+        expect(ipc.agentTaskReadiness.mock.calls.length).toBe(calls);
+      });
+    });
+
+    describe("when no Agent can start a task", () => {
+      beforeEach(() => {
+        readinessValue = [
+          readiness("claude", { binaryReady: false, ready: false }),
+          readiness("antigravity", { launchSupported: false, ready: false }),
+        ];
+      });
+
+      it("says why for each Agent, and offers nothing to turn on", async () => {
+        const w = await openScreen();
+        expect(stage(w)).toBe("blocked");
+        expect(text(w, "tasks-lead")).toBe(message("setup.tasks.blockedLead"));
+        expect(text(w, "tasks-blocked-claude")).toContain(
+          "The claude command was not found; install Claude Code's command-line tool first",
+        );
+        // An Agent that cannot start tasks at all is not a reason: there is nothing to fix.
+        expect(find(w, "tasks-blocked-antigravity").exists()).toBe(false);
+        expect(find(w, "tasks-enable").exists()).toBe(false);
+        expect(find(w, "tasks-later").exists()).toBe(false);
+        expect(find(w, "tasks-offer").exists()).toBe(false);
+        expect(text(w, "tasks-blocked-hint")).toBe(message("setup.tasks.blockedHint"));
+      });
+
+      it("explains Codex and Cursor by both of their routes", async () => {
+        readinessValue = [
+          readiness("codex", {
+            ready: false,
+            binaryReady: false,
+            startable: false,
+            launch: {
+              preference: "desktop",
+              target: null,
+              desktopAvailable: false,
+              terminalAvailable: false,
+              desktopReason: "appNotDetected",
+              terminalReason: "cliNotDetected",
+              integrated: true,
+            },
+          }),
+        ];
+        const w = await openScreen();
+        expect(stage(w)).toBe("blocked");
+        // Neither the app nor the CLI is there: said once, as the one thing to fix.
+        expect(text(w, "tasks-blocked-codex")).toContain(message("desktop.noneDetectedReason"));
+      });
+
+      it("names no Agent at all when none is set up", async () => {
+        readinessValue = [readiness("claude", { integrationMode: "none", ready: false })];
+        const w = await openScreen();
+        expect(stage(w)).toBe("blocked");
+        expect(text(w, "tasks-blocked-none")).toContain(message("setup.tasks.agentsNone"));
+      });
+
+      it("Skip goes on to Done without recording a decline, so a rerun asks again", async () => {
+        const w = await openScreen();
+        await click(w, "tasks-skip");
+        expect(find(w, "done-summary").exists()).toBe(true);
+        expect(ipc.setupSkip).not.toHaveBeenCalledWith("phoneTasks");
+        expect(text(w, "summary-tasks-state")).toBe(message("setup.done.tasksOff"));
+        await click(w, "finish");
+        expect(saves[0].config.agentTasks).toMatchObject({ enabled: false });
+      });
+
+      it("Check again looks afresh, and the offer appears once something can start", async () => {
+        const w = await openScreen();
+        expect(find(w, "tasks-enable").exists()).toBe(false);
+
+        readinessValue = [readiness("claude")];
+        await click(w, "tasks-recheck");
+        expect(ipc.agentTaskReadiness).toHaveBeenLastCalledWith({ force: true });
+        expect(stage(w)).toBe("ready");
+        expect(isDisabled(w, "tasks-enable")).toBe(false);
+      });
+
+      it("checks again by itself when the window is focused again", async () => {
+        const w = await openScreen();
+        readinessValue = [readiness("claude")];
+        window.dispatchEvent(new Event("focus"));
+        await flushPromises();
+        expect(stage(w)).toBe("ready");
+      });
+    });
+
+    describe("Turn on", () => {
+      it("goes straight on to Done, and saves only there", async () => {
+        const w = await openScreen();
+        await click(w, "tasks-enable");
+        expect(find(w, "tasks-page").exists()).toBe(false);
+        expect(find(w, "done-summary").exists()).toBe(true);
+        expect(saves).toHaveLength(0);
+        expect(text(w, "summary-tasks-state")).toBe(message("setup.done.tasksOn"));
+        // The feature pins the keep-running switch on, and Done saves both.
+        expect(isChecked(w, "switch-b")).toBe(true);
+        expect(isDisabled(w, "switch-b")).toBe(true);
+        expect(text(w, "done-background")).toContain(message("setup.done.switchBLocked"));
+        await click(w, "finish");
+        expect(saves).toHaveLength(1);
+        expect(saves[0].config.agentTasks).toMatchObject({ enabled: true });
+        expect(saves[0].config.general).toMatchObject({ daemonLifecycle: "keepalive" });
+      });
+
+      it("works with no remote channel yet: Done says so, and still pins the keep-running switch", async () => {
+        const w = await mountWizard("remote");
+        await click(w, "remote-skip");
+        await click(w, "tasks-enable");
+        expect(text(w, "summary-tasks-state")).toBe(message("setup.done.tasksOnNoChannel"));
+        // No channel is on, but the feature needs a resident daemon all the same.
+        expect(isChecked(w, "switch-b")).toBe(true);
+        expect(isDisabled(w, "switch-b")).toBe(true);
+        await click(w, "finish");
+        expect(saves[0].config.agentTasks).toMatchObject({ enabled: true });
+        expect(saves[0].config.general).toMatchObject({ daemonLifecycle: "keepalive" });
+      });
+    });
+
     describe("Not now", () => {
       it("keeps the feature off, remembers the answer and moves on to Done", async () => {
-        const w = await openOffer();
+        const w = await openScreen();
         await click(w, "tasks-later");
         expect(ipc.setupSkip).toHaveBeenCalledWith("phoneTasks");
         expect(find(w, "done-summary").exists()).toBe(true);
@@ -1010,7 +1295,7 @@ describe("setup wizard", () => {
         ipc.setupSkip.mockImplementation(async (domain: string) => {
           if (domain === "phoneTasks") throw new Error("disk full");
         });
-        const w = await openOffer();
+        const w = await openScreen();
         await click(w, "tasks-later");
         expect(find(w, "done-summary").exists()).toBe(true);
         expect(text(w, "summary-tasks-state")).toBe(message("setup.done.tasksOff"));
@@ -1021,200 +1306,17 @@ describe("setup wizard", () => {
         statusValue = status({ phoneTasksDeclined: true });
         const w = await mountWizard("remote");
         await click(w, "remote-continue");
-        expect(find(w, "tasks-offer").exists()).toBe(false);
+        expect(find(w, "tasks-page").exists()).toBe(false);
         await click(w, "summary-tasks-link");
-        expect(find(w, "tasks-offer").exists()).toBe(true);
-      });
-    });
-
-    describe("Turn on", () => {
-      it("shows what the phone will list and goes on from there, saving only at Done", async () => {
-        workspacesValue = [
-          workspace("/u/dev/alpha"),
-          workspace("/u/dev/beta"),
-          workspace("/u/dev/gamma"),
-          workspace("/u/dev/delta"),
-          workspace("/u/dev/stale", { hidden: true }),
-        ];
-        readinessValue = [
-          readiness("claude"),
-          readiness("codex"),
-          // An Agent whose CLI is missing and one that cannot start tasks at all are not startable.
-          readiness("cursor", { binaryReady: false, ready: false }),
-          readiness("antigravity", { launchSupported: false, ready: false }),
-        ];
-        const w = await turnOn();
-        expect(find(w, "tasks-offer").exists()).toBe(false);
-        expect(text(w, "tasks-lead")).toBe(message("setup.tasks.onLead"));
-        // The first three projects the phone can pick (a hidden one is not among them), then a count.
-        const projects = get(w, "tasks-projects");
-        expect(projects.findAll(".check-chip").map((chip) => chip.text())).toEqual([
-          "alpha",
-          "beta",
-          "gamma",
-        ]);
-        expect(projects.get(".check-none").text()).toBe("1 more");
-        expect(
-          get(w, "tasks-agents")
-            .findAll(".check-chip")
-            .map((chip) => chip.text()),
-        ).toEqual(["Claude Code", "Codex"]);
-        expect(text(w, "tasks-background")).toBe(message("setup.tasks.backgroundValue"));
-        expect(get(w, "tasks-check").find(".check-item.warn").exists()).toBe(false);
-        expect(find(w, "tasks-fix").exists()).toBe(false);
-        // The projects come from the same refreshed list the phone reads.
-        expect(ipc.agentTaskWorkspaces).toHaveBeenCalledWith(true);
-        expect(ipc.agentTaskReadiness).toHaveBeenCalledWith(undefined);
-        // Nothing is written until Done is clicked.
-        expect(saves).toHaveLength(0);
-
-        await click(w, "tasks-continue");
-        expect(find(w, "done-summary").exists()).toBe(true);
-        expect(text(w, "summary-tasks-state")).toBe(message("setup.done.tasksOn"));
-        // The feature pins the keep-running switch on, and Done saves both.
-        expect(isChecked(w, "switch-b")).toBe(true);
-        expect(isDisabled(w, "switch-b")).toBe(true);
-        expect(text(w, "done-background")).toContain(message("setup.done.switchBLocked"));
-        await click(w, "finish");
-        expect(saves).toHaveLength(1);
-        expect(saves[0].config.agentTasks).toMatchObject({ enabled: true });
-        expect(saves[0].config.general).toMatchObject({ daemonLifecycle: "keepalive" });
-      });
-
-      it("shows the lines as pending until the check has answered", async () => {
-        let release: (items: AgentTaskWorkspace[]) => void = () => {};
-        ipc.agentTaskWorkspaces.mockImplementation(
-          () =>
-            new Promise<AgentTaskWorkspace[]>((resolve) => {
-              release = resolve;
-            }),
-        );
-        const w = await turnOn();
-        expect(text(w, "tasks-lead")).toBe(message("setup.tasks.onLeadChecking"));
-        expect(text(w, "tasks-projects")).toBe("…");
-        expect(find(w, "tasks-fix").exists()).toBe(false);
-        // Continue never waits for the check.
-        expect(isDisabled(w, "tasks-continue")).toBe(false);
-
-        release([workspace("/u/dev/alpha")]);
-        await flushPromises();
-        expect(text(w, "tasks-lead")).toBe(message("setup.tasks.onLead"));
-        expect(text(w, "tasks-projects")).toBe("alpha");
-      });
-
-      it("says now that there is no project to pick from, with how to fix it", async () => {
-        workspacesValue = [workspace("/u/dev/stale", { hidden: true })];
-        const w = await turnOn();
-        expect(text(w, "tasks-lead")).toBe(message("setup.tasks.onLeadIssue"));
-        expect(text(w, "tasks-projects")).toBe(message("setup.tasks.projectsNone"));
-        expect(get(w, "tasks-check").findAll(".check-item.warn")).toHaveLength(1);
-        expect(text(w, "tasks-projects-hint")).toBe(message("setup.tasks.projectsHint"));
-        expect(find(w, "tasks-agents-hint").exists()).toBe(false);
-        expect(text(w, "tasks-fix")).toBe(message("setup.tasks.fixProjects"));
-        await click(w, "tasks-fix");
-        expect(ipc.openSettings).toHaveBeenCalledWith("advanced");
-      });
-
-      it("says now that no Agent can be started, with how to fix it", async () => {
-        readinessValue = [
-          readiness("claude", { binaryReady: false, ready: false }),
-          readiness("antigravity", { launchSupported: false, ready: false }),
-        ];
-        const w = await turnOn();
-        expect(text(w, "tasks-lead")).toBe(message("setup.tasks.onLeadIssue"));
-        expect(text(w, "tasks-agents")).toBe(message("setup.tasks.agentsNone"));
-        expect(text(w, "tasks-agents-hint")).toBe(message("setup.tasks.agentsHint"));
-        expect(find(w, "tasks-projects-hint").exists()).toBe(false);
-        expect(text(w, "tasks-fix")).toBe(message("setup.tasks.fixAgents"));
-      });
-
-      it("points at the project first when both are missing", async () => {
-        workspacesValue = [];
-        readinessValue = [];
-        const w = await turnOn();
-        expect(get(w, "tasks-check").findAll(".check-item.warn")).toHaveLength(2);
-        expect(text(w, "tasks-fix")).toBe(message("setup.tasks.fixProjects"));
-      });
-
-      it("never blocks: Continue still goes on, and the feature stays on", async () => {
-        workspacesValue = [];
-        const w = await turnOn();
-        await click(w, "tasks-continue");
-        expect(find(w, "done-summary").exists()).toBe(true);
-        expect(text(w, "summary-tasks-state")).toBe(message("setup.done.tasksOn"));
-        await click(w, "finish");
-        expect(saves[0].config.agentTasks).toMatchObject({ enabled: true });
-      });
-
-      it("says it could not check, and nothing is wrong, when the reads fail", async () => {
-        ipc.agentTaskWorkspaces.mockRejectedValue(new Error("no index"));
-        ipc.agentTaskReadiness.mockRejectedValue(new Error("no shell"));
-        const w = await turnOn();
-        expect(text(w, "tasks-lead")).toBe(message("setup.tasks.onLeadUnknown"));
-        expect(text(w, "tasks-projects")).toBe(message("setup.tasks.unknown"));
-        expect(text(w, "tasks-agents")).toBe(message("setup.tasks.unknown"));
-        expect(get(w, "tasks-check").find(".check-item.warn").exists()).toBe(false);
-        expect(find(w, "tasks-fix").exists()).toBe(false);
-        await click(w, "tasks-continue");
-        expect(find(w, "done-summary").exists()).toBe(true);
-      });
-
-      it("still reports the line that could be read when only the other fails", async () => {
-        ipc.agentTaskWorkspaces.mockRejectedValue(new Error("no index"));
-        const w = await turnOn();
-        expect(text(w, "tasks-projects")).toBe(message("setup.tasks.unknown"));
-        expect(text(w, "tasks-agents")).toBe("Claude Code");
-        expect(text(w, "tasks-lead")).toBe(message("setup.tasks.onLead"));
-      });
-
-      it("looks again when the window is focused again, so what was fixed elsewhere shows up", async () => {
-        workspacesValue = [];
-        const w = await turnOn();
-        expect(find(w, "tasks-projects-hint").exists()).toBe(true);
-
-        // The person added a project in a Settings window and comes back.
-        workspacesValue = [workspace("/u/dev/alpha")];
-        window.dispatchEvent(new Event("focus"));
-        await flushPromises();
-        expect(text(w, "tasks-projects")).toBe("alpha");
-        expect(find(w, "tasks-projects-hint").exists()).toBe(false);
-        expect(find(w, "tasks-fix").exists()).toBe(false);
-        expect(text(w, "tasks-lead")).toBe(message("setup.tasks.onLead"));
-        // The Agents' CLIs are looked up again, not taken from the last lookup.
-        expect(ipc.agentTaskReadiness).toHaveBeenLastCalledWith({ force: true });
-      });
-
-      it("does not check on focus before it is turned on, or after the page is left", async () => {
-        const w = await openOffer();
-        window.dispatchEvent(new Event("focus"));
-        await flushPromises();
-        expect(ipc.agentTaskWorkspaces).not.toHaveBeenCalled();
-
-        await click(w, "tasks-enable");
-        const calls = ipc.agentTaskWorkspaces.mock.calls.length;
-        await click(w, "tasks-continue");
-        window.dispatchEvent(new Event("focus"));
-        await flushPromises();
-        expect(ipc.agentTaskWorkspaces.mock.calls.length).toBe(calls);
-      });
-
-      it("lets the person change their mind there: back to Not now", async () => {
-        const w = await turnOn();
-        await click(w, "tasks-undo");
-        expect(ipc.setupSkip).toHaveBeenCalledWith("phoneTasks");
-        expect(find(w, "done-summary").exists()).toBe(true);
-        expect(text(w, "summary-tasks-state")).toBe(message("setup.done.tasksOff"));
-        await click(w, "finish");
-        expect(saves[0].config.agentTasks).toMatchObject({ enabled: false });
-        expect(saves[0].config.general).toMatchObject({ daemonLifecycle: "activity" });
+        expect(find(w, "tasks-page").exists()).toBe(true);
       });
     });
 
     describe("from the step bar and the Done page", () => {
       it("jumping straight to Done leaves the question to the summary row", async () => {
-        const w = await openOffer();
+        const w = await openScreen();
         await click(w, "step-done");
-        expect(find(w, "tasks-offer").exists()).toBe(false);
+        expect(find(w, "tasks-page").exists()).toBe(false);
         expect(text(w, "summary-tasks-state")).toBe(message("setup.done.tasksOff"));
         // Nothing was turned on or turned down by leaving without an answer.
         expect(ipc.setupSkip).not.toHaveBeenCalledWith("phoneTasks");
@@ -1222,27 +1324,26 @@ describe("setup wizard", () => {
         expect(saves[0].config.agentTasks).toMatchObject({ enabled: false });
       });
 
-      it("Done's row goes back to the offer, and Turn on there is saved at Done", async () => {
+      it("Done's row goes back to the screen, and Turn on there is saved at Done", async () => {
         enabledSlack();
         const w = await mountWizard("done");
         await click(w, "summary-tasks-link");
-        expect(find(w, "tasks-offer").exists()).toBe(true);
+        expect(find(w, "tasks-page").exists()).toBe(true);
         expect(get(w, "step-remote").classes()).toContain("active");
         await click(w, "tasks-enable");
-        await click(w, "tasks-continue");
         expect(text(w, "summary-tasks-state")).toBe(message("setup.done.tasksOn"));
         await click(w, "finish");
         expect(saves[0].config.agentTasks).toMatchObject({ enabled: true });
         expect(saves[0].config.general).toMatchObject({ daemonLifecycle: "keepalive" });
       });
 
-      it("a feature that is already on opens straight on the check, and the step bar still leaves it", async () => {
+      it("a feature that is already on opens on the same check, and the step bar still leaves it", async () => {
         enabledSlack();
         payload = settings({ agentTasks: true, daemonLifecycle: "keepalive" });
         const w = await mountWizard("done");
         await click(w, "summary-tasks-link");
-        expect(find(w, "tasks-offer").exists()).toBe(false);
-        expect(find(w, "tasks-check").exists()).toBe(true);
+        expect(find(w, "tasks-page").exists()).toBe(true);
+        expect(stage(w)).toBe("ready");
         await click(w, "step-remote");
         expect(find(w, "remote-list").exists()).toBe(true);
       });
@@ -1361,8 +1462,8 @@ describe("setup wizard", () => {
       });
     });
 
-    describe("the Agent-task row: reported here, decided on the offer screen", () => {
-      it("shows Off with a way to the offer where it is on offer, and no switch for it", async () => {
+    describe("the Agent-task row: reported here, decided on the Agent-task screen", () => {
+      it("shows Off with a way to the screen where it is on offer, and no switch for it", async () => {
         enabledSlack();
         const w = await mountWizard("done");
         expect(text(w, "summary-tasks-state")).toBe(message("setup.done.tasksOff"));
@@ -1390,13 +1491,26 @@ describe("setup wizard", () => {
         expect(find(w, "summary-tasks").exists()).toBe(true);
       });
 
+      it("is there without any remote channel: the switch is global, and a channel may come later", async () => {
+        const w = await mountWizard("done");
+        expect(find(w, "summary-tasks").exists()).toBe(true);
+        expect(text(w, "summary-tasks-state")).toBe(message("setup.done.tasksOff"));
+        expect(find(w, "done-tasks-tip").exists()).toBe(false);
+      });
+
       it.each([
-        ["no remote channel is on", () => {}],
         [
           "no Agent is connected",
           () => {
             enabledSlack();
             rowsValue = [row({ id: "claude", mode: "none" })];
+          },
+        ],
+        [
+          "only Antigravity is connected, which cannot start a task",
+          () => {
+            enabledSlack();
+            rowsValue = [row({ id: "antigravity", title: "Antigravity", mode: "mcp" })];
           },
         ],
         [
@@ -1412,10 +1526,17 @@ describe("setup wizard", () => {
         expect(find(w, "summary-tasks").exists()).toBe(false);
       });
 
-      it("still reports a feature that is on where it could not be offered", async () => {
+      it("still reports a feature that is on where it could not be offered, and says when no channel can use it yet", async () => {
+        rowsValue = [row({ id: "claude", mode: "none" })];
         payload = settings({ agentTasks: true, daemonLifecycle: "keepalive" });
-        const w = await mountWizard("done");
-        expect(text(w, "summary-tasks-state")).toBe(message("setup.done.tasksOn"));
+        const without = await mountWizard("done");
+        expect(text(without, "summary-tasks-state")).toBe(message("setup.done.tasksOnNoChannel"));
+        without.unmount();
+        wrappers.length = 0;
+
+        enabledSlack();
+        const withChannel = await mountWizard("done");
+        expect(text(withChannel, "summary-tasks-state")).toBe(message("setup.done.tasksOn"));
       });
 
       it("keeps the keep-running switch as saved while the feature is not touched", async () => {
@@ -1436,14 +1557,14 @@ describe("setup wizard", () => {
         expect(saves[0].config.general).toMatchObject({ daemonLifecycle: "keepalive" });
       });
 
-      it("turning it off on the offer screen lets the keep-running switch be chosen again", async () => {
+      it("turning it off on the Agent-task screen lets the keep-running switch be chosen again", async () => {
         enabledSlack();
         payload = settings({ agentTasks: true, daemonLifecycle: "keepalive" });
         const w = await mountWizard("done");
         expect(isDisabled(w, "switch-b")).toBe(true);
 
         await click(w, "summary-tasks-link");
-        await click(w, "tasks-undo");
+        await click(w, "tasks-later");
         expect(text(w, "summary-tasks-state")).toBe(message("setup.done.tasksOff"));
         expect(isDisabled(w, "switch-b")).toBe(false);
         // B goes back to what it was: the mode that is saved.
@@ -1456,10 +1577,11 @@ describe("setup wizard", () => {
 
       it("turning it off is saved even where the offer could no longer be made", async () => {
         // On from an earlier run, but no Agent is connected now: the person still chooses to turn it off.
+        rowsValue = [row({ id: "claude", mode: "none" })];
         payload = settings({ agentTasks: true, daemonLifecycle: "keepalive" });
         const w = await mountWizard("done");
         await click(w, "summary-tasks-link");
-        await click(w, "tasks-undo");
+        await click(w, "tasks-later");
         await click(w, "finish");
         expect(saves[0].config.agentTasks).toMatchObject({ enabled: false });
       });
@@ -1467,10 +1589,18 @@ describe("setup wizard", () => {
 
     describe("where the feature is not on offer yet", () => {
       it("tells where to turn it on later, and opens that place", async () => {
+        // No Agent is connected yet, so there is nothing to start a task on.
+        rowsValue = [row({ id: "claude", mode: "none" })];
         const w = await mountWizard("done");
         expect(text(w, "done-tasks-tip")).toContain(message("setup.done.tasksTip"));
         await click(w, "done-tasks-tip-link");
         expect(ipc.openSettings).toHaveBeenCalledWith("advanced");
+      });
+
+      it("says nothing while an Agent can start a task, because the row above is the way in", async () => {
+        const w = await mountWizard("done");
+        expect(find(w, "done-tasks-tip").exists()).toBe(false);
+        expect(find(w, "summary-tasks").exists()).toBe(true);
       });
 
       it("says nothing when the feature is already on, or the platform cannot run it", async () => {

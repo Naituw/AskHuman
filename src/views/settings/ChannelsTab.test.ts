@@ -2,7 +2,7 @@
 // switch), and the switch still writes through the shared config and saves
 // (docs/specs/settings-agents-channels-cards.md).
 import { mount } from "@vue/test-utils";
-import { ref } from "vue";
+import { nextTick, ref } from "vue";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { i18n } from "../../i18n";
 import type { AppConfig } from "../../lib/types";
@@ -30,10 +30,16 @@ function mountTab(
     states?: Partial<Record<string, ChannelState>>;
     issues?: Record<string, string>;
     highlight?: string | null;
+    /** The platform can start Agent tasks from the phone or IM (the switch is shown only then). */
+    agentTasks?: boolean;
   } = {},
 ) {
   const config = ref<AppConfig | null>(channelsConfig());
   const api = {
+    supportsAgentTasks: options.agentTasks ?? false,
+    toggleAgentTasks: vi.fn(),
+    taskReadiness: ref([]),
+    activeTab: ref("channels"),
     persist: vi.fn(async () => {}),
     openChannelGuide: vi.fn(),
     channelCardState: vi.fn((id: string): ChannelState => options.states?.[id] ?? "unconfigured"),
@@ -140,5 +146,60 @@ describe("ChannelsTab", () => {
     const card = wrapper.get("#channel-slack");
     expect(card.get(".channel-head + .card-desc.warn").text()).toContain("bad token");
     expect(wrapper.find("#channel-feishu .card-desc.warn").exists()).toBe(false);
+  });
+
+  describe("the Agent-task switch", () => {
+    const rows = (wrapper: ReturnType<typeof mountTab>["wrapper"]) =>
+      wrapper.findAll('[data-testid="agent-tasks-row"]');
+
+    it("ends the details of every IM card that is on, and no other card", async () => {
+      const { wrapper, config } = mountTab({ agentTasks: true });
+      // A card that is off shows no details, so no switch either.
+      expect(rows(wrapper)).toHaveLength(0);
+      for (const id of IM_CHANNELS) config.value!.channels[id].enabled = true;
+      await nextTick();
+      for (const id of IM_CHANNELS) {
+        expect(wrapper.find(`#channel-${id} [data-testid="agent-tasks-row"]`).exists(), id).toBe(true);
+      }
+      // The popup is not a remote channel: it has none.
+      expect(rows(wrapper)).toHaveLength(IM_CHANNELS.length);
+      // It is the last thing in a card, under a divider of its own.
+      const card = wrapper.get("#channel-slack");
+      const dividers = card.findAll(".divider");
+      expect(dividers[dividers.length - 1].element.nextElementSibling).toBe(
+        card.get('[data-testid="agent-tasks-row"]').element,
+      );
+    });
+
+    it("is one global setting: turning it on in one card shows it on in the others", async () => {
+      const { wrapper, config, api } = mountTab({ agentTasks: true });
+      config.value!.channels.telegram.enabled = true;
+      config.value!.channels.slack.enabled = true;
+      await nextTick();
+      const [first, second] = rows(wrapper);
+      await first.get('[data-testid="agent-tasks-switch"]').setValue(true);
+      // The shared handler owns the confirmation; the card only hands the change over.
+      expect(api.toggleAgentTasks).toHaveBeenCalledTimes(1);
+      expect(config.value!.agentTasks.enabled).toBe(true);
+      expect(
+        (second.get('[data-testid="agent-tasks-switch"]').element as HTMLInputElement).checked,
+      ).toBe(true);
+      expect(second.text()).toContain("On, for all channels.");
+    });
+
+    it("is not offered where the platform cannot start Agent tasks", async () => {
+      const { wrapper, config } = mountTab({ agentTasks: false });
+      for (const id of IM_CHANNELS) config.value!.channels[id].enabled = true;
+      await nextTick();
+      expect(rows(wrapper)).toHaveLength(0);
+    });
+
+    it("speaks Chinese when the interface is Chinese", async () => {
+      i18n.global.locale.value = "zh";
+      const { wrapper, config } = mountTab({ agentTasks: true });
+      config.value!.channels.feishu.enabled = true;
+      await nextTick();
+      expect(rows(wrapper)[0].text()).toContain("从手机 / IM 创建 Agent 任务");
+    });
   });
 });

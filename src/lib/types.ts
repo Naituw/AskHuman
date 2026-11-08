@@ -1,3 +1,5 @@
+import type { CodexLaunchStatus, CursorLaunchStatus } from "./ipc";
+
 export type OutputFormat = "text" | "json";
 
 export interface AskRequest {
@@ -1227,6 +1229,17 @@ export interface AgentTaskReadiness {
   ready: boolean;
   /** Whether New Task / Fork can start this family; Settings and doctor still show all families. */
   launchSupported: boolean;
+  /**
+   * Whether a task can be started on this Agent right now — the one verdict the phone, IM, the
+   * wizard and Settings all use. It also counts the routes `ready` ignores: Codex's Desktop App
+   * and Cursor's Agents window. Absent only in older builds and test fixtures: read it through
+   * `isStartable`, which falls back to `ready`.
+   */
+  startable?: boolean;
+  /** Where a task would run when `startable`; `null` when it cannot start. */
+  startRoute?: "desktop" | "terminal" | null;
+  /** Codex and Cursor: the launch status behind `startable` (both routes, and why each is unavailable). */
+  launch?: CodexLaunchStatus | CursorLaunchStatus | null;
   diagnostics: string[];
   /** Codex only: oldest version that can receive the protocol through its SessionStart hook. */
   protocolMinimumVersion?: string | null;

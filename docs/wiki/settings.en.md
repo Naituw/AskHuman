@@ -87,10 +87,12 @@ includes `cursorDesktop` diagnostics (counts of ignored unloads only; no chat ID
 ## Creating Cursor tasks
 
 **Where tasks run.** The "Agents → Cursor" integration card lets you choose where new tasks run: the CLI (default) or the
-Agents window (experimental, macOS only). With the Agents window selected, Cursor tasks created from the GUI, IM `/new` or the
-phone start a chat in your already-open Cursor Agents window and send the task automatically. Cursor must be running with exactly
-one Agents window, and the project must already be added there. If the window is not available before creation, the task
-uses the CLI and the card's status line says why; once a task has started in the Agents window, a failure never falls back to the CLI.
+Agents window (experimental, macOS only). This only decides which route is tried first: when it is not usable and the other one is,
+the other one is used automatically and the card's status line says why. So with only Cursor Desktop installed and no CLI, the phone,
+IM and GUI can still create Cursor tasks (through the Agents window). On the Agents window route, Cursor tasks created from the GUI,
+IM `/new` or the phone start a chat in your already-open Cursor Agents window and send the task automatically. Cursor must be
+running with exactly one Agents window, and the project must already be added there. Once a task has started in the Agents window,
+a failure never falls back to the CLI.
 
 **Max mode.** On the old request-based plan, Max mode is billed at API rates and burns through credits quickly, so AskHuman
 turns Max off by default when it creates a Cursor task (Advanced → "Max mode for Cursor tasks"):

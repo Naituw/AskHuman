@@ -15,7 +15,7 @@
   macOS Cursor 的 CLI/MCP 自动集成有效时，由 Daemon 管理实验性的 Desktop 全局接入；逐窗口、逐守卫原生行为预检
   通过后才修改并报告 active，一个守卫不可用时另一个照常（状态 `partial`）。有效能力独立保活，不改写
   `general.daemonLifecycle`；None 停止接入但保留偏好，终端 Cursor CLI 不在范围内。
-- `cursorDesktop.launchPreference`：`terminal|desktop`，默认 `terminal`；新 Cursor 任务的运行位置。`desktop` 在 macOS 上经 Agents 窗口创建（实验），不可用时落回终端并在状态行说明；偏好终端时终端不可用也不会改用 Agents 窗口（与 Codex 的双向回退不同）；任务开始后不再改走另一条路径。
+- `cursorDesktop.launchPreference`：`terminal|desktop`，默认 `terminal`；新 Cursor 任务的运行位置。`desktop` 在 macOS 上经 Agents 窗口创建（实验）。偏好只决定两条路谁优先：首选路线不可用、另一条可用时双向自动改用另一条（与 Codex 对称，状态行说明原因）——所以只装了 Cursor Desktop、没有 CLI 也算「能启动」（`integrations/agent_start.rs` 的统一判定）；任务开始后不再改走另一条路径。
 - `general`
   - `theme`、`language`、`alwaysOnTop`、`appearAnimation`、`windowEffect`（`solid|blur|glass`；配置默认 `blur`，显式 `glass` 在 macOS 26 以下有效值自动解析为 `blur`）
   - `speechLanguage`、`speechShortcut`
@@ -33,7 +33,7 @@
 - `channels.ios`（实验，设置「实验」Tab 的 iOS 渠道卡）：`enabled`、`host`、`port`（TLS，默认 8883）、`wsPort`（WSS，默认 8084）、`username`（只含字母数字，同时是话题命名空间 `ah/{username}/`）、`password`（进钥匙串）、`relayUrl`、`macName`（留空取电脑名）、`alertAfterSecs`（手机没在看某个提问时，Mac 键盘 / 鼠标空闲满多少秒才推送通知，默认 900，`0` = 立即，上限 86400；改它不会重连 broker）；隐藏的 `insecureLocal` 只给回环测试 broker 用（对非回环地址无效）。手机配对、关注集、推送句柄与流量计数不在 `AppConfig`，存于 `~/.askhuman/ios/`
 - `channels.autoActivation`：IM 渠道按需发送，默认 `false`
 - `channels.autoEndWatch`：切离活跃 IM 后自动结束该渠道 watch，默认 `true`，仅在 `autoActivation` 开启时生效
-- `agentTasks.enabled`：从手机（iPhone App 的「新任务」）/ IM（`/new`）创建电脑端 Agent 任务，默认 `false`；开启会强制 `daemonLifecycle=keepalive` 并同步 daemon 登录项。入口在设置「高级」Tab（2026-07-25 从「实验」转正）；iOS 渠道卡片顶部的提示条与 `AskHuman setup` 向导（GUI 在远程回答之后有一屏确认页，开启后当场检查手机上能看到的项目与 Agent；文字版是同一个问题）也能开启，效果相同（`docs/specs/onboarding.md` D25）
+- `agentTasks.enabled`：从手机（iPhone App 的「新任务」）/ IM（`/new`）创建电脑端 Agent 任务，默认 `false`；开启会强制 `daemonLifecycle=keepalive` 并同步 daemon 登录项。它是全局一项，设置里有两处入口，效果相同：每个已启用的远程渠道卡片（Telegram / 钉钉 / 飞书 / Slack / iOS App）底部的开关，以及「高级」Tab；`AskHuman setup` 向导（GUI 在远程回答之后有一屏确认页，先检查这台 Mac 现在能不能启动任务再问是否开启，没配远程渠道也会出现，因为这项设置不属于任何渠道；文字版是同一个问题）也能开启（`docs/specs/onboarding.md` D25）。「能不能启动」只有一个判定（`integrations/agent_start.rs`）：Agent CLI 就绪，或 Codex 桌面 App / Cursor Agents 窗口路线可用
 - `agentTasks.permissionPrompt`：`ask|agent-default|yolo`，默认 `ask`
 - `agentTasks.cursorMax.{policy, plan}`：Cursor Max 模式控制。`policy` 为 `enforce-off`（默认，创建任务时强制关闭 Max）或 `inherit`（沿用 Cursor 当前设置，不干预）；`plan` 为 `auto`（默认，读 Cursor 的本地数据判断）、`legacy` 或 `token-based`（新计划无 Max，全部隐藏且不干预）；每次启动读取，改后立即生效
 - `experimental.enabled`：显示实验区，默认 `false`（当前实验区里是 iOS 渠道卡；`channel list` 与帮助也只在它开启时列出 `ios`）

@@ -81,10 +81,11 @@ macOS 的「Agents → Cursor」集成卡提供 **Cursor 会话防护（实验�
 
 ## 新建 Cursor 任务
 
-**运行位置。** 「Agents → Cursor」集成卡的「新任务运行位置」可选 CLI（默认）或 Agents 窗口（实验，仅 macOS）。
-选 Agents 窗口后，GUI、IM `/new` 与手机新建的 Cursor 任务会在你已打开的 Cursor Agents 窗口里创建会话并自动发送；
-需要 Cursor 正在运行、只有一个 Agents 窗口，且项目已添加到其中。创建前窗口不可用时，新任务改用 CLI，集成卡状态行会说明原因；
-任务一旦在 Agents 窗口里开始，失败也不会再自动改用 CLI。
+**运行位置。** 「Agents → Cursor」集成卡的「新任务运行位置」可选 CLI（默认）或 Agents 窗口（实验，仅 macOS），
+它只决定**先用哪个**：先选的那条用不了、另一条可用时，会自动改用另一条，集成卡状态行会说明原因。所以只装了 Cursor Desktop、
+没有 CLI，手机 / IM / GUI 照样能新建 Cursor 任务（走 Agents 窗口）。
+走 Agents 窗口时，GUI、IM `/new` 与手机新建的 Cursor 任务会在你已打开的 Cursor Agents 窗口里创建会话并自动发送；
+需要 Cursor 正在运行、只有一个 Agents 窗口，且项目已添加到其中。任务一旦在 Agents 窗口里开始，失败也不会再自动改用 CLI。
 
 **Max 模式。** 仍在旧的按次计费计划里的用户，Max 按 API 费率计费、额度消耗很快，所以 AskHuman 新建 Cursor 任务时
 默认强制关闭 Max（「高级 → Cursor 任务的 Max 模式」）：

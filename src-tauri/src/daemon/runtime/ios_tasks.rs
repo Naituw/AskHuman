@@ -19,6 +19,7 @@ use crate::agents::model_catalog::{resolve_choice, AgentCatalog, ModelChoice};
 use crate::codex_desktop::{LaunchStatus, LaunchTarget};
 use crate::config::AgentTaskPermission;
 use crate::integrations::agent_launch::{self, AgentReadiness, LaunchPermission, LaunchRecord};
+use crate::integrations::agent_start;
 use crate::ios::gateway::{TaskChoices, TaskLaunch, TodoChoices};
 use crate::ios::wire::{
     AgentOption, DefaultModel, ModelOption, TaskOptions, TodoOption, WorkspaceOption,
@@ -117,14 +118,10 @@ fn probe_agents() -> AgentProbes {
     }
 }
 
-/// Whether a task can be started on this Agent right now. Codex and Cursor are judged by their
-/// launch route (Desktop or terminal); the others by their own readiness.
+/// Whether a task can be started on this Agent right now: the one rule every surface shares
+/// (`agent_start`), judged here from the probes already taken.
 fn is_ready(item: &AgentReadiness, probes: &AgentProbes) -> bool {
-    match item.kind {
-        AgentKind::Codex => probes.codex.target.is_some(),
-        AgentKind::Cursor => probes.cursor.target.is_some(),
-        _ => item.ready,
-    }
+    agent_start::startable(item, &probes.codex, &probes.cursor)
 }
 
 /// Where the model list of `kind` is read from: the executable the launch would use. Codex is
@@ -269,9 +266,11 @@ fn agent_options(
                 item.integration_mode.clone()
             };
             let reason = (!ready).then(|| {
+                // Both of these have a route besides the CLI, so "not ready" is explained by
+                // their routes, not by the CLI's diagnostics alone.
                 let reason = if is_codex {
                     probes.codex.description(lang)
-                } else if cursor_desktop {
+                } else if item.kind == AgentKind::Cursor {
                     probes.cursor.description(lang)
                 } else {
                     item.diagnostics.first().cloned().unwrap_or_default()
@@ -555,25 +554,21 @@ pub(super) async fn create(state: &Arc<ServerState>, launch: TaskLaunch) -> Resu
     let want_source = !wanted.is_default();
     let (ready, source) = tokio::task::spawn_blocking(move || {
         let readiness = agent_launch::readiness(kind);
+        // Whether a task can start is the one rule every surface shares; where its model list
+        // comes from depends on the route a Codex task would take.
+        let ready = agent_start::startable_now(&readiness);
         if kind == AgentKind::Codex {
-            let status = crate::codex_desktop::launch_status(false);
-            let runtime = status.target.filter(|_| want_source).and_then(|target| {
-                crate::codex_desktop::catalog_runtime(target, readiness.executable.as_deref())
-            });
-            (
-                status.target.is_some(),
-                catalog_source(kind, None, runtime.as_ref()),
-            )
-        } else if kind == AgentKind::Cursor {
-            // The list of models is the CLI's either way; whether a task can start is the route's.
-            let source = catalog_source(kind, readiness.executable.as_deref(), None);
-            (
-                crate::cursor_desktop::launch_status(false).target.is_some(),
-                source,
-            )
+            let runtime = crate::codex_desktop::launch_status(false)
+                .target
+                .filter(|_| want_source)
+                .and_then(|target| {
+                    crate::codex_desktop::catalog_runtime(target, readiness.executable.as_deref())
+                });
+            (ready, catalog_source(kind, None, runtime.as_ref()))
         } else {
+            // Cursor's list of models is the CLI's whichever route the task takes.
             let source = catalog_source(kind, readiness.executable.as_deref(), None);
-            (readiness.ready, source)
+            (ready, source)
         }
     })
     .await

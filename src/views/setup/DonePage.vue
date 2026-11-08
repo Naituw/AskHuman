@@ -163,8 +163,9 @@ onMounted(async () => {
             <span class="check-icon" aria-hidden="true"></span>
             <span class="check-label">{{ t("setup.done.tasks") }}</span>
             <span class="check-value">
+              <!-- With no channel yet the feature is on but has nothing to start from: say so. -->
               <span v-if="tasksWanted" data-testid="summary-tasks-state">{{
-                t("setup.done.tasksOn")
+                hasRemoteChannel ? t("setup.done.tasksOn") : t("setup.done.tasksOnNoChannel")
               }}</span>
               <span v-else class="check-none" data-testid="summary-tasks-state">{{
                 t("setup.done.tasksOff")

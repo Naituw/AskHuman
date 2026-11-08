@@ -32,6 +32,7 @@ import { createCore } from "../settings/context";
 import { useChannels } from "../settings/useChannels";
 import {
   agentsPrimary,
+  canStartTasks,
   isIntegrated,
   isMainRow,
   isPending,
@@ -388,14 +389,19 @@ export function createSetup(initialPage: SetupPage = "agents") {
   /** A remote channel of any kind: an IM channel or the iOS app. */
   const hasRemoteChannel = computed(() => hasEnabledChannel.value || iosEnabled.value);
 
-  /** Switch B is only offered once a remote channel is on. */
-  const showBackgroundB = computed(() => hasRemoteChannel.value);
   /**
-   * Starting Agent tasks from the phone or IM can be offered: it needs a remote channel to start
-   * them from, an Agent to start, and a platform with a supported terminal.
+   * Switch B is offered once a remote channel is on, and also when the Agent-task choice (which
+   * pins it on) was made before any channel exists: the page then shows what it pinned.
+   */
+  const showBackgroundB = computed(() => hasRemoteChannel.value || tasksWanted.value);
+  /**
+   * Starting Agent tasks from the phone or IM can be offered: it needs an Agent to start and a
+   * platform with a supported terminal. It does not need a remote channel yet: the switch is
+   * global, and a channel set up later (in Settings, where it sits apart from this switch) would
+   * be easy to leave without it.
    */
   const tasksAvailable = computed(
-    () => supportsAgentTasks && hasRemoteChannel.value && rows.value.some(isIntegrated),
+    () => supportsAgentTasks && rows.value.some(canStartTasks),
   );
   /** The summary line on the Done page: where the feature is on offer, and wherever it is on. */
   const showTasksRow = computed(() => tasksAvailable.value || tasksSavedOn.value);
@@ -429,9 +435,13 @@ export function createSetup(initialPage: SetupPage = "agents") {
     () => supportsAgentTasks && rowsLoaded.value && !tasksAvailable.value && !tasksSavedOn.value,
   );
 
-  /** "Turn on": recorded here, saved with the rest of the settings when the wizard finishes. */
+  /**
+   * "Turn on": recorded here, saved with the rest of the settings when the wizard finishes. The
+   * offer screen has already checked that an Agent can start, so there is nothing more to show.
+   */
   function wantTasks() {
     tasksWanted.value = true;
+    goto("done");
   }
 
   /**

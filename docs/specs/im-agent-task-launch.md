@@ -470,3 +470,9 @@ workspace 动态状态放 `agent-workspaces.json`，launch record 放短时私�
   点「生命周期」的 × 以前没有反应，现在退到该 Agent 的卡片并高亮。`launchSupported = false` 的 Agent（Antigravity）
   那一行显示灰色「暂不支持」和三个短横，不再是「未就绪」加三个修不好的 ×。就绪判定（`ready = binary ∧
   lifecycle ∧ integration`）、刷新时机与 `/new` 的门控都不变。
+- **2026-11-08**（同日后续）：「现在能不能启动一个任务」收成一个判定（`integrations/agent_start.rs`），手机「新任务」页的 Agent 列表与
+  `noAgent`、`/new` 的 Agent 门控（D5）、安装向导、文字版、「高级」页的就绪矩阵全读它：Codex 的桌面 App 或终端任一可用、Cursor 的
+  Agents 窗口或终端任一可用、其余 Agent 的 CLI 就绪（`ready`）。起因是向导与矩阵只看 CLI 就绪，而手机认桌面路线，同一台只装了
+  桌面版的电脑上两边互相矛盾（向导先邀请开启、再说没有可开启的 Agent）。Cursor 的「运行位置」偏好只决定谁优先，首选用不了、另一条可用就改用另一条
+  （`cursor-desktop-task-creation.md` §3）。上一条里「就绪判定（`ready = …`）不变」只指当时那次版式改动；矩阵标签现在读统一判定，
+  见 `settings-agents-channels-cards.md` §8.5，开关的新入口见 `onboarding.md` D25。

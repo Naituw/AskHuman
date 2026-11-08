@@ -1,5 +1,5 @@
 import { expect, it } from "vitest";
-import { cursorLaunchDescription } from "./cursorLaunch";
+import { cursorLaunchDescription, cursorLaunchReasons } from "./cursorLaunch";
 import { i18n } from "../i18n";
 import type { CursorLaunchStatus } from "./ipc";
 
@@ -18,22 +18,30 @@ function status(patch: Partial<CursorLaunchStatus>): CursorLaunchStatus {
   };
 }
 
-it("names only the terminal's problem for someone who never chose the Agents window", () => {
+it("names both problems when neither route works, the one that goes first leading", () => {
   i18n.global.locale.value = "en";
-  const text = cursorLaunchDescription(
-    status({ target: null, terminalAvailable: false, desktopReason: "appNotRunning", terminalReason: "cliNotDetected" }),
-    t,
+  const stuck = { target: null, terminalAvailable: false, desktopReason: "appNotRunning", terminalReason: "cliNotDetected" } as const;
+  // Terminal first: whoever prefers the CLI is told about the CLI before the window.
+  expect(cursorLaunchDescription(status(stuck), t)).toBe(
+    "Unable to start: Cursor CLI was not detected; Cursor is not running",
   );
-  expect(text).toBe("Unable to start: Cursor CLI was not detected");
+  expect(cursorLaunchDescription(status({ ...stuck, preference: "desktop" }), t)).toBe(
+    "Unable to start: Cursor is not running; Cursor CLI was not detected",
+  );
 });
 
-it("names both problems when the Agents window was the choice", () => {
+it("lists the reasons on their own, preferred route first, without repeating one", () => {
   i18n.global.locale.value = "en";
-  const text = cursorLaunchDescription(
-    status({ preference: "desktop", target: null, terminalAvailable: false, desktopReason: "appNotRunning", terminalReason: "cliNotDetected" }),
-    t,
-  );
-  expect(text).toBe("Unable to start: Cursor is not running; Cursor CLI was not detected");
+  const stuck = { target: null, terminalAvailable: false, desktopReason: "appNotRunning", terminalReason: "cliNotDetected" } as const;
+  expect(cursorLaunchReasons(status(stuck), t)).toEqual(["Cursor CLI was not detected", "Cursor is not running"]);
+  expect(cursorLaunchReasons(status({ ...stuck, preference: "desktop" }), t)).toEqual([
+    "Cursor is not running",
+    "Cursor CLI was not detected",
+  ]);
+  expect(
+    cursorLaunchReasons(status({ ...stuck, desktopReason: "cliNotDetected" }), t),
+  ).toEqual(["Cursor CLI was not detected"]);
+  expect(cursorLaunchReasons(status({}), t)).toEqual([]);
 });
 
 it("explains a fallback from the Agents window to the CLI", () => {
@@ -41,4 +49,14 @@ it("explains a fallback from the Agents window to the CLI", () => {
   expect(cursorLaunchDescription(status({ preference: "desktop", desktopReason: "multipleApps" }), t)).toBe(
     "New tasks will use the CLI (More than one Cursor process is running)",
   );
+});
+
+it("explains a fallback from the CLI to the Agents window", () => {
+  i18n.global.locale.value = "en";
+  expect(
+    cursorLaunchDescription(
+      status({ target: "desktop", terminalAvailable: false, desktopAvailable: true, terminalReason: "cliNotDetected" }),
+      t,
+    ),
+  ).toBe("New tasks will use Cursor's Agents window (Cursor CLI was not detected)");
 });

@@ -1,8 +1,10 @@
 <script setup lang="ts">
 // iOS app channel card (experimental tab): broker connection, device list and the pairing flow.
-// docs/specs/ios-channel.md §3 / §7.
+// docs/specs/ios-channel.md §3 / §7. The app's "New task" needs the Agent-task switch, which sits
+// in the card as a row of its own (AgentTasksSwitchRow).
 import { computed } from "vue";
 import { useI18n } from "vue-i18n";
+import AgentTasksSwitchRow from "./AgentTasksSwitchRow.vue";
 import { useSettingsContext } from "./context";
 import { useIosChannel } from "./useIosChannel";
 import type { IosPhone } from "../../lib/types";
@@ -16,15 +18,7 @@ import {
 import { formatBytes, quotaShare, trafficLevel } from "./iosTraffic";
 
 const { t } = useI18n();
-const {
-  config,
-  persist,
-  secretsPresent,
-  SECRET_PLACEHOLDER,
-  clearSecret,
-  supportsAgentTasks,
-  agentTasksConfirmOpen,
-} = useSettingsContext();
+const { persist, secretsPresent, SECRET_PLACEHOLDER, clearSecret } = useSettingsContext();
 const {
   ios,
   state,
@@ -57,10 +51,6 @@ const {
   importConnection,
   exportConnection,
 } = useIosChannel();
-
-// Whether the phone's "New task" can reach this Mac: it is the same switch as Settings → Advanced.
-// Turning it on goes through that switch's confirmation, because it keeps the daemon resident.
-const tasksOn = computed(() => config.value?.agentTasks?.enabled === true);
 
 const statusText = computed(() => {
   const s = state.value;
@@ -164,22 +154,9 @@ function pushWarning(phone: IosPhone): string {
       </p>
       <p v-if="trafficText" class="card-desc ios-traffic" :class="trafficLevelNow">{{ trafficText }}</p>
       <p v-if="trafficWarning" class="ios-traffic-warning" :class="trafficLevelNow">{{ trafficWarning }}</p>
-      <!-- The app's "New task" needs the Agent-task switch on this Mac: say so first, where the phone is set up. -->
-      <div
-        v-if="supportsAgentTasks && !tasksOn"
-        class="ios-tasks-callout"
-        data-testid="ios-tasks-callout"
-      >
-        <p class="ios-tasks-callout-text">{{ t("settings.experimental.ios.tasksCallout") }}</p>
-        <button
-          class="btn"
-          type="button"
-          data-testid="ios-tasks-enable"
-          @click="agentTasksConfirmOpen = true"
-        >
-          {{ t("settings.experimental.ios.tasksEnable") }}
-        </button>
-      </div>
+      <!-- The app's "New task" needs the Agent-task switch on this Mac: it is right here, where the phone is set up. -->
+      <hr class="divider" />
+      <AgentTasksSwitchRow />
       <hr class="divider" />
 
       <p class="ios-section-title">{{ t("settings.experimental.ios.connectionTitle") }}</p>

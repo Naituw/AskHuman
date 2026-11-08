@@ -7,7 +7,14 @@ import BrandBadge from "../setup/BrandBadge.vue";
 import { useSettingsContext } from "./context";
 import CursorMaxCard from "./CursorMaxCard.vue";
 import PermissionRulesCard from "./PermissionRulesCard.vue";
-import { readinessIssues, readinessState, type ReadinessIssue, type ReadinessState } from "./readiness";
+import {
+  readinessIssues,
+  readinessState,
+  startBlockers,
+  startsOutsideTheCli,
+  type ReadinessIssue,
+  type ReadinessState,
+} from "./readiness";
 
 const { t } = useI18n();
 const ctx = useSettingsContext();
@@ -30,20 +37,42 @@ const {
 const config = computed(() => ctx.config.value!);
 
 // What each Agent still lacks and the state of its row, worked out once per change rather than once
-// per use in the template.
+// per use in the template. The row's state is the backend's verdict (the one the phone acts on), so
+// Codex's app and Cursor's Agents window count: `outside` marks an Agent that starts without its CLI,
+// whose CLI columns are then not needed; `blockers` explain an Agent with two routes that has none.
 const readinessRows = computed(() =>
-  taskReadiness.value.map((item) => ({
-    item,
-    state: readinessState(item),
-    issues: readinessIssues(item),
-  })),
+  taskReadiness.value.map((item) => {
+    const state = readinessState(item);
+    return {
+      item,
+      state,
+      issues: readinessIssues(item),
+      outside: startsOutsideTheCli(item),
+      blockers:
+        state === "notReady" && item.launch && (item.kind === "codex" || item.kind === "cursor")
+          ? startBlockers(item, t)
+          : [],
+    };
+  }),
 );
 const hasUnsupported = computed(() => readinessRows.value.some((row) => row.state === "unsupported"));
+const hasOutside = computed(() => readinessRows.value.some((row) => row.outside));
 const STATE_TEXT: Record<ReadinessState, string> = {
   ready: "settings.agentTasks.ready",
   notReady: "settings.agentTasks.notReady",
   unsupported: "settings.agentTasks.unsupported",
 };
+/** The tag of an Agent that starts outside its CLI says where, so a ready tag never hides the route. */
+function tagText(row: { item: { kind: string }; state: ReadinessState; outside: boolean }): string {
+  if (!row.outside) return t(STATE_TEXT[row.state]);
+  return t(
+    row.item.kind === "codex"
+      ? "settings.agentTasks.readyCodexApp"
+      : "settings.agentTasks.readyCursorWindow",
+  );
+}
+/** The CLI's own conditions: not needed by an Agent that starts in its app or window. */
+const CLI_ONLY: ReadinessIssue[] = ["binary", "lifecycle"];
 const STATE_TONE: Record<ReadinessState, string> = { ready: "ok", notReady: "warn", unsupported: "muted" };
 const CONDITIONS: ReadinessIssue[] = ["binary", "lifecycle", "integration"];
 const COLUMN_TEXT: Record<ReadinessIssue, string> = {
@@ -197,56 +226,74 @@ const ISSUE_TEXT: Record<ReadinessIssue, string> = {
       </div>
       <!-- A matrix: one row per Agent (badge, name, overall tag), one fixed column per condition. A met
            condition is a check; an unmet one is an orange cross that goes to where it is fixed. An Agent
-           that cannot start tasks at all has nothing to fix: a grey tag and dashes, no crosses. -->
+           that cannot start tasks at all has nothing to fix: a grey tag and dashes, no crosses. An Agent
+           that starts in its app or window needs no CLI: its tag says where, its CLI columns are dashes. -->
       <div v-if="readinessRows.length > 0" class="readiness-matrix" data-testid="readiness-matrix">
         <div class="readiness-row readiness-head" aria-hidden="true">
           <span class="readiness-agent"></span>
           <span v-for="cond in CONDITIONS" :key="cond" class="readiness-cell">{{ t(COLUMN_TEXT[cond]) }}</span>
         </div>
         <div
-          v-for="{ item, state, issues } in readinessRows"
-          :key="item.kind"
-          class="readiness-row"
-          :data-testid="`readiness-${item.kind}`"
+          v-for="row in readinessRows"
+          :key="row.item.kind"
+          class="readiness-item"
+          :data-testid="`readiness-${row.item.kind}`"
         >
-          <div class="readiness-agent">
-            <BrandBadge :id="item.kind" :label="item.label" />
-            <span class="label">{{ item.label }}</span>
-            <span
-              class="status-tag"
-              :class="STATE_TONE[state]"
-              :data-testid="`readiness-tag-${item.kind}`"
-            >{{ t(STATE_TEXT[state]) }}</span>
-          </div>
-          <span v-for="cond in CONDITIONS" :key="cond" class="readiness-cell">
-            <span v-if="state === 'unsupported'" class="readiness-na" aria-hidden="true">–</span>
-            <button
-              v-else-if="issues.includes(cond)"
-              type="button"
-              class="readiness-fix"
-              :aria-label="`${item.label}: ${t(ISSUE_TEXT[cond])}`"
-              :title="`${t(ISSUE_TEXT[cond])} · ${cond === 'binary' ? t('settings.agentTasks.openInstallDocs') : t('settings.agentTasks.goToSetting')}`"
-              :data-testid="`readiness-issue-${item.kind}-${cond}`"
-              @click="openReadinessIssue(item.kind, cond)"
-            >
-              <svg viewBox="0 0 16 16" aria-hidden="true">
-                <path d="M5 5l6 6M11 5l-6 6" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" />
+          <div class="readiness-row">
+            <div class="readiness-agent">
+              <BrandBadge :id="row.item.kind" :label="row.item.label" />
+              <span class="label">{{ row.item.label }}</span>
+              <span
+                class="status-tag"
+                :class="STATE_TONE[row.state]"
+                :data-testid="`readiness-tag-${row.item.kind}`"
+              >{{ tagText(row) }}</span>
+            </div>
+            <span v-for="cond in CONDITIONS" :key="cond" class="readiness-cell">
+              <span v-if="row.state === 'unsupported'" class="readiness-na" aria-hidden="true">–</span>
+              <span
+                v-else-if="row.outside && CLI_ONLY.includes(cond) && row.issues.includes(cond)"
+                class="readiness-na"
+                role="img"
+                :aria-label="`${row.item.label}: ${t(COLUMN_TEXT[cond])} · ${t('settings.agentTasks.cliNotNeeded')}`"
+                :title="t('settings.agentTasks.cliNotNeeded')"
+                :data-testid="`readiness-skip-${row.item.kind}-${cond}`"
+              >–</span>
+              <button
+                v-else-if="row.issues.includes(cond)"
+                type="button"
+                class="readiness-fix"
+                :aria-label="`${row.item.label}: ${t(ISSUE_TEXT[cond])}`"
+                :title="`${t(ISSUE_TEXT[cond])} · ${cond === 'binary' ? t('settings.agentTasks.openInstallDocs') : t('settings.agentTasks.goToSetting')}`"
+                :data-testid="`readiness-issue-${row.item.kind}-${cond}`"
+                @click="openReadinessIssue(row.item.kind, cond)"
+              >
+                <svg viewBox="0 0 16 16" aria-hidden="true">
+                  <path d="M5 5l6 6M11 5l-6 6" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" />
+                </svg>
+              </button>
+              <svg
+                v-else
+                class="readiness-ok"
+                viewBox="0 0 16 16"
+                role="img"
+                :aria-label="`${row.item.label}: ${t(COLUMN_TEXT[cond])}`"
+              >
+                <path d="M3.5 8.5l3 3 6-7" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" />
               </svg>
-            </button>
-            <svg
-              v-else
-              class="readiness-ok"
-              viewBox="0 0 16 16"
-              role="img"
-              :aria-label="`${item.label}: ${t(COLUMN_TEXT[cond])}`"
-            >
-              <path d="M3.5 8.5l3 3 6-7" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" />
-            </svg>
-          </span>
+            </span>
+          </div>
+          <!-- Why an Agent with two routes (CLI and app / window) has neither: the crosses only cover the CLI's side. -->
+          <p
+            v-if="row.blockers.length > 0"
+            class="card-desc readiness-blockers"
+            :data-testid="`readiness-blockers-${row.item.kind}`"
+          >{{ row.blockers.join(t("desktop.reasonSeparator")) }}</p>
         </div>
       </div>
       <p v-if="readinessRows.length > 0" class="card-desc readiness-hint">
         <span class="readiness-hint-line">{{ t("settings.agentTasks.readinessHint") }}</span>
+        <span v-if="hasOutside" class="readiness-hint-line">{{ t("settings.agentTasks.outsideHint") }}</span>
         <span v-if="hasUnsupported" class="readiness-hint-line">{{ t("settings.agentTasks.unsupportedHint") }}</span>
       </p>
       <hr class="divider" />
