@@ -287,7 +287,12 @@ final class AskHumanWebUITests: XCTestCase {
 
         let field = requireElement("annotation-field", timeout: 10)
         XCTAssertTrue(element("annotation-quote").label.contains("Redis"), "the sheet shows the passage")
-        XCTAssertFalse(element("annotation-commit").isEnabled, "nothing to add before something is written")
+        shot("40b-notes-sheet-empty")
+        // Nothing is written yet, so "Add" does nothing. (Asked by pressing it, not by `isEnabled`: on iOS 18 the identifier
+        // is on a container that is never marked disabled, though the button in it is, and drawn grey.)
+        element("annotation-commit").tap()
+        XCTAssertTrue(element("annotation-field").exists, "nothing to add before something is written")
+        field.tap()
         field.typeText("Does it survive a restart?")
         XCTAssertTrue(element("annotation-commit").isEnabled)
         shot("41-notes-sheet")

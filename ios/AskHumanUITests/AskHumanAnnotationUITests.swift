@@ -15,7 +15,19 @@ final class AskHumanAnnotationUITests: XCTestCase {
     }
 
     override func tearDown() async throws {
-        if let run = testRun, run.totalFailureCount > 0, app != nil { shot("failed-" + name.filter { $0.isLetter }) }
+        if let run = testRun, run.totalFailureCount > 0, app != nil {
+            let label = "failed-" + name.filter { $0.isLetter }
+            shot(label)
+            dumpTheTree(label)
+        }
+    }
+
+    /// What the app showed at the failure, element by element, next to the screenshot (only when there is a folder for them).
+    private func dumpTheTree(_ label: String) {
+        guard let folder = ProcessInfo.processInfo.environment["AH_UI_SHOTS"], !folder.isEmpty else { return }
+        let url = URL(fileURLWithPath: folder).appendingPathComponent("\(label).txt")
+        try? FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try? Data(app.debugDescription.utf8).write(to: url)
     }
 
     // MARK: helpers
@@ -90,6 +102,27 @@ final class AskHumanAnnotationUITests: XCTestCase {
 
     /// On the screen and not behind anything: what a person could press.
     private func visible(_ element: XCUIElement) -> Bool { element.exists && element.isHittable }
+
+    /// Inside the part of the screen the message is read in: below the navigation bar and above the bar at the foot. The
+    /// words of a web page that is taller than the screen are all in the accessibility tree, and the ones far down it
+    /// can report themselves hittable; where they are is told by their frame.
+    private func inReach(_ element: XCUIElement) -> Bool {
+        guard element.exists else { return false }
+        let window = app.windows.firstMatch.frame
+        let frame = element.frame
+        return frame.height > 0 && frame.minY > 110 && frame.maxY < window.height - 130
+    }
+
+    /// A line in the log of the run saying where a word is (the one thing a screenshot cannot say exactly).
+    private func noteWhere(_ label: String, _ element: XCUIElement) {
+        let frame = element.frame
+        let window = app.windows.firstMatch.frame
+        XCTContext.runActivity(named: String(
+            format: "WHERE %@: exists=%@ hittable=%@ frame=%.0f,%.0f %.0fx%.0f window=%.0fx%.0f", label,
+            element.exists ? "yes" : "no", element.isHittable ? "yes" : "no", frame.minX, frame.minY, frame.width, frame.height,
+            window.width, window.height
+        )) { _ in }
+    }
 
     /// An entry of the selection menu (or of anything else that is up) by its title.
     private func entry(_ title: String) -> XCUIElement {
@@ -205,21 +238,25 @@ final class AskHumanAnnotationUITests: XCTestCase {
         XCTAssertTrue(word("Alpha").waitForExistence(timeout: 60), "the page is drawn")
 
         // The last paragraph is a long way down: go there, write on it, and come back to the top.
+        noteWhere("Omega at the top", word("Omega"))
         var swipes = 0
-        while !visible(word("Omega")), swipes < 18 {
+        while !inReach(word("Omega")), swipes < 18 {
             app.swipeUp(velocity: .slow)
             swipes += 1
         }
-        XCTAssertTrue(visible(word("Omega")), "the last paragraph is within reach after \(swipes) swipes")
+        noteWhere("Omega after \(swipes) swipes", word("Omega"))
+        XCTAssertTrue(inReach(word("Omega")), "the last paragraph is within reach after \(swipes) swipes")
         writeNote(on: "Omega", "Is this really the end?")
         scrollToTop()
-        XCTAssertFalse(visible(word("Omega")), "from the top the passage is out of sight")
+        noteWhere("Omega back at the top", word("Omega"))
+        XCTAssertFalse(inReach(word("Omega")), "from the top the passage is out of sight")
         shot("52-passage-out-of-sight")
 
         openTheList()
         element("annotation-row-0").tap()
         XCTAssertTrue(gone("annotation-row-0"), "the list leaves")
-        XCTAssertTrue(eventually(20) { visible(word("Omega")) }, "the screen scrolled to the passage")
+        XCTAssertTrue(eventually(20) { inReach(word("Omega")) }, "the screen scrolled to the passage")
+        noteWhere("Omega revealed", word("Omega"))
         // Not at the very top (it was not there) and not under the bar: in the upper part of what can be seen.
         let frame = word("Omega").frame
         let window = app.windows.firstMatch.frame

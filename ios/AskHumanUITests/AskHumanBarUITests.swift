@@ -20,7 +20,9 @@ final class AskHumanBarUITests: XCTestCase {
     private var notes = 0
 
     override func setUp() async throws {
-        continueAfterFailure = false
+        // `TEST_RUNNER_AH_UI_CONTINUE=1` measures every state even after one assertion failed (a run that is there to
+        // collect frames, not to gate anything).
+        continueAfterFailure = ProcessInfo.processInfo.environment["AH_UI_CONTINUE"] == "1"
     }
 
     override func tearDown() async throws {
@@ -164,11 +166,13 @@ final class AskHumanBarUITests: XCTestCase {
                 XCTAssertEqual(button.frame.width, button.frame.height, accuracy: 1, "\(state): \(button.id) is not round")
             }
         }
-        // The count gave way to the buttons, but not down to nothing (an empty chip is the padding alone, 28 pt). The classic
-        // bar is the old row, where the buttons come first and the count is left what remains: with "Send and go away" armed
-        // that is a fragment ("A…"), as it was before the floating bar learned to say "0/3" or to put the count above.
-        if circles {
-            XCTAssertGreaterThanOrEqual(count.width, 40, "\(state): the count was squeezed out")
+        // The count gave way to the buttons, but not down to nothing (an empty chip is the padding alone, 28 pt). The floating
+        // bar says "0/3" when "Answered 0/3" does not fit beside the buttons, and both bars put the count above them when not
+        // even that does. The classic bar has no short wording: its count is one whole line, beside the buttons or above them
+        // (what that replaced was "An-/swered 0/3" on three lines, and "A" with "Send and go away" armed).
+        XCTAssertGreaterThanOrEqual(count.width, 40, "\(state): the count was squeezed out")
+        if !circles {
+            XCTAssertGreaterThan(count.width, count.height * 2.5, "\(state): the count is wrapped")
         }
         XCTAssertGreaterThan(count.height, 0, "\(state): the count has no height")
         XCTAssertGreaterThanOrEqual(count.minX, 0, "\(state): the count is off the screen")
