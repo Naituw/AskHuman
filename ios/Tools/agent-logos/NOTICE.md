@@ -11,9 +11,11 @@ OpenAI, xAI and the Pi project) and AskHuman is not affiliated with any of them.
 | `codex.svg` | Codex | LobeHub Icons `codex` |
 | `grok.svg` | Grok | LobeHub Icons `grok` |
 | `pi.svg` | Pi | The official logo from https://pi.dev/logo-auto.svg, cropped to its bounds |
+| `antigravity.svg` | Antigravity | The arch outline of LobeHub Icons `antigravity` (it matches the outline of Google's own icon, see its [press page](https://antigravity.google/press/), by eye); the colors are redrawn as plain gradients after Google's full-colour icon |
 
 `make-logos.sh` turns the sources into the vector assets in
-`ios/AskHuman/Resources/Assets.xcassets/AgentLogos`.
+`ios/AskHuman/Resources/Assets.xcassets/AgentLogos`. The Mac setup wizard imports these same SVG files
+(`src/views/setup/brandBadges.ts`), so a logo exists once; renaming or replacing one affects both apps.
 
 LobeHub Icons is distributed under the MIT License:
 

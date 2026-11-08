@@ -1,0 +1,41 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24">
+  <defs>
+    <clipPath id="arch">
+      <path d="M21.751 22.607c1.34 1.005 3.35.335 1.508-1.508C17.73 15.74 18.904 1 12.037 1 5.17 1 6.342 15.74.815 21.1c-2.01 2.009.167 2.511 1.507 1.506 5.192-3.517 4.857-9.714 9.715-9.714 4.857 0 4.522 6.197 9.714 9.715z"/>
+    </clipPath>
+    <linearGradient id="top" gradientUnits="userSpaceOnUse" x1="6" y1="0" x2="18" y2="0">
+      <stop offset="0" stop-color="#76c262"/>
+      <stop offset=".175" stop-color="#93c456"/>
+      <stop offset=".3" stop-color="#cbb338"/>
+      <stop offset=".49" stop-color="#ee7f2f"/>
+      <stop offset=".68" stop-color="#ee5940"/>
+      <stop offset=".8" stop-color="#e4544f"/>
+      <stop offset="1" stop-color="#dc5660"/>
+    </linearGradient>
+    <linearGradient id="fade" gradientUnits="userSpaceOnUse" x1="0" y1="3.2" x2="0" y2="10">
+      <stop offset="0" stop-color="#3186ff" stop-opacity="0"/>
+      <stop offset=".4" stop-color="#3186ff" stop-opacity=".3"/>
+      <stop offset="1" stop-color="#3186ff"/>
+    </linearGradient>
+    <radialGradient id="green" gradientUnits="userSpaceOnUse" cx="6" cy="7.6" r="5.6">
+      <stop offset="0" stop-color="#5dba86" stop-opacity=".8"/>
+      <stop offset="1" stop-color="#5dba86" stop-opacity="0"/>
+    </radialGradient>
+    <radialGradient id="red" gradientUnits="userSpaceOnUse" cx="16.8" cy="6.4" r="4.8">
+      <stop offset="0" stop-color="#e0505a" stop-opacity=".6"/>
+      <stop offset="1" stop-color="#e0505a" stop-opacity="0"/>
+    </radialGradient>
+    <radialGradient id="light" gradientUnits="userSpaceOnUse" cx="19.2" cy="13.6" r="4.6">
+      <stop offset="0" stop-color="#7396f5" stop-opacity=".9"/>
+      <stop offset="1" stop-color="#7396f5" stop-opacity="0"/>
+    </radialGradient>
+  </defs>
+  <g clip-path="url(#arch)">
+    <rect width="24" height="24" fill="#3186ff"/>
+    <rect width="24" height="12" fill="url(#top)"/>
+    <rect width="24" height="24" fill="url(#fade)"/>
+    <circle cx="19.2" cy="13.6" r="4.6" fill="url(#light)"/>
+    <circle cx="6" cy="7.6" r="5.6" fill="url(#green)"/>
+    <circle cx="16.8" cy="6.4" r="4.8" fill="url(#red)"/>
+  </g>
+</svg>

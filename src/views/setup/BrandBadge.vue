@@ -1,7 +1,7 @@
 <script setup lang="ts">
-// A small rounded badge that stands in for an Agent's or channel's logo (see brandBadges.ts).
+// A small rounded tile with the mark of an Agent or channel on it (see brandBadges.ts).
 import { computed } from "vue";
-import { BADGES } from "./brandBadges";
+import { BADGES, FALLBACK_TILE, svgUrl } from "./brandBadges";
 
 const props = withDefaults(
   defineProps<{
@@ -15,22 +15,32 @@ const props = withDefaults(
 
 const spec = computed(() => BADGES[props.id]);
 const fallbackGlyph = computed(() => (props.label || props.id).trim().charAt(0).toUpperCase());
+// A one-colour mark is a mask over a painted layer; a mark in its own colours is the image itself.
+const ownColours = computed(() => spec.value !== undefined && spec.value.mark.paint === undefined);
+
+const vars = computed<Record<string, string>>(() => {
+  const badge = spec.value;
+  if (!badge) return { "--badge-tile": FALLBACK_TILE };
+  const out: Record<string, string> = {
+    "--badge-tile": badge.tile,
+    "--badge-hairline": badge.hairline,
+    "--mark-url": svgUrl(badge.mark.svg),
+    "--mark-scale": String(badge.mark.scale),
+  };
+  if (badge.mark.paint !== undefined) out["--mark-paint"] = badge.mark.paint;
+  return out;
+});
 </script>
 
 <template>
   <span
     class="brand-badge"
-    :class="size"
-    :style="{
-      '--badge-from': spec?.from ?? '#6e6e73',
-      '--badge-to': spec?.to ?? '#48484a',
-    }"
+    :class="[size, { 'own-colours': ownColours }]"
+    :style="vars"
     :data-badge="id"
     aria-hidden="true"
   >
-    <svg v-if="spec?.paths" viewBox="0 0 24 24" focusable="false">
-      <path v-for="d in spec.paths" :key="d" :d="d" />
-    </svg>
-    <span v-else class="brand-glyph">{{ spec?.glyph ?? fallbackGlyph }}</span>
+    <span v-if="spec" class="brand-mark" />
+    <span v-else class="brand-glyph">{{ fallbackGlyph }}</span>
   </span>
 </template>

@@ -3,7 +3,7 @@
 # next to this script. Needs `rsvg-convert` (brew install librsvg). Sources and licenses: NOTICE.md.
 #
 # The mono marks are black shapes on a 24-unit grid, drawn as template images so the badge can color
-# them; the Pi mark keeps its own three colors.
+# them; the Pi and Antigravity marks keep their own colors.
 set -eu
 
 here=$(cd "$(dirname "$0")" && pwd)
@@ -16,8 +16,10 @@ for svg in "$here"/*.svg; do
   set="$catalog/agent-$name.imageset"
   mkdir -p "$set"
   rsvg-convert -f pdf -o "$set/agent-$name.pdf" "$svg"
-  intent=template
-  [ "$name" = pi ] && intent=original
+  case "$name" in
+    pi|antigravity) intent=original ;;
+    *) intent=template ;;
+  esac
   cat > "$set/Contents.json" <<JSON
 {
   "images" : [

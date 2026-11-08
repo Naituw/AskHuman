@@ -379,27 +379,30 @@
   justify-content: center;
   width: var(--size);
   height: var(--size);
-  border-radius: calc(var(--size) * 0.27);
-  background: linear-gradient(145deg, var(--badge-from), var(--badge-to));
+  /* The iOS app's corner radius for an Agent tile. */
+  border-radius: calc(var(--size) * 0.3);
+  background: var(--badge-tile);
   color: #fff;
   box-shadow:
-    inset 0 0 0 0.5px rgba(255, 255, 255, 0.28),
+    inset 0 0 0 0.5px var(--badge-hairline, rgba(255, 255, 255, 0.14)),
     0 1px 3px rgba(0, 0, 0, 0.25);
 }
 .brand-badge.sm {
-  --size: 20px;
+  --size: 22px;
 }
-.brand-badge svg {
-  width: 58%;
-  height: 58%;
-  fill: none;
-  stroke: currentColor;
-  stroke-width: 2;
-  stroke-linecap: round;
-  stroke-linejoin: round;
+/* A one-colour mark: `--mark-paint` shows through the shape of the SVG. */
+.brand-mark {
+  width: calc(var(--size) * var(--mark-scale));
+  height: calc(var(--size) * var(--mark-scale));
+  background: var(--mark-paint, #fff);
+  -webkit-mask: var(--mark-url) center / contain no-repeat;
+  mask: var(--mark-url) center / contain no-repeat;
 }
-.brand-badge.sm svg {
-  stroke-width: 2.4;
+/* A mark in its own colours is shown as the image it is. */
+.brand-badge.own-colours .brand-mark {
+  background: var(--mark-url) center / contain no-repeat;
+  -webkit-mask: none;
+  mask: none;
 }
 .brand-glyph {
   font-size: calc(var(--size) * 0.5);

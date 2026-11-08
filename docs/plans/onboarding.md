@@ -321,7 +321,7 @@ Rust 单测（均不碰真实 HOME / 钥匙串）：
 - 新文件：
   - `views/SetupView.vue`：窗口壳（可点击的步骤条 + 页面容器 + 底部导航）；挂载时 `Promise.all([getSettings(), setupStatus()])`，把 `config` / `secretsPresent` / `everydayIntegrationsReadOnly` 灌入 `core`（同 `SettingsView`）；应用主题 / 语言并监听 `settings-updated`；初始页读 URL `?page=`，监听 `setup-goto-page` 与 `setup-status-changed`。
   - `views/setup/useSetup.ts`：状态机与动作（页、`status`、`rows`、`style`、`applyResults`、`env`、`channelStatus`、后台两个开关）。
-  - `views/setup/AgentsPage.vue`（Agent 磁贴 `AgentTile.vue`）、`RemotePage.vue`、`DonePage.vue`、`SetupChannelForm.vue`、`EnvCards.vue`；共用 `SetupHeader.vue`（页头）与 `BrandBadge.vue`（徽标，图案注册表 `brandBadges.ts`）。版式见 spec §8 第 7 轮。
+  - `views/setup/AgentsPage.vue`（Agent 磁贴 `AgentTile.vue`）、`RemotePage.vue`、`DonePage.vue`、`SetupChannelForm.vue`、`EnvCards.vue`；共用 `SetupHeader.vue`（页头）与 `BrandBadge.vue`（徽标，图案注册表 `brandBadges.ts`）。版式见 spec §8 第 7 轮，图标素材（Agent 含 Antigravity 都用 iOS 的 SVG 源，渠道的在 `views/setup/logos/`，来源与许可见该目录 `NOTICE.md`）见第 8 轮。
   - `views/settings/useSetupStatus.ts`：共享的 `status` + `refresh()`（挂载、`setup-status-changed`、窗口获得焦点时刷新），供设置页横幅 / 卡片 / 菜单栏提示使用。
 - 中途关闭窗口不保存步骤进度；已应用的改动保留（D4）。
 
