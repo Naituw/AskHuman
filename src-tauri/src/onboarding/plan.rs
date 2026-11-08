@@ -97,7 +97,6 @@ pub fn planned_by_mode(def: &AgentDef) -> PlannedByMode {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::integrations::agent_mode;
     use crate::onboarding::agents;
     use std::collections::BTreeMap;
     use std::path::Path;
@@ -157,6 +156,9 @@ mod tests {
     #[cfg(unix)]
     #[test]
     fn preview_matches_what_set_really_writes() {
+        // Imported here, not at module level: this is the only unix-only user, and an unused
+        // import fails clippy on Windows (`-D warnings`).
+        use crate::integrations::agent_mode;
         use crate::onboarding::testutil;
         if !testutil::in_child() {
             testutil::run_in_child(module_path!(), "preview_matches_what_set_really_writes");
