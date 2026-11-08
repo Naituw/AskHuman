@@ -80,6 +80,9 @@ public struct WatchFrameData: Sendable, Equatable {
     public var project: String?
     /// The latest words of the Agent (Markdown).
     public var text: String?
+    public var latestText: WatchLatestText?
+    /// A present null means the Mac is buffering its first paragraph, not a legacy Mac.
+    public var supportsLatestText: Bool
     public var steps: [WatchStep]
     public var stepsOmitted: Int
     public var todos: [WatchTodo]
@@ -94,12 +97,15 @@ public struct WatchFrameData: Sendable, Equatable {
     public init(
         phase: String, title: String? = nil, project: String? = nil, text: String? = nil, steps: [WatchStep] = [],
         stepsOmitted: Int = 0, todos: [WatchTodo] = [], activeElapsedSecs: UInt64? = nil, at: Int64? = nil,
-        model: String? = nil, reasoning: String? = nil, speed: TaskSpeed? = nil
+        model: String? = nil, reasoning: String? = nil, speed: TaskSpeed? = nil, latestText: WatchLatestText? = nil,
+        supportsLatestText: Bool = false
     ) {
         self.phase = phase
         self.title = title
         self.project = project
         self.text = text
+        self.latestText = latestText
+        self.supportsLatestText = supportsLatestText || latestText != nil
         self.steps = steps
         self.stepsOmitted = stepsOmitted
         self.todos = todos
@@ -131,7 +137,8 @@ public struct WatchFrameData: Sendable, Equatable {
             phase: json["phase"]?.stringValue ?? "working", title: string("title"), project: string("project"),
             text: string("text"), steps: steps, stepsOmitted: Int(json["stepsOmitted"]?.intValue ?? 0), todos: todos,
             activeElapsedSecs: json["activeElapsedSecs"]?.intValue.map { UInt64(max(0, $0)) }, at: json["at"]?.intValue,
-            model: string("model"), reasoning: string("reasoning"), speed: string("speed").flatMap(TaskSpeed.init(rawValue:))
+            model: string("model"), reasoning: string("reasoning"), speed: string("speed").flatMap(TaskSpeed.init(rawValue:)),
+            latestText: json["latestText"].flatMap(WatchLatestText.init(json:)), supportsLatestText: json["latestText"] != nil
         )
     }
 }

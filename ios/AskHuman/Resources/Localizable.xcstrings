@@ -1240,6 +1240,16 @@
         }
       }
     },
+    "Collapse" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "收起"
+          }
+        }
+      }
+    },
     "Collapsed" : {
       "localizations" : {
         "zh-Hans" : {
@@ -1890,6 +1900,16 @@
         }
       }
     },
+    "Expand" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "展开"
+          }
+        }
+      }
+    },
     "Expanded" : {
       "localizations" : {
         "zh-Hans" : {
@@ -2360,6 +2380,16 @@
         }
       }
     },
+    "Latest excerpt" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "末尾片段"
+          }
+        }
+      }
+    },
     "Leave it empty to use the name the Mac gives itself." : {
       "localizations" : {
         "zh-Hans" : {
@@ -2636,6 +2666,16 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "需要你确认：%@"
+          }
+        }
+      }
+    },
+    "New content" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "有新内容"
           }
         }
       }
@@ -5345,6 +5385,16 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "没有可发送的内容。"
+          }
+        }
+      }
+    },
+    "Thinking" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "思考"
           }
         }
       }

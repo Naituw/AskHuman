@@ -328,7 +328,7 @@ fn gui_focus_tick(state: &Arc<ServerState>) {
             .and_then(|r| r.get("seq").and_then(|v| v.as_u64()))
             .unwrap_or(0);
         let frame = crate::watch::build_frame(seq, rec, waiting.contains(&session_id));
-        let sig = crate::watch::signature(&frame);
+        let sig = crate::watch::detail_signature(&frame);
         if sig == last_sig {
             continue;
         }
@@ -406,6 +406,7 @@ pub(super) fn frame_detail_json(
         "title": f.title,
         "project": f.project,
         "text": f.text,
+        "latestText": f.latest_text,
         "steps": steps,
         "stepsOmitted": f.steps_omitted,
         "todos": todos,

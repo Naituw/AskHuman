@@ -128,6 +128,62 @@ impl Session {
         }
         None
     }
+
+    pub fn latest_observation_text(&self) -> Option<crate::agents::observation::LatestText> {
+        for turn in protocol::turns(&self.state).into_iter().rev() {
+            let items = protocol::entities(&turn["items"]);
+            for (index, item) in items.iter().enumerate().rev() {
+                let completed = index + 1 < items.len()
+                    || turn["status"] == "completed"
+                    || item["status"] == "completed";
+                if !completed {
+                    continue;
+                }
+                let (kind, text) = match item["type"].as_str() {
+                    Some("agentMessage" | "assistantMessage") => {
+                        ("assistant", item["text"].as_str().map(str::to_string))
+                    }
+                    Some("reasoning") => (
+                        "thinking",
+                        native_text_parts(&item["summary"])
+                            .or_else(|| native_text_parts(&item["content"])),
+                    ),
+                    _ => continue,
+                };
+                if let Some(text) = text {
+                    if let Some(candidate) = crate::agents::observation::LatestText::new(
+                        format!(
+                            "{}:{}",
+                            turn["id"]
+                                .as_str()
+                                .or_else(|| turn["turnId"].as_str())
+                                .unwrap_or(""),
+                            item["id"].as_str().unwrap_or("")
+                        ),
+                        kind,
+                        &text,
+                        None,
+                    ) {
+                        return Some(candidate);
+                    }
+                }
+            }
+        }
+        None
+    }
+}
+
+fn native_text_parts(value: &Value) -> Option<String> {
+    if let Some(text) = value.as_str().filter(|text| !text.trim().is_empty()) {
+        return Some(text.to_string());
+    }
+    let parts: Vec<_> = value
+        .as_array()?
+        .iter()
+        .filter_map(|part| part.as_str().or_else(|| part["text"].as_str()))
+        .filter(|text| !text.trim().is_empty())
+        .collect();
+    (!parts.is_empty()).then(|| parts.join("\n"))
 }
 
 pub struct Bridge {
@@ -721,6 +777,25 @@ fn save(path: &std::path::Path, value: &Value) -> Result<(), String> {
 mod tests {
     use super::launch::select_target;
     use super::*;
+    #[test]
+    fn observation_only_publishes_completed_native_items() {
+        let mut session = Session {
+            state: Arc::new(json!({"turns":[{"id":"turn","status":"inProgress","items":[
+                {"id":"body","type":"agentMessage","text":"Old prose"},
+                {"id":"thought","type":"reasoning","summary":["Growing thought"]}
+            ]}]})),
+            ..Session::default()
+        };
+        assert_eq!(session.latest_observation_text().unwrap().text, "Old prose");
+        session.state = Arc::new(json!({"turns":[{"id":"turn","status":"inProgress","items":[
+            {"id":"body","type":"agentMessage","text":"Old prose"},
+            {"id":"thought","type":"reasoning","summary":["Completed thought"]},
+            {"id":"tool","type":"commandExecution"}
+        ]}]}));
+        let candidate = session.latest_observation_text().unwrap();
+        assert_eq!(candidate.kind, "thinking");
+        assert_eq!(candidate.text, "Completed thought");
+    }
     fn bridge() -> Bridge {
         Bridge {
             connection: tokio::sync::Mutex::new(None),

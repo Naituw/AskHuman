@@ -1,6 +1,7 @@
 # 需求：Agent 状态窗口改版为双栏「Agent 控制台」（集成 Watch）
 
 > 状态：已实现（2026-07-25）。
+> 2026-11-08 已实现的正文 / 思考展示与阅读稳定性增量见 [Agent 观察中的最新正文与思考](agent-observation-latest-text.md)，其 O1–O8 补充 C2 / C8 的主文字区行为。
 > 实现计划：`docs/plans/gui-agent-console.md`。
 > 视觉/交互基准：`src/prototype/agent-console.html`（浏览器直跑原型，迭代先行；
 > 运行方式见 `docs/development.md`「UI prototyping」）。

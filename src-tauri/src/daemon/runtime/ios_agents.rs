@@ -269,7 +269,11 @@ pub(super) fn watch_frame(state: &Arc<ServerState>, key: &str) -> Option<FrameDa
         }
     }
     Some(FrameData {
-        sig: format!("{}|{:?}", crate::watch::signature(&frame), session.speed),
+        sig: format!(
+            "{}|{:?}",
+            crate::watch::detail_signature(&frame),
+            session.speed
+        ),
         ended: frame.phase == crate::watch::WatchPhase::Ended,
         frame: with_session_model(frame_detail_json(session_id, &frame), &session),
     })

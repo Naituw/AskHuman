@@ -253,6 +253,7 @@ fn poc_frame(i: usize, started: u64) -> crate::watch::WatchFrame {
         state,
     };
     crate::watch::WatchFrame {
+        latest_text: None,
         seq: 99,
         kind_label: "PoC".into(),
         forked_from: None,

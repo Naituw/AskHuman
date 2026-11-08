@@ -21,6 +21,7 @@ pub mod detect;
 pub mod failure;
 pub mod interject;
 pub mod model_catalog;
+pub mod observation;
 pub mod registry;
 pub mod report;
 pub mod result;

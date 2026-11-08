@@ -1017,6 +1017,7 @@ pub(crate) fn todo_summary(
 /// 一条注册表快照记录的「当前活动」组成部分（transcript 尾部 × hook 实时工具融合结果）。
 /// `/status <编号>` 与 `/watch` 实时卡共用同一份融合逻辑。
 pub(crate) struct ActivityParts {
+    pub latest_text: Option<crate::agents::observation::LatestText>,
     /// 最后一段助手文字（transcript 侧）。
     pub text: Option<String>,
     /// 最后一段文字之后的足迹时间线（≤3 步，旧→新；实时工具严格更新时并入为进行中的末步）。
@@ -1038,7 +1039,13 @@ pub(crate) fn activity_parts(rec: &Value) -> ActivityParts {
     let sid = rec.get("sessionId").and_then(|v| v.as_str()).unwrap_or("");
     let activity = crate::agents::AgentKind::parse(kind)
         .filter(|_| !sid.is_empty())
-        .and_then(|k| crate::agents::activity::resolve_activity(k, sid));
+        .and_then(|k| {
+            crate::agents::activity::resolve_activity(
+                k,
+                sid,
+                matches!(rec["state"].as_str(), Some("idle" | "ended")),
+            )
+        });
 
     // transcript 侧：助手文字永远取此；足迹与时间用于与实时工具比较。
     let ts_text = activity.as_ref().and_then(|a| a.text.clone());
@@ -1098,6 +1105,7 @@ pub(crate) fn activity_parts(rec: &Value) -> ActivityParts {
         ts_at
     };
     ActivityParts {
+        latest_text: activity.and_then(|a| a.latest_text),
         text: ts_text,
         steps,
         steps_omitted: omitted,

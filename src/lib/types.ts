@@ -882,6 +882,15 @@ export interface DiffFileView {
   lines: { kind: "add" | "del" | "context" | "header" | string; text: string }[];
 }
 
+export interface LatestAgentText {
+  id: string;
+  revision: string;
+  kind: "assistant" | "thinking";
+  text: string;
+  truncated: boolean;
+  at?: number | null;
+}
+
 /** 焦点会话详情帧（tagged，daemon 签名变化才推；spec gui-agent-console C8/R5）。 */
 export interface AgentDetailFrame {
   type: "watchFrame" | string;
@@ -892,6 +901,7 @@ export interface AgentDetailFrame {
   title?: string | null;
   project?: string | null;
   text?: string | null;
+  latestText?: LatestAgentText | null;
   steps: DetailStep[];
   stepsOmitted: number;
   todos: DetailTodo[];

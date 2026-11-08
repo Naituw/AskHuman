@@ -178,6 +178,7 @@ mod tests {
 
     fn frame() -> WatchFrame {
         WatchFrame {
+            latest_text: None,
             seq: 3,
             kind_label: "Cursor".into(),
             title: Some("重构空闲退出".into()),

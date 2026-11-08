@@ -918,6 +918,15 @@ fn oversized_frames_are_shrunk_to_the_budget() {
 
     let small = serde_json::json!({"phase": "idle", "text": "hi", "steps": [], "todos": []});
     assert_eq!(fit_frame(small.clone()), small);
+
+    let thought = "思考\n\"".repeat(4_000);
+    let frame = fit_frame(serde_json::json!({
+        "text": "legacy ".repeat(2_000), "steps": [], "todos": [],
+        "latestText": {"id":"stable", "revision":"r1", "kind":"thinking", "text":thought,"truncated":false},
+    }));
+    assert!(serde_json::to_vec(&frame).unwrap().len() <= wire::WATCH_FRAME_MAX_BYTES);
+    assert_eq!(frame["latestText"]["truncated"], true);
+    assert_eq!(frame["latestText"]["revision"], "r1");
 }
 
 #[tokio::test(start_paused = true)]

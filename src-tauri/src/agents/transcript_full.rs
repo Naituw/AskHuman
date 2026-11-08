@@ -464,6 +464,39 @@ pub fn event_json(ev: &TranscriptEvent) -> Value {
     }
 }
 
+/// JSONL records are appended after their message/item completes. Reuse the full transcript
+/// decoder while leaving legacy activity/tool aggregation independent of reasoning.
+pub(super) fn latest_text_from_lines(
+    kind: AgentKind,
+    lines: &[String],
+) -> Option<super::observation::LatestText> {
+    let mut latest = None;
+    let mut tools = OpenTools::default();
+    for line in lines {
+        let Ok(value) = serde_json::from_str::<Value>(line) else {
+            continue;
+        };
+        let mut events = Vec::new();
+        push_full_with_limit(kind, &value, &mut events, &mut tools, usize::MAX);
+        for event in events {
+            let (kind, text, at) = match event {
+                TranscriptEvent::AssistantText { text, at, .. } => ("assistant", text, at),
+                TranscriptEvent::Thinking { text, at, .. } => ("thinking", text, at),
+                _ => continue,
+            };
+            latest = super::observation::LatestText::new(
+                super::observation::fingerprint(line),
+                kind,
+                &text,
+                at,
+            );
+        }
+        // Tool result pairing is irrelevant to choosing text; indexes belong to this record only.
+        tools = OpenTools::default();
+    }
+    latest
+}
+
 pub fn load_path(kind: AgentKind, path: &Path) -> Result<TranscriptDoc, String> {
     let (lines, truncated_head) = read_lines_bounded(path, MAX_READ_BYTES)?;
     let mut events = Vec::new();
@@ -606,16 +639,31 @@ fn push_full(
     out: &mut Vec<TranscriptEvent>,
     open_tools: &mut OpenTools,
 ) {
+    push_full_with_limit(kind, v, out, open_tools, MAX_TEXT_CHARS);
+}
+
+fn push_full_with_limit(
+    kind: AgentKind,
+    v: &Value,
+    out: &mut Vec<TranscriptEvent>,
+    open_tools: &mut OpenTools,
+    text_limit: usize,
+) {
     match kind {
-        AgentKind::Cursor | AgentKind::Claude => push_msg(v, out, open_tools),
-        AgentKind::Codex => push_codex(v, out, open_tools),
-        AgentKind::Grok => push_grok(v, out, open_tools),
-        AgentKind::Pi => push_pi(v, out, open_tools),
+        AgentKind::Cursor | AgentKind::Claude => push_msg(v, out, open_tools, text_limit),
+        AgentKind::Codex => push_codex(v, out, open_tools, text_limit),
+        AgentKind::Grok => push_grok(v, out, open_tools, text_limit),
+        AgentKind::Pi => push_pi(v, out, open_tools, text_limit),
         AgentKind::Antigravity => {}
     }
 }
 
-fn push_pi(v: &Value, out: &mut Vec<TranscriptEvent>, open_tools: &mut OpenTools) {
+fn push_pi(
+    v: &Value,
+    out: &mut Vec<TranscriptEvent>,
+    open_tools: &mut OpenTools,
+    text_limit: usize,
+) {
     match v.get("type").and_then(Value::as_str).unwrap_or("") {
         "message" => {
             let Some(message) = v.get("message") else {
@@ -641,7 +689,7 @@ fn push_pi(v: &Value, out: &mut Vec<TranscriptEvent>, open_tools: &mut OpenTools
                     let (text, label) = clean_user(text.trim());
                     if !text.is_empty() {
                         out.push(TranscriptEvent::UserText {
-                            text: trunc(&text, MAX_TEXT_CHARS),
+                            text: trunc(&text, text_limit),
                             at: event_time(v),
                             at_label: label,
                         });
@@ -662,7 +710,7 @@ fn push_pi(v: &Value, out: &mut Vec<TranscriptEvent>, open_tools: &mut OpenTools
                             let text = text.trim();
                             if !text.is_empty() && !is_noise_assistant(text) {
                                 out.push(TranscriptEvent::AssistantText {
-                                    text: trunc(text, MAX_TEXT_CHARS),
+                                    text: trunc(text, text_limit),
                                     at: event_time(v),
                                     at_label: None,
                                 });
@@ -674,7 +722,7 @@ fn push_pi(v: &Value, out: &mut Vec<TranscriptEvent>, open_tools: &mut OpenTools
                             let text = text.trim();
                             if !text.is_empty() {
                                 out.push(TranscriptEvent::Thinking {
-                                    text: trunc(text, 800),
+                                    text: trunc(text, text_limit),
                                     at: event_time(v),
                                     at_label: None,
                                 });
@@ -706,7 +754,7 @@ fn push_pi(v: &Value, out: &mut Vec<TranscriptEvent>, open_tools: &mut OpenTools
             if let Some(summary) = v.get("summary").and_then(Value::as_str) {
                 out.push(TranscriptEvent::Meta(format!(
                     "Compaction: {}",
-                    trunc(summary.trim(), MAX_TEXT_CHARS)
+                    trunc(summary.trim(), text_limit)
                 )));
             }
         }
@@ -714,7 +762,7 @@ fn push_pi(v: &Value, out: &mut Vec<TranscriptEvent>, open_tools: &mut OpenTools
             if let Some(summary) = v.get("summary").and_then(Value::as_str) {
                 out.push(TranscriptEvent::Meta(format!(
                     "Branch summary: {}",
-                    trunc(summary.trim(), MAX_TEXT_CHARS)
+                    trunc(summary.trim(), text_limit)
                 )));
             }
         }
@@ -808,7 +856,12 @@ fn is_codex_contextual_user_payload(text: &str) -> bool {
     text.trim_start().starts_with('<')
 }
 
-fn push_msg(v: &Value, out: &mut Vec<TranscriptEvent>, open_tools: &mut OpenTools) {
+fn push_msg(
+    v: &Value,
+    out: &mut Vec<TranscriptEvent>,
+    open_tools: &mut OpenTools,
+    text_limit: usize,
+) {
     let role = v
         .get("role")
         .and_then(|r| r.as_str())
@@ -829,7 +882,7 @@ fn push_msg(v: &Value, out: &mut Vec<TranscriptEvent>, open_tools: &mut OpenTool
                 let (t, label) = clean_user(t);
                 if !t.is_empty() {
                     out.push(TranscriptEvent::UserText {
-                        text: trunc(&t, MAX_TEXT_CHARS),
+                        text: trunc(&t, text_limit),
                         at: event_time(v),
                         at_label: label,
                     });
@@ -854,7 +907,7 @@ fn push_msg(v: &Value, out: &mut Vec<TranscriptEvent>, open_tools: &mut OpenTool
                             continue;
                         }
                         out.push(TranscriptEvent::AssistantText {
-                            text: trunc(text, MAX_TEXT_CHARS),
+                            text: trunc(text, text_limit),
                             at: event_time(v),
                             at_label: None,
                         });
@@ -862,7 +915,7 @@ fn push_msg(v: &Value, out: &mut Vec<TranscriptEvent>, open_tools: &mut OpenTool
                         let (t, label) = clean_user(text);
                         if !t.is_empty() {
                             out.push(TranscriptEvent::UserText {
-                                text: trunc(&t, MAX_TEXT_CHARS),
+                                text: trunc(&t, text_limit),
                                 at: event_time(v),
                                 at_label: label,
                             });
@@ -870,7 +923,7 @@ fn push_msg(v: &Value, out: &mut Vec<TranscriptEvent>, open_tools: &mut OpenTool
                     }
                 }
             }
-            // Thinking kept but heavily truncated — user cares more about output + tools.
+            // Public reasoning also feeds the latest-text observation candidate.
             "thinking" | "reasoning" => {
                 if let Some(text) = item
                     .get("thinking")
@@ -880,7 +933,7 @@ fn push_msg(v: &Value, out: &mut Vec<TranscriptEvent>, open_tools: &mut OpenTool
                     let text = text.trim();
                     if !text.is_empty() {
                         out.push(TranscriptEvent::Thinking {
-                            text: trunc(text, 800),
+                            text: trunc(text, text_limit),
                             at: event_time(v),
                             at_label: None,
                         });
@@ -920,7 +973,12 @@ fn push_msg(v: &Value, out: &mut Vec<TranscriptEvent>, open_tools: &mut OpenTool
     }
 }
 
-fn push_codex(v: &Value, out: &mut Vec<TranscriptEvent>, open_tools: &mut OpenTools) {
+fn push_codex(
+    v: &Value,
+    out: &mut Vec<TranscriptEvent>,
+    open_tools: &mut OpenTools,
+    text_limit: usize,
+) {
     let ttype = v.get("type").and_then(|t| t.as_str()).unwrap_or("");
     let Some(payload) = v.get("payload") else {
         return;
@@ -941,14 +999,14 @@ fn push_codex(v: &Value, out: &mut Vec<TranscriptEvent>, open_tools: &mut OpenTo
                     let (t, label) = clean_user(t);
                     if !t.is_empty() {
                         out.push(TranscriptEvent::UserText {
-                            text: trunc(&t, MAX_TEXT_CHARS),
+                            text: trunc(&t, text_limit),
                             at: event_time(v),
                             at_label: label,
                         });
                     }
                 } else if role == "assistant" {
                     out.push(TranscriptEvent::AssistantText {
-                        text: trunc(t, MAX_TEXT_CHARS),
+                        text: trunc(t, text_limit),
                         at: event_time(v),
                         at_label: None,
                     });
@@ -968,7 +1026,7 @@ fn push_codex(v: &Value, out: &mut Vec<TranscriptEvent>, open_tools: &mut OpenTo
                 let t = t.trim();
                 if !t.is_empty() {
                     out.push(TranscriptEvent::Thinking {
-                        text: trunc(t, MAX_TEXT_CHARS),
+                        text: trunc(t, text_limit),
                         at: event_time(v),
                         at_label: None,
                     });
@@ -1019,7 +1077,7 @@ fn push_codex(v: &Value, out: &mut Vec<TranscriptEvent>, open_tools: &mut OpenTo
                 let t = t.trim();
                 if !t.is_empty() {
                     out.push(TranscriptEvent::AssistantText {
-                        text: trunc(t, MAX_TEXT_CHARS),
+                        text: trunc(t, text_limit),
                         at: event_time(v),
                         at_label: None,
                     });
@@ -1031,7 +1089,7 @@ fn push_codex(v: &Value, out: &mut Vec<TranscriptEvent>, open_tools: &mut OpenTo
                 let (t, label) = clean_user(t.trim());
                 if !t.is_empty() {
                     out.push(TranscriptEvent::UserText {
-                        text: trunc(&t, MAX_TEXT_CHARS),
+                        text: trunc(&t, text_limit),
                         at: event_time(v),
                         at_label: label,
                     });
@@ -1091,14 +1149,19 @@ fn push_codex_item_completed(v: &Value, item: Option<&Value>, out: &mut Vec<Tran
     }
 }
 
-fn push_grok(v: &Value, out: &mut Vec<TranscriptEvent>, open_tools: &mut OpenTools) {
+fn push_grok(
+    v: &Value,
+    out: &mut Vec<TranscriptEvent>,
+    open_tools: &mut OpenTools,
+    text_limit: usize,
+) {
     match v.get("type").and_then(|t| t.as_str()).unwrap_or("") {
         "user" => {
             if let Some(t) = value_text(v.get("content")) {
                 let (t, label) = clean_user(t.trim());
                 if !t.is_empty() {
                     out.push(TranscriptEvent::UserText {
-                        text: trunc(&t, MAX_TEXT_CHARS),
+                        text: trunc(&t, text_limit),
                         at: event_time(v),
                         at_label: label,
                     });
@@ -1110,7 +1173,7 @@ fn push_grok(v: &Value, out: &mut Vec<TranscriptEvent>, open_tools: &mut OpenToo
                 let t = t.trim();
                 if !t.is_empty() {
                     out.push(TranscriptEvent::AssistantText {
-                        text: trunc(t, MAX_TEXT_CHARS),
+                        text: trunc(t, text_limit),
                         at: event_time(v),
                         at_label: None,
                     });
@@ -1120,7 +1183,7 @@ fn push_grok(v: &Value, out: &mut Vec<TranscriptEvent>, open_tools: &mut OpenToo
                 let r = r.trim();
                 if !r.is_empty() {
                     out.push(TranscriptEvent::Thinking {
-                        text: trunc(r, MAX_TEXT_CHARS),
+                        text: trunc(r, text_limit),
                         at: event_time(v),
                         at_label: None,
                     });
@@ -1173,7 +1236,7 @@ fn push_grok(v: &Value, out: &mut Vec<TranscriptEvent>, open_tools: &mut OpenToo
                 let t = t.trim();
                 if !t.is_empty() {
                     out.push(TranscriptEvent::Thinking {
-                        text: trunc(t, MAX_TEXT_CHARS),
+                        text: trunc(t, text_limit),
                         at: event_time(v),
                         at_label: None,
                     });
@@ -1927,6 +1990,31 @@ fn trunc(s: &str, max: usize) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn observation_decodes_public_reasoning_and_keeps_the_actual_tail() {
+        let thought = format!("{}Latest action", "思考".repeat(6000));
+        for (kind, value) in [
+            (
+                AgentKind::Claude,
+                serde_json::json!({"type":"assistant","message":{"content":[{"type":"thinking","thinking":thought}]}}),
+            ),
+            (
+                AgentKind::Pi,
+                serde_json::json!({"type":"message","message":{"role":"assistant","content":[{"type":"thinking","thinking":thought}]}}),
+            ),
+            (
+                AgentKind::Codex,
+                serde_json::json!({"type":"response_item","payload":{"type":"reasoning","summary":[{"type":"summary_text","text":thought}]}}),
+            ),
+        ] {
+            let candidate = latest_text_from_lines(kind, &[value.to_string()]).unwrap();
+            assert_eq!(candidate.kind, "thinking");
+            assert!(candidate.text.ends_with("Latest action"));
+            assert!(candidate.truncated);
+            assert!(candidate.text.len() <= 4000);
+        }
+    }
 
     fn write_jsonl(lines: &[Value]) -> tempfile::NamedTempFile {
         use std::io::Write;

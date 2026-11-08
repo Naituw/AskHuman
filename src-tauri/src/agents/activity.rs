@@ -33,6 +33,8 @@ const MAX_TODO_CHARS: usize = 60;
 /// 一次「当前活动」解析结果。`text`/`steps`/`todos` 至少一个非空时才会返回（否则 `resolve_activity` 返回 `None`）。
 #[derive(Debug, Clone, PartialEq)]
 pub struct Activity {
+    /// Latest completed prose or public reasoning, independent of the legacy tool trail.
+    pub latest_text: Option<super::observation::LatestText>,
     /// 最后一段助手自然语言文字（已截断）。
     pub text: Option<String>,
     /// 最后一段文字**之后**的工具足迹（≤`MAX_STEPS` 步，旧→新；文字出现即清空重计）。
@@ -105,9 +107,9 @@ pub enum ToolLabel {
 /// 解析某家 agent 某 session 的「当前活动」。取不到（文件缺失 / 无文字也无工具）返回 `None`。
 /// Cursor 先试 IDE 的 vscdb 实时源（jsonl 在 IDE 长回合内会冻结数小时，spec gui-agent-console
 /// 反馈记录 2026-07-25）；未命中（CLI 会话 / 库缺失 / schema 变化）回退 jsonl。
-pub fn resolve_activity(kind: AgentKind, session_id: &str) -> Option<Activity> {
+pub fn resolve_activity(kind: AgentKind, session_id: &str, turn_ended: bool) -> Option<Activity> {
     if kind == AgentKind::Cursor {
-        if let Some(a) = super::cursor_vscdb::resolve_activity(session_id) {
+        if let Some(a) = super::cursor_vscdb::resolve_activity(session_id, turn_ended) {
             return Some(a);
         }
     }
@@ -230,7 +232,19 @@ fn analyze(kind: AgentKind, lines: &[String]) -> Option<Activity> {
     }
     // Cursor jsonl 的调用**跑完后**才落盘且从不写 tool_result（见 aggregate 注释）→ 全部收敛；
     // vscdb 源自带真实状态，不走此收敛。
-    aggregate(&evs, kind == AgentKind::Cursor)
+    let latest_text = super::transcript_full::latest_text_from_lines(kind, lines);
+    let mut activity = aggregate(&evs, kind == AgentKind::Cursor).or_else(|| {
+        latest_text.as_ref().map(|_| Activity {
+            latest_text: None,
+            text: None,
+            steps: Vec::new(),
+            steps_omitted: 0,
+            todos: Vec::new(),
+            at: None,
+        })
+    })?;
+    activity.latest_text = latest_text;
+    Some(activity)
 }
 
 /// 事件流 → 「当前活动」聚合（jsonl 与 vscdb 两源共用）。`settle_all`：结尾把所有仍在跑的
@@ -310,6 +324,7 @@ pub(super) fn aggregate(evs: &[Ev], settle_all: bool) -> Option<Activity> {
     }
     // `at` 由 `resolve_activity` 从文件 mtime 填充；`analyze` 是纯函数不触盘。
     Some(Activity {
+        latest_text: None,
         text,
         steps,
         steps_omitted: omitted,
@@ -1423,7 +1438,7 @@ mod tests {
             eprintln!("skip: paginated probe session not on disk");
             return;
         }
-        let activity = resolve_activity(AgentKind::Codex, sid);
+        let activity = resolve_activity(AgentKind::Codex, sid, false);
         eprintln!("real paginated activity={activity:?}");
         let Some(activity) = activity else {
             panic!("expected activity from assistant response_item");
@@ -1445,7 +1460,7 @@ mod tests {
             eprintln!("skip: paginated write-session probe not on disk");
             return;
         };
-        let activity = resolve_activity(AgentKind::Codex, sid);
+        let activity = resolve_activity(AgentKind::Codex, sid, false);
         eprintln!("write-session activity={activity:?} path={path:?}");
         assert!(
             activity.is_some(),

@@ -32,6 +32,17 @@ pub(super) fn fit_frame(mut frame: Value) -> Value {
         let Some(object) = frame.as_object_mut() else {
             break;
         };
+        if let Some(latest) = object.get_mut("latestText").and_then(Value::as_object_mut) {
+            if let Some(text) = latest.get("text").and_then(Value::as_str) {
+                let length = text.chars().count();
+                if length > 400 {
+                    let kept: String = text.chars().skip(length / 4).collect();
+                    latest.insert("text".into(), Value::String(kept));
+                    latest.insert("truncated".into(), Value::Bool(true));
+                    continue;
+                }
+            }
+        }
         let text_len = object
             .get("text")
             .and_then(Value::as_str)

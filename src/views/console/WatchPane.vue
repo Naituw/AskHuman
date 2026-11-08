@@ -3,7 +3,7 @@
 // 足迹时间线 + TODO 面板。帧由 daemon 按签名推送（`agent-detail` 事件，父级转发）。
 import { computed, ref } from "vue";
 import { useI18n } from "vue-i18n";
-import MarkdownContent from "../../components/MarkdownContent.vue";
+import LatestAgentText from "./LatestAgentText.vue";
 import type { AgentDetailFrame, DetailStep } from "../../lib/types";
 
 const { t } = useI18n();
@@ -43,11 +43,11 @@ const todoSummary = computed(() => {
   </div>
   <template v-else>
     <div class="act-heading-row">
-      <span class="act-heading">{{ t("console.activityHeading", { time: clockTime(frame.at) }) }}</span>
+      <span class="act-heading" :title="clockTime(frame.latestText?.at ?? frame.at)">{{ t("console.observation.heading") }}</span>
       <slot name="heading-actions" />
     </div>
-    <MarkdownContent v-if="frame.text" class="act-text" :source="frame.text" />
-    <p v-else-if="!frame.steps.length" class="act-none">{{ t("console.noActivity") }}</p>
+    <LatestAgentText :key="frame.sessionId" :candidate="frame.latestText" :legacy-text="frame.text" />
+    <p v-if="!frame.latestText?.text && !frame.text && !frame.steps.length" class="act-none">{{ t("console.noActivity") }}</p>
 
     <div v-if="frame.steps.length" class="steps">
       <div v-if="frame.stepsOmitted > 0" class="step omitted">

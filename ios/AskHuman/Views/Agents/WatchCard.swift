@@ -8,21 +8,20 @@ struct WatchCard: View {
     let watch: WatchState?
     /// The Mac is reachable and still lists the session, so frames can arrive.
     let live: Bool
+    @Binding var reading: Bool
 
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
             header
             if let frame = watch?.frame {
-                if let text = frame.text, !text.isEmpty {
-                    MarkdownView(text: text)
-                }
+                WatchText(frame: frame, pageReading: $reading).id(item.id)
                 if !frame.todos.isEmpty {
                     TodoList(todos: frame.todos)
                 }
                 if !frame.steps.isEmpty || frame.stepsOmitted > 0 {
                     StepTimeline(steps: frame.steps, omitted: frame.stepsOmitted)
                 }
-                if (frame.text ?? "").isEmpty, frame.todos.isEmpty, frame.steps.isEmpty {
+                if (frame.latestText?.text ?? frame.text ?? "").isEmpty, frame.todos.isEmpty, frame.steps.isEmpty {
                     Text("Nothing to show yet.")
                         .font(.subheadline)
                         .foregroundStyle(.secondary)

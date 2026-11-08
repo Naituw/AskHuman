@@ -116,6 +116,7 @@ pub enum CardMode {
 /// 故内容不变不编辑。
 #[derive(Debug, Clone, PartialEq)]
 pub struct WatchFrame {
+    pub latest_text: Option<crate::agents::observation::LatestText>,
     /// 展示编号（当前 daemon 生命周期内稳定；重启后重解析）。
     pub seq: u64,
     /// 家族展示名（Cursor / Claude Code / …）。
@@ -147,6 +148,7 @@ pub struct WatchFrame {
 pub fn build_frame(seq: u64, rec: Option<&Value>, waiting: bool) -> WatchFrame {
     let Some(rec) = rec else {
         return WatchFrame {
+            latest_text: None,
             seq,
             kind_label: String::new(),
             forked_from: None,
@@ -208,8 +210,14 @@ pub fn build_frame(seq: u64, rec: Option<&Value>, waiting: bool) -> WatchFrame {
         if let Some(text) = session.latest_text() {
             parts.text = Some(text);
         }
+        // Persisted rollout items already carry completion boundaries. The native stream
+        // supplies completed text when that session has no readable rollout candidate.
+        if parts.latest_text.is_none() {
+            parts.latest_text = session.latest_observation_text();
+        }
     }
     WatchFrame {
+        latest_text: parts.latest_text,
         seq,
         kind_label,
         forked_from,
@@ -252,6 +260,18 @@ pub fn automatic_final_kind(
         WatchPhase::Idle if idle_grace_expired(rec, now) => Some(FinalKind::Idle),
         WatchPhase::Working | WatchPhase::Idle | WatchPhase::Waiting => None,
     }
+}
+
+/// Desktop/phone text candidates have an independent signature from legacy IM projections.
+pub fn detail_signature(frame: &WatchFrame) -> String {
+    format!(
+        "{}|{:?}",
+        signature(frame),
+        frame
+            .latest_text
+            .as_ref()
+            .map(|text| (&text.kind, &text.revision))
+    )
 }
 
 /// Cross-channel signature of user-visible content. Activity timestamps and cumulative active

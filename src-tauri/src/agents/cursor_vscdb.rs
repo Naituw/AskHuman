@@ -15,11 +15,12 @@
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
+use std::time::{Duration, Instant};
 
 use rusqlite::{Connection, OpenFlags};
 use serde_json::Value;
 
-use super::activity::{self, Activity, Ev, TodoItem, TodoState};
+use super::activity::{self, Activity, Ev, TodoItem};
 use super::transcript_full::{self, AskHumanBlock, TranscriptDoc, TranscriptEvent};
 
 /// 活动帧滚动事件窗上限（Text/Tool/ToolResult；TODO 走独立台账不受限）。
@@ -180,15 +181,69 @@ fn bubble_value(conn: &Connection, session_id: &str, bubble_id: &str) -> Option<
     serde_json::from_str(&raw).ok()
 }
 
-/// 有序消息头（bubbleId 列表）。
-fn header_ids(composer: &Value) -> Option<Vec<String>> {
-    let arr = composer.get("fullConversationHeadersOnly")?.as_array()?;
-    Some(
-        arr.iter()
-            .filter_map(|h| h.get("bubbleId").and_then(|v| v.as_str()))
-            .map(|s| s.to_string())
-            .collect(),
-    )
+/// A bounded suffix of the authoritative conversation directory.
+struct HeaderWindow {
+    ids: Vec<String>,
+    start: usize,
+    total: usize,
+    generation: String,
+}
+
+fn header_window(
+    conn: &Connection,
+    session_id: &str,
+    composer: &Value,
+    limit: usize,
+) -> Option<HeaderWindow> {
+    let (headers, start, total, generation) =
+        if let Some(log) = composer.get("headerLog").filter(|v| !v.is_null()) {
+            let size = usize::try_from(log.get("chunkSize")?.as_u64()?).ok()?;
+            let chunks = usize::try_from(log.get("chunkCount")?.as_u64()?).ok()?;
+            let count = usize::try_from(log.get("count")?.as_u64()?).ok()?;
+            if size == 0 || size > 4096 || chunks > 65536 || count > size.checked_mul(chunks)? {
+                return None;
+            }
+            let first = chunks.saturating_sub(limit.div_ceil(size) + 1);
+            let mut headers = Vec::new();
+            for index in first..chunks {
+                let value: Value = serde_json::from_str(&kv_get(
+                    conn,
+                    &format!("composerConvHeaders:{session_id}:{index:06}"),
+                )?)
+                .ok()?;
+                let chunk = value.as_array()?;
+                if chunk.len() > size {
+                    return None;
+                }
+                headers.extend(chunk.iter().cloned());
+            }
+            if headers.len() > count || (first == 0 && headers.len() != count) {
+                return None;
+            }
+            let start = count - headers.len();
+            (
+                headers,
+                start,
+                count,
+                log["generation"].as_str().unwrap_or("").to_string(),
+            )
+        } else {
+            let headers = composer.get("fullConversationHeadersOnly")?.as_array()?;
+            let total = headers.len();
+            let start = total.saturating_sub(limit);
+            (headers[start..].to_vec(), start, total, String::new())
+        };
+    let skip = headers.len().saturating_sub(limit);
+    let ids = headers[skip..]
+        .iter()
+        .map(|h| h.get("bubbleId")?.as_str().map(str::to_string))
+        .collect::<Option<Vec<_>>>()?;
+    Some(HeaderWindow {
+        ids,
+        start: start + skip,
+        total,
+        generation,
+    })
 }
 
 /// 官方会话标题（IDE 恢复列表同款）。
@@ -295,7 +350,10 @@ fn workspace_for_session(storage: &Path, session_id: &str) -> Option<String> {
 pub fn last_updated(session_id: &str) -> Option<std::time::SystemTime> {
     let conn = open()?;
     let composer = composer_value(&conn, session_id)?;
-    let ms = composer.get("lastUpdatedAt").and_then(|v| v.as_u64())?;
+    let ms = ["lastUpdatedAt", "conversationCheckpointLastUpdatedAt"]
+        .iter()
+        .filter_map(|key| composer.get(key).and_then(Value::as_u64))
+        .max()?;
     Some(std::time::UNIX_EPOCH + std::time::Duration::from_millis(ms))
 }
 
@@ -390,6 +448,11 @@ fn bubble_to_evs(b: &Value, out: &mut Vec<Ev>) {
 // ── 活动帧（增量缓存）──
 
 struct SessCache {
+    generation: String,
+    backfilled_at: Instant,
+    anchor: Option<String>,
+    latest_text: Option<super::observation::LatestText>,
+    last_activity: Option<Activity>,
     /// 已消化的消息头数量（headers 前缀）。
     seen: usize,
     /// 滚动事件窗（Text/Tool/ToolResult；上限 MAX_RECENT_EVS）。
@@ -412,93 +475,199 @@ fn cache() -> &'static Mutex<HashMap<String, SessCache>> {
 ///   补全、工具 status 翻转），读一次就定格会让新内容永远停在首见状态（用户实证）。
 ///
 /// 聚合语义与 jsonl 完全同源。会话不在库中（CLI / 旧版本）→ None（调用方回退 jsonl）。
-pub fn resolve_activity(session_id: &str) -> Option<Activity> {
-    let conn = open()?;
-    let composer = composer_value(&conn, session_id)?;
-    let headers = header_ids(&composer)?;
-    let finalized = headers.len().saturating_sub(TAIL_LIVE);
-
-    let mut guard = cache().lock().ok()?;
-    let entry = guard.entry(session_id.to_string()).or_insert(SessCache {
-        seen: 0,
-        recent: Vec::new(),
-        todos: Vec::new(),
-        last_at: None,
+pub fn resolve_activity(session_id: &str, turn_ended: bool) -> Option<Activity> {
+    let resolved = open().and_then(|conn| {
+        let tx = conn.unchecked_transaction().ok()?;
+        resolve_activity_in(&tx, session_id, turn_ended)
     });
-    // 消息头收缩（会话被裁剪/重建）→ 重置重放。
-    if headers.len() < entry.seen {
-        entry.seen = 0;
-        entry.recent.clear();
-        entry.todos.clear();
-        entry.last_at = None;
+    resolved.or_else(|| cache().lock().ok()?.get(session_id)?.last_activity.clone())
+}
+
+fn resolve_activity_in(conn: &Connection, session_id: &str, turn_ended: bool) -> Option<Activity> {
+    let composer = composer_value(conn, session_id)?;
+    let headers = header_window(conn, session_id, &composer, MAX_BACKFILL + TAIL_LIVE)?;
+    let finalized = headers.total.saturating_sub(TAIL_LIVE).max(headers.start);
+    let mut guard = cache().lock().ok()?;
+    if guard.len() > 128 {
+        guard.clear();
     }
-    // 首次同步只回看有限窗口（台账尽力重建；再早的 TODO 更新忽略）。
-    if entry.seen == 0 && finalized > MAX_BACKFILL {
-        entry.seen = finalized - MAX_BACKFILL;
-    }
-    // 定稿区：增量消化一次。
-    for bubble_id in &headers[entry.seen.min(finalized)..finalized] {
-        let Some(b) = bubble_value(&conn, session_id, bubble_id) else {
-            continue; // 定稿边界仍缺行（极罕见）：放弃该条，不阻塞。
+    let entry = guard
+        .entry(session_id.to_string())
+        .or_insert_with(|| SessCache {
+            generation: headers.generation.clone(),
+            backfilled_at: Instant::now(),
+            anchor: None,
+            latest_text: None,
+            last_activity: None,
+            seen: headers.start,
+            recent: Vec::new(),
+            todos: Vec::new(),
+            last_at: None,
+        });
+    let anchor_changed = entry
+        .seen
+        .checked_sub(1)
+        .and_then(|index| index.checked_sub(headers.start))
+        .and_then(|index| headers.ids.get(index))
+        .is_some_and(|id| entry.anchor.as_ref() != Some(id));
+    // Cursor changes its generation on ordinary writes as well as directory rebuilds.
+    // Recheck finalized rows at most once per ten seconds; always reread the live suffix.
+    if (entry.generation != headers.generation
+        && entry.backfilled_at.elapsed() >= Duration::from_secs(10))
+        || headers.total < entry.seen
+        || entry.seen < headers.start
+        || anchor_changed
+    {
+        *entry = SessCache {
+            generation: headers.generation.clone(),
+            backfilled_at: Instant::now(),
+            anchor: None,
+            latest_text: None,
+            last_activity: None,
+            seen: headers.start,
+            recent: Vec::new(),
+            todos: Vec::new(),
+            last_at: None,
         };
-        if let Some(at) = bubble_at(&b) {
-            entry.last_at = Some(at);
+    }
+    // Stop at a missing row so a later tick can retry it rather than permanently skipping it.
+    while entry.seen < finalized {
+        let id = &headers.ids[entry.seen - headers.start];
+        let Some(bubble) = bubble_value(conn, session_id, id) else {
+            break;
+        };
+        entry.last_at = bubble_at(&bubble).or(entry.last_at);
+        if let Some(text) = completed_bubble_text(&bubble, &format!("{session_id}:{id}"), true) {
+            entry.latest_text = Some(text);
         }
-        let mut evs = Vec::new();
-        bubble_to_evs(&b, &mut evs);
-        for ev in evs {
-            match ev {
+        let mut events = Vec::new();
+        bubble_to_evs(&bubble, &mut events);
+        for event in events {
+            match event {
                 Ev::Todos { replace, items } => {
-                    activity::apply_todo_update(&mut entry.todos, replace, &items);
+                    activity::apply_todo_update(&mut entry.todos, replace, &items)
                 }
                 other => entry.recent.push(other),
             }
         }
+        entry.seen += 1;
+        entry.anchor = Some(id.clone());
     }
-    entry.seen = finalized.max(entry.seen);
     if entry.recent.len() > MAX_RECENT_EVS {
-        let drop = entry.recent.len() - MAX_RECENT_EVS;
-        entry.recent.drain(..drop);
+        entry.recent.drain(..entry.recent.len() - MAX_RECENT_EVS);
     }
-
-    // 活动区：每拍重读，事件与 TODO 更新叠在定稿态副本之上。
-    let mut live_todos = entry.todos.clone();
-    let mut live_evs: Vec<Ev> = Vec::new();
-    let mut live_at = entry.last_at;
-    for bubble_id in &headers[finalized..] {
-        let Some(b) = bubble_value(&conn, session_id, bubble_id) else {
-            continue; // 行还没写入：下一拍自然补上。
+    let mut todos = entry.todos.clone();
+    let mut events = entry.recent.clone();
+    let mut latest_text = entry.latest_text.clone();
+    let mut at = entry.last_at;
+    for (offset, id) in headers.ids[entry.seen - headers.start..].iter().enumerate() {
+        let Some(bubble) = bubble_value(conn, session_id, id) else {
+            continue;
         };
-        if let Some(at) = bubble_at(&b) {
-            live_at = Some(live_at.map_or(at, |x| x.max(at)));
+        at = match (at, bubble_at(&bubble)) {
+            (Some(a), Some(b)) => Some(a.max(b)),
+            (a, b) => a.or(b),
+        };
+        // A completed root must be at least as recent as this bubble. Older persisted status
+        // can survive a retry and must not finalize a new streaming paragraph.
+        let started = bubble["startedAtMs"]
+            .as_u64()
+            .or_else(|| bubble_at(&bubble).map(|at| at * 1000));
+        let root_completed = composer["status"] == "completed"
+            && composer["lastUpdatedAt"]
+                .as_u64()
+                .zip(started)
+                .is_some_and(|(updated, started)| updated >= started);
+        let followed = entry.seen + offset + 1 < headers.total || turn_ended || root_completed;
+        if let Some(text) = completed_bubble_text(&bubble, &format!("{session_id}:{id}"), followed)
+        {
+            latest_text = Some(text);
         }
-        let mut evs = Vec::new();
-        bubble_to_evs(&b, &mut evs);
-        for ev in evs {
-            match ev {
+        let mut live = Vec::new();
+        bubble_to_evs(&bubble, &mut live);
+        for event in live {
+            match event {
                 Ev::Todos { replace, items } => {
-                    activity::apply_todo_update(&mut live_todos, replace, &items);
+                    activity::apply_todo_update(&mut todos, replace, &items)
                 }
-                other => live_evs.push(other),
+                other => events.push(other),
             }
         }
     }
-
-    // 聚合：TODO 快照（一条 replace 事件注入）+ 定稿滚动窗 + 活动区事件。
-    // vscdb 自带真实工具状态，不做 Cursor jsonl 的「全部收敛」。
-    let mut evs: Vec<Ev> = Vec::with_capacity(entry.recent.len() + live_evs.len() + 1);
-    if !live_todos.is_empty() {
-        evs.push(Ev::Todos {
+    // Inject the replayed TODO ledger independently of the bounded event window.
+    events.insert(
+        0,
+        Ev::Todos {
             replace: true,
-            items: live_todos,
-        });
+            items: todos,
+        },
+    );
+    let mut result = activity::aggregate(&events, false).unwrap_or(Activity {
+        latest_text: None,
+        text: None,
+        steps: Vec::new(),
+        steps_omitted: 0,
+        todos: Vec::new(),
+        at: None,
+    });
+    result.latest_text = latest_text;
+    result.at = at;
+    let has_content = result.latest_text.is_some()
+        || result.text.is_some()
+        || !result.steps.is_empty()
+        || !result.todos.is_empty();
+    if has_content {
+        entry.last_activity = Some(result.clone());
     }
-    evs.extend(entry.recent.iter().cloned());
-    evs.extend(live_evs);
-    let mut a = activity::aggregate(&evs, false)?;
-    a.todos.retain(|t| t.state != TodoState::Cancelled);
-    a.at = live_at;
-    Some(a)
+    has_content.then_some(result)
+}
+
+fn thinking_text(bubble: &Value) -> Option<&str> {
+    let thinking = bubble.get("thinking")?;
+    thinking
+        .as_str()
+        .or_else(|| thinking.get("text").and_then(Value::as_str))
+        .map(str::trim)
+        .filter(|text| !text.is_empty())
+}
+
+fn completed_bubble_text(
+    bubble: &Value,
+    id: &str,
+    followed: bool,
+) -> Option<super::observation::LatestText> {
+    if bubble["type"].as_u64() != Some(2) {
+        return None;
+    }
+    if followed || bubble["completedAtMs"].as_u64().is_some() {
+        let prose = bubble["text"].as_str().and_then(|text| {
+            super::observation::LatestText::new(
+                id.to_string(),
+                "assistant",
+                text,
+                bubble_at(bubble),
+            )
+        });
+        if prose.is_some() {
+            return prose;
+        }
+    }
+    if let Some(text) = thinking_text(bubble) {
+        if followed
+            || bubble["thinkingDurationMs"].as_u64().is_some()
+            || bubble["text"]
+                .as_str()
+                .is_some_and(|text| !text.trim().is_empty())
+        {
+            return super::observation::LatestText::new(
+                id.to_string(),
+                "thinking",
+                text,
+                bubble_at(bubble),
+            );
+        }
+    }
+    None
 }
 
 // ── 完整会话（控制台分页数据源）──
@@ -506,18 +675,18 @@ pub fn resolve_activity(session_id: &str) -> Option<Activity> {
 /// 完整会话事件（旧→新）。会话不在库中返回 Err（调用方回退 jsonl）。
 pub fn load_events(session_id: &str) -> Result<TranscriptDoc, String> {
     let conn = open().ok_or("cursor state.vscdb not found")?;
-    let composer = composer_value(&conn, session_id).ok_or("session not in cursor state.vscdb")?;
-    let headers = header_ids(&composer).ok_or("no conversation headers")?;
-    let truncated_head = headers.len() > MAX_TX_EVENTS;
-    let window = if truncated_head {
-        &headers[headers.len() - MAX_TX_EVENTS..]
-    } else {
-        &headers[..]
-    };
+    let tx = conn
+        .unchecked_transaction()
+        .map_err(|error| error.to_string())?;
+    let composer = composer_value(&tx, session_id).ok_or("session not in cursor state.vscdb")?;
+    let headers = header_window(&tx, session_id, &composer, MAX_TX_EVENTS)
+        .ok_or("conversation directory unavailable")?;
+    let truncated_head = headers.start > 0;
+    let window = &headers.ids;
     let mut events: Vec<TranscriptEvent> = Vec::new();
     let mut partial = false;
     for bubble_id in window {
-        let Some(b) = bubble_value(&conn, session_id, bubble_id) else {
+        let Some(b) = bubble_value(&tx, session_id, bubble_id) else {
             partial = true;
             continue;
         };
@@ -534,6 +703,15 @@ pub fn load_events(session_id: &str) -> Result<TranscriptDoc, String> {
 fn push_tx_events(b: &Value, out: &mut Vec<TranscriptEvent>) {
     let at = bubble_at(b);
     let bubble_type = b.get("type").and_then(|v| v.as_u64());
+    if let Some(text) = thinking_text(b) {
+        if bubble_type == Some(2) {
+            out.push(TranscriptEvent::Thinking {
+                text: text.to_string(),
+                at,
+                at_label: None,
+            });
+        }
+    }
     let text = b
         .get("text")
         .and_then(|v| v.as_str())
@@ -590,6 +768,165 @@ fn push_tx_events(b: &Value, out: &mut Vec<TranscriptEvent>) {
 
 #[cfg(test)]
 mod tests {
+    use super::*;
+
+    fn memory_db() -> Connection {
+        let conn = Connection::open_in_memory().unwrap();
+        conn.execute(
+            "CREATE TABLE cursorDiskKV (key TEXT PRIMARY KEY, value TEXT)",
+            [],
+        )
+        .unwrap();
+        conn
+    }
+
+    fn put(conn: &Connection, key: &str, value: Value) {
+        conn.execute(
+            "INSERT OR REPLACE INTO cursorDiskKV VALUES (?1, ?2)",
+            [key.to_string(), value.to_string()],
+        )
+        .unwrap();
+    }
+
+    #[test]
+    fn chunked_headers_take_precedence_and_retry_missing_chunks() {
+        let conn = memory_db();
+        let composer = serde_json::json!({
+            "fullConversationHeadersOnly": [],
+            "headerLog": {"chunkSize":2,"chunkCount":2,"count":3,"generation":"g1"}
+        });
+        put(
+            &conn,
+            "composerConvHeaders:s:000000",
+            serde_json::json!([{"bubbleId":"a"},{"bubbleId":"b"}]),
+        );
+        assert!(header_window(&conn, "s", &composer, 2).is_none());
+        put(
+            &conn,
+            "composerConvHeaders:s:000001",
+            serde_json::json!([{"bubbleId":"c"}]),
+        );
+        let window = header_window(&conn, "s", &composer, 2).unwrap();
+        assert_eq!(window.ids, ["b", "c"]);
+        assert_eq!(window.start, 1);
+        assert_eq!(window.total, 3);
+        assert_eq!(window.generation, "g1");
+        let legacy = serde_json::json!({"fullConversationHeadersOnly":[{"bubbleId":"old"}]});
+        assert_eq!(header_window(&conn, "s", &legacy, 20).unwrap().ids, ["old"]);
+    }
+
+    #[test]
+    fn thoughts_wait_for_completion_and_then_replace_old_prose() {
+        let conn = memory_db();
+        let sid = uuid::Uuid::new_v4().to_string();
+        let composer_key = format!("composerData:{sid}");
+        let thought_key = format!("bubbleId:{sid}:thought");
+        put(
+            &conn,
+            &composer_key,
+            serde_json::json!({"status":"generating", "fullConversationHeadersOnly":[{"bubbleId":"body"},{"bubbleId":"thought"}]}),
+        );
+        put(
+            &conn,
+            &format!("bubbleId:{sid}:body"),
+            serde_json::json!({"type":2,"text":"Old prose"}),
+        );
+        put(
+            &conn,
+            &thought_key,
+            serde_json::json!({"type":2,"thinking":"Growing thought"}),
+        );
+        assert_eq!(
+            resolve_activity_in(&conn, &sid, false)
+                .unwrap()
+                .latest_text
+                .unwrap()
+                .text,
+            "Old prose"
+        );
+        put(
+            &conn,
+            &thought_key,
+            serde_json::json!({"type":2,"thinking":{"text":"Completed thought","signature":"private"},"thinkingDurationMs":0}),
+        );
+        let activity = resolve_activity_in(&conn, &sid, false).unwrap();
+        assert_eq!(activity.text.as_deref(), Some("Old prose"));
+        assert_eq!(activity.latest_text.unwrap().text, "Completed thought");
+        put(
+            &conn,
+            &thought_key,
+            serde_json::json!({"type":2,"thinking":"Followed by a tool"}),
+        );
+        put(
+            &conn,
+            &composer_key,
+            serde_json::json!({"fullConversationHeadersOnly":[{"bubbleId":"body"},{"bubbleId":"thought"},{"bubbleId":"tool"}]}),
+        );
+        put(
+            &conn,
+            &format!("bubbleId:{sid}:tool"),
+            serde_json::json!({"type":2,"toolFormerData":{"name":"read_file_v2","status":"loading","params":"{\"path\":\"camera.swift\"}"}}),
+        );
+        let activity = resolve_activity_in(&conn, &sid, false).unwrap();
+        assert_eq!(activity.latest_text.unwrap().text, "Followed by a tool");
+        assert_eq!(
+            activity.steps.last().unwrap().state,
+            activity::StepState::Running
+        );
+    }
+
+    #[test]
+    fn generation_replacement_discards_finalized_cached_thoughts() {
+        let conn = memory_db();
+        let sid = uuid::Uuid::new_v4().to_string();
+        let headers: Vec<_> = (0..25)
+            .map(|i| serde_json::json!({"bubbleId":i.to_string()}))
+            .collect();
+        put(
+            &conn,
+            &format!("composerConvHeaders:{sid}:000000"),
+            serde_json::json!(headers),
+        );
+        let composer = |generation| serde_json::json!({"headerLog":{"chunkSize":256,"chunkCount":1,"count":25,"generation":generation}});
+        put(&conn, &format!("composerData:{sid}"), composer("before"));
+        for i in 0..25 {
+            put(
+                &conn,
+                &format!("bubbleId:{sid}:{i}"),
+                serde_json::json!({"type":2}),
+            );
+        }
+        put(
+            &conn,
+            &format!("bubbleId:{sid}:0"),
+            serde_json::json!({"type":2,"thinking":"Old thought"}),
+        );
+        assert_eq!(
+            resolve_activity_in(&conn, &sid, false)
+                .unwrap()
+                .latest_text
+                .unwrap()
+                .text,
+            "Old thought"
+        );
+        cache().lock().unwrap().get_mut(&sid).unwrap().backfilled_at =
+            Instant::now() - Duration::from_secs(10);
+        put(&conn, &format!("composerData:{sid}"), composer("after"));
+        put(
+            &conn,
+            &format!("bubbleId:{sid}:0"),
+            serde_json::json!({"type":2,"thinking":"Rebuilt thought"}),
+        );
+        assert_eq!(
+            resolve_activity_in(&conn, &sid, false)
+                .unwrap()
+                .latest_text
+                .unwrap()
+                .text,
+            "Rebuilt thought"
+        );
+    }
+
     #[test]
     fn workspace_identity_requires_an_exact_unique_composer_match() {
         let root = tempfile::tempdir().unwrap();
@@ -634,7 +971,6 @@ mod tests {
         assert!(workspace_for_session(&storage, "exact").is_none());
     }
 
-    use super::*;
     use crate::agents::activity::{StepState, ToolLabel};
 
     #[test]
@@ -860,7 +1196,7 @@ mod tests {
         let _ = resolve_title(&sid);
         assert!(last_updated(&sid).is_some(), "lastUpdatedAt 应可读");
         // 活动帧与完整会话解析不 panic 且完整会话非空。
-        let _ = resolve_activity(&sid);
+        let _ = resolve_activity(&sid, false);
         let doc = load_events(&sid).expect("load_events 应成功");
         assert!(!doc.events.is_empty(), "最大会话应至少解析出一条事件");
     }
