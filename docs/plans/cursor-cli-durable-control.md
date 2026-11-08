@@ -2,7 +2,9 @@
 
 2026-10-15。用户在 Desktop / CLI 持久性评估后授权按推荐方向推进：优先 CLI，补齐已知缺口并按构建验证。前期实验和撤回记录见 `../investigations/cursor-background-reliability.md`。
 
-**当前状态：延期。** 2026-10-15 用户在入口取舍讨论后决定“先不做 CLI 接管了”。本轮只完成计划和审核，尚未恢复 CLI 功能代码；独立 `AskHuman cursor` 入口也未获确认。后续恢复时先重新确认接入方式。
+**2026-10-15 的决定：延期。** 用户在入口取舍讨论后决定“先不做 CLI 接管了”。当时只完成计划和审核，独立 `AskHuman cursor` 入口尚未获确认。
+
+2026-11-08 已按后续确认实现并安装独立的 `AskHuman cursor` 和 `AskHuman cursor shortcut <name>`。本文保留 10 月原型的评审历史。当前实现走独立入口，验证记录见 [Cursor 断线排查](../investigations/cursor-disconnect-2026-11-07.md) 的 CLI 接入与兼容性章节。
 
 ## 范围
 
