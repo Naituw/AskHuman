@@ -910,10 +910,12 @@
 .readiness-matrix {
   margin-top: var(--space-2);
 }
+/* No gap between the fixed-width columns: the 64px cells already space the checks apart, and every
+   pixel saved goes to the name column, which at the narrowest window (480px) has to hold a name and its
+   tag on one line ("Antigravity" + "Unsupported" is the longest pair). */
 .readiness-row {
   display: flex;
   align-items: center;
-  gap: var(--space-2);
   min-height: 42px;
 }
 .readiness-row + .readiness-row:not(.readiness-head) {
@@ -927,6 +929,7 @@
 .readiness-agent {
   flex: 1 1 auto;
   min-width: 0;
+  margin-right: var(--space-2);
   display: flex;
   align-items: center;
   flex-wrap: wrap;
@@ -954,6 +957,12 @@
   height: 16px;
   color: var(--accent-green);
 }
+/* "Not applicable": the Agent cannot start tasks, so no condition applies to it. */
+.readiness-na {
+  color: var(--text-tertiary);
+  font-size: 13px;
+  line-height: 1;
+}
 .readiness-fix {
   display: inline-flex;
   align-items: center;
@@ -980,6 +989,13 @@
 }
 .readiness-hint {
   margin: var(--space-2) 0 0;
+}
+/* Each sentence on its own line: no stray space between a Chinese full stop and the next sentence. */
+.readiness-hint-line {
+  display: block;
+}
+.readiness-hint-line + .readiness-hint-line {
+  margin-top: 2px;
 }
 /* A card that belongs to one Agent (Cursor's Max mode, Codex's grants): a small badge in front of the
    title; the description below keeps the card's full width. */

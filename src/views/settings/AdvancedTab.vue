@@ -7,7 +7,7 @@ import BrandBadge from "../setup/BrandBadge.vue";
 import { useSettingsContext } from "./context";
 import CursorMaxCard from "./CursorMaxCard.vue";
 import PermissionRulesCard from "./PermissionRulesCard.vue";
-import { readinessIssues, type ReadinessIssue } from "./readiness";
+import { readinessIssues, readinessState, type ReadinessIssue, type ReadinessState } from "./readiness";
 
 const { t } = useI18n();
 const ctx = useSettingsContext();
@@ -29,10 +29,22 @@ const {
 // 父组件仅在 config 加载后渲染本 tab，这里可安全断言非空。
 const config = computed(() => ctx.config.value!);
 
-// What each Agent still lacks, worked out once per change rather than once per use in the template.
+// What each Agent still lacks and the state of its row, worked out once per change rather than once
+// per use in the template.
 const readinessRows = computed(() =>
-  taskReadiness.value.map((item) => ({ item, issues: readinessIssues(item) })),
+  taskReadiness.value.map((item) => ({
+    item,
+    state: readinessState(item),
+    issues: readinessIssues(item),
+  })),
 );
+const hasUnsupported = computed(() => readinessRows.value.some((row) => row.state === "unsupported"));
+const STATE_TEXT: Record<ReadinessState, string> = {
+  ready: "settings.agentTasks.ready",
+  notReady: "settings.agentTasks.notReady",
+  unsupported: "settings.agentTasks.unsupported",
+};
+const STATE_TONE: Record<ReadinessState, string> = { ready: "ok", notReady: "warn", unsupported: "muted" };
 const CONDITIONS: ReadinessIssue[] = ["binary", "lifecycle", "integration"];
 const COLUMN_TEXT: Record<ReadinessIssue, string> = {
   binary: "settings.agentTasks.colBinary",
@@ -184,14 +196,15 @@ const ISSUE_TEXT: Record<ReadinessIssue, string> = {
         <p>{{ t("common.loading") }}</p>
       </div>
       <!-- A matrix: one row per Agent (badge, name, overall tag), one fixed column per condition. A met
-           condition is a check; an unmet one is an orange cross that goes to where it is fixed. -->
+           condition is a check; an unmet one is an orange cross that goes to where it is fixed. An Agent
+           that cannot start tasks at all has nothing to fix: a grey tag and dashes, no crosses. -->
       <div v-if="readinessRows.length > 0" class="readiness-matrix" data-testid="readiness-matrix">
         <div class="readiness-row readiness-head" aria-hidden="true">
           <span class="readiness-agent"></span>
           <span v-for="cond in CONDITIONS" :key="cond" class="readiness-cell">{{ t(COLUMN_TEXT[cond]) }}</span>
         </div>
         <div
-          v-for="{ item, issues } in readinessRows"
+          v-for="{ item, state, issues } in readinessRows"
           :key="item.kind"
           class="readiness-row"
           :data-testid="`readiness-${item.kind}`"
@@ -201,13 +214,14 @@ const ISSUE_TEXT: Record<ReadinessIssue, string> = {
             <span class="label">{{ item.label }}</span>
             <span
               class="status-tag"
-              :class="item.ready ? 'ok' : 'warn'"
+              :class="STATE_TONE[state]"
               :data-testid="`readiness-tag-${item.kind}`"
-            >{{ item.ready ? t("settings.agentTasks.ready") : t("settings.agentTasks.notReady") }}</span>
+            >{{ t(STATE_TEXT[state]) }}</span>
           </div>
           <span v-for="cond in CONDITIONS" :key="cond" class="readiness-cell">
+            <span v-if="state === 'unsupported'" class="readiness-na" aria-hidden="true">–</span>
             <button
-              v-if="issues.includes(cond)"
+              v-else-if="issues.includes(cond)"
               type="button"
               class="readiness-fix"
               :aria-label="`${item.label}: ${t(ISSUE_TEXT[cond])}`"
@@ -231,7 +245,10 @@ const ISSUE_TEXT: Record<ReadinessIssue, string> = {
           </span>
         </div>
       </div>
-      <p v-if="readinessRows.length > 0" class="card-desc readiness-hint">{{ t("settings.agentTasks.readinessHint") }}</p>
+      <p v-if="readinessRows.length > 0" class="card-desc readiness-hint">
+        <span class="readiness-hint-line">{{ t("settings.agentTasks.readinessHint") }}</span>
+        <span v-if="hasUnsupported" class="readiness-hint-line">{{ t("settings.agentTasks.unsupportedHint") }}</span>
+      </p>
       <hr class="divider" />
       <div class="row">
         <div class="col">

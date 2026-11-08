@@ -809,6 +809,8 @@ export default {
       colLifecycle: "Lifecycle",
       colIntegration: "Integration",
       readinessHint: "Click an orange × to fix it; a missing CLI opens the official installation guide.",
+      unsupported: "Unsupported",
+      unsupportedHint: "An Agent marked “Unsupported” can't create tasks from IM yet; there is nothing to fix.",
       issueBinary: "CLI unavailable",
       issueLifecycle: "Lifecycle tracking not ready",
       issueIntegration: "Integration unavailable",

@@ -1,7 +1,7 @@
 // Settings → Advanced: the Agent readiness list is a matrix (one row per Agent, one fixed column per
-// condition, a check where met and a cross button where missing), and the two cards that belong to a
-// single Agent carry that Agent's badge in front of their title
-// (docs/specs/settings-agents-channels-cards.md §8).
+// condition, a check where met and a cross button where missing; an Agent that cannot start tasks is
+// a grey "Unsupported" row with dashes), and the two cards that belong to a single Agent carry that
+// Agent's badge in front of their title (docs/specs/settings-agents-channels-cards.md §8).
 import { flushPromises, mount } from "@vue/test-utils";
 import { ref } from "vue";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -19,7 +19,12 @@ vi.mock("../../lib/ipc", () => ({
   permissionRulesPanel: vi.fn(async () => ({ kind: "summaries", sessions: [], globalCount: 0 })),
 }));
 
-function agent(kind: AgentKind, label: string, missing: ReadinessIssue[] = []): AgentTaskReadiness {
+function agent(
+  kind: AgentKind,
+  label: string,
+  missing: ReadinessIssue[] = [],
+  launchSupported = true,
+): AgentTaskReadiness {
   const lacks = (what: ReadinessIssue) => missing.includes(what);
   return {
     kind,
@@ -32,7 +37,7 @@ function agent(kind: AgentKind, label: string, missing: ReadinessIssue[] = []): 
     integrationReady: !lacks("integration"),
     integrationMode: "cli",
     ready: missing.length === 0,
-    launchSupported: true,
+    launchSupported,
     diagnostics: [],
   };
 }
@@ -40,8 +45,10 @@ function agent(kind: AgentKind, label: string, missing: ReadinessIssue[] = []): 
 const AGENTS = [
   agent("claude", "Claude Code"),
   agent("codex", "Codex", ["lifecycle", "integration"]),
-  agent("antigravity", "Antigravity", ["binary", "lifecycle", "integration"]),
+  agent("pi", "Pi", ["binary", "lifecycle", "integration"]),
 ];
+// Antigravity has no New Task path: it lacks everything, and nothing the person does changes that.
+const ANTIGRAVITY = agent("antigravity", "Antigravity", ["binary", "lifecycle", "integration"], false);
 
 const CONDITIONS: ReadinessIssue[] = ["binary", "lifecycle", "integration"];
 const AGENT_ROWS = ".readiness-matrix .readiness-row:not(.readiness-head)";
@@ -97,18 +104,18 @@ describe("AdvancedTab: Agent readiness", () => {
     expect(rows.map((row) => row.get(".brand-badge").attributes("data-badge"))).toEqual([
       "claude",
       "codex",
-      "antigravity",
+      "pi",
     ]);
     expect(rows.map((row) => row.get(".label").text())).toEqual([
       "Claude Code",
       "Codex",
-      "Antigravity",
+      "Pi",
     ]);
 
     const ready = wrapper.get('[data-testid="readiness-tag-claude"]');
     expect(ready.text()).toBe("Ready");
     expect(ready.classes()).toEqual(expect.arrayContaining(["status-tag", "ok"]));
-    for (const kind of ["codex", "antigravity"]) {
+    for (const kind of ["codex", "pi"]) {
       const tag = wrapper.get(`[data-testid="readiness-tag-${kind}"]`);
       expect(tag.text(), kind).toBe("Not ready");
       expect(tag.classes(), kind).toEqual(expect.arrayContaining(["status-tag", "warn"]));
@@ -142,7 +149,7 @@ describe("AdvancedTab: Agent readiness", () => {
         .map((cell) => (cell.find(".readiness-fix").exists() ? "missing" : cell.find(".readiness-ok").exists() ? "met" : "?"));
     expect(cells("claude")).toEqual(["met", "met", "met"]);
     expect(cells("codex")).toEqual(["met", "missing", "missing"]);
-    expect(cells("antigravity")).toEqual(["missing", "missing", "missing"]);
+    expect(cells("pi")).toEqual(["missing", "missing", "missing"]);
 
     // Only a missing condition is a button; the checks are not clickable.
     expect(wrapper.findAll('[data-testid="readiness-claude"] button')).toHaveLength(0);
@@ -159,10 +166,10 @@ describe("AdvancedTab: Agent readiness", () => {
       wrapper.get('[data-testid="readiness-claude"] .readiness-ok').attributes("aria-label"),
     ).toBe("Claude Code: CLI");
 
-    const binary = wrapper.get('[data-testid="readiness-issue-antigravity-binary"]');
+    const binary = wrapper.get('[data-testid="readiness-issue-pi-binary"]');
     const lifecycle = wrapper.get('[data-testid="readiness-issue-codex-lifecycle"]');
     const integration = wrapper.get('[data-testid="readiness-issue-codex-integration"]');
-    expect(binary.attributes("aria-label")).toBe("Antigravity: CLI unavailable");
+    expect(binary.attributes("aria-label")).toBe("Pi: CLI unavailable");
     expect(lifecycle.attributes("aria-label")).toBe("Codex: Lifecycle tracking not ready");
     expect(integration.attributes("aria-label")).toBe("Codex: Integration unavailable");
     expect(binary.attributes("title")).toBe("CLI unavailable · Open official installation guide");
@@ -178,14 +185,65 @@ describe("AdvancedTab: Agent readiness", () => {
     const { wrapper, api } = mountTab();
     await flushPromises();
 
-    await wrapper.get('[data-testid="readiness-issue-antigravity-binary"]').trigger("click");
+    await wrapper.get('[data-testid="readiness-issue-pi-binary"]').trigger("click");
     await wrapper.get('[data-testid="readiness-issue-codex-lifecycle"]').trigger("click");
     await wrapper.get('[data-testid="readiness-issue-codex-integration"]').trigger("click");
     expect(api.openReadinessIssue.mock.calls).toEqual([
-      ["antigravity", "binary"],
+      ["pi", "binary"],
       ["codex", "lifecycle"],
       ["codex", "integration"],
     ]);
+  });
+
+  it("shows an Agent that cannot start tasks as a grey tag with dashes, not as crosses to fix", async () => {
+    const { wrapper } = mountTab([...AGENTS, ANTIGRAVITY]);
+    await flushPromises();
+
+    const tag = wrapper.get('[data-testid="readiness-tag-antigravity"]');
+    expect(tag.text()).toBe("Unsupported");
+    // Grey, like the Channels page's "not configured": not the orange of "Not ready".
+    expect(tag.classes()).toEqual(expect.arrayContaining(["status-tag", "muted"]));
+    expect(tag.classes()).not.toContain("warn");
+
+    const row = wrapper.get('[data-testid="readiness-antigravity"]');
+    const cells = row.findAll(".readiness-cell");
+    expect(cells).toHaveLength(CONDITIONS.length);
+    expect(cells.map((cell) => cell.text())).toEqual(["–", "–", "–"]);
+    // Nothing to click, and no ready-check either: no condition applies.
+    expect(row.findAll("button")).toHaveLength(0);
+    expect(row.find(".readiness-ok").exists()).toBe(false);
+    expect(row.find(".readiness-fix").exists()).toBe(false);
+  });
+
+  it("keeps the supported rows around an unsupported one exactly as they were", async () => {
+    const { wrapper } = mountTab([...AGENTS, ANTIGRAVITY]);
+    await flushPromises();
+
+    expect(wrapper.get('[data-testid="readiness-tag-claude"]').text()).toBe("Ready");
+    expect(wrapper.get('[data-testid="readiness-tag-pi"]').text()).toBe("Not ready");
+    expect(wrapper.findAll('[data-testid="readiness-pi"] .readiness-fix')).toHaveLength(3);
+  });
+
+  it("says what \"Unsupported\" means only when such an Agent is listed", async () => {
+    const without = mountTab();
+    await flushPromises();
+    expect(without.wrapper.get(".readiness-hint").text()).toBe(
+      i18n.global.t("settings.agentTasks.readinessHint"),
+    );
+
+    const withOne = mountTab([...AGENTS, ANTIGRAVITY]);
+    await flushPromises();
+    const hint = withOne.wrapper.get(".readiness-hint").text();
+    expect(hint).toContain(i18n.global.t("settings.agentTasks.readinessHint"));
+    expect(hint).toContain(i18n.global.t("settings.agentTasks.unsupportedHint"));
+  });
+
+  it("speaks the language for the unsupported tag too", async () => {
+    const { wrapper } = mountTab([...AGENTS, ANTIGRAVITY]);
+    i18n.global.locale.value = "zh";
+    await flushPromises();
+
+    expect(wrapper.get('[data-testid="readiness-tag-antigravity"]').text()).toBe("暂不支持");
   });
 
   it("explains under the matrix how to read it", async () => {
@@ -208,8 +266,8 @@ describe("AdvancedTab: Agent readiness", () => {
       "集成",
     ]);
     expect(
-      wrapper.get('[data-testid="readiness-issue-antigravity-lifecycle"]').attributes("aria-label"),
-    ).toBe("Antigravity: 生命周期追踪未就绪");
+      wrapper.get('[data-testid="readiness-issue-pi-lifecycle"]').attributes("aria-label"),
+    ).toBe("Pi: 生命周期追踪未就绪");
   });
 
   it("shows no matrix, only the loading state, until the first readiness arrives", async () => {

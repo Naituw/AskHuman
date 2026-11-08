@@ -795,6 +795,8 @@ export default {
       colLifecycle: "生命周期",
       colIntegration: "集成",
       readinessHint: "点击橙色 × 前往修复；CLI 不可用时会打开官方安装文档。",
+      unsupported: "暂不支持",
+      unsupportedHint: "标「暂不支持」的 Agent 目前不能从 IM 创建任务，无需处理。",
       issueBinary: "CLI 不可用",
       issueLifecycle: "生命周期追踪未就绪",
       issueIntegration: "集成不可用",
