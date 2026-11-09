@@ -86,7 +86,17 @@ private struct MacsList: View {
             }
 
             Section {
-                Toggle("Open the next request after sending", isOn: $store.autoAdvance)
+                // It moves the page on in two cases (docs/specs/ios-answer-flow.md §3.8): after a send, and when the request
+                // being read ends somewhere else. The line under the label says both.
+                Toggle(isOn: $store.autoAdvance) {
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("Open the next request automatically")
+                        Text("Opens it after you send an answer, and a few seconds after the request you are reading ends somewhere else.")
+                            .font(.footnote)
+                            .foregroundStyle(.secondary)
+                    }
+                }
+                .accessibilityIdentifier("auto-advance-toggle")
                 LabeledContent("This phone is called") {
                     TextField("Name", text: $deviceName)
                         .multilineTextAlignment(.trailing)

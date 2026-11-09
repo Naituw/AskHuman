@@ -53,7 +53,7 @@ struct ConfirmScreen: View {
             .actionBar {
                 bar(composer: composer, confirm: confirm)
             }
-            .endedStrip(finished)
+            .endedStrip(finished, id: item.id)
             .endedCue(finished)
         }
     }

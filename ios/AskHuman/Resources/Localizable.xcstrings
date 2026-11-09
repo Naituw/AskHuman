@@ -1,26 +1,6 @@
 {
   "sourceLanguage" : "en",
   "strings" : {
-    "Your Mac is updating. Your input is kept and sending resumes automatically." : {
-      "localizations" : {
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Mac 正在更新，输入已保留，提交会自动继续。"
-          }
-        }
-      }
-    },
-    "Update pending" : {
-      "localizations" : {
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "等待自动更新"
-          }
-        }
-      }
-    },
     "%@ (offline)" : {
       "localizations" : {
         "zh-Hans" : {
@@ -1230,6 +1210,16 @@
         }
       }
     },
+    "Close in %llds" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%lld 秒后关闭"
+          }
+        }
+      }
+    },
     "Close to the broker's free allowance of 1 GB a month. The service pauses when it runs out; nothing is charged." : {
       "localizations" : {
         "zh-Hans" : {
@@ -2280,6 +2270,16 @@
         }
       }
     },
+    "It happens by itself in a few seconds. Choose Stay to keep this page." : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "几秒后会自动执行。想留在这个页面，请选「停留」。"
+          }
+        }
+      }
+    },
     "It has not answered yet. Pull down to try again." : {
       "localizations" : {
         "zh-Hans" : {
@@ -2726,6 +2726,16 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "下一题"
+          }
+        }
+      }
+    },
+    "Next in %llds" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%lld 秒后下一条"
           }
         }
       }
@@ -3340,12 +3350,12 @@
         }
       }
     },
-    "Open the next request after sending" : {
+    "Open the next request automatically" : {
       "localizations" : {
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "发送后打开下一个请求"
+            "value" : "自动打开下一个请求"
           }
         }
       }
@@ -3356,6 +3366,16 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "打开这个链接？"
+          }
+        }
+      }
+    },
+    "Opens it after you send an answer, and a few seconds after the request you are reading ends somewhere else." : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "发送回答后会自动打开；你正在看的请求在别处结束时，几秒后也会自动打开。"
           }
         }
       }
@@ -4515,6 +4535,26 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "状态"
+          }
+        }
+      }
+    },
+    "Stay" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "停留"
+          }
+        }
+      }
+    },
+    "Stay on this page" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "停留在此页"
           }
         }
       }
@@ -5907,6 +5947,16 @@
         }
       }
     },
+    "Update pending" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "等待自动更新"
+          }
+        }
+      }
+    },
     "Updating…" : {
       "localizations" : {
         "zh-Hans" : {
@@ -6223,6 +6273,16 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "连不上你的 Mac"
+          }
+        }
+      }
+    },
+    "Your Mac is updating. Your input is kept and sending resumes automatically." : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Mac 正在更新，输入已保留，提交会自动继续。"
           }
         }
       }

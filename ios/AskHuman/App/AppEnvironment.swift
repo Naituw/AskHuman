@@ -63,6 +63,9 @@ struct LaunchOptions {
     /// stretch them to have time to look; the app's own values are made for the eye).
     var advanceHold: Double?
     var advanceSettle: Double?
+    /// Seconds the countdown on the strip of an ended request page takes (the app's own 5 is too short for a UI test
+    /// that has to look at the strip and press a button on a busy simulator).
+    var endedCountdown: Double?
     /// Seconds the "Added to <project>" note stays over a request page (the app's own 2 is too short for a
     /// UI test that polls a busy simulator).
     var todoNoteHold: Double?
@@ -127,6 +130,7 @@ struct LaunchOptions {
         cachedInbox = defaults.bool(forKey: "AHCached")
         if defaults.object(forKey: "AHAdvanceHold") != nil { advanceHold = defaults.double(forKey: "AHAdvanceHold") }
         if defaults.object(forKey: "AHAdvanceSettle") != nil { advanceSettle = defaults.double(forKey: "AHAdvanceSettle") }
+        if defaults.object(forKey: "AHEndedCountdown") != nil { endedCountdown = max(0.1, defaults.double(forKey: "AHEndedCountdown")) }
         if defaults.object(forKey: "AHTodoNoteHold") != nil { todoNoteHold = max(0, defaults.double(forKey: "AHTodoNoteHold")) }
         if defaults.object(forKey: "AHDeveloperToastHold") != nil { developerToastHold = max(0, defaults.double(forKey: "AHDeveloperToastHold")) }
         notifyRequest = defaults.string(forKey: "AHNotify")
@@ -185,6 +189,7 @@ final class AppEnvironment {
             store = AppStore(backend: backend, drafts: drafts, defaults: suite)
             if let hold = launch.advanceHold { store.advanceTiming.hold = .seconds(hold) }
             if let settle = launch.advanceSettle { store.advanceTiming.settle = .seconds(settle) }
+            if let seconds = launch.endedCountdown { store.endedCountdownLength = .seconds(seconds) }
             if let hold = launch.todoNoteHold { store.todoNoteHold = .seconds(hold) }
             if let hold = launch.developerToastHold { store.developer.toastHold = hold }
             leftoverPairings = 0
@@ -219,6 +224,10 @@ final class AppEnvironment {
             leftoverPairings = defaults.bool(forKey: "ah.hasLaunched") ? 0 : vault.pairings().count
         }
         defaults.set(true, forKey: "ah.hasLaunched")
+        // The strip of an ended request moves the page on (or closes it) without the page's own arrows being touched:
+        // it gets the arrows' light transition (docs/specs/ios-request-switching.md).
+        store.animatePageMove = { change in withAnimation(.easeOut(duration: 0.18), change) }
+        store.pageIsCovered = { PageEditing.isCovered }
         push = PushCoordinator(store: store, simulated: launch.mock)
         if let tab = launch.tab { store.tab = tab }
         Self.current = self

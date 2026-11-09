@@ -318,7 +318,8 @@ ZH = {
     "Paired Macs": "已配对的 Mac",
     "No Mac is paired yet.": "还没有配对的 Mac。",
     "Notifications": "通知",
-    "Open the next request after sending": "发送后打开下一个请求",
+    "Open the next request automatically": "自动打开下一个请求",
+    "Opens it after you send an answer, and a few seconds after the request you are reading ends somewhere else.": "发送回答后会自动打开；你正在看的请求在别处结束时，几秒后也会自动打开。",
     "This phone is called": "这部手机的名称",
     "General": "通用",
     "The name your Macs show for this phone. It applies to pairings you make from now on.": "Mac 上显示的这部手机的名称，仅对之后的配对生效。",
@@ -447,6 +448,12 @@ ZH = {
     "It was answered.": "已回答。",
     "It was dismissed.": "已忽略。",
     "It finished while you were away.": "它在你离开期间已结束。",
+    # The strip's way on: a button and a countdown (docs/specs/ios-answer-flow.md §3.8)
+    "Stay": "停留",
+    "Stay on this page": "停留在此页",
+    "Next in %llds": "%lld 秒后下一条",
+    "Close in %llds": "%lld 秒后关闭",
+    "It happens by itself in a few seconds. Choose Stay to keep this page.": "几秒后会自动执行。想留在这个页面，请选「停留」。",
     "Your reply was not delivered": "你的回复未送达",
     "The Mac did not confirm it. You can send it again or discard it and edit your answer.": "Mac 没有确认收到。你可以重新发送，或放弃后修改回答。",
     "Send again": "重新发送",
@@ -661,6 +668,14 @@ ZH = {
     "Annotations · %lld": "附注 · %lld 条",
     "Tap a note to see its passage. Swipe left to edit or delete. Annotations are sent to the Agent with your answer.": "点一条附注可回到它所在的段落，左滑可编辑或删除。附注会和你的回答一起发给 Agent。",
     "Original text not found": "找不到原文位置",
+    # Put into the catalog by hand by earlier commits, without this script: kept here so that the catalog can be made again.
+    "Collapse": "收起",
+    "Expand": "展开",
+    "Latest excerpt": "末尾片段",
+    "New content": "有新内容",
+    "Thinking": "思考",
+    "Update pending": "等待自动更新",
+    "Your Mac is updating. Your input is kept and sending resumes automatically.": "Mac 正在更新，输入已保留，提交会自动继续。",
 }
 
 # Shown by iOS itself when a push cannot be decrypted by the notification extension.

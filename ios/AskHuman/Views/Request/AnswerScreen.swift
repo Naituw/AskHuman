@@ -89,7 +89,7 @@ struct AnswerScreen: View {
                         onJump: { jumpToMissing(composer, proxy: proxy) }
                     )
                 }
-                .endedStrip(finished)
+                .endedStrip(finished, id: item.id)
                 .endedCue(finished)
                 .coordinateSpace(name: Self.space)
                 .onPreferenceChange(ReadingKey.self) { tracker.update($0, composer: composer) }

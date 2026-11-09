@@ -144,6 +144,8 @@ public final class AppStore {
     public var tab: AppTab = .inbox {
         didSet {
             if oldValue != tab { Diagnostics.note("nav", "tab \(oldValue.rawValue) → \(tab.rawValue)") }
+            // The countdown is for a reader who is on the page: elsewhere it would move them on from nowhere.
+            if tab != .inbox { stopEndedCountdown() }
         }
     }
     public var filter: InboxFilter = .all
@@ -153,6 +155,8 @@ public final class AppStore {
         didSet {
             if oldValue != inboxPath { Diagnostics.note("nav", "inbox stack \(oldValue.count) → \(inboxPath.count)") }
             if oldValue.last != inboxPath.last { requestNavigationEpoch &+= 1 }
+            // Another page, or none: the countdown was for the page that left.
+            if endedCountdown?.id != inboxPath.last { stopEndedCountdown() }
             for id in Set(oldValue).subtracting(inboxPath) { closed(id: id) }
             if let open = inboxPath.last {
                 if requestNavigation == nil { beginRequestNavigation(filter: filter, current: open) }
@@ -185,10 +189,26 @@ public final class AppStore {
     public var taskComposer: TaskComposer?
     /// The task whose progress the sheet shows (after sending it, or when opened from the list).
     public var viewingTask: String?
-    /// Jump to the next pending request after a submission.
+    /// Jump to the next pending request after a submission, and, a few seconds after the request being read ended
+    /// elsewhere, off the page that says so (`endedCountdown`).
     public var autoAdvance: Bool {
-        didSet { defaults.set(autoAdvance, forKey: Self.autoAdvanceKey) }
+        didSet {
+            defaults.set(autoAdvance, forKey: Self.autoAdvanceKey)
+            if !autoAdvance { stopEndedCountdown() }
+        }
     }
+
+    /// The countdown on the strip of the open page whose request ended elsewhere, while it runs (docs/specs/ios-answer-flow.md §3.8).
+    public internal(set) var endedCountdown: EndedCountdown?
+    /// How long that countdown is; tests shorten or stretch it.
+    @ObservationIgnored public var endedCountdownLength = Duration.seconds(5)
+    @ObservationIgnored var endedCountdownTask: Task<Void, Never>?
+    /// Runs the change of page that the strip makes (its button, or its countdown running out) the way the app layer
+    /// wants it drawn (a light transition). Without it the change is made as it is.
+    @ObservationIgnored public var animatePageMove: (@MainActor (_ change: () -> Void) -> Void)?
+    /// Whether something is over the request page, or the reader is typing on it (a sheet, an alert, the keyboard).
+    /// Set by the app layer, which can ask UIKit. Nothing counts down over it, and the page is not moved from under it.
+    @ObservationIgnored public var pageIsCovered: (@MainActor () -> Bool)?
 
     /// The Todos tab: the todos of the Macs, shown and edited from here.
     public let todos: TodosStore
@@ -318,7 +338,7 @@ public final class AppStore {
             "tab \(tab.rawValue); inbox stack \(inboxPath.count), agents stack \(agentPath.count)",
             "connection \(Self.diagnosticName(of: state.phase)); sync \(syncStatus); lists \(listReadiness); foreground \(state.foreground)",
             "macs \(state.macs.count)\(links.isEmpty ? "" : " (\(links))"); inbox \(state.inbox.count) (unread \(unreadCount)); agents \(state.agents.count); history \(history.count)",
-            "ended while open \(finished.count); arrivals showing \(requestArrivals.count); banner \(banner != nil); receipt \(receipt != nil)",
+            "ended while open \(finished.count) (countdown \(endedCountdown != nil)); arrivals showing \(requestArrivals.count); banner \(banner != nil); receipt \(receipt != nil)",
             "new task sheet \(taskComposer != nil); task progress sheet \(viewingTask != nil)",
             "auto-advance \(autoAdvance); developer mode \(developer.enabled)",
         ]
@@ -430,6 +450,9 @@ public final class AppStore {
                    submissionEpoch == nil || submissionEpoch == requestNavigationEpoch,
                    let sent = retained[key]?.item, case .sending = sent.state {
                     advance(from: key, outcome: outcome)
+                } else {
+                    // It ended somewhere else while the page is open: the strip offers the way on, and counts down to it.
+                    beginEndedCountdown(for: key)
                 }
             }
             if case .request(let bannerMac, let bannerId)? = banner?.kind, bannerMac == macId, bannerId == requestId {
@@ -681,7 +704,7 @@ public final class AppStore {
         inboxPath = [id]
     }
 
-    private func cancelAdvance() {
+    func cancelAdvance() {
         advanceTask?.cancel()
         noteTask?.cancel()
         receipt = nil

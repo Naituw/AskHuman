@@ -157,16 +157,7 @@ struct RequestScreen: View {
         guard !switching else { return }
         switching = true
         let current = id
-        let windows = UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }.flatMap(\.windows)
-        if let window = windows.first(where: \.isKeyWindow) {
-            func editingView(_ view: UIView) -> UIView? {
-                if view.isFirstResponder { return view }
-                for child in view.subviews { if let found = editingView(child) { return found } }
-                return nil
-            }
-            (editingView(window) as? UITextInput)?.unmarkText()
-            window.endEditing(true)
-        }
+        PageEditing.commit()
         Task { @MainActor in
             // Let native editors publish their final composition before the old page is saved.
             await Task.yield()
