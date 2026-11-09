@@ -14,9 +14,9 @@ import {
 import { dirname, relative, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 
-import { pnpmBuildCommand } from "./package-command.mjs";
+import { pnpmScriptCommand } from "./package-command.mjs";
 
-const CACHE_VERSION = 1;
+const CACHE_VERSION = 2;
 const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const distDir = resolve(repoRoot, "dist");
 const configuredTarget = process.env.CARGO_TARGET_DIR;
@@ -28,11 +28,15 @@ const force = process.argv.includes("--force");
 
 const inputPaths = [
   "src",
+  "public",
   "scripts/build-frontend-if-needed.mjs",
+  "scripts/package-command.mjs",
+  "scripts/vite-mermaid.ts",
   "package.json",
   "pnpm-lock.yaml",
   "tsconfig.json",
   "vite.config.ts",
+  "vite.attachment.config.ts",
   ".env",
   ".env.local",
   ".env.production",
@@ -57,19 +61,23 @@ function collectFiles(path, files = []) {
   return files;
 }
 
-function digestFiles(paths, context = {}) {
+function digestFiles(files, context = {}) {
   const hash = createHash("sha256");
   hash.update(JSON.stringify(context));
-  const files = paths
-    .flatMap((path) => collectFiles(path))
-    .sort((a, b) => normalizedRelative(a).localeCompare(normalizedRelative(b)));
   for (const file of files) {
     hash.update("\0");
     hash.update(normalizedRelative(file));
     hash.update("\0");
     hash.update(readFileSync(file));
   }
-  return { digest: hash.digest("hex"), files: files.length };
+  return hash.digest("hex");
+}
+
+function isTestSource(file) {
+  const path = normalizedRelative(file);
+  // Vite copies public assets verbatim, regardless of their names.
+  return path.startsWith("src/") && !path.startsWith("src/public/")
+    && /\.(?:test|spec|testkit)\.[cm]?[jt]sx?$/.test(path);
 }
 
 function readStamp() {
@@ -82,7 +90,14 @@ function readStamp() {
 
 function outputDigest() {
   if (!existsSync(resolve(distDir, "index.html"))) return null;
-  return digestFiles([distDir]).digest;
+  return digestFiles(collectFiles(distDir));
+}
+
+function runPnpmScript(script) {
+  const pnpm = pnpmScriptCommand(script);
+  const result = spawnSync(pnpm.command, pnpm.args, { cwd: repoRoot, stdio: "inherit" });
+  if (result.error) throw result.error;
+  if (result.status !== 0) process.exit(result.status ?? 1);
 }
 
 const buildEnvironment = Object.fromEntries(
@@ -96,42 +111,39 @@ const buildEnvironment = Object.fromEntries(
     )
     .sort(([a], [b]) => a.localeCompare(b)),
 );
-const input = digestFiles(
-  inputPaths.map((path) => resolve(repoRoot, path)),
-  {
-    cacheVersion: CACHE_VERSION,
-    node: process.version,
-    platform: process.platform,
-    arch: process.arch,
-    environment: buildEnvironment,
-  },
-);
+const files = inputPaths.flatMap((path) => collectFiles(resolve(repoRoot, path)));
+const bundleInputDigest = digestFiles(files.filter((file) => !isTestSource(file)), {
+  cacheVersion: CACHE_VERSION,
+  node: process.version,
+  platform: process.platform,
+  arch: process.arch,
+  environment: buildEnvironment,
+});
+const testInputDigest = digestFiles(files.filter(isTestSource));
 const stamp = readStamp();
-const existingOutput = outputDigest();
 
-if (
-  !force &&
-  stamp?.cacheVersion === CACHE_VERSION &&
-  stamp.inputDigest === input.digest &&
-  stamp.outputDigest === existingOutput &&
-  existingOutput
-) {
-  console.log(`==> 前端输入未变化，复用 dist/（${input.files} 个输入文件）`);
-  process.exit(0);
+let output = null;
+if (!force && stamp?.cacheVersion === CACHE_VERSION && stamp.bundleInputDigest === bundleInputDigest) {
+  const existingOutput = outputDigest();
+  if (existingOutput && existingOutput === stamp.outputDigest) {
+    output = existingOutput;
+  }
 }
 
-console.log("==> 构建前端 (dist/)");
-const pnpm = pnpmBuildCommand();
-const result = spawnSync(pnpm.command, pnpm.args, {
-  cwd: repoRoot,
-  env: process.env,
-  stdio: "inherit",
-});
-if (result.error) throw result.error;
-if (result.status !== 0) process.exit(result.status ?? 1);
+if (output) {
+  if (stamp.testInputDigest === testInputDigest) {
+    console.log(`==> 前端输入未变化，复用 dist/（${files.length} 个输入文件）`);
+    process.exit(0);
+  }
+  console.log("==> 仅测试源码变化，检查前端类型并复用 dist/");
+  runPnpmScript("typecheck");
+} else {
+  console.log("==> 构建前端 (dist/)");
+  runPnpmScript("build");
+  output = outputDigest();
+}
 
-const builtOutput = outputDigest();
-if (!builtOutput) {
+if (!output) {
   console.error("错误: 前端构建成功但 dist/index.html 不存在");
   process.exit(1);
 }
@@ -143,9 +155,10 @@ writeFileSync(
   `${JSON.stringify(
     {
       cacheVersion: CACHE_VERSION,
-      inputDigest: input.digest,
-      outputDigest: builtOutput,
-      inputFiles: input.files,
+      bundleInputDigest,
+      testInputDigest,
+      outputDigest: output,
+      inputFiles: files.length,
     },
     null,
     2,

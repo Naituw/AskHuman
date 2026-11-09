@@ -24,4 +24,4 @@ PY
 
 ln -sfn "$rel_src" "$HOOK_DST"
 echo "Installed pre-commit hook -> $HOOK_DST"
-echo "  (fmt + clippy when staged src-tauri/**/*.rs change; bypass with --no-verify)"
+echo "  (rustfmt when staged src-tauri/**/*.rs change; bypass with --no-verify)"

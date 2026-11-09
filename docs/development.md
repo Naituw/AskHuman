@@ -111,15 +111,27 @@ Current prototypes:
 in a browser), get the design confirmed, then port to the real views. Keep the prototype in
 sync when a design decision changes — it stays the reference for the next iteration round.
 
-### Optional local git hooks (fmt + clippy)
+### Optional local formatting hook and CI Clippy
 
-Linux CI fails the job on `cargo fmt --check` and `cargo clippy --all-targets -- -D warnings`. To catch that before push:
+Install the local formatting hook with the following command.
 
 ```bash
 ./scripts/install-git-hooks.sh
 ```
 
-This only installs a `pre-commit` hook (LFS hooks are left alone). It runs when staged `src-tauri/**/*.rs` files change. Typical warm cost is a few seconds; a cold clippy can take about a minute. Bypass with `git commit --no-verify`. Local toolchain may still differ slightly from CI’s stable channel.
+This installs a `pre-commit` hook that runs `cargo fmt --check` for staged changes to
+`src-tauri/**/*.rs`. Git LFS hooks keep their separate role.
+
+CI enforces `cargo clippy --all-targets -- -D warnings` on Linux, Windows, and native macOS arm64.
+For local lint feedback, run `node scripts/machine-health.mjs` before Clippy.
+
+```bash
+cargo clippy --manifest-path src-tauri/Cargo.toml --jobs 2 --all-targets -- -D warnings
+```
+
+Use the same toolchain and target directory for repeat runs so Cargo can reuse its cache.
+When checking with a different Rust toolchain, reuse a separate target directory for that
+worktree and toolchain.
 
 > `--features custom-protocol` is mandatory for production builds; without it the binary runs in dev mode against the Vite dev URL and shows a blank window.
 
@@ -153,8 +165,11 @@ session. The uninstaller removes only its managed launcher and install-directory
 
 `install.sh` uses the dedicated `local-install` Cargo profile (`opt-level=0`, 64 codegen units) so
 small local edits compile quickly; publishing and CI continue to use the production `release`
-profile. The script fingerprints frontend inputs and reuses `dist/` when they have not changed,
-preventing an unchanged Vite rebuild from invalidating Tauri's embedded resources. It also skips
+profile. The script fingerprints frontend inputs and reuses `dist/` when production inputs and
+the built files match the cache. Changes limited to frontend `*.test.*`, `*.spec.*`, or
+`*.testkit.*` source files run `vue-tsc` and reuse the bundle. Keep those files out of the
+production import graph. The full `pnpm build` type-checks all sources and builds both Vite
+outputs. The installer also skips
 copy/sign when the built and installed binary state is unchanged (local macOS signing does not
 request a network timestamp). After a successful copy it enforces per-profile target budgets with
 Cargo-coordinated cleanup: local package artifacts are removed first, while dependency caches are

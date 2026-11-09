@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Local gate matching Linux CI: cargo fmt --check + clippy -D warnings.
+# Keep local commits fast. CI runs Clippy on native platform targets.
 # Install: ./scripts/install-git-hooks.sh
 # Bypass:  git commit --no-verify
 set -euo pipefail
@@ -14,9 +14,5 @@ cd "$ROOT"
 
 echo "==> pre-commit: cargo fmt --check"
 cargo fmt --manifest-path src-tauri/Cargo.toml --check
-
-echo "==> pre-commit: cargo clippy --all-targets -D warnings"
-# Warm incremental runs are usually a few seconds; cold builds can take ~1 min.
-cargo clippy --manifest-path src-tauri/Cargo.toml --all-targets -- -D warnings
 
 echo "==> pre-commit: ok"

@@ -97,6 +97,7 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
         with:
           targets: ${{ matrix.target }}
+          components: rustfmt, clippy
 
       - uses: Swatinem/rust-cache@v2
         with:
@@ -107,6 +108,8 @@ jobs:
       - run: pnpm build
 
       - name: frontend and script tests
+        # Both macOS jobs run the same arm64 Node environment.
+        if: matrix.target != 'x86_64-apple-darwin'
         run: pnpm test
 
       - name: Windows maintenance scripts (PowerShell 5.1)
@@ -145,9 +148,9 @@ jobs:
         if: startsWith(matrix.os, 'ubuntu')
         run: cargo fmt --manifest-path src-tauri/Cargo.toml --check
 
-      # Linux 与 Windows 各自编译不同的平台代码，两边都必须保持 warning-free。
-      - name: clippy (Linux + Windows)
-        if: startsWith(matrix.os, 'ubuntu') || startsWith(matrix.os, 'windows')
+      # Each native platform checks its own cfg-gated Rust code.
+      - name: clippy (Linux + Windows + macOS arm64)
+        if: matrix.target != 'x86_64-apple-darwin'
         run: cargo clippy --manifest-path src-tauri/Cargo.toml --all-targets -- -D warnings
 
       # 原生平台测试覆盖各自 cfg；macOS x64 是交叉构建，不重复运行 host tests。
