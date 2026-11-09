@@ -53,6 +53,8 @@ Changes to the SQLite recovery schema in `src-tauri/src/daemon/recovery.rs` must
 upgrade databases that have already run it. Keep the existing SQL fixtures under
 `src-tauri/src/daemon/recovery/fixtures/` unchanged, add a fixture for the new version, and verify
 upgrades preserve pending calls, terminal results, channel checkpoints, and cancellation behavior.
+Task serialization hashes are also part of the recovery-version contract. Additive default fields
+must preserve existing serialized hashes, or explicitly migrate and renegotiate recovery compatibility.
 See [daemon live update](docs/specs/daemon-live-update.md#私有恢复存储).
 
 ## Code comments

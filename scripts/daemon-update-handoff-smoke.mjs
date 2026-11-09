@@ -220,6 +220,22 @@ try {
   await ipc({ type: 'stop', force: true }); await stopped(daemon);
   console.log('PASS: autorestart=0 is respected');
 
+  start(); await until(status, 'exec failure scenario startup');
+  const beforeExecFailure = await status();
+  const capability = execFileSync(source, ['--recovery-capabilities'], { encoding: 'utf8' }).trim();
+  const failingExec = `#!/bin/sh\nif [ "$1" = "--recovery-capabilities" ]; then\n  printf '%s\\n' '${capability}'\n  chmod 600 "$0"\n  exit 0\nfi\nexit 1\n`;
+  fs.writeFileSync(binary + '.exec-failure', failingExec);
+  fs.chmodSync(binary + '.exec-failure', 0o700);
+  fs.renameSync(binary + '.exec-failure', binary);
+  await until(() => fs.readFileSync(path.join(root, 'daemon.log'), 'utf8').includes('recovering requests in the current daemon'), 'exec failure recovery');
+  await until(status, 'old daemon recovered after failed exec');
+  const recovered = await status();
+  assert.deepEqual(recovered.fingerprint, beforeExecFailure.fingerprint, 'failed exec must keep the running image identity');
+  replace();
+  await until(async () => { const s = await status(); return !s.draining && differs(s.fingerprint, beforeExecFailure.fingerprint); }, 'retry after failed exec');
+  await ipc({ type: 'stop', force: true }); await stopped(daemon);
+  console.log('PASS: failed exec preserves the old running fingerprint and a repaired replacement is retried');
+
   start(); await until(status, 'failure scenario startup');
   const healthy = await status();
   fs.writeFileSync(binary + '.broken', 'not an executable'); fs.chmodSync(binary + '.broken', 0o700); fs.renameSync(binary + '.broken', binary);

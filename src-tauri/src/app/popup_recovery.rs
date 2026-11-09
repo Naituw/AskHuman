@@ -179,6 +179,7 @@ pub(super) fn bridge(
                     event,
                 } => match serde_json::from_value::<Event>(event.clone()) {
                     Ok(Event::Updating) => updating = true,
+                    Ok(Event::Updated) => updating = false,
                     Ok(Event::PopupLease { token }) => {
                         if let Kind::Independent { token: current, .. } = &mut kind {
                             *current = Some(token);
@@ -200,6 +201,7 @@ pub(super) fn bridge(
                         if ipc::write_msg(&mut input, &updated).await.is_err() {
                             return;
                         }
+                        updating = false;
                     }
                     if existed {
                         continue;
@@ -214,6 +216,7 @@ pub(super) fn bridge(
                         if ipc::write_msg(&mut input, &updated).await.is_err() {
                             return;
                         }
+                        updating = false;
                     }
                     continue;
                 }

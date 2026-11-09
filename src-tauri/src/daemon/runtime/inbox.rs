@@ -3,6 +3,16 @@ use super::*;
 use crate::daemon::popup_inbox::{Lease, Recovery};
 use std::collections::HashSet;
 
+pub(super) async fn write_popup_message<W: tokio::io::AsyncWrite + Unpin>(
+    writer: &mut W,
+    message: &ServerMsg,
+    announcement: &super::live_update::PopupAnnouncement,
+) -> std::io::Result<()> {
+    ipc::write_msg(writer, message).await?;
+    announcement.written(message);
+    Ok(())
+}
+
 /// Upper bound on captured popup host stderr that may reach the daemon log.
 const POPUP_HOST_STDERR_LIMIT: usize = 8192;
 
@@ -105,9 +115,13 @@ pub(super) async fn reconnect_popup(
     });
     if let Some(entry) = entry {
         let (tx, mut messages) = tokio::sync::mpsc::unbounded_channel();
+        let announcement = state.popup_announcement.clone();
         let write_task = tokio::spawn(async move {
             while let Some(message) = messages.recv().await {
-                if ipc::write_msg(&mut writer, &message).await.is_err() {
+                if write_popup_message(&mut writer, &message, &announcement)
+                    .await
+                    .is_err()
+                {
                     break;
                 }
             }
@@ -142,9 +156,13 @@ pub(super) async fn reconnect_popup(
     } else if let Some(entry) = state.registry.attach_gui(&token) {
         let (tx, mut messages) = tokio::sync::mpsc::unbounded_channel();
         let _ = save_independent_lease(&entry, pid, &tx);
+        let announcement = state.popup_announcement.clone();
         let write_task = tokio::spawn(async move {
             while let Some(message) = messages.recv().await {
-                if ipc::write_msg(&mut writer, &message).await.is_err() {
+                if write_popup_message(&mut writer, &message, &announcement)
+                    .await
+                    .is_err()
+                {
                     break;
                 }
             }
@@ -563,10 +581,11 @@ pub(super) async fn handle_popup_host_supported<R, W>(
     }
     let failed = Arc::new(tokio::sync::Notify::new());
     let writer_failed = failed.clone();
+    let announcement = state.popup_announcement.clone();
     let write_task = tokio::spawn(async move {
         let mut writer = writer;
         while let Some(message) = messages.recv().await {
-            if let Err(error) = ipc::write_msg(&mut writer, &message).await {
+            if let Err(error) = write_popup_message(&mut writer, &message, &announcement).await {
                 log(&format!(
                     "popup host write failed generation={generation} reason={}",
                     ipc::error_summary(&error)
@@ -612,7 +631,7 @@ pub(super) async fn handle_popup_host_supported<R, W>(
     for id in &known_ids {
         if state.popup_inbox.lock().unwrap().get(id).is_none() {
             let winner =
-                super::live_update::saved_winner(state, &id).unwrap_or_else(|| "system".into());
+                super::live_update::saved_winner(state, id).unwrap_or_else(|| "system".into());
             let _ = tx.send(ServerMsg::PopupSubmissionAck {
                 request_id: id.clone(),
                 winner: Some(winner),
@@ -718,12 +737,11 @@ pub(super) async fn handle_popup_host_supported<R, W>(
                             },
                             directive,
                         );
-                        if !won {
-                            if entry.request().recovery.is_some()
-                                && entry.coordinator.winner_channel_id().is_none()
-                            {
-                                continue;
-                            }
+                        if !won
+                            && entry.request().recovery.is_some()
+                            && entry.coordinator.winner_channel_id().is_none()
+                        {
+                            continue;
                         }
                         (
                             Some(if won {

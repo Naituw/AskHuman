@@ -8,6 +8,80 @@ use anyhow::{Context, Result};
 use sha2::Digest;
 use tokio::sync::watch;
 
+#[derive(Default)]
+pub(super) struct PopupAnnouncement(Mutex<(String, usize)>);
+
+impl PopupAnnouncement {
+    pub(super) fn begin(&self) -> String {
+        let id = uuid::Uuid::new_v4().to_string();
+        *self.0.lock().unwrap() = (id.clone(), 0);
+        id
+    }
+
+    pub(super) fn written(&self, message: &ServerMsg) {
+        let ServerMsg::Recovery {
+            version: VERSION,
+            event,
+        } = message
+        else {
+            return;
+        };
+        if event["event"] != "updating" {
+            return;
+        }
+        let Some(id) = event["handoffId"].as_str() else {
+            return;
+        };
+        let mut current = self.0.lock().unwrap();
+        if current.0 == id {
+            current.1 += 1;
+        }
+    }
+
+    pub(super) fn delivered(&self, id: &str, expected: usize) -> bool {
+        let current = self.0.lock().unwrap();
+        current.0 == id && current.1 >= expected
+    }
+}
+
+pub(super) fn announce_popup_update(state: &ServerState, message: ServerMsg) -> usize {
+    let mut senders = Vec::new();
+    {
+        let host = state.popup_inbox.lock().unwrap();
+        if let Some(sender) = host.sender() {
+            if host.saved().is_some() {
+                senders.push(sender);
+            } else {
+                // An empty legacy host can retire, but cannot decode recovery envelopes.
+                let _ = sender.send(ServerMsg::PopupHostShutdown);
+            }
+        }
+    }
+    for slot in state
+        .registry
+        .in_flight_entries()
+        .into_iter()
+        .map(|entry| entry.gui.clone())
+        .chain(
+            state
+                .registry
+                .in_flight_confirm_entries()
+                .into_iter()
+                .map(|entry| entry.gui.clone()),
+        )
+    {
+        if let Some(sender) = slot.lock().unwrap().as_ref() {
+            if !senders.iter().any(|existing| existing.same_channel(sender)) {
+                senders.push(sender.clone());
+            }
+        }
+    }
+    senders
+        .into_iter()
+        .filter(|sender| sender.send(message.clone()).is_ok())
+        .count()
+}
+
 pub(super) struct Runtime {
     pub store: Arc<Store>,
     workers: Mutex<HashMap<String, Arc<Worker>>>,
@@ -791,11 +865,14 @@ impl Runtime {
             context.begin_recovery();
             context.suspend();
         }
+        let announcement = state.popup_announcement.begin();
+        let mut event = serde_json::to_value(Event::Updating)?;
+        event["handoffId"] = announcement.clone().into();
         let updating = ServerMsg::Recovery {
             version: VERSION,
-            event: serde_json::to_value(Event::Updating)?,
+            event,
         };
-        broadcast_popup_state(state, updating);
+        let popup_connections = announce_popup_update(state, updating);
         broadcast_tray_state(state);
         if let Some(router) = state.dd_router.lock().await.as_ref() {
             router.pause().await;
@@ -837,6 +914,9 @@ impl Runtime {
                     .iter()
                     .any(|saved| saved.decision.is_some() && saved.outcome.is_none());
                 if contexts.iter().all(|context| context.is_quiescent())
+                    && state
+                        .popup_announcement
+                        .delivered(&announcement, popup_connections)
                     && !finalizing
                     && !self.store.pending_daemon_results()?
                 {
@@ -847,6 +927,9 @@ impl Runtime {
             for context in &contexts {
                 context.flush()?;
             }
+            // Initial lease publication may have failed; handoff must persist the current host.
+            self.store
+                .set_metadata("popup/host", &state.popup_inbox.lock().unwrap().saved())?;
             self.store
                 .set_metadata("popup/focus", &*state.popup_focus.lock().unwrap())?;
             if let Some(gateway) = ios_gateway(state) {

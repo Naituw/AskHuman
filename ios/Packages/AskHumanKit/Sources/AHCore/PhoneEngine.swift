@@ -510,7 +510,8 @@ public actor PhoneEngine: RemoteBackend {
         guard var mac = macs[device] else { return }
         let wasOnline = mac.online
         let wasUpdating = mac.recoveringUpdate
-        if presence.u == "updating" || presence.u == "recovering" {
+        let updateInProgress = presence.u == "updating" || presence.u == "recovering"
+        if updateInProgress {
             mac.recoveringUpdate = true
             for item in outbox.values where item.macId == device { cancelTimer("ack." + item.clientMsgId) }
         }
@@ -530,10 +531,12 @@ public actor PhoneEngine: RemoteBackend {
             mac.lastSeenAt = clock.now()
             store.saveMeta(MacMeta(lastSeenAt: mac.lastSeenAt, lastEpoch: mac.epoch, follow: store.meta(macId: device).follow), macId: device)
         }
-        if presence.u == nil && mac.sync == .synced { mac.recoveringUpdate = false }
         macs[device] = mac
         await evaluateHello(device)
-        if wasUpdating && !mac.recoveringUpdate { await requestResync(device, stream: "inbox") }
+        // Keep transfers and submissions parked until the authoritative inbox has recovered.
+        if wasUpdating && !updateInProgress && macs[device]?.sync == .synced {
+            await requestResync(device, stream: "inbox")
+        }
     }
 
     /// Opens a message from a paired Mac. Returns `nil` for anything that must be dropped silently:
@@ -669,7 +672,7 @@ public actor PhoneEngine: RemoteBackend {
                 id: mac.record.macId, name: mac.record.displayName, macName: mac.record.macName, alias: mac.record.alias,
                 link: link(of: mac), caps: mac.caps ?? mac.record.caps, slot: mac.slot, pairedAt: mac.record.pairedAt,
                 lastSeenAt: mac.lastSeenAt, pendingCount: pending[mac.record.macId] ?? 0, pushStatus: mac.pushStatus,
-                away: mac.away, update: mac.recoveringUpdate ? (mac.presence?.u ?? "recovering") : mac.presence?.u
+                away: mac.away, update: mac.recoveringUpdate ? (mac.presence?.u == "updating" ? "updating" : "recovering") : mac.presence?.u
             )
         }
         let inbox = requests.values.compactMap { runtime -> InboxItem? in

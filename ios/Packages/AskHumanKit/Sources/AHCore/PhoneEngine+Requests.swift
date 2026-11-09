@@ -16,7 +16,7 @@ extension PhoneEngine {
         guard var mac = macs[macId], snapshot.epoch == mac.epoch else { return }
         mac.inboxRev = snapshot.rev
         mac.sync = .synced
-        let recoveredUpdate = mac.recoveringUpdate && mac.presence?.u == nil
+        let recoveredUpdate = mac.recoveringUpdate && mac.presence?.u != "updating" && mac.presence?.u != "recovering"
         if recoveredUpdate { mac.recoveringUpdate = false }
         macs[macId] = mac
         let now = clock.now()

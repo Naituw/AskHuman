@@ -226,10 +226,14 @@ fn run_cmd(background: bool) -> i32 {
     crate::integrations::agent_launch::log_lookup_misses(true);
     // 复用 tauri 的全局（多线程）tokio 运行时，使各 Channel 的 `tauri::async_runtime::spawn`
     // 与 Daemon 自身的任务跑在同一运行时上（不初始化任何 GUI / AppKit）。
+    // A failed exec resumes this image; the installation path may already name its replacement.
+    let startup_fp = lifecycle::current_fingerprint();
+    // Unix retries exec in this image; Windows returns after handing the lock to its child.
+    #[cfg_attr(windows, allow(clippy::never_loop))]
     loop {
         super::recovery::set_handoff(false);
         let intent = Arc::new(Mutex::new(super::handoff::Intent::default()));
-        let code = tauri::async_runtime::block_on(serve(&lock, intent.clone()));
+        let code = tauri::async_runtime::block_on(serve(&lock, intent.clone(), startup_fp));
         if *intent.lock().unwrap() != super::handoff::Intent::ReplaceOwnBinary {
             return code;
         }
@@ -267,6 +271,7 @@ struct ServerState {
     /// 活动请求登记表。
     registry: Arc<RequestRegistry>,
     recovery: Option<Arc<live_update::Runtime>>,
+    popup_announcement: Arc<live_update::PopupAnnouncement>,
     /// Cross-process popup focus owner and background cascade order.
     popup_focus: Mutex<PopupFocusArbiter>,
     popup_inbox: Mutex<super::popup_inbox::Host<InteractionEntry>>,
@@ -369,6 +374,7 @@ fn test_state(directory: &std::path::Path) -> Arc<ServerState> {
         closing: AtomicBool::new(false),
         registry: RequestRegistry::new(),
         recovery: None,
+        popup_announcement: Default::default(),
         popup_focus: Mutex::new(PopupFocusArbiter::new()),
         popup_inbox: Mutex::new(Default::default()),
         dd_router: Default::default(),
@@ -893,12 +899,17 @@ fn refresh_update_snapshot(state: &Arc<ServerState>) {
 }
 
 fn broadcast_popup_state(state: &Arc<ServerState>, message: ServerMsg) {
-    let shared = state.popup_inbox.lock().unwrap().sender();
+    let (shared, supported) = {
+        let host = state.popup_inbox.lock().unwrap();
+        (host.sender(), host.saved().is_some())
+    };
     state
         .registry
         .broadcast_to_guis_except(message.clone(), shared.as_ref());
     if let Some(sender) = shared {
-        let _ = sender.send(message);
+        if supported || !matches!(message, ServerMsg::Recovery { .. }) {
+            let _ = sender.send(message);
+        }
     }
 }
 
@@ -954,7 +965,11 @@ fn check_pending_update(state: &Arc<ServerState>) {
     }
 }
 
-async fn serve(_lock: &LockGuard, exit: Arc<Mutex<super::handoff::Intent>>) -> i32 {
+async fn serve(
+    _lock: &LockGuard,
+    exit: Arc<Mutex<super::handoff::Intent>>,
+    startup_fp: lifecycle::Fingerprint,
+) -> i32 {
     super::recovery::enter_daemon();
     let listener = match transport::bind() {
         Ok(l) => l,
@@ -963,7 +978,6 @@ async fn serve(_lock: &LockGuard, exit: Arc<Mutex<super::handoff::Intent>>) -> i
             return 1;
         }
     };
-    let startup_fp = lifecycle::current_fingerprint();
     let exe_path = std::env::current_exe()
         .map(|path| path.display().to_string())
         .unwrap_or_default();
@@ -1056,6 +1070,7 @@ async fn serve(_lock: &LockGuard, exit: Arc<Mutex<super::handoff::Intent>>) -> i
         closing: AtomicBool::new(false),
         registry: RequestRegistry::new(),
         recovery,
+        popup_announcement: Default::default(),
         popup_focus: Mutex::new(PopupFocusArbiter::new()),
         popup_inbox: Mutex::new(super::popup_inbox::Host::default()),
         dd_router: tokio::sync::Mutex::new(None),
@@ -3449,9 +3464,13 @@ async fn handle_gui(token: String, reader: Reader, w: Writer, state: &Arc<Server
     // GUI 发送端：专用写任务串行写出 ServerMsg，供 show 下发与 adapter cancel 共用。
     let (gui_tx, mut gui_rx) = tokio::sync::mpsc::unbounded_channel::<ServerMsg>();
     let mut w = w;
+    let announcement = state.popup_announcement.clone();
     let writer = tokio::spawn(async move {
         while let Some(msg) = gui_rx.recv().await {
-            if ipc::write_msg(&mut w, &msg).await.is_err() {
+            if inbox::write_popup_message(&mut w, &msg, &announcement)
+                .await
+                .is_err()
+            {
                 break;
             }
         }
@@ -3815,9 +3834,13 @@ async fn handle_gui_warm_supported(
 
     let (gui_tx, mut gui_rx) = tokio::sync::mpsc::unbounded_channel::<ServerMsg>();
     let mut w = w;
+    let announcement = state.popup_announcement.clone();
     let writer = tokio::spawn(async move {
         while let Some(msg) = gui_rx.recv().await {
-            if ipc::write_msg(&mut w, &msg).await.is_err() {
+            if inbox::write_popup_message(&mut w, &msg, &announcement)
+                .await
+                .is_err()
+            {
                 break;
             }
         }

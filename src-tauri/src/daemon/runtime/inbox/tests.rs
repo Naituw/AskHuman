@@ -5,6 +5,73 @@ use std::task::{Context, Poll};
 use tokio::io::{AsyncRead, AsyncWriteExt, ReadBuf};
 
 #[tokio::test]
+async fn an_idle_legacy_host_receives_no_recovery_envelopes() {
+    let directory = tempfile::tempdir().unwrap();
+    let state = test_state(directory.path());
+    let lease = state.popup_inbox.lock().unwrap().start().unwrap();
+    let (sender, mut messages) = tokio::sync::mpsc::unbounded_channel();
+    state
+        .popup_inbox
+        .lock()
+        .unwrap()
+        .connect(&lease.token, sender)
+        .unwrap();
+    assert!(matches!(
+        messages.try_recv().unwrap(),
+        ServerMsg::PopupHostAccepted { .. }
+    ));
+    let message = ServerMsg::Recovery {
+        version: crate::daemon::recovery::VERSION,
+        event: serde_json::json!({"event": "updating", "handoffId": "test"}),
+    };
+    assert_eq!(
+        super::super::live_update::announce_popup_update(&state, message.clone()),
+        0
+    );
+    assert!(matches!(
+        messages.try_recv().unwrap(),
+        ServerMsg::PopupHostShutdown
+    ));
+    broadcast_popup_state(&state, message);
+    assert!(messages.try_recv().is_err());
+}
+
+#[tokio::test]
+async fn update_handoff_waits_for_the_popup_notice_to_reach_its_connection() {
+    let announcement = Arc::new(super::super::live_update::PopupAnnouncement::default());
+    let id = announcement.begin();
+    let message = ServerMsg::Recovery {
+        version: crate::daemon::recovery::VERSION,
+        event: serde_json::json!({"event": "updating", "handoffId": id}),
+    };
+    let (mut writer, reader) = tokio::io::duplex(1);
+    let pending = announcement.clone();
+    let notice = message.clone();
+    let writing = tokio::spawn(async move {
+        write_popup_message(&mut writer, &notice, &pending)
+            .await
+            .unwrap();
+    });
+    tokio::task::yield_now().await;
+    assert!(!announcement.delivered(&id, 1));
+    let mut reader = tokio::io::BufReader::new(reader);
+    let delivered = ipc::read_msg::<_, ServerMsg>(&mut reader)
+        .await
+        .unwrap()
+        .unwrap();
+    assert!(matches!(delivered, ServerMsg::Recovery { event, .. }
+        if matches!(serde_json::from_value::<crate::daemon::recovery::Event>(event.clone()), Ok(crate::daemon::recovery::Event::Updating))));
+    writing.await.unwrap();
+    assert!(announcement.delivered(&id, 1));
+    let next = announcement.begin();
+    announcement.written(&message);
+    assert!(
+        !announcement.delivered(&next, 1),
+        "a delayed earlier notice cannot acknowledge a later handoff"
+    );
+}
+
+#[tokio::test]
 async fn popup_stderr_capture_drains_beyond_the_retained_limit() {
     let input = vec![b'x'; POPUP_HOST_STDERR_LIMIT * 32];
     let mut stream = std::io::Cursor::new(&input);
@@ -356,6 +423,7 @@ fn state() -> Arc<ServerState> {
         closing: AtomicBool::new(false),
         registry: RequestRegistry::new(),
         recovery: None,
+        popup_announcement: Default::default(),
         popup_focus: Mutex::new(PopupFocusArbiter::new()),
         popup_inbox: Mutex::new(Default::default()),
         dd_router: Default::default(),

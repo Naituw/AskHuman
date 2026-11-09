@@ -162,7 +162,7 @@ fn exec_native(target: &std::path::Path) -> std::io::Error {
 
 /// The caller retains the singleton lock throughout cleanup and until the exec boundary.
 /// Windows' child waits on that same lock; it never kills or replaces a sibling's daemon.
-pub(super) fn replace(lock: &LockGuard, _background: bool) -> i32 {
+pub(super) fn replace(_lock: &LockGuard, _background: bool) -> i32 {
     #[cfg(windows)]
     if PREPARED.load(std::sync::atomic::Ordering::SeqCst) {
         return 0;
@@ -191,7 +191,7 @@ pub(super) fn replace(lock: &LockGuard, _background: bool) -> i32 {
     );
     #[cfg(unix)]
     {
-        if let Err(error) = lock.close_on_exec() {
+        if let Err(error) = _lock.close_on_exec() {
             eprintln!("askhuman: update handoff lock setup failed: {error}");
         } else {
             for attempt in 0..3 {

@@ -74,14 +74,34 @@ impl Progress {
         self.comment = comment.clone().unwrap_or_default();
         self.pending = Some(index);
         self.save(entry, channel).await;
-        entry.coordinator.submit_wire(index, comment, channel)
+        Self::submit_saved(entry, channel, index, comment).await
     }
 
     async fn restore_submission(&self, entry: &ConfirmEntry, channel: &str) {
         if let Some(index) = self.pending {
-            let _ = entry
+            let _ = Self::submit_saved(entry, channel, index, Some(self.comment.clone())).await;
+        }
+    }
+
+    async fn submit_saved(
+        entry: &ConfirmEntry,
+        channel: &str,
+        index: usize,
+        comment: Option<String>,
+    ) -> Result<bool, String> {
+        entry
+            .request
+            .resolve_submission(index, comment.clone(), channel)?;
+        loop {
+            match entry
                 .coordinator
-                .submit_wire(index, Some(self.comment.clone()), channel);
+                .submit_wire(index, comment.clone(), channel)
+            {
+                Ok(accepted) => return Ok(accepted),
+                Err(error) if paused(entry) => return Err(error),
+                Err(error) => eprintln!("askhuman: waiting to retain the IM confirmation: {error}"),
+            }
+            tokio::time::sleep(Duration::from_secs(1)).await;
         }
     }
 
@@ -1293,6 +1313,68 @@ mod tests {
         ConfirmChoice, ConfirmDetail, ConfirmField, ConfirmFieldKind, ConfirmInput,
         ConfirmPresentation, ConfirmSpec,
     };
+
+    #[tokio::test]
+    async fn a_restored_im_confirmation_retries_a_temporary_database_write_failure() {
+        use crate::daemon::recovery::{Call, Request, RequestContext, Store, Task};
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("requests.sqlite3");
+        let store = Arc::new(Store::open(&path).unwrap());
+        let spec: ConfirmSpec = serde_json::from_value(serde_json::json!({
+            "title": "Continue?", "context": [], "detail": {"summary": "Continue", "bodyMd": ""},
+            "choices": [
+                {"id": "approve_once", "label": "Allow", "description": "", "role": "primary"},
+                {"id": "deny", "label": "Deny", "description": "", "role": "destructive"}
+            ], "presentation": {"type": "singleSelectSubmit", "submit_label": "Submit"}, "dismissActionId": "deny"
+        })).unwrap();
+        let task: crate::ipc::ConfirmTask = serde_json::from_value(serde_json::json!({
+            "spec": spec, "source": "test", "lang": "en", "project": "", "agentKind": "claude", "agentSessionId": "test"
+        })).unwrap();
+        let (entry, mut result) = crate::daemon::request::create_internal_confirm(
+            task.spec.clone(),
+            "telegram",
+            "en",
+            "",
+            "claude",
+            Duration::from_secs(60),
+        )
+        .unwrap();
+        let saved = Request {
+            id: entry.request_id.clone(),
+            task: Task::Confirm(Box::new(task)),
+            show: Some(entry.show.clone()),
+            created_at_ms: 123,
+        };
+        store.accept(&saved, &Call::new(), "task").unwrap();
+        entry
+            .coordinator
+            .set_recovery(RequestContext::new(store.clone(), saved.id.clone(), true));
+        let blocker = rusqlite::Connection::open(&path).unwrap();
+        blocker.execute_batch("BEGIN IMMEDIATE").unwrap();
+        let release = std::thread::spawn(move || {
+            std::thread::sleep(Duration::from_secs(3));
+            blocker.execute_batch("COMMIT").unwrap();
+        });
+        let progress = Progress {
+            pending: Some(0),
+            ..Progress::default()
+        };
+        progress.restore_submission(&entry, "telegram").await;
+        release.join().unwrap();
+        let accepted = tokio::time::timeout(Duration::from_secs(2), result.recv())
+            .await
+            .unwrap()
+            .unwrap();
+        assert!(
+            matches!(accepted, crate::app::confirm_coordinator::ConfirmOutcome::Final(answer) if answer.action_id == "approve_once")
+        );
+        assert!(store
+            .request(&saved.id)
+            .unwrap()
+            .unwrap()
+            .decision
+            .is_some());
+    }
 
     #[test]
     fn channel_names_are_localized_for_terminal_copy() {

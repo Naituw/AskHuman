@@ -790,7 +790,8 @@ impl Store {
     }
 
     pub fn request(&self, request_id: &str) -> Result<Option<Saved>> {
-        let row: Option<(String, Option<String>, Option<String>, Option<u64>)> = self
+        type RequestRow = (String, Option<String>, Option<String>, Option<u64>);
+        let row: Option<RequestRow> = self
             .connection
             .lock()
             .unwrap()
@@ -1055,7 +1056,8 @@ fn lookup(
     call: &Call,
     task_hash: Option<&str>,
 ) -> Result<Option<Resumed>> {
-    let row: Option<(String, String, String, bool, bool, Option<String>, bool)> = connection
+    type CallRow = (String, String, String, bool, bool, Option<String>, bool);
+    let row: Option<CallRow> = connection
         .query_row(
             "SELECT c.secret_hash,c.task_hash,c.request_id,c.cancelled,c.delivered,r.outcome,r.decision IS NOT NULL
          FROM calls c JOIN requests r ON r.id=c.request_id WHERE c.id=?1",
@@ -1127,6 +1129,110 @@ mod tests {
             stderr: None,
             exit_code: 0,
         })
+    }
+
+    #[tokio::test]
+    async fn an_im_answer_waits_for_storage_to_recover_before_finishing() {
+        use crate::channels::conversation::{MessagingChannel, QuestionCtx, QuestionOutcome};
+        use crate::channels::{ConversationOrigin, Preemption};
+        use crate::models::{AskRequest, MessagePrompt, QuestionAnswer};
+
+        struct AnsweredChannel;
+        #[async_trait::async_trait]
+        impl MessagingChannel for AnsweredChannel {
+            fn id(&self) -> &str {
+                "test"
+            }
+            async fn open(&mut self) -> Result<(), String> {
+                Ok(())
+            }
+            async fn send_message_prompt(
+                &mut self,
+                _: &MessagePrompt,
+                _: bool,
+                _: &str,
+                _: crate::i18n::Lang,
+            ) {
+            }
+            async fn ask_question(
+                &mut self,
+                _: &QuestionCtx<'_>,
+                _: &Preemption,
+            ) -> QuestionOutcome {
+                QuestionOutcome::Answered(QuestionAnswer {
+                    user_input: Some("retained response".into()),
+                    ..QuestionAnswer::default()
+                })
+            }
+            async fn close(&mut self) {}
+        }
+
+        let dir = tempfile::tempdir().unwrap();
+        let store = Arc::new(Store::open(&dir.path().join("requests.sqlite3")).unwrap());
+        let saved = make_request();
+        let Task::Ask(task) = &saved.task else {
+            unreachable!()
+        };
+        let mut request = AskRequest::new(task.message.clone(), task.questions.clone(), false);
+        request.id = saved.id.clone();
+        request.recovery = Some(RequestContext::new(store.clone(), saved.id.clone(), false));
+        store.accept(&saved, &Call::new(), "task").unwrap();
+        let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
+        let coordinator = crate::app::coordinator::Coordinator::new_ipc(
+            request.clone(),
+            crate::i18n::Lang::En,
+            tx,
+            dir.path().to_string_lossy().into(),
+            "test".into(),
+            crate::app::coordinator::HistoryBinding::default(),
+            false,
+        );
+        store
+            .connection
+            .lock()
+            .unwrap()
+            .pragma_update(None, "query_only", true)
+            .unwrap();
+        let runner = tokio::spawn(async move {
+            crate::channels::conversation::run_conversation(
+                &mut AnsweredChannel,
+                &request,
+                &ConversationOrigin::new("test", None, ""),
+                Arc::new(Preemption::new()),
+                coordinator,
+            )
+            .await;
+        });
+        tokio::task::yield_now().await;
+        assert!(
+            !runner.is_finished(),
+            "an unsaved IM answer must stay queued for retry"
+        );
+        assert!(store
+            .request(&saved.id)
+            .unwrap()
+            .unwrap()
+            .decision
+            .is_none());
+        store
+            .connection
+            .lock()
+            .unwrap()
+            .pragma_update(None, "query_only", false)
+            .unwrap();
+        let result = tokio::time::timeout(Duration::from_secs(5), rx.recv())
+            .await
+            .unwrap()
+            .unwrap();
+        assert!(result.stdout.contains("retained response"));
+        assert!(store
+            .request(&saved.id)
+            .unwrap()
+            .unwrap()
+            .decision
+            .is_some());
+        runner.await.unwrap();
+        assert!(rx.try_recv().is_err());
     }
 
     #[test]
@@ -1376,7 +1482,7 @@ mod tests {
                     store.load_checkpoint(&pending.id, "ios").unwrap().unwrap()["card"],
                     "original"
                 );
-                store.prune(crate::history::now_ms() as i64).unwrap();
+                store.prune(crate::history::now_ms()).unwrap();
                 let cancelled = Call::new();
                 store.cancel_call(&cancelled).unwrap();
                 assert!(store.accept(&make_request(), &cancelled, "late").is_err());

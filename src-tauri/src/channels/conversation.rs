@@ -398,7 +398,7 @@ pub async fn run_conversation(
         sink.notify_finalized();
         return;
     }
-    if !(n == 1 && !has_message) && !progress.message_attempted {
+    if (n != 1 || has_message) && !progress.message_attempted {
         let header = origin.source_title(lang, "channel.messageFrom");
         channel
             .send_message_prompt(&request.message, request.is_markdown, &header, lang)
@@ -448,12 +448,23 @@ pub async fn run_conversation(
     }
     let source_channel_id = channel.id().to_string();
     channel.close().await;
-    sink.submit(ChannelResult {
+    let result = ChannelResult {
         action: ChannelAction::Send,
         answers: progress.answers,
         source_channel_id,
         annotations: Vec::new(),
-    });
+    };
+    loop {
+        if sink.try_submit(result.clone())
+            || request.recovery.is_none()
+            || sink.is_finalizing()
+            || preempt.is_cancelled()
+        {
+            break;
+        }
+        eprintln!("askhuman: waiting to retain the completed IM answer");
+        tokio::time::sleep(std::time::Duration::from_secs(1)).await;
+    }
 }
 
 fn save_progress(request: &AskRequest, key: &str, progress: &ConversationProgress) {
