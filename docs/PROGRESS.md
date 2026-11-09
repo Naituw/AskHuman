@@ -87,7 +87,7 @@ AttributeGraph 更新与 `UITextView.becomeFirstResponder`；用户确认主要�
 用户已批准启用 GitHub Pages、发布独立 Mac 预览包并继续上传/送审；审核联系人选定 Spatialify，个人信息只存私有输入并提交 Apple。
 完成标准与分阶段验证见计划；未经批准不加演示模式、不迁移中继、不自动创建定时任务。
 2026-11-05 23:45（北京时间）已提交 **0.1.0 (10)**：Apple build `81b235eb-4db3-46ee-8372-e74ca5bcbe0a`，VALID、APP_STORE_ELIGIBLE、`WAITING_FOR_BETA_REVIEW`（审核提交 `WAITING_FOR_REVIEW`）。源码与本地标签 `ios-testflight-10` 固定 `d3bb833`；后续 main 的已结束问题页面改动不在此包。首次上传最终确认 401 已通过同归档受控重试解决，不再重传。
-2026-11-06 Build 10 获批后已向用户指定的一位朋友发出邀请。2026-11-09 Build 15 已在 `AskHuman Friends` 进入 `IN_BETA_TESTING`，沿用原邀请，本次 2026-11-09 只读查询已显示 `INSTALLED: 1`；独立配对与推送验收尚未确认。见 [Build 15 交付记录](plans/ios-channel.md#2026-11-09testflight-内部与外部构建-15)。
+2026-11-06 Build 10 获批后已向用户指定的一位朋友发出邀请。2026-11-09 Build 15 已在 `AskHuman Friends` 进入 `IN_BETA_TESTING`，沿用原邀请，本次 2026-11-09 只读查询已显示 `INSTALLED: 1`；独立配对与推送验收尚未确认。见 [Build 15 交付记录](plans/ios-channel.md#2026-11-09testflight-内部与外部构建-15)。2026-11-10 Build 16 同样进入两组 `IN_BETA_TESTING`，成员未变，见 [Build 16 交付记录](plans/ios-channel.md#2026-11-10testflight-内部与外部构建-16)。
 下一步：首位朋友按[中文接入指南](https://naituw.github.io/AskHuman/beta-zh/)安装[最新版 AskHuman](https://github.com/Naituw/AskHuman/releases/latest)，完成配对、前台回答、锁屏推送、切网与首答验证。已有项目待办 `73650ea1-449e-42bd-91e4-61a18478d84d`。
 
 ## 待平台验收：Daemon 更新接班的 Windows / Linux 原生路径
@@ -514,7 +514,7 @@ SSH 到 Mac B 的旧授权已用完，需要再次操作时当次确认。上述
 - [ ] **iOS 真机验收**：已随内测包 `0.1.0 (9)` 出去（2026-11-05，更新 TestFlight 即可；Mac 日常版已是带这次改动的版本，入口由 `caps.away` / `caps.answerTodos` 把关：新 App 连老 Mac 不显示入口，老 App 没有这些界面）。待用户在真机上看：离开模式的青绿色条（2026-11-07 由橙色改成系统 teal，见 `docs/specs/special-replies.md` D31，已随内测包 `0.1.0 (11)` 出去）与 Mac 的状态、计数一致，「发送并离开 / 发送并停用」不被截断，底栏菜单的展开方向与顺序，选项目待办后 Agent 收到的回答与 Mac 上待办的变化。iOS 17 的降级条样式、iPad / Duo 大屏上的常驻条没有看过（iOS 18.5 模拟器的经典条已逐屏看过并跑过 `AskHumanAwayUITests`，修了「发送并离开」按钮被截断，见计划「iOS 18.5 经典条补验」）
 - [ ] 控制台里 Agent 页头的横幅 / 会话菜单在真实数据上的样子没再核对（组件与逻辑有测试）
 
-## 待验收：iOS 已结束的请求页（钉住的状态条 + 正文变灰 + 控件停用，另有「下一条 / 关闭」按钮与 5 秒倒计时；已实现并过模拟器自动化，手机上没看过；按钮与倒计时未出内测包）
+## 待验收：iOS 已结束的请求页（钉住的状态条 + 正文变灰 + 控件停用，另有「下一条 / 关闭」按钮与 5 秒倒计时；已实现并过模拟器自动化，手机上没看过；按钮与倒计时已随内测包 `0.1.0 (16)` 出去，2026-11-10）
 
 用户 2026-11-05 在用过离开模式的版本后反馈：别处已回答的问题，手机上「不够明显」，读着读着才发现不用回答了。范围他选了「整个请求已在别处结束（Mac 弹窗 / IM 答了、Agent 取消、超时），手机上的页面还开着」，
 形式让我设计（「不一定是整体变淡」）；之后他问「往下滑它会消失吗」，我答不会（钉住），他选了「保持钉住」。需求 [`docs/specs/ios-answer-flow.md`](specs/ios-answer-flow.md) §3.7（E1–E8）、验收第 13–14 条；
@@ -527,14 +527,14 @@ SSH 到 Mac B 的旧授权已用完，需要再次操作时当次确认。上述
 相关回归（iOS 27.0）：请求导航 / 连接、待办挑选三组，加主类里 22 条提问页与确认页的用例，共 39 条，38 条过；唯一失败的是 `AskHumanRequestNavigationUITests.testManualReturnRestoresTheReadingPositionOfALongForm`（`:101`），就是上面「特殊回复」一节记下的 main 上已有的不稳定用例，换成不带状态条的构建它也是时过时不过，带状态条的构建用 `test-without-building` 复跑时也至少过了三次。没跑的：离开模式用例的后 11 条、`AskHumanRequestTodoUITests`、`AskHumanInputVisibilityUITests`、主类里与请求页无关的用例、iPad 两栏（`AskHumanLargeScreenUITests`）；也没跑 `./scripts/install.sh`（这次只动了 iOS App 与文档，Mac 端二进制没有变化）。
 
 2026-11-09 追加「下一条 / 关闭」按钮与 5 秒倒计时（用户：「当一个消息在其他端完成或被取消，ios 端顶部的横幅加一个按钮，可以继续跳转下一条或关闭消息」，随后要求「5 秒倒计时，自动按这个按钮的操作」，再加一个「停留」按钮）。
-需求 [`ios-answer-flow.md`](specs/ios-answer-flow.md) §3.8（E9–E15）、验收第 18–19 条；`ios-request-switching.md` §2 与 `overview-ios.md` 随之改（推翻了「请求结束后不自动跳走」）。已提交到本地 main，**未推送、未出 TestFlight 包**；没跑 `./scripts/install.sh`（只动了 iOS App 与文档，Mac 端二进制没有变化）。
+需求 [`ios-answer-flow.md`](specs/ios-answer-flow.md) §3.8（E9–E15）、验收第 18–19 条；`ios-request-switching.md` §2 与 `overview-ios.md` 随之改（推翻了「请求结束后不自动跳走」）。已提交到本地 main（`aeb59922`、`78d19d49`），**未推送**；2026-11-10 已随内外 TestFlight `0.1.0 (16)` 出去（源码 `78d19d49`，Internal 与 Friends 均 `IN_BETA_TESTING`，见 [Build 16 交付记录](plans/ios-channel.md#2026-11-10testflight-内部与外部构建-16)）；没跑 `./scripts/install.sh`（只动了 iOS App 与文档，Mac 端二进制没有变化）。
 做了什么：条的右边一枚按钮，还有别的待答请求写「下一条消息」、没有写「关闭」（去向同提交后自动前进，`nextPending(after:)`）；设置里的「自动打开下一个请求」开着时（文案已改成覆盖两种情形，加了一行说明），条出现后数 5 秒自动按它，旁边有「停留」；弹层或键盘开着不倒计时（写回答时请求结束也算：键盘随表单变只读而收起，所以在收到「已结束」的同一轮里查）；按钮与句子并排放不下（窄屏、大字号）就排到句子下面（`EndedStripLayout`）。
 自测（模拟器）：iOS 27.0 / iPhone 18 Pro Max 上 `AskHumanEndedUITests` 14 条，英文、中文各全跑一次全过；Swift 包 504 条全过（`EndedCountdownTests` 23 条）；请求导航类 8 条全过（`testArrivalHintLeavesTheRightHandControlsUsableDuringFlight` 在机器换页最凶时因等动效阶段超时失败过一次，单独重跑通过）；主类里发送与自动前进的 6 条（回执后滑入下一条、从头开始且未读、关自动前进回列表、多题发送、菜单取消、确认页选择）全过。窄屏与经典栏：iPhone SE（3 代，375 pt，iOS 18.5，临时建的模拟器，已删）上字号、倒计时、停留、滚动、关闭五条全过；暗色与三档大字号只看了截图。
 没跑的：主类 `AskHumanUITests` 其余用例、离开模式用例、iPad（`AskHumanLargeScreenUITests`）、iOS 26.2；中文只在 440 pt 宽的机型上看过。
 没做、也没问过用户的（E12）：App 退到后台时倒计时照数、回到前台页面可能已换；VoiceOver / 切换控制开着时仍会自动跳；手指碰屏幕不算停留；页面上有没发出的草稿、但键盘已收起时照数（想留下点「停留」；结束的那页一走，草稿随页丢弃）。
 
 下一步：
-- [ ] 真机验收（按钮与倒计时，未出包）：开着「自动打开下一个请求」，让 Mac 弹窗先答掉一条、手机停在那页，看 5 秒是否合适、「停留」是否好找、数完换页是否太突然、写回答时被别处答掉是否确实不跳；关掉开关后只剩按钮；有意见记进 `ios-answer-flow.md` §5。上面「没做」的四项真机上觉得需要再加
+- [ ] 真机验收（按钮与倒计时，已随内测包 `0.1.0 (16)` 出去，出包时用户还没更新）：开着「自动打开下一个请求」，让 Mac 弹窗先答掉一条、手机停在那页，看 5 秒是否合适、「停留」是否好找、数完换页是否太突然、写回答时被别处答掉是否确实不跳；关掉开关后只剩按钮；有意见记进 `ios-answer-flow.md` §5。上面「没做」的四项真机上觉得需要再加
 - [ ] 真机验收（状态条本身，已随内测包 `0.1.0 (11)` 出去，2026-11-07）：让 Mac 弹窗先答掉一条、手机停在那页，看状态条是否一眼能看到、正文变灰到什么程度合适（现在 0.6，想更淡 / 更不淡改 `EndedDimming.level`）、触感与播报是否合适；有意见记进 `ios-answer-flow.md` §5
 - [ ] 没看过：iOS 17、iPad / 折叠屏内屏上的样子；VoiceOver 实际读出的内容（只验了无障碍标识与标签，没开 VoiceOver 听）
 - [ ] 取舍待用户看过再定：条里白字在橙 / 灰上对比不高（约 2.4 / 3.4 比 1；离开模式的条也是白字压在带色玻璃上，改成青绿色后约 2.6 比 1，做法一致），若觉得难读，可把橙与灰的底色调深一档（会与历史页的颜色略不同）
