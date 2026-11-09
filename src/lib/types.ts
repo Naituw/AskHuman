@@ -570,6 +570,7 @@ export interface PopupInboxRequest {
   kind?: "ask" | "permission" | "stop";
 }
 export interface PopupInboxSnapshot {
+  updating?: boolean;
   requests: PopupInboxRequest[];
   recovered: boolean;
   presented?: boolean;

@@ -23,6 +23,7 @@ const MAX_STAGED_BYTES_PER_PHONE: u64 = 64 * 1024 * 1024;
 /// The phone gets an acknowledgement after this many chunks (and after the last one).
 const ACK_EVERY_CHUNKS: u64 = 4;
 
+#[derive(serde::Serialize, serde::Deserialize)]
 pub(crate) struct Upload {
     phone_id: String,
     name: String,
@@ -37,8 +38,10 @@ pub(crate) struct Upload {
     task_id: Option<String>,
     next: u64,
     received: u64,
+    #[serde(skip)]
     hasher: Sha256,
     path: PathBuf,
+    #[serde(skip)]
     file: Option<std::fs::File>,
     complete: bool,
     touched_ms: i64,
@@ -52,12 +55,63 @@ pub(crate) struct UploadedFile {
     pub path: PathBuf,
 }
 
-#[derive(Default)]
+#[derive(Default, serde::Serialize, serde::Deserialize)]
 pub(crate) struct Uploads {
     by_id: HashMap<String, Upload>,
 }
 
 impl Uploads {
+    pub fn snapshot(&self) -> anyhow::Result<serde_json::Value> {
+        for upload in self.by_id.values() {
+            if let Some(file) = &upload.file {
+                file.sync_all()?;
+            }
+        }
+        Ok(serde_json::to_value(self)?)
+    }
+
+    pub fn restore(value: serde_json::Value, directory: &Path) -> anyhow::Result<Self> {
+        let mut uploads: Self = serde_json::from_value(value)?;
+        uploads.by_id.retain(|_, upload| upload.path.exists());
+        for (id, upload) in &mut uploads.by_id {
+            let expected = directory
+                .join("uploads")
+                .join(id)
+                .join(safe_file_name(&upload.name));
+            anyhow::ensure!(
+                crypto::is_valid_id(id) && upload.path == expected,
+                "invalid saved upload path"
+            );
+            anyhow::ensure!(
+                upload.size <= MAX_ASSET_BYTES
+                    && upload.received <= upload.size
+                    && upload.next <= upload.chunks,
+                "invalid saved upload size"
+            );
+            let mut file = std::fs::OpenOptions::new()
+                .read(true)
+                .write(true)
+                .open(&upload.path)?;
+            anyhow::ensure!(
+                file.metadata()?.len() >= upload.received,
+                "saved upload is incomplete"
+            );
+            file.set_len(upload.received)?;
+            let mut data = Vec::with_capacity(upload.received as usize);
+            std::io::Read::read_to_end(&mut file, &mut data)?;
+            upload.hasher.update(&data);
+            if upload.complete {
+                anyhow::ensure!(
+                    upload.received == upload.size && hex(&Sha256::digest(&data)) == upload.sha256,
+                    "saved upload failed verification"
+                );
+            } else {
+                upload.file = Some(file);
+            }
+        }
+        Ok(uploads)
+    }
+
     fn staged_for(&self, phone_id: &str) -> (usize, u64) {
         self.by_id
             .values()
@@ -171,6 +225,9 @@ impl Actor {
     }
 
     pub(super) fn on_upload_begin(&mut self, phone_id: &str, begin: UploadBegin) {
+        if !self.inbox_ready() {
+            return;
+        }
         let id = begin.upload_id.clone();
         let reject = |this: &mut Self, reason: &str| {
             this.upload_ack(phone_id, &id, 0, "error", Some(reason));
@@ -178,15 +235,22 @@ impl Actor {
         if !crypto::is_valid_id(&id) {
             return reject(self, "invalid");
         }
-        if self.uploads.by_id.contains_key(&id) {
-            // A repeated begin (lost ack): report where the transfer stands.
-            let next = self.uploads.by_id[&id].next;
-            let owned = self.uploads.by_id[&id].phone_id == phone_id;
-            return if owned {
-                self.upload_ack(phone_id, &id, next, "ok", None)
-            } else {
-                reject(self, "invalid")
-            };
+        if let Some(upload) = self.uploads.by_id.get(&id) {
+            let matches = upload.phone_id == phone_id
+                && upload.name == safe_file_name(&begin.name)
+                && upload.mime == begin.mime.chars().take(100).collect::<String>()
+                && upload.size == begin.size
+                && upload.chunks == begin.chunks
+                && upload.sha256.eq_ignore_ascii_case(&begin.sha256)
+                && upload.request_id == begin.scope.request_id
+                && upload.agent_key == begin.scope.agent_key
+                && upload.task_id == begin.scope.task_id;
+            if !matches {
+                return reject(self, "invalid");
+            }
+            let next = upload.next;
+            let status = if upload.complete { "complete" } else { "ok" };
+            return self.upload_ack(phone_id, &id, next, status, None);
         }
         if begin.size == 0 || begin.size > MAX_ASSET_BYTES {
             return reject(self, "tooLarge");
@@ -272,6 +336,9 @@ impl Actor {
     }
 
     pub(super) fn on_upload_chunk(&mut self, phone_id: &str, chunk: UploadChunk) {
+        if !self.inbox_ready() {
+            return;
+        }
         let id = chunk.upload_id.clone();
         let now = self.now();
         let Some(upload) = self.uploads.by_id.get_mut(&id) else {
@@ -357,8 +424,8 @@ impl Actor {
 
     /// Takes finished uploads for an answer to `request_id`: every id must exist, be complete
     /// and belong to this phone and request. They leave the table either way (consumed).
-    pub(super) fn take_uploads(
-        &mut self,
+    pub(super) fn reply_uploads(
+        &self,
         phone_id: &str,
         request_id: &str,
         ids: &[String],
@@ -371,10 +438,35 @@ impl Actor {
                 return Err("attachment is not available".into());
             }
         }
-        Ok(self.consume_uploads(ids))
+        Ok(ids
+            .iter()
+            .map(|id| {
+                let upload = &self.uploads.by_id[id];
+                UploadedFile {
+                    name: upload.name.clone(),
+                    mime: upload.mime.clone(),
+                    path: upload.path.clone(),
+                }
+            })
+            .collect())
     }
 
-    /// Like [`Self::take_uploads`] for the files of an interjection to `agent_key`.
+    pub(super) fn finish_reply_uploads(&mut self, submit: &crate::ios::wire::AnswerSubmit) {
+        for item in &submit.answers {
+            for id in &item.images {
+                if let Some(upload) = self.uploads.by_id.remove(id) {
+                    if let Some(directory) = upload.path.parent() {
+                        let _ = std::fs::remove_dir_all(directory);
+                    }
+                }
+            }
+            for id in &item.files {
+                self.uploads.by_id.remove(id);
+            }
+        }
+    }
+
+    /// Like [`Self::reply_uploads`] for the files of an interjection to `agent_key`.
     pub(super) fn take_agent_uploads(
         &mut self,
         phone_id: &str,
@@ -451,6 +543,9 @@ impl Actor {
 
     /// Uploads that were never used, and ones whose request already ended.
     pub(super) fn prune_uploads(&mut self, now: i64) {
+        if !self.inbox_ready() {
+            return;
+        }
         let stale: Vec<String> = self
             .uploads
             .by_id

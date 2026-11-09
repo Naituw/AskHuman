@@ -7,6 +7,7 @@ pub mod handoff;
 pub mod lifecycle;
 pub mod popup_focus;
 pub mod popup_inbox;
+pub mod recovery;
 pub mod request;
 pub mod restart_guard;
 pub mod spawn;

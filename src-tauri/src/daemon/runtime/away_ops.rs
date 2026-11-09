@@ -88,7 +88,7 @@ pub(super) async fn finish_auto_reply(
     state: &Arc<ServerState>,
     task: &TaskRequest,
     reply: AutoReply,
-    w: &mut OwnedWriteHalf,
+    w: &mut Writer,
 ) {
     let request_id = uuid::Uuid::new_v4().to_string();
     let json = task.output_format == crate::models::OutputFormat::Json;

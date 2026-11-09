@@ -41,6 +41,7 @@ pub(crate) struct HistoryBinding {
 
 pub struct Coordinator {
     inner: Mutex<Inner>,
+    submit_lock: Mutex<()>,
     terminal: FirstTerminalGate<()>,
     /// 结果渲染 / 收尾文案使用的界面语言（Daemon 模式为调用方上送的 lang；单进程为 `Lang::current()`）。
     lang: Lang,
@@ -188,6 +189,7 @@ impl Coordinator {
                 headless,
             }),
             terminal: FirstTerminalGate::new(),
+            submit_lock: Mutex::new(()),
             lang,
             project,
             source,
@@ -237,8 +239,32 @@ impl Coordinator {
         )
     }
 
-    pub fn register(&self, channel: Arc<dyn Channel>) {
-        self.inner.lock().unwrap().channels.push(channel);
+    pub fn register(&self, channel: Arc<dyn Channel>) -> bool {
+        let mut inner = self.inner.lock().unwrap();
+        if inner
+            .channels
+            .iter()
+            .any(|existing| existing.id() == channel.id())
+        {
+            return false;
+        }
+        if channel.id() != "popup" {
+            if let Some(context) = &inner.request.recovery {
+                if let Err(error) = context.remember_channel(channel.id()) {
+                    eprintln!("askhuman: cannot save request delivery routes: {error}");
+                }
+            }
+        }
+        inner.channels.push(channel);
+        true
+    }
+
+    pub(crate) fn suspend(&self) {
+        self.surfaces_settled.store(false, Ordering::SeqCst);
+        let channels = std::mem::take(&mut self.inner.lock().unwrap().channels);
+        for channel in channels {
+            channel.interrupt(&Interruption::Handoff);
+        }
     }
 
     /// 是否已登记某个渠道（按 id）。用于「补推在途」时避免对同一渠道重复挂接 / 重发卡片。
@@ -291,6 +317,18 @@ impl Coordinator {
     /// entry is written (nothing happened on the human side) and no card is touched (the lost
     /// surfaces already left on their own).
     fn fail_without_surface(&self) {
+        let _submission = self.submit_lock.lock().unwrap();
+        if self
+            .inner
+            .lock()
+            .unwrap()
+            .request
+            .recovery
+            .as_ref()
+            .is_some_and(|context| context.is_suspended() || context.is_recovering())
+        {
+            return;
+        }
         if !self.terminal.try_set(()) {
             return;
         }
@@ -333,11 +371,69 @@ impl Coordinator {
 
     /// Return whether this submission won, so a shared popup can acknowledge only its own
     /// request without treating a rejected or stale answer as a new human decision.
-    pub fn try_submit(self: &Arc<Self>, mut result: ChannelResult) -> bool {
-        if !self.terminal.try_set(()) {
+    pub fn try_submit(self: &Arc<Self>, result: ChannelResult) -> bool {
+        let directive = self.directive.lock().unwrap().clone();
+        self.try_submit_inner(result, false, None, directive)
+    }
+
+    pub(crate) fn try_submit_with_directive(
+        self: &Arc<Self>,
+        result: ChannelResult,
+        directive: Option<crate::daemon::away::Directive>,
+    ) -> bool {
+        self.try_submit_inner(result, false, None, directive)
+    }
+
+    pub(crate) fn recovery(&self) -> Option<Arc<crate::daemon::recovery::RequestContext>> {
+        self.inner.lock().unwrap().request.recovery.clone()
+    }
+
+    pub(crate) fn try_submit_identified(
+        self: &Arc<Self>,
+        result: ChannelResult,
+        receipt: &crate::daemon::recovery::Receipt,
+        directive: Option<crate::daemon::away::Directive>,
+    ) -> bool {
+        self.try_submit_inner(result, false, Some(receipt), directive)
+    }
+
+    /// Continue a decision that was saved before the preceding daemon could finish delivery.
+    pub(crate) fn restore_answer(self: &Arc<Self>) -> anyhow::Result<bool> {
+        let recovery = self.inner.lock().unwrap().request.recovery.clone();
+        let Some(context) = recovery else {
+            return Ok(false);
+        };
+        let Some(saved) = context.store.request(&context.id)? else {
+            anyhow::bail!("saved request is missing");
+        };
+        let Some(decision) = saved.decision else {
+            return Ok(false);
+        };
+        let result = serde_json::from_value(decision["answer"].clone())?;
+        let directive = serde_json::from_value(decision["directive"].clone())?;
+        Ok(self.try_submit_inner(result, true, None, directive))
+    }
+
+    fn try_submit_inner(
+        self: &Arc<Self>,
+        mut result: ChannelResult,
+        persisted: bool,
+        receipt: Option<&crate::daemon::recovery::Receipt>,
+        directive: Option<crate::daemon::away::Directive>,
+    ) -> bool {
+        let _submission = self.submit_lock.lock().unwrap();
+        if self.terminal.is_set() {
             return false;
         }
         let request = { self.inner.lock().unwrap().request.clone() };
+        let operation = if let Some(context) = &request.recovery {
+            let Some(operation) = context.operation() else {
+                return false;
+            };
+            Some(operation)
+        } else {
+            None
+        };
         if request
             .message
             .development
@@ -348,7 +444,7 @@ impl Coordinator {
                 answer.todo_ids.clear();
                 answer.todo_selections.clear();
             }
-        } else {
+        } else if !persisted {
             crate::todos::apply_todo_deliveries(&request, &mut result, &self.project);
         }
         // Notes on the message are cleaned once here for every source (popup, phone): a
@@ -357,6 +453,31 @@ impl Coordinator {
             std::mem::take(&mut result.annotations),
             result.action == ChannelAction::Send && request.annotatable,
         );
+        if let Some(context) = request.recovery.as_ref().filter(|_| !persisted) {
+            let decision = serde_json::json!({
+                "answer": result,
+                "directive": directive,
+            });
+            match context
+                .store
+                .decide_with_receipt(&context.id, &decision, receipt)
+            {
+                Ok(true) => {}
+                Ok(false) => return false,
+                Err(error) => {
+                    eprintln!("askhuman: cannot save accepted answer: {error}");
+                    return false;
+                }
+            }
+        }
+        if !self.terminal.try_set(()) {
+            return false;
+        }
+        *self.directive.lock().unwrap() = if result.action == ChannelAction::Send {
+            directive
+        } else {
+            None
+        };
         let (exiter, pending_count, dequeue_ids) = {
             let inner = self.inner.lock().unwrap();
             // 进入收尾：此后 GUI 拦下关窗退出，独占由协调器主动 `app.exit`。
@@ -420,6 +541,7 @@ impl Coordinator {
         // 收尾窗口：等落败端收尾完成（pending 归零）或 2s 超时后输出并退出。
         let me = Arc::clone(self);
         let waiter = async move {
+            let _operation = operation;
             me.wait_for_finalizers().await;
             me.finish();
         };
@@ -440,6 +562,7 @@ impl Coordinator {
     /// preserve the original prompt in reply history. No-op if a result was already submitted.
     /// `source` is the localized cancel source; `source_channel_id` is its stable history id.
     pub fn cancel_request(&self, source: String, source_channel_id: &str) {
+        let _submission = self.submit_lock.lock().unwrap();
         if !self.terminal.try_set(()) {
             return;
         }
@@ -1056,5 +1179,25 @@ mod tests {
             rx.try_recv().is_err(),
             "already terminal; no second outcome"
         );
+    }
+    #[tokio::test]
+    async fn a_losing_answer_cannot_replace_the_winning_directive() {
+        let (coordinator, _rx) = observable_coordinator();
+        let directive = crate::daemon::away::Directive {
+            kind: crate::daemon::away::DirectiveKind::Away,
+            scope: crate::daemon::away::Scope::Global,
+            note: Some("the winner".into()),
+        };
+        assert!(coordinator.try_submit_with_directive(
+            ChannelResult {
+                action: ChannelAction::Send,
+                source_channel_id: "ios".into(),
+                answers: Vec::new(),
+                annotations: Vec::new(),
+            },
+            Some(directive.clone())
+        ));
+        assert!(!coordinator.try_submit_with_directive(ChannelResult::cancel("popup"), None));
+        assert_eq!(coordinator.take_directive(), Some(directive));
     }
 }

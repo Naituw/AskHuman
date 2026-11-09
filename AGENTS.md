@@ -46,6 +46,15 @@ for routine updates; credentials stay outside the repository.
 
 Before editing the message types in [`src-tauri/src/ipc/mod.rs`](src-tauri/src/ipc/mod.rs) (`ClientMsg`, `ServerMsg` and their payloads), read the [“IPC 协议号”](docs/overview.md#ipc-协议号protocol_version) section of `docs/overview.md`. It says which changes must bump `PROTOCOL_VERSION` and which must not, and what to update when you bump. In short: an additive field with `#[serde(default)]` never bumps; a new enum variant an older peer can receive, or any change an older peer would misread, always does. A daemon may serve clients of the same protocol number but a different build, so “same number” has to keep meaning “can talk”.
 
+## Changing recovery storage
+
+Changes to the SQLite recovery schema in `src-tauri/src/daemon/recovery.rs` must increment
+`SCHEMA_VERSION` and add a new transactional migration. Editing an earlier migration does not
+upgrade databases that have already run it. Keep the existing SQL fixtures under
+`src-tauri/src/daemon/recovery/fixtures/` unchanged, add a fixture for the new version, and verify
+upgrades preserve pending calls, terminal results, channel checkpoints, and cancellation behavior.
+See [daemon live update](docs/specs/daemon-live-update.md#私有恢复存储).
+
 ## Code comments
 
 Write code comments in English.

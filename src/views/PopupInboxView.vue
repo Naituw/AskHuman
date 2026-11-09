@@ -79,6 +79,7 @@ const pendingArrivals = new Set<string>();
 const shownArrivals = new Set<string>();
 let hostPresented = false;
 const recovered = ref(false);
+const updating = ref(false);
 const error = ref("");
 const notice = ref("");
 // A warning (files that did not get attached, and why) stays longer and is marked; a plain notice just informs.
@@ -924,7 +925,9 @@ onMounted(async () => {
   listeners.push(await listen("popup-inbox-reconcile", () => { void enqueue(() => geometry()); }));
   // The window's own drag-drop events (C28): one listener routes a drag to any request, instead of each request's core.
   listeners.push(await getCurrentWebview().onDragDropEvent(event => { void drop.onEvent(event.payload); }));
+  listeners.push(await listen<boolean>("popup-connection", event => { updating.value = event.payload; }));
   const snapshot = await popupInboxInit();
+  updating.value = snapshot.updating ?? false;
   hostPresented ||= snapshot.presented ?? false;
   recovered.value = snapshot.recovered;
   await enqueue(async () => {
@@ -954,7 +957,8 @@ onBeforeUnmount(() => {
     <div v-if="renderedSidebar" class="inbox-divider" role="separator" aria-orientation="vertical" :aria-label="t('popup.inbox.resize')" @pointerdown="beginResize"></div>
     <main class="inbox-body" :inert="blocked || view === 'collapsed'">
       <button v-if="layoutReview" class="inbox-layout-review" @click="toggleReviewSidebar">{{ renderedSidebar ? '隐藏 Sidebar' : '显示 Sidebar' }} · 几何测试</button>
-      <div v-if="recovered" class="inbox-recovery" role="alert">{{ t('popup.inbox.recovered') }}<button @click="recovered = false" :aria-label="t('popup.inbox.dismiss')">×</button></div>
+      <div v-if="updating" class="inbox-recovery" role="status">{{ t('popup.inbox.updating') }}</div>
+      <div v-else-if="recovered" class="inbox-recovery" role="alert">{{ t('popup.inbox.recovered') }}<button @click="recovered = false" :aria-label="t('popup.inbox.dismiss')">×</button></div>
       <div v-for="request in mounted" v-show="(request.requestId === active && (!terminals.has(request.requestId) || motion?.from === request.requestId)) || (motion?.phase === 'prepare' && request.requestId === motion.from)" :key="request.requestId" class="inbox-request" :class="{ 'inbox-preparing': motion?.incoming === request.requestId && motion.phase === 'prepare' }" :data-answer-phase="panePhase(request.requestId)" :data-inbox-request="request.requestId" :inert="request.requestId !== active">
         <PopupView :scope="scopeFor(request.requestId)" />
       </div>

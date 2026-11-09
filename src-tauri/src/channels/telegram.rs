@@ -5,6 +5,7 @@
 
 use super::conversation::{
     run_conversation, InboundReply, MessagingChannel, QuestionCtx, QuestionOutcome,
+    QuestionProgress,
 };
 use super::{Channel, ConversationOrigin, Interruption, Preemption, ResultSink};
 use crate::config::TelegramChannelConfig;
@@ -13,6 +14,7 @@ use crate::models::{AskRequest, MessagePrompt, QuestionAnswer};
 use crate::telegram::router::{RoutedTg, TgInbound, TgRouter};
 use crate::telegram::{markdown, TelegramClient};
 use serde_json::{json, Value};
+use sha2::Digest;
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -175,24 +177,19 @@ impl MessagingChannel for TelegramSession {
         ctx: &QuestionCtx<'_>,
         preempt: &Preemption,
     ) -> QuestionOutcome {
-        // 拆分借用：client 不可变 + events 可变。
-        let Self { client, events, .. } = self;
+        let Self {
+            client,
+            events,
+            config,
+        } = self;
         let (Some(client), Some(events)) = (client.as_ref(), events.as_mut()) else {
             return QuestionOutcome::Lost;
         };
-        ask_question(
-            client,
-            events,
-            ctx.header,
-            ctx.text,
-            ctx.options,
-            ctx.is_markdown,
-            ctx.select_only,
-            ctx.single,
-            ctx.lang,
-            preempt,
-        )
-        .await
+        let route = format!(
+            "{:x}",
+            sha2::Sha256::digest(format!("{}|{}", config.api_base_url, config.bot_token))
+        );
+        ask_question(client, events, ctx, preempt, &route).await
     }
 
     async fn close(&mut self) {
@@ -237,158 +234,180 @@ async fn send_message_prompt(
     }
 }
 
-/// 发送一道题（单卡片：正文 + 补充提示 + inline 选项/提交键盘）并长轮询直到用户点「提交」。
-/// `header` is the fully assembled question title, including source / Agent / project context.
-/// 卡片发出后、提交前用户在聊天里发的文字会累积进 `user_input`。
-/// 终态：本端胜出→卡片改「✅ 已回复」；被抢答→改「✅ 已在{赢家}回答」并去键盘后返回
-/// `Interrupted`；卡片发不出去 / 轮询器永久停止 → `Lost`（不改卡片）。
-#[allow(clippy::too_many_arguments)]
+/// Restore the original question card and its accumulated input.
 async fn ask_question(
     client: &TelegramClient,
     events: &mut RoutedTg,
-    header: &str,
-    question_text: &str,
-    options: &[crate::models::OptionItem],
-    is_markdown: bool,
-    select_only: bool,
-    single: bool,
-    lang: Lang,
+    ctx: &QuestionCtx<'_>,
     preempt: &Preemption,
+    route: &str,
 ) -> QuestionOutcome {
-    // 提交值用原文；正文清单用显示文本（推荐选项带本地化前缀）。
-    let displays: Vec<String> = options
-        .iter()
-        .map(|o| super::conversation::display_text(o, lang))
-        .collect();
-    let options: Vec<String> = options.iter().map(|o| o.text.clone()).collect();
-    let mut selected: Vec<String> = Vec::new();
-    let mut user_input = String::new();
-
-    // Question title: when there's no source header, fall back to a fixed title (consistent with
-    // DingTalk/Feishu) and prefix it with the question icon `❓`, separating the question area from the
-    // body (Telegram messages are plain text with no card frame, so this prefix simulates a card title).
-    let title = if header.trim().is_empty() {
-        i18n::tr(lang, "channel.tgTitleFallback").to_string()
-    } else {
-        header.to_string()
+    let saved = match ctx.saved::<QuestionProgress>("telegram") {
+        Ok(saved) => saved,
+        Err(error) => {
+            eprintln!("[telegram] cannot restore question: {error}");
+            return QuestionOutcome::Lost;
+        }
     };
-    let header = format!("\u{2753} {}", title);
-    let header = header.as_str();
-
-    // 单卡片：正文 = 题干 + 选项清单（A. xxx，按钮只放字母规避超长选项显示不全）+ 补充提示；
-    // inline 键盘 = 字母选项（可多选）+「提交」。
-    let content = card_content(question_text, &displays);
-    // 严格模式忽略自由文字，提示改为「选择后提交」（区分单/多选）；否则用补充文字提示。
-    let hint = if select_only {
-        if single {
-            i18n::tr(lang, "channel.tgActionHintSelectSingle")
+    let target = client.chat_id().to_string();
+    if saved.target_id.as_ref().is_some_and(|id| id != &target)
+        || saved.route_id.as_ref().is_some_and(|id| id != route)
+    {
+        return QuestionOutcome::Lost;
+    }
+    if !ctx
+        .commit(
+            "telegram",
+            &json!({"targetId": target, "routeId": route}),
+            preempt,
+        )
+        .await
+    {
+        return QuestionOutcome::Interrupted;
+    }
+    let displays = ctx
+        .options
+        .iter()
+        .map(|option| super::conversation::display_text(option, ctx.lang))
+        .collect::<Vec<_>>();
+    let options = ctx
+        .options
+        .iter()
+        .map(|option| option.text.clone())
+        .collect::<Vec<_>>();
+    let mut selected = saved.selected_options;
+    let mut input = saved.input;
+    let mut processed = saved.processed_events;
+    let title = if ctx.header.trim().is_empty() {
+        i18n::tr(ctx.lang, "channel.tgTitleFallback")
+    } else {
+        ctx.header
+    };
+    let header = format!("❓ {title}");
+    let content = card_content(ctx.text, &displays);
+    let hint = if ctx.select_only {
+        if ctx.single {
+            i18n::tr(ctx.lang, "channel.tgActionHintSelectSingle")
         } else {
-            i18n::tr(lang, "channel.tgActionHintSelectMulti")
+            i18n::tr(ctx.lang, "channel.tgActionHintSelectMulti")
         }
     } else {
-        i18n::tr(lang, "channel.tgActionHint")
+        i18n::tr(ctx.lang, "channel.tgActionHint")
     };
     let body = if content.is_empty() {
         hint.to_string()
     } else {
-        format!("{}\n\n{}", content, hint)
+        format!("{content}\n\n{hint}")
     };
-    let keyboard = card_keyboard(&options, &selected, lang);
-    let card_message_id = send_composed(client, header, &body, is_markdown, Some(keyboard)).await;
-    if card_message_id == 0 {
-        // Both the HTML card and its plain-text retry failed: the human never saw this question,
-        // so this surface cannot carry it. Waiting would only hide the failure from the caller.
-        eprintln!(
-            "{}{}",
-            i18n::warn_prefix(lang),
-            i18n::tr(lang, "channel.tgQuestionSendFailed")
-        );
-        return QuestionOutcome::Lost;
-    }
-
-    // 登记卡片精确路由 + 接管本 chat 的自由文字（成为「最新活动卡片」）。
-    events.set_active(client.chat_id(), card_message_id);
-
-    while !preempt.is_cancelled() {
-        let ev = match tokio::time::timeout(POLL_INTERVAL, events.recv()).await {
-            Ok(Some(ev)) => ev,
-            Ok(None) => {
-                // The poller stopped for good (Router dropped); transient API errors are retried
-                // inside the Router. Leave the card as is and let the coordinator drop this surface
-                // rather than stamping "cancelled" on a question nobody cancelled.
-                if preempt.is_cancelled() {
-                    break;
-                }
-                events.clear_active(card_message_id);
+    let id = match saved.message_id {
+        Some(id) => match id.parse::<i64>() {
+            Ok(id) => id,
+            Err(_) => return QuestionOutcome::Lost,
+        },
+        None => {
+            if preempt.is_cancelled() {
+                return QuestionOutcome::Interrupted;
+            }
+            let keyboard = card_keyboard(&options, &selected, ctx.lang);
+            let id = send_composed(client, &header, &body, ctx.is_markdown, Some(keyboard)).await;
+            if id == 0 {
                 return QuestionOutcome::Lost;
             }
-            Err(_) => continue, // 超时：回到循环顶部重新检查 cancelled
+            if !ctx
+                .commit("telegram", &json!({"messageId": id.to_string()}), preempt)
+                .await
+            {
+                return QuestionOutcome::Interrupted;
+            }
+            id
+        }
+    };
+    if let Some(answer) = saved.answer {
+        finalize_card(
+            client,
+            id,
+            &header,
+            &content,
+            i18n::tr(ctx.lang, "channel.tgReplied"),
+            ctx.is_markdown,
+        )
+        .await;
+        return QuestionOutcome::Answered(answer);
+    }
+    events.set_active(client.chat_id(), id);
+    loop {
+        let event = if preempt.is_handoff() {
+            match events.try_recv() {
+                Some(event) => event,
+                None => break,
+            }
+        } else {
+            if preempt.is_cancelled() {
+                break;
+            }
+            match tokio::time::timeout(POLL_INTERVAL, events.recv()).await {
+                Ok(Some(event)) => event,
+                Ok(None) => {
+                    if preempt.is_cancelled() {
+                        break;
+                    }
+                    events.clear_active(id);
+                    return QuestionOutcome::Lost;
+                }
+                Err(_) => continue,
+            }
         };
         if handle_event(
-            ev,
+            event,
             client,
+            ctx,
+            preempt,
             &options,
             &mut selected,
-            &mut user_input,
-            card_message_id,
-            select_only,
-            single,
-            lang,
+            &mut input,
+            id,
+            &mut processed,
         )
         .await
         {
-            // 本端胜出：卡片改「已回复」终态、去键盘。
-            let status = i18n::tr(lang, "channel.tgReplied");
+            let answer = question_answer(selected.clone(), &input);
             finalize_card(
                 client,
-                card_message_id,
-                header,
+                id,
+                &header,
                 &content,
-                status,
-                is_markdown,
+                i18n::tr(ctx.lang, "channel.tgReplied"),
+                ctx.is_markdown,
             )
             .await;
-            events.clear_active(card_message_id);
-            return QuestionOutcome::Answered(QuestionAnswer {
-                selected_options: selected,
-                user_input: {
-                    let t = user_input.trim();
-                    if t.is_empty() {
-                        None
-                    } else {
-                        Some(t.to_string())
-                    }
-                },
-                images: Vec::new(),
-                files: Vec::new(),
-                todo_ids: Vec::new(),
-                todo_selections: Vec::new(),
-            });
+            events.clear_active(id);
+            return QuestionOutcome::Answered(answer);
         }
     }
-
-    // Interrupted: edit the card to its terminal state and drop the keyboard.
-    // Preempted → "Answered via X"; cancelled (with/without source) → "Cancelled [by X]".
+    if preempt.is_handoff() {
+        events.clear_active(id);
+        return QuestionOutcome::Interrupted;
+    }
     let status = match preempt.reason() {
-        Some(Interruption::AnsweredBy(w)) => {
-            i18n::tr(lang, "channel.tgAnsweredVia").replace("{source}", &w)
+        Some(Interruption::AnsweredBy(winner)) => {
+            i18n::tr(ctx.lang, "channel.tgAnsweredVia").replace("{source}", &winner)
         }
-        Some(Interruption::Cancelled(src)) if !src.is_empty() => {
-            i18n::tr(lang, "channel.tgCancelledBy").replace("{source}", &src)
+        Some(Interruption::Cancelled(source)) if !source.is_empty() => {
+            i18n::tr(ctx.lang, "channel.tgCancelledBy").replace("{source}", &source)
         }
-        _ => i18n::tr(lang, "channel.tgCancelled").to_string(),
+        _ => i18n::tr(ctx.lang, "channel.tgCancelled").to_string(),
     };
-    finalize_card(
-        client,
-        card_message_id,
-        header,
-        &content,
-        &status,
-        is_markdown,
-    )
-    .await;
-    events.clear_active(card_message_id);
+    finalize_card(client, id, &header, &content, &status, ctx.is_markdown).await;
+    events.clear_active(id);
     QuestionOutcome::Interrupted
+}
+
+fn question_answer(selected: Vec<String>, input: &str) -> QuestionAnswer {
+    QuestionAnswer {
+        selected_options: selected,
+        user_input: (!input.trim().is_empty()).then(|| input.trim().to_string()),
+        ..Default::default()
+    }
 }
 
 /// 把卡片编辑为终态：保留头部 + 内容（题干 + 选项清单），追加状态行，并移除按钮（不传 reply_markup）。
@@ -509,100 +528,117 @@ fn compose_html(header: &str, body: &str, is_markdown: bool) -> String {
 /// 路由（chat / 卡片匹配）已由 Router 完成，这里只处理业务语义。
 #[allow(clippy::too_many_arguments)]
 async fn handle_event(
-    ev: TgInbound,
+    event: TgInbound,
     client: &TelegramClient,
+    ctx: &QuestionCtx<'_>,
+    preempt: &Preemption,
     options: &[String],
     selected: &mut Vec<String>,
-    user_input: &mut String,
+    input: &mut String,
     card_message_id: i64,
-    select_only: bool,
-    single: bool,
-    lang: Lang,
+    processed: &mut Vec<String>,
 ) -> bool {
-    match ev {
-        // callback_query：切换选项 / 提交（已按本卡片精确路由）。
-        TgInbound::Callback(cb) => {
-            let mut finished = false;
-            // 严格模式空提交：弹 alert 拦截，不进入终结（已用 alert 应答，无需再普通应答）。
-            let mut alerted = false;
-            if let Some(data) = cb.get("data").and_then(|d| d.as_str()) {
-                if data == SUBMIT_CALLBACK {
-                    if select_only && selected.is_empty() {
-                        if let Some(cb_id) = cb.get("id").and_then(|i| i.as_str()) {
-                            client
-                                .answer_callback_query_alert(
-                                    cb_id,
-                                    i18n::tr(lang, "channel.tgSelectRequired"),
-                                )
-                                .await;
-                        }
-                        alerted = true;
-                    } else {
-                        finished = true;
-                    }
-                } else if let Some(idx) = data
-                    .strip_prefix("toggle:")
-                    .and_then(|s| s.parse::<usize>().ok())
+    match event {
+        TgInbound::Callback(callback) => {
+            let callback_id = callback.get("id").and_then(Value::as_str).unwrap_or("");
+            let identity = format!("callback:{callback_id}");
+            if processed.contains(&identity) {
+                client.answer_callback_query(callback_id).await;
+                return false;
+            }
+            let data = callback.get("data").and_then(Value::as_str).unwrap_or("");
+            if data == SUBMIT_CALLBACK {
+                if ctx.select_only && selected.is_empty() {
+                    client
+                        .answer_callback_query_alert(
+                            callback_id,
+                            i18n::tr(ctx.lang, "channel.tgSelectRequired"),
+                        )
+                        .await;
+                    return false;
+                }
+                remember_event(processed, identity);
+                let answer = question_answer(selected.clone(), input);
+                if !ctx
+                    .commit_response(
+                        "telegram",
+                        &json!({"answer": answer, "processedEvents": processed}),
+                        preempt,
+                    )
+                    .await
                 {
-                    if let Some(opt) = options.get(idx) {
-                        if single {
-                            toggle_single(selected, opt);
-                        } else {
-                            toggle(selected, opt);
-                        }
-                        client
-                            .edit_message_reply_markup(
-                                card_message_id,
-                                card_keyboard(options, selected.as_slice(), lang),
-                            )
-                            .await;
+                    return false;
+                }
+                client.answer_callback_query(callback_id).await;
+                return true;
+            }
+            if let Some(index) = data
+                .strip_prefix("toggle:")
+                .and_then(|index| index.parse::<usize>().ok())
+            {
+                if let Some(option) = options.get(index) {
+                    if ctx.single {
+                        toggle_single(selected, option);
+                    } else {
+                        toggle(selected, option);
                     }
+                    remember_event(processed, identity);
+                    if !ctx.commit_response("telegram", &json!({"selectedOptions": selected, "input": input, "processedEvents": processed}), preempt).await { return false; }
+                    client
+                        .edit_message_reply_markup(
+                            card_message_id,
+                            card_keyboard(options, selected, ctx.lang),
+                        )
+                        .await;
                 }
             }
-            // 应答消除客户端转圈（Telegram 无 3 秒硬限，会话自行应答即可）。
-            if !alerted {
-                if let Some(cb_id) = cb.get("id").and_then(|i| i.as_str()) {
-                    client.answer_callback_query(cb_id).await;
-                }
-            }
-            finished
+            client.answer_callback_query(callback_id).await;
+            false
         }
-        // message：卡片之后用户发的文字 → 累积为补充输入；严格模式下忽略（不并入答案）。
         TgInbound::Text {
             text, message_id, ..
         } => {
-            if select_only {
-                // 严格模式忽略自由文字 → 引导（spec R3）；斜线命令交 handle_inbound，不回引导。
+            if ctx.select_only {
                 if let Some(reply) = super::conversation::answer_inbound_reply(
                     None,
                     crate::autochannel::AckMode::Card,
                     &text,
                     "telegram",
-                    lang,
+                    ctx.lang,
                 ) {
-                    send_inbound_reply(client, reply, lang).await;
+                    send_inbound_reply(client, reply, ctx.lang).await;
                 }
                 return false;
             }
-            if message_id <= card_message_id {
+            let identity = format!("text:{message_id}");
+            if message_id <= card_message_id || processed.contains(&identity) {
                 return false;
             }
-            if !user_input.is_empty() {
-                user_input.push('\n');
+            if !input.is_empty() {
+                input.push('\n');
             }
-            user_input.push_str(&text);
-            // 已并入补充输入 → 确认（spec R2）。
+            input.push_str(&text);
+            remember_event(processed, identity);
+            if !ctx.commit_response("telegram", &json!({"selectedOptions": selected, "input": input, "processedEvents": processed}), preempt).await { return false; }
             if let Some(reply) = super::conversation::answer_inbound_reply(
                 Some(crate::autochannel::AckKind::Text),
                 crate::autochannel::AckMode::Card,
                 &text,
                 "telegram",
-                lang,
+                ctx.lang,
             ) {
-                send_inbound_reply(client, reply, lang).await;
+                send_inbound_reply(client, reply, ctx.lang).await;
             }
             false
         }
+    }
+}
+
+fn remember_event(processed: &mut Vec<String>, identity: String) {
+    const KEEP: usize = 512;
+    processed.push(identity);
+    if processed.len() > KEEP {
+        processed.drain(..processed.len() - KEEP);
     }
 }
 

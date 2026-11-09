@@ -86,6 +86,10 @@ extension PhoneEngine {
 
     func windowTimedOut(_ assetId: String) async {
         guard var download = downloads[assetId] else { return }
+        if macs[download.macId]?.recoveringUpdate == true {
+            after("asset." + assetId, Self.windowTimeout) { engine in await engine.windowTimedOut(assetId) }
+            return
+        }
         if download.retried {
             failDownload(assetId, with: BackendError.timedOut)
             return
@@ -203,6 +207,7 @@ extension PhoneEngine {
         defer {
             uploadMailboxes[uploadId] = nil
             uploadOwners[uploadId] = nil
+            uploadBegins[uploadId] = nil
             if !completed, scope.taskId != nil { Task { await self.send(UploadCancel(uploadId: uploadId), to: macId) } }
         }
         let size = UInt64(source.data.count)
@@ -220,13 +225,12 @@ extension PhoneEngine {
         }
 
         try Task.checkCancellation()
-        await send(
-            UploadBegin(
+        let begin = UploadBegin(
                 uploadId: uploadId, name: source.name, mime: source.mime, size: size, chunks: UInt64(chunks), sha256: digest,
                 scope: scope
-            ),
-            to: macId
-        )
+            )
+        uploadBegins[uploadId] = begin
+        await send(begin, to: macId)
         let begun = try await nextUploadAck(uploadId)
         guard begun.status != "error" else { throw fail(begun) }
 
@@ -286,7 +290,16 @@ extension PhoneEngine {
         waiter.resume(throwing: BackendError.cancelled)
     }
 
+    func resumeTransfers(_ macId: String) async {
+        for (id, begin) in uploadBegins where uploadOwners[id] == macId { await send(begin, to: macId) }
+        for (id, download) in downloads where download.macId == macId { await requestWindow(id, from: download.windowStart) }
+    }
+
     func uploadAckTimedOut(_ uploadId: String) {
+        if let macId = uploadOwners[uploadId], macs[macId]?.recoveringUpdate == true {
+            after("upload." + uploadId, Self.uploadAckTimeout) { engine in await engine.uploadAckTimedOut(uploadId) }
+            return
+        }
         guard var mailbox = uploadMailboxes[uploadId], let waiter = mailbox.waiter else { return }
         mailbox.waiter = nil
         uploadMailboxes[uploadId] = mailbox

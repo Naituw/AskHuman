@@ -1,5 +1,11 @@
 # 需求：版本自更新机制（self-update）
 
+> 2026-11-09 新增可恢复换新路径。自身更新在调用和窗口均支持恢复时保存原题并直接交接，
+> 不再等待人类作答。能力不足时保留旧服务并接收兼容新题，待旧调用结束再交接。
+> 本文的排空流程继续定义显式 stop/restart、协议不兼容让位与旧版迁移边界，
+> 可恢复更新的状态、失败重试及验收见 [即时换新](daemon-live-update.md)。
+
+
 > 状态：已实现；macOS/Linux 支持 Direct/npm 自动 apply，Windows 支持检查、日志与安全的手动更新准备。
 > 关联计划：`docs/plans/self-update.md`
 > 影响面：新增 `update/` 模块；daemon 生命周期与 IPC 协议（增量，PROTOCOL_VERSION 不变）；前端弹窗 `PopupView` 与设置 `SettingsView`；`commands.rs`；`release.yml` + 新增 `cliff.toml`；发布流程（更新日志生成）。**不改**正常提问流程的 stdout 契约、退出码语义。
@@ -10,7 +16,7 @@
 >
 > **主动更新换新时效补充（2026-07）**：应用内更新成功落盘后，除保留 daemon 的 15 秒指纹轮询
 > （覆盖外部 npm/install 更新）外，还会立即向**已运行** daemon 发送更新快照刷新 + 常规 Hello
-> 指纹握手；空闲 daemon 立即退出换新，有在途请求则立即进入 graceful drain，未运行 daemon 不会仅
+> 指纹握手；空闲 daemon 立即退出换新，有在途请求时按恢复能力交接原题，旧调用能力不足时保持服务，未运行 daemon 不会仅
 > 因同步更新而被拉起。菜单栏继续显示真实的运行中 daemon 版本，并在其下按阶段解释目标版本与等待
 > 原因（含在途数量及“不打断作答”）。
 >
@@ -38,11 +44,11 @@ daemon 已具备**优雅排空换新（graceful drain）**：盘上二进制内�
 
 | 编号 | 决策项 | 结论 |
 |---|---|---|
-| D1 | 平台范围 | **macOS + Linux + Windows x64**。Unix 由 drain 协调自动原子替换；Windows 未签名阶段仅检查并手动安装，`update prepare` 协调运行中 exe、daemon 与 GUI Host。 |
+| D1 | 平台范围 | **macOS + Linux + Windows x64**。Unix 原子替换后由恢复交接或旧版排空协调生效；Windows 未签名阶段仅检查并手动安装，`update prepare` 协调运行中 exe、daemon 与 GUI Host。 |
 | D2 | 新二进制来源 / 安装方式分流 | **检测安装方式、分别更新**：按 daemon `current_exe()` 路径判定——含 `/node_modules/@humaninloop/` 或 `/node_modules/askhuman/` → **npm 安装**；否则 → **直装二进制**（`install.sh` / 手动下载，如 `~/.local/bin`）。 |
 | D3 | 两套更新实现 | 统一抽象 `Updater`（`check_latest()` + `apply()`），运行时按 D2 选择：① **DirectUpdater**：GitHub Releases 查版本 + 下载平台资产替换；② **NpmUpdater**：npm registry 查版本 + 跑 `npm i -g askhuman@latest`。 |
 | D4 | npm 更新点击行为 | macOS/Linux 点「更新」自动执行 `npm i -g askhuman@latest`。Windows 显示并可复制该固定命令，二次确认后只运行 `update prepare`，不会自动运行 npm。保留的 Windows npm worker 只有将来完成正式签名项目后才可重新启用。 |
-| D5 | 生效时机（关键，无用户开关） | Unix 更新由用户主动触发，落盘后用 Hello 指纹握手触发 daemon drain。Windows 使用源码固定 capability，不能由配置/环境变量打开自动 apply；`update prepare` 等在途清零后关闭 daemon/GUI Host，用户随后安装。两者都**绝不打断当前作答**。 |
+| D5 | 生效时机（关键，无用户开关） | Unix 更新落盘后通知 daemon 按恢复能力交接，外部替换另由指纹轮询检测。Windows 使用源码固定 capability，不能由配置/环境变量打开自动 apply；`update prepare` 等在途清零后关闭 daemon/GUI Host，用户随后安装。两者都**绝不打断当前作答**。 |
 | D6 | 外部更新也提示 | daemon 已监听二进制指纹变化；**任何来源**导致盘上二进制变化（如用户在终端跑了 `npm i -g`、另一处装了新版）都触发「待生效」提示——不限于应用内点更新。 |
 | D7 | 版本门槛 | 仅当「远端正式版 > 本地 `CARGO_PKG_VERSION`」才提示更新（数字段逐段比较）。故本地同版本开发构建不会被误判为有更新。 |
 | D8 | 检查时机 / 频率 | daemon **启动时 + 周期性（约每 24h）** 后台检查；设置与菜单栏内可**手动「检查更新」**。手动检查要求上游缓存重新验证，避免刚发布的版本仍命中旧 `/latest` 响应。检查结果（最新版本、检查时间）落 `~/.askhuman/update.json`；多进程读改写由 `update.lock` 串行化，已观察到的最高版本不会被短暂旧响应降级。 |
@@ -66,7 +72,7 @@ Direct 和 npm 更新继续使用既有的主程序替换方式，连旧版本 D
 已开启同步时由新版 daemon 在后台验证并升级 helper；未开启时不安装或注册。组件更新不删除待办，
 不打断在途作答，失败保留旧 helper 并可在设置中修复。
 
-- **不打断在途**：更新只落盘，换新交给既有 drain；任何在途弹窗 / IM 卡片 / 抢答语义零变化。
+- **不打断在途**：更新落盘后由后台按恢复能力交接，旧版迁移沿用安全排空；任何在途弹窗 / IM 卡片 / 抢答语义零变化。
 - **不 restart 提问进程**：与参考实现的 `app.restart()` 不同。Unix 设置进程的「重启设置页面」是独立进程、与 drain 无关；Windows worker 只在排空后协调退出/恢复后台角色和调用它的设置/宿主进程，不会重启在途提问进程。
 - **stdout 洁净 / 退出码契约**不变；更新相关日志走 stderr / daemon.log。
 - **后台网络失败静默**：daemon 周期检查失败不打扰用户；设置或菜单栏内的手动检查可在当前界面显式报错。

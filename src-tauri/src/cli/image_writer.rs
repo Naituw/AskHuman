@@ -19,6 +19,25 @@ pub fn save(
     question_index: usize,
     lang: Lang,
 ) -> Result<Vec<String>> {
+    save_for_request(images, request_id, question_index, lang, false)
+}
+
+pub(crate) fn save_resumable(
+    images: &[ImageAttachment],
+    request_id: &str,
+    question_index: usize,
+    lang: Lang,
+) -> Result<Vec<String>> {
+    save_for_request(images, request_id, question_index, lang, true)
+}
+
+fn save_for_request(
+    images: &[ImageAttachment],
+    request_id: &str,
+    question_index: usize,
+    lang: Lang,
+    resumable: bool,
+) -> Result<Vec<String>> {
     if images.is_empty() {
         return Ok(Vec::new());
     }
@@ -27,7 +46,7 @@ pub fn save(
         tr(lang, "cli.createImageDirFailed").replace("{path}", &dir.display().to_string())
     })?;
 
-    save_into_dir(images, &dir, lang)
+    save_into_dir_with_policy(images, &dir, lang, resumable)
 }
 
 pub(crate) fn save_into_dir(
@@ -35,10 +54,19 @@ pub(crate) fn save_into_dir(
     dir: &Path,
     lang: Lang,
 ) -> Result<Vec<String>> {
+    save_into_dir_with_policy(images, dir, lang, false)
+}
+
+fn save_into_dir_with_policy(
+    images: &[ImageAttachment],
+    dir: &Path,
+    lang: Lang,
+    resumable: bool,
+) -> Result<Vec<String>> {
     let mut used_names = HashSet::with_capacity(images.len());
     let mut paths_out = Vec::with_capacity(images.len());
     for (index, img) in images.iter().enumerate() {
-        paths_out.push(save_one(img, index, dir, &mut used_names, lang)?);
+        paths_out.push(save_one(img, index, dir, &mut used_names, lang, resumable)?);
     }
     Ok(paths_out)
 }
@@ -49,6 +77,7 @@ fn save_one(
     dir: &Path,
     used_names: &mut HashSet<String>,
     lang: Lang,
+    resumable: bool,
 ) -> Result<String> {
     let ext = extension_from_media_type(&img.media_type);
     let preferred_filename = match img
@@ -60,9 +89,21 @@ fn save_one(
         Some(name) => sanitize_filename(name, ext),
         None => format!("img-{}.{}", index + 1, ext),
     };
-    let filename = unique_filename(&preferred_filename, dir, used_names);
+    let filename = unique_filename(&preferred_filename, dir, used_names, resumable);
     let file_path = dir.join(&filename);
     let data = decode_image_data(&img.data, lang)?;
+    if resumable {
+        match std::fs::read(&file_path) {
+            Ok(existing) => {
+                anyhow::ensure!(existing == data, "saved reply image changed");
+                return Ok(file_path.to_string_lossy().to_string());
+            }
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+            Err(error) => return Err(error.into()),
+        }
+        crate::integrations::hook_edit::atomic_write_private(&file_path, &data)?;
+        return Ok(file_path.to_string_lossy().to_string());
+    }
     std::fs::write(&file_path, &data).with_context(|| {
         tr(lang, "cli.writeImageFailed").replace("{path}", &file_path.display().to_string())
     })?;
@@ -71,10 +112,17 @@ fn save_one(
 
 /// Reserve a filename without overwriting an earlier attachment in the same answer.
 /// Case-folded comparison also keeps results portable to case-insensitive filesystems.
-fn unique_filename(preferred: &str, dir: &Path, used_names: &mut HashSet<String>) -> String {
+fn unique_filename(
+    preferred: &str,
+    dir: &Path,
+    used_names: &mut HashSet<String>,
+    resumable: bool,
+) -> String {
     let mut candidate = preferred.to_string();
     let mut suffix = 2;
-    while used_names.contains(&candidate.to_lowercase()) || dir.join(&candidate).exists() {
+    while used_names.contains(&candidate.to_lowercase())
+        || (!resumable && dir.join(&candidate).exists())
+    {
         candidate = filename_with_suffix(preferred, suffix);
         suffix += 1;
     }
@@ -135,6 +183,28 @@ fn decode_image_data(data: &str, lang: Lang) -> Result<Vec<u8>> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_restored_render_reuses_the_original_image_paths() {
+        let dir = tempfile::tempdir().unwrap();
+        let images = vec![
+            ImageAttachment {
+                data: B64.encode(b"first"),
+                media_type: "image/png".into(),
+                filename: Some("reply.png".into()),
+            },
+            ImageAttachment {
+                data: B64.encode(b"second"),
+                media_type: "image/png".into(),
+                filename: Some("reply.png".into()),
+            },
+        ];
+        let first = save_into_dir_with_policy(&images, dir.path(), Lang::En, true).unwrap();
+        let resumed = save_into_dir_with_policy(&images, dir.path(), Lang::En, true).unwrap();
+        assert_eq!(first, resumed);
+        assert_eq!(std::fs::read_dir(dir.path()).unwrap().count(), 2);
+        assert_ne!(first[0], first[1]);
+    }
 
     #[test]
     fn sanitize_strips_path_separators() {

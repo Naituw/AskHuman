@@ -27,14 +27,14 @@ pub enum PopupEffect {
     },
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 enum SurfacePhase {
     Reserved,
     Ready,
     Presented,
 }
 
-#[derive(Debug)]
+#[derive(Debug, serde::Serialize, serde::Deserialize)]
 struct PopupSurface {
     seq: u64,
     phase: SurfacePhase,
@@ -54,7 +54,7 @@ impl PopupSurface {
 }
 
 /// Single authority for automatic popup focus and background cascade order.
-#[derive(Debug, Default)]
+#[derive(Debug, Default, serde::Serialize, serde::Deserialize)]
 pub struct PopupFocusArbiter {
     owner: Option<String>,
     waiting: VecDeque<String>,
@@ -70,6 +70,20 @@ impl PopupFocusArbiter {
         self.owner = None;
         self.waiting.clear();
         self.entries.clear();
+    }
+
+    pub fn retain_live(&mut self, live: &std::collections::HashSet<String>) {
+        self.entries.retain(|id, _| live.contains(id));
+        self.waiting.retain(|id| self.entries.contains_key(id));
+        self.owner = self.owner.take().filter(|id| self.entries.contains_key(id));
+        if self.owner.is_none() {
+            self.owner = self
+                .entries
+                .iter()
+                .min_by_key(|(_, surface)| surface.seq)
+                .map(|(id, _)| id.clone());
+        }
+        self.waiting.retain(|id| Some(id) != self.owner.as_ref());
     }
 
     /// Reserve a popup slot before dispatching its helper.
@@ -525,6 +539,43 @@ mod tests {
                 cascade_index: 1,
                 behind_window_number: Some(22),
             }]
+        );
+    }
+    #[test]
+    fn restored_windows_keep_focus_order_without_being_presented_again() {
+        let mut focus = PopupFocusArbiter::new();
+        focus.reserve("original", 1);
+        focus.ready(
+            "original",
+            ReadyMetadata {
+                window_number: Some(10),
+            },
+        );
+        focus.reserve("background", 2);
+        focus.ready(
+            "background",
+            ReadyMetadata {
+                window_number: Some(11),
+            },
+        );
+        let bytes = serde_json::to_vec(&focus).unwrap();
+        let mut restored: PopupFocusArbiter = serde_json::from_slice(&bytes).unwrap();
+        restored.retain_live(
+            &["original".into(), "background".into()]
+                .into_iter()
+                .collect(),
+        );
+        assert!(restored
+            .ready(
+                "original",
+                ReadyMetadata {
+                    window_number: Some(10)
+                }
+            )
+            .is_empty());
+        restored.reserve("new", 3);
+        assert!(
+            matches!(restored.ready("new", ReadyMetadata { window_number: Some(12) }).as_slice(), [PopupEffect::PresentBackground { request_id, .. }] if request_id == "new")
         );
     }
 }

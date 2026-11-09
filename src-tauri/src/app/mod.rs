@@ -17,6 +17,7 @@ mod popup_navigation;
 pub mod popup_preview;
 pub mod popup_preview_actions;
 pub(crate) mod popup_preview_geometry;
+mod popup_recovery;
 mod popup_size;
 pub(crate) mod popup_title;
 pub mod popup_transition;
@@ -86,6 +87,7 @@ enum View {
 
 /// GUI Helper 模式下，弹窗 ↔ Daemon 的 IPC 接线（由 `run_gui_helper` 建好后传入 `launch`）。
 pub struct PopupIpc {
+    pub recoverable: bool,
     pub host: Option<(u64, bool)>,
     /// 向 Daemon 发送 `answer` 等消息（写任务已在 `run_gui_helper` 中起好）。
     pub gui_tx: tokio::sync::mpsc::UnboundedSender<crate::ipc::ClientMsg>,
@@ -107,6 +109,8 @@ pub struct WarmPopup {
 /// Bridges popup submissions and cancellations back to the daemon over IPC.
 /// Every product popup uses this bridge; there is no single-process data path.
 pub struct GuiBridge {
+    recoverable: bool,
+    pending: std::sync::Mutex<Option<tokio::sync::oneshot::Sender<Result<(), String>>>>,
     tx: tokio::sync::mpsc::UnboundedSender<crate::ipc::ClientMsg>,
     /// Daemon 分配的 request_id（回带在 `answer` 中）。预热弹窗领用前为空，收到 `Show` 时由 reader 循环填入，
     /// 故用内部可变。
@@ -121,6 +125,38 @@ pub struct GuiBridge {
 }
 
 impl GuiBridge {
+    pub async fn submit(&self, message: crate::ipc::ClientMsg) -> Result<(), String> {
+        if !self.recoverable {
+            self.terminal(message);
+            return Ok(());
+        }
+        let (tx, rx) = tokio::sync::oneshot::channel();
+        {
+            let mut pending = self.pending.lock().unwrap();
+            if self.done.load(Ordering::SeqCst) || pending.is_some() {
+                return Err("popup answer is already being sent".into());
+            }
+            *pending = Some(tx);
+        }
+        if self.tx.send(message).is_err() {
+            self.pending.lock().unwrap().take();
+            return Err("popup daemon connection is unavailable".into());
+        }
+        rx.await
+            .map_err(|_| "popup answer connection closed".to_string())?
+    }
+
+    fn acknowledge(&self, error: Option<String>) {
+        let result = error.map_or(Ok(()), Err);
+        let accepted = result.is_ok();
+        if let Some(reply) = self.pending.lock().unwrap().take() {
+            let _ = reply.send(result);
+        }
+        if accepted {
+            self.dismiss_from_daemon();
+        }
+    }
+
     /// 预热弹窗领用时回填 request_id（仅一次）。
     pub fn set_request_id(&self, id: String) {
         if let Ok(mut g) = self.request_id.lock() {
@@ -129,6 +165,13 @@ impl GuiBridge {
     }
 
     fn terminal(&self, message: crate::ipc::ClientMsg) {
+        if self.recoverable {
+            let app = self.app.clone();
+            tauri::async_runtime::spawn(async move {
+                let _ = app.state::<GuiBridge>().submit(message).await;
+            });
+            return;
+        }
         if self.done.swap(true, Ordering::SeqCst) {
             crate::daemon::lifecycle::log_runtime_event(
                 "popup_helper",
@@ -168,6 +211,9 @@ impl GuiBridge {
     }
 
     pub fn dismiss_from_daemon(&self) {
+        if let Some(reply) = self.pending.lock().unwrap().take() {
+            let _ = reply.send(Ok(()));
+        }
         self.done.store(true, Ordering::SeqCst);
         if let Some(window) = self.app.get_webview_window("popup") {
             let _ = window.close();
@@ -660,38 +706,40 @@ pub fn run_gui_host(config: AppConfig) -> ! {
 /// 流程：连 Daemon → 出示一次性 token → 收 `show` → 本进程主线程跑 Tauri 弹窗；
 /// 用户作答 / 取消经 IPC `answer` 回 Daemon；收到 `cancel` 或连接断开即退出。
 pub fn run_popup_host(token: String) -> ! {
-    use crate::ipc::{self, transport, ClientMsg, ServerMsg};
+    use crate::ipc::{self, transport, ServerMsg};
     use tokio::io::BufReader;
+    let reconnect_token = token.clone();
     let connected = tauri::async_runtime::block_on(async move {
         let stream = transport::connect().await?;
         let (reader, mut writer) = stream.into_split();
         let mut reader = BufReader::new(reader);
-        ipc::write_msg(&mut writer, &ClientMsg::PopupHostHello { token }).await?;
+        let (hello, supported) = popup_recovery::host_hello(&token, Vec::new()).await;
+        ipc::write_msg(&mut writer, &hello).await?;
         match ipc::read_msg::<_, ServerMsg>(&mut reader).await? {
             Some(ServerMsg::PopupHostAccepted {
                 generation,
                 recovered,
-            }) => Ok((reader, writer, generation, recovered)),
+            }) => Ok((reader, writer, generation, recovered, supported)),
             _ => Err(std::io::Error::other(
                 "popup host was not accepted by daemon",
             )),
         }
     });
-    let (reader, mut writer, generation, recovered) = match connected {
+    let (reader, writer, generation, recovered, supported) = match connected {
         Ok(connection) => connection,
         Err(error) => {
             stderr_redirect::eprintln_real(&format!("popup host connection failed: {error}"));
             std::process::exit(3);
         }
     };
-    let (tx, mut messages) = tokio::sync::mpsc::unbounded_channel();
-    tauri::async_runtime::spawn(async move {
-        while let Some(message) = messages.recv().await {
-            if ipc::write_msg(&mut writer, &message).await.is_err() {
-                break;
-            }
-        }
-    });
+    let (tx, reader) = popup_recovery::bridge(
+        reader,
+        writer,
+        popup_recovery::Kind::Host {
+            token: reconnect_token,
+        },
+        supported,
+    );
     let state = AppState {
         caller_cwd: None,
         interaction: InteractionRequest::Ask(AskRequest::new(
@@ -712,10 +760,11 @@ pub fn run_popup_host(token: String) -> ! {
         created_at_ms: 0,
     };
     let ipc = PopupIpc {
+        recoverable: supported,
         host: Some((generation, recovered)),
         gui_tx: tx,
         request_id: String::new(),
-        reader: Box::pin(reader),
+        reader,
         warm: true,
     };
     if let Err(error) = launch(state, View::PopupInbox, Some(ipc)) {
@@ -736,25 +785,33 @@ pub fn run_gui_helper(_endpoint: String, token: String, warm: bool) -> ! {
         let connected = tauri::async_runtime::block_on(async move {
             let stream = transport::connect().await?;
             let (r, mut w) = stream.into_split();
-            ipc::write_msg(&mut w, &ClientMsg::GuiWarmReady).await?;
-            Ok::<_, std::io::Error>((BufReader::new(r), w))
+            let supported = crate::client::recovery::available().await;
+            let hello = if supported {
+                popup_recovery::operation(crate::daemon::recovery::ClientOperation::WarmPopup {
+                    pid: std::process::id(),
+                })
+            } else {
+                ClientMsg::GuiWarmReady
+            };
+            ipc::write_msg(&mut w, &hello).await?;
+            Ok::<_, std::io::Error>((BufReader::new(r), w, supported))
         });
-        let (reader, writer) = match connected {
+        let (reader, writer, supported) = match connected {
             Ok(v) => v,
             Err(e) => {
                 stderr_redirect::eprintln_real(&format!("askhuman warm popup helper: {}", e));
                 std::process::exit(3);
             }
         };
-        let (gui_tx, mut gui_rx) = tokio::sync::mpsc::unbounded_channel::<ClientMsg>();
-        tauri::async_runtime::spawn(async move {
-            let mut writer = writer;
-            while let Some(msg) = gui_rx.recv().await {
-                if ipc::write_msg(&mut writer, &msg).await.is_err() {
-                    break;
-                }
-            }
-        });
+        let (gui_tx, reader) = popup_recovery::bridge(
+            reader,
+            writer,
+            popup_recovery::Kind::Independent {
+                token: None,
+                request_id: None,
+            },
+            supported,
+        );
         // 待命态：无请求；source/project/agent 等领用时由 `Show` 注入（见 setup 的 reader 循环）。
         let state = AppState {
             caller_cwd: None,
@@ -777,10 +834,11 @@ pub fn run_gui_helper(_endpoint: String, token: String, warm: bool) -> ! {
             created_at_ms: 0,
         };
         let popup_ipc = PopupIpc {
+            recoverable: supported,
             host: None,
             gui_tx,
             request_id: String::new(),
-            reader: Box::pin(reader),
+            reader,
             warm: true,
         };
         if let Err(e) = launch(state, View::Popup, Some(popup_ipc)) {
@@ -791,14 +849,18 @@ pub fn run_gui_helper(_endpoint: String, token: String, warm: bool) -> ! {
     }
 
     // 连接 + 握手 + 读 show（在 Tauri 全局运行时上完成，确保后续读写任务同一 reactor）。
+    let reconnect_token = token.clone();
     let connected = tauri::async_runtime::block_on(async move {
         let stream = transport::connect().await?;
         let (r, mut w) = stream.into_split();
         let mut reader = BufReader::new(r);
-        ipc::write_msg(&mut w, &ClientMsg::GuiHello { token }).await?;
+        let (hello, supported) = popup_recovery::independent_hello(&token).await;
+        ipc::write_msg(&mut w, &hello).await?;
         loop {
             match ipc::read_msg::<_, ServerMsg>(&mut reader).await? {
-                Some(ServerMsg::Show(show)) => return Ok::<_, std::io::Error>((show, reader, w)),
+                Some(ServerMsg::Show(show)) => {
+                    return Ok::<_, std::io::Error>((show, reader, w, supported))
+                }
                 Some(_) => continue,
                 None => {
                     return Err(std::io::Error::new(
@@ -810,7 +872,7 @@ pub fn run_gui_helper(_endpoint: String, token: String, warm: bool) -> ! {
         }
     });
 
-    let (show, reader, writer) = match connected {
+    let (show, reader, writer, supported) = match connected {
         Ok(v) => v,
         Err(e) => {
             stderr_redirect::eprintln_real(&format!("askhuman popup helper: {}", e));
@@ -819,16 +881,15 @@ pub fn run_gui_helper(_endpoint: String, token: String, warm: bool) -> ! {
     };
     crate::perf::mark_env("gui.show_recv");
 
-    // 写任务：把 answer / 取消等消息串行写回 Daemon。
-    let (gui_tx, mut gui_rx) = tokio::sync::mpsc::unbounded_channel::<ClientMsg>();
-    tauri::async_runtime::spawn(async move {
-        let mut writer = writer;
-        while let Some(msg) = gui_rx.recv().await {
-            if ipc::write_msg(&mut writer, &msg).await.is_err() {
-                break;
-            }
-        }
-    });
+    let (gui_tx, reader) = popup_recovery::bridge(
+        reader,
+        writer,
+        popup_recovery::Kind::Independent {
+            token: Some(reconnect_token),
+            request_id: Some(show.request_id.clone()),
+        },
+        supported,
+    );
 
     let request_id = show.request_id.clone();
     let state = AppState {
@@ -849,10 +910,11 @@ pub fn run_gui_helper(_endpoint: String, token: String, warm: bool) -> ! {
         created_at_ms: show.created_at_ms,
     };
     let popup_ipc = PopupIpc {
+        recoverable: supported,
         host: None,
         gui_tx,
         request_id,
-        reader: Box::pin(reader),
+        reader,
         warm: false,
     };
     if let Err(e) = launch(state, View::Popup, Some(popup_ipc)) {
@@ -1119,6 +1181,7 @@ fn launch(state: AppState, view: View, popup_ipc: Option<PopupIpc>) -> tauri::Re
                             // —— GUI Helper 模式：作答经 IPC 回 Daemon，无本地协调器 / 消息渠道 ——
                             Some(ipc) => {
                                 let PopupIpc {
+                                    recoverable,
                                     gui_tx,
                                     request_id,
                                     reader,
@@ -1126,6 +1189,8 @@ fn launch(state: AppState, view: View, popup_ipc: Option<PopupIpc>) -> tauri::Re
                                     host: _,
                                 } = ipc;
                                 app.manage(GuiBridge {
+                                    recoverable,
+                                    pending: Default::default(),
                                     tx: gui_tx,
                                     request_id: std::sync::Mutex::new(request_id),
                                     done: AtomicBool::new(false),
@@ -1203,6 +1268,20 @@ fn launch(state: AppState, view: View, popup_ipc: Option<PopupIpc>) -> tauri::Re
                                                 let _ = app_handle.run_on_main_thread(move || {
                                                     finalize_popup_show(&app2, presentation);
                                                 });
+                                            }
+                                            Ok(Some(crate::ipc::ServerMsg::PopupSubmissionAck { request_id, error, .. })) => {
+                                                if let Some(bridge) = app_handle.try_state::<GuiBridge>() {
+                                                    if bridge.request_id() == request_id { bridge.acknowledge(error); }
+                                                }
+                                            }
+                                            Ok(Some(crate::ipc::ServerMsg::Recovery { version: crate::daemon::recovery::VERSION, event })) => {
+                                                use tauri::Emitter;
+                                                let updating = match serde_json::from_value::<crate::daemon::recovery::Event>(event) {
+                                                    Ok(crate::daemon::recovery::Event::Updating) => true,
+                                                    Ok(crate::daemon::recovery::Event::Updated) => false,
+                                                    _ => continue,
+                                                };
+                                                let _ = app_handle.emit("popup-connection", updating);
                                             }
                                             Ok(Some(crate::ipc::ServerMsg::Cancel { .. })) => {
                                                 let app2 = app_handle.clone();
@@ -1399,7 +1478,7 @@ fn launch(state: AppState, view: View, popup_ipc: Option<PopupIpc>) -> tauri::Re
 ///
 /// Pure rendering function apart from attachment writes. The daemon returns its result to the
 /// CLI over IPC; `emit_result` remains a process-output adapter for internal callers and tests.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct RenderOutcome {
     /// 给 CLI stdout 的结果区块文本（不含尾换行；打印方负责换行）。
     pub stdout: String,
@@ -1455,7 +1534,11 @@ pub(crate) fn render_result(
                         lang,
                     )
                 } else {
-                    image_writer::save(&answer.images, &request.id, i, lang)
+                    if request.recovery.is_some() {
+                        image_writer::save_resumable(&answer.images, &request.id, i, lang)
+                    } else {
+                        image_writer::save(&answer.images, &request.id, i, lang)
+                    }
                 };
                 match saved {
                     Ok(paths) => image_paths_per_q.push(paths),
@@ -1512,7 +1595,11 @@ fn render_whats_next(
     // 落盘图片（仅 Send 路径有回答；取消路径 answers 为空，循环自然跳过）。
     let mut image_paths_per_q: Vec<Vec<String>> = Vec::with_capacity(result.answers.len());
     for (i, answer) in result.answers.iter().enumerate() {
-        match image_writer::save(&answer.images, &request.id, i, lang) {
+        match if request.recovery.is_some() {
+            image_writer::save_resumable(&answer.images, &request.id, i, lang)
+        } else {
+            image_writer::save(&answer.images, &request.id, i, lang)
+        } {
             Ok(paths) => image_paths_per_q.push(paths),
             Err(e) => {
                 return (

@@ -76,6 +76,9 @@ pub struct HelloAck {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct StatusInfo {
+    /// Stable request-recovery bootstrap. Clients inspect Status before sending Recover.
+    #[serde(default, skip_serializing_if = "is_zero_u32")]
+    pub recovery_version: u32,
     /// A verification client must reject a peer that would ignore its isolation metadata.
     #[serde(default)]
     pub development_verification_version: u32,
@@ -564,6 +567,11 @@ pub enum PopupPresentation {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "camelCase")]
 pub enum ClientMsg {
+    /// Versioned recovery bootstrap, sent only after Status advertises this capability.
+    Recover {
+        version: u32,
+        operation: serde_json::Value,
+    },
     CodexDesktop {
         operation: crate::codex_desktop::Operation,
     },
@@ -825,6 +833,11 @@ pub enum InterjectAction {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "camelCase")]
 pub enum ServerMsg {
+    /// Recovery peers alone receive this versioned envelope.
+    Recovery {
+        version: u32,
+        event: serde_json::Value,
+    },
     CodexDesktop {
         result: Result<serde_json::Value, String>,
     },
@@ -1260,6 +1273,7 @@ mod tests {
     #[test]
     fn status_info_binary_facts_round_trip() {
         let info = StatusInfo {
+            recovery_version: 0,
             development_verification_version: 1,
             development_remote_outlets: vec![],
             pid: 7,

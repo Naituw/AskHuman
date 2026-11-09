@@ -101,6 +101,13 @@ pub fn dispatch() {
             exit(1);
         }
     };
+    if raw_argv
+        .get(1)
+        .is_some_and(|arg| arg == "--recovery-capabilities")
+    {
+        print_line(&crate::daemon::recovery::capabilities().to_string());
+        exit(0);
+    }
     if raw_argv.get(1).is_some_and(|s| {
         matches!(
             s.as_str(),

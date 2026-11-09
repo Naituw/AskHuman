@@ -77,8 +77,8 @@ if (Test-Path -LiteralPath $InstalledBin) {
   $StatusMatch = [regex]::Match(($StatusOut | Out-String), 'requests\s+(\d+) active')
   if ($StatusExitCode -eq 0 -and $StatusMatch.Success -and [int]$StatusMatch.Groups[1].Value -gt 0) {
     $ActiveRequests = $StatusMatch.Groups[1].Value
-    Write-Host "提示: daemon 当前有 $ActiveRequests 个在途请求；安装后将在它们完结后自动换新（期间新提问会等待）。"
-    Write-Host "      立即换新: AskHuman daemon restart --force（会打断在途请求）"
+    Write-Host "提示: daemon 当前有 $ActiveRequests 个在途请求；支持恢复的提问将在更新后自动重连。"
+    Write-Host "      仍在等待的旧版调用会在作答结束后安全换新。"
   }
 }
 
@@ -146,7 +146,7 @@ if (-not $SkipCopy) {
     }
     $Json = $Transaction | ConvertTo-Json -Compress
     [IO.File]::WriteAllText($TransactionPath, $Json, (New-Object Text.UTF8Encoding($false)))
-    Write-Host "    正在安全排空后台进程并事务式替换二进制"
+    Write-Host "    正在事务式替换二进制，保留兼容作答"
     & $WorkerBin __update-worker $TransactionPath
     if ($LASTEXITCODE -ne 0) {
       throw "AskHuman Windows install worker failed with exit code $LASTEXITCODE"

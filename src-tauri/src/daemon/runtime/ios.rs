@@ -2,6 +2,7 @@
 //! gateway's `Host`, and serves the management operations of the settings window and the CLI
 //! (docs/plans/ios-channel.md §4.3).
 
+use serde_json::Value;
 use std::sync::Weak;
 
 use super::ios_agents::{self, ProjectCache};
@@ -59,12 +60,104 @@ struct DaemonHost {
 
 #[async_trait::async_trait]
 impl Host for DaemonHost {
+    fn update_status(&self) -> Option<String> {
+        let state = self.state.upgrade()?;
+        if *state.exit_intent.lock().unwrap() == super::super::handoff::Intent::Stop {
+            return None;
+        }
+        if let Some(runtime) = &state.recovery {
+            if runtime.is_restoring() {
+                return Some("recovering".into());
+            }
+            if runtime.suspending.load(Ordering::SeqCst) {
+                return Some("updating".into());
+            }
+        }
+        let pending = state.update.lock().unwrap().pending;
+        pending.then(|| "pending".into())
+    }
+    fn pending_ios_requests(&self) -> Result<Vec<String>, String> {
+        let Some(state) = self.state.upgrade() else {
+            return Err("daemon unavailable".into());
+        };
+        state
+            .recovery
+            .as_ref()
+            .map(|runtime| {
+                runtime
+                    .store
+                    .awaiting_channel("ios")
+                    .map_err(|error| error.to_string())
+            })
+            .unwrap_or(Ok(Vec::new()))
+    }
+
+    fn load_recovery(&self) -> Result<Option<Value>, String> {
+        let Some(state) = self.state.upgrade() else {
+            return Err("daemon unavailable".into());
+        };
+        state
+            .recovery
+            .as_ref()
+            .map(|runtime| {
+                runtime
+                    .store
+                    .metadata("ios/gateway")
+                    .map_err(|error| error.to_string())
+            })
+            .unwrap_or(Ok(None))
+    }
+
+    fn save_recovery(&self, value: &Value) -> Result<(), String> {
+        let Some(state) = self.state.upgrade() else {
+            return Err("daemon unavailable".into());
+        };
+        state
+            .recovery
+            .as_ref()
+            .map(|runtime| {
+                runtime
+                    .store
+                    .set_metadata("ios/gateway", value)
+                    .map_err(|error| error.to_string())
+            })
+            .unwrap_or(Ok(()))
+    }
+    fn updating(&self) -> bool {
+        self.state.upgrade().is_none_or(|state| {
+            state.recovery.as_ref().is_some_and(|runtime| {
+                runtime.is_restoring() || runtime.suspending.load(Ordering::SeqCst)
+            })
+        })
+    }
+
+    fn submission_receipt(
+        &self,
+        id: &str,
+        phone: &str,
+        hash: &str,
+    ) -> Result<crate::ios::store::JournalLookup, String> {
+        let Some(state) = self.state.upgrade() else {
+            return Err("daemon unavailable".into());
+        };
+        state
+            .recovery
+            .as_ref()
+            .map(|runtime| {
+                runtime
+                    .store
+                    .receipt(id, phone, hash)
+                    .map_err(|error| error.to_string())
+            })
+            .unwrap_or(Ok(crate::ios::store::JournalLookup::New))
+    }
     fn mac_name(&self) -> String {
         self.computer_name.clone()
     }
 
     fn caps(&self) -> Caps {
         Caps {
+            live_update: true,
             new_task: true,
             interject: true,
             watch: true,
@@ -286,6 +379,7 @@ fn build_gateway(state: &Arc<ServerState>, cfg: &IosChannelConfig) -> Arc<IosGat
     let will = Will {
         topic: wire::topic_presence(&user, &mac_id),
         payload: serde_json::to_vec(&Presence {
+            u: None,
             o: 0,
             t: 0,
             r: "mac".into(),

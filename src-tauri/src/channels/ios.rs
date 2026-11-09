@@ -103,6 +103,21 @@ impl SessionRef {
 struct CoordSink(ResultSink, bool);
 
 impl AskSink for CoordSink {
+    fn operation(&self) -> Result<Option<crate::daemon::recovery::Operation>, ()> {
+        self.0
+            .recovery()
+            .map(|context| context.operation().map(Some).ok_or(()))
+            .unwrap_or(Ok(None))
+    }
+
+    fn try_submit_identified(
+        &self,
+        result: ChannelResult,
+        receipt: &crate::daemon::recovery::Receipt,
+        directive: Option<crate::daemon::away::Directive>,
+    ) -> bool {
+        self.0.try_submit_identified(result, receipt, directive)
+    }
     fn quiet_feedback(&self) -> bool {
         self.1
     }
@@ -138,7 +153,25 @@ impl Channel for IosChannel {
         let session = self.session.clone();
         tauri::async_runtime::spawn(async move {
             // Decoding attachment thumbnails is CPU and disk work.
-            let created_at_ms = chrono::Utc::now().timestamp_millis();
+            let _operation = match request.recovery.as_ref() {
+                Some(context) => match context.operation() {
+                    Some(operation) => Some(operation),
+                    None => return,
+                },
+                None => None,
+            };
+            let created_at_ms = request
+                .recovery
+                .as_ref()
+                .and_then(|context| {
+                    context
+                        .store
+                        .request(&context.id)
+                        .ok()
+                        .flatten()
+                        .map(|saved| saved.request.created_at_ms as i64)
+                })
+                .unwrap_or_else(|| chrono::Utc::now().timestamp_millis());
             let view = {
                 let request = request.clone();
                 tauri::async_runtime::spawn_blocking(move || {
@@ -172,6 +205,10 @@ impl Channel for IosChannel {
 
     fn interrupt(&self, reason: &Interruption) {
         let resolution = match reason {
+            Interruption::Handoff => {
+                self.interrupted.store(true, Ordering::SeqCst);
+                return;
+            }
             Interruption::AnsweredBy(name) => Resolution::AnsweredElsewhere(name.clone()),
             Interruption::Cancelled(name) => Resolution::Cancelled(name.clone()),
         };

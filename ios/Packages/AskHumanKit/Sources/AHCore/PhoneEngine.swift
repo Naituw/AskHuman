@@ -93,6 +93,7 @@ public actor PhoneEngine: RemoteBackend {
     var downloads: [String: Download] = [:]
     var uploadMailboxes: [String: UploadMailbox] = [:]
     var uploadOwners: [String: String] = [:]
+    var uploadBegins: [String: UploadBegin] = [:]
 
     // MARK: agents, watches, interjections and tasks
 
@@ -508,9 +509,14 @@ public actor PhoneEngine: RemoteBackend {
         presenceCache[device] = presence
         guard var mac = macs[device] else { return }
         let wasOnline = mac.online
+        let wasUpdating = mac.recoveringUpdate
+        if presence.u == "updating" || presence.u == "recovering" {
+            mac.recoveringUpdate = true
+            for item in outbox.values where item.macId == device { cancelTimer("ack." + item.clientMsgId) }
+        }
         if presence.o != 1 {
             if wasOnline {
-                failTransfers(for: device, with: .macOffline)
+                if !mac.recoveringUpdate { failTransfers(for: device, with: .macOffline) }
                 failInterjects(for: device, with: .macOffline)
                 failTodos(for: device, with: .macOffline)
                 dropWatches(of: device)
@@ -524,8 +530,10 @@ public actor PhoneEngine: RemoteBackend {
             mac.lastSeenAt = clock.now()
             store.saveMeta(MacMeta(lastSeenAt: mac.lastSeenAt, lastEpoch: mac.epoch, follow: store.meta(macId: device).follow), macId: device)
         }
+        if presence.u == nil && mac.sync == .synced { mac.recoveringUpdate = false }
         macs[device] = mac
         await evaluateHello(device)
+        if wasUpdating && !mac.recoveringUpdate { await requestResync(device, stream: "inbox") }
     }
 
     /// Opens a message from a paired Mac. Returns `nil` for anything that must be dropped silently:
@@ -661,7 +669,7 @@ public actor PhoneEngine: RemoteBackend {
                 id: mac.record.macId, name: mac.record.displayName, macName: mac.record.macName, alias: mac.record.alias,
                 link: link(of: mac), caps: mac.caps ?? mac.record.caps, slot: mac.slot, pairedAt: mac.record.pairedAt,
                 lastSeenAt: mac.lastSeenAt, pendingCount: pending[mac.record.macId] ?? 0, pushStatus: mac.pushStatus,
-                away: mac.away
+                away: mac.away, update: mac.recoveringUpdate ? (mac.presence?.u ?? "recovering") : mac.presence?.u
             )
         }
         let inbox = requests.values.compactMap { runtime -> InboxItem? in
@@ -709,6 +717,7 @@ enum SyncPhase: Equatable {
 struct MacRuntime {
     var record: PairingRecord
     var presence: Presence?
+    var recoveringUpdate = false
     var sync: SyncPhase = .none
     /// The latest hellos that went unanswered so far, oldest first: an ack for any of them counts.
     var helloNonces: [String] = []

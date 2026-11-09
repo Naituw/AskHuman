@@ -7,6 +7,7 @@ import Foundation
 // MARK: shared shapes
 
 public struct Caps: Codable, Equatable, Sendable {
+    @OmitFalse public var liveUpdate: Bool
     public var newTask: Bool
     public var interject: Bool
     public var watch: Bool
@@ -27,8 +28,9 @@ public struct Caps: Codable, Equatable, Sendable {
 
     public init(
         newTask: Bool, interject: Bool, watch: Bool, todos: Bool = false, answerTodos: Bool = false,
-        away: Bool = false, annotations: Bool = false
+        away: Bool = false, annotations: Bool = false, liveUpdate: Bool = false
     ) {
+        self.liveUpdate = liveUpdate
         self.newTask = newTask
         self.interject = interject
         self.watch = watch
@@ -47,6 +49,7 @@ public struct Caps: Codable, Equatable, Sendable {
         answerTodos = try c.decodeIfPresent(Bool.self, forKey: .answerTodos) ?? false
         away = try c.decodeIfPresent(Bool.self, forKey: .away) ?? false
         annotations = try c.decodeIfPresent(Bool.self, forKey: .annotations) ?? false
+        liveUpdate = try c.decodeIfPresent(Bool.self, forKey: .liveUpdate) ?? false
     }
 }
 

@@ -3,6 +3,7 @@ import Foundation
 /// Whether a retained request can be sent to its own Mac right now.
 public enum RequestConnection: Sendable, Equatable {
     case ready
+    case updating
     case connecting
     case reconnecting
     case refused
@@ -19,6 +20,7 @@ extension EngineState {
         case .backoff: return .reconnecting
         case .refused: return .refused
         case .connected:
+            if mac.isUpdating { return .updating }
             switch mac.link {
             case .online: return .ready
             case .connecting: return .connecting

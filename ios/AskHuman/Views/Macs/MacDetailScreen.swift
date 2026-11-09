@@ -27,8 +27,8 @@ struct MacDetailScreen: View {
                     }
                     LabeledContent("Status") {
                         HStack(spacing: 6) {
-                            StatusDot(color: mac.link.color)
-                            Text(mac.link.title)
+                            StatusDot(color: mac.isUpdating ? .secondary : mac.link.color)
+                            if mac.isUpdating { Text("Updating…") } else if mac.update == "pending" { Text("Update pending") } else { Text(mac.link.title) }
                         }
                     }
                     if let seen = mac.lastSeenAt {

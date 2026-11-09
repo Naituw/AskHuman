@@ -3,7 +3,8 @@
 // 各区块子组件 inject）。此处仅负责根布局：导航栏 / 内容区（确认面板 或 Message+问题区）/
 // 页脚 / 根级弹层。样式统一在 ./popup/popup.css（弹窗为独立窗口，天然隔离）。
 import { useI18n } from "vue-i18n";
-import { computed } from "vue";
+import { computed, onBeforeUnmount, onMounted, ref } from "vue";
+import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import { type PopupScope } from "./popup/usePopupCore";
 import { createPopupContext } from "./popup/context";
 import { frozenMainStyle, usePreviewDivider } from "./popup/usePreviewDivider";
@@ -28,6 +29,21 @@ const props = defineProps<{ scope?: PopupScope }>();
 const ctx = createPopupContext(props.scope);
 defineExpose({ ctx });
 const { t } = useI18n();
+const updating = ref(false);
+let connectionListener: UnlistenFn | undefined;
+let disposed = false;
+onMounted(async () => {
+  if (props.scope) return;
+  const unlisten = await listen<boolean>("popup-connection", event => {
+    updating.value = event.payload;
+  });
+  if (disposed) unlisten();
+  else connectionListener = unlisten;
+});
+onBeforeUnmount(() => {
+  disposed = true;
+  connectionListener?.();
+});
 
 const {
   request,
@@ -100,6 +116,7 @@ const { beginDivider } = usePreviewDivider({ mainWidth: () => previewLayout.valu
     <!-- A question that came through away mode says why, with a one-click way out (spec D21). -->
     <EscalatedNotice v-if="!isConfirm" />
     <FindBar v-if="findActive && findScope === 'question'" />
+    <p v-if="updating" class="popup-connection-notice" role="status">{{ t("popup.inbox.updating") }}</p>
     <p v-if="submissionError" class="status-error popup-submission-error" role="alert">{{ t("popup.inbox.submitError", { message: submissionError }) }}</p>
     <!-- What became of files dropped on a standalone popup (an inbox page shows its own notice). -->
     <p v-if="dropNotice" class="drop-notice" :data-level="dropNotice.level" :role="dropNotice.level === 'warn' ? 'alert' : 'status'">{{ dropNotice.text }}</p>
@@ -148,3 +165,7 @@ const { beginDivider } = usePreviewDivider({ mainWidth: () => previewLayout.valu
     <PopupOverlays />
   </div>
 </template>
+
+<style scoped>
+.popup-connection-notice { margin: 0; padding: 8px 14px; color: var(--text-secondary); font-size: 12px; }
+</style>

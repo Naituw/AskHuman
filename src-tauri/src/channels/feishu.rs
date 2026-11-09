@@ -11,7 +11,8 @@
 //! （`MessagingChannel`）+ 薄外层 `FeishuChannel`。
 
 use super::conversation::{
-    run_conversation, InboundReply, MessagingChannel, QuestionCtx, QuestionOutcome,
+    run_conversation, AttachmentProgress, InboundReply, MessagingChannel, PendingAttachment,
+    QuestionCtx, QuestionOutcome, QuestionProgress,
 };
 use super::{Channel, ConversationOrigin, Interruption, Preemption, ResultSink};
 use crate::config::FeishuChannelConfig;
@@ -230,7 +231,6 @@ impl MessagingChannel for FeishuSession {
         } else {
             ctx.header
         };
-
         let Self {
             client,
             events,
@@ -240,231 +240,253 @@ impl MessagingChannel for FeishuSession {
             return QuestionOutcome::Lost;
         };
         let open_id = config.open_id.trim().to_string();
-
-        let placeholder = i18n::tr(ctx.lang, "channel.fsInputPlaceholder");
-        let note_label_text = i18n::tr(ctx.lang, "channel.fsNoteLabel");
-        let submit_label = i18n::tr(ctx.lang, "channel.fsSubmitButton");
-        let recommended_prefix = i18n::tr(ctx.lang, "channel.feishuRecommendedPrefix");
-        let todo_text_prefix = i18n::tr(ctx.lang, "whatsNext.todoPrefix");
-        let todo_badge_prefix = i18n::tr(ctx.lang, "channel.feishuTodoPrefix");
-        // 单选已选状态由会话自管（勾选器在表单外，靠 toggle 回调互斥）。
-        let mut selected_single: Vec<String> = Vec::new();
-        let question_card = card::build_question_card_with_todo(
-            title,
-            ctx.text,
-            ctx.options,
-            ctx.is_markdown,
-            ctx.single,
-            ctx.select_only,
-            &selected_single,
-            placeholder,
-            submit_label,
-            recommended_prefix,
-            todo_text_prefix,
-            todo_badge_prefix,
-        );
-
-        // 1. 投放互动卡片；失败 → 回退纯文本编号方案。
-        let message_id = match client.send_card(&question_card).await {
-            Ok(id) => id,
-            Err(e) => {
-                eprintln!(
-                    "{}{}",
-                    i18n::warn_prefix(ctx.lang),
-                    i18n::tr(ctx.lang, "channel.fsCardDeliverFailed")
-                        .replace("{e}", &e.to_string())
-                );
-                return ask_question_text(client, events, &open_id, ctx, preempt).await;
+        let mut saved = match ctx.saved::<QuestionProgress>("feishu") {
+            Ok(saved) => saved,
+            Err(error) => {
+                eprintln!("[feishu] cannot restore question: {error}");
+                return QuestionOutcome::Lost;
             }
         };
-
-        // 登记卡片精确路由 + 认领本 open_id 的聊天消息。
-        events.set_active(Some(&message_id), &open_id);
-
-        // 2. 等卡片「提交」；作答期间收到的图片/文件**并发下载**（不阻塞收事件循环，保证提交一到
-        //    就能被立刻处理、即时回包），下载结果累积进共享集合，提交时再收尾。
-        let images: Arc<Mutex<Vec<ImageAttachment>>> = Arc::new(Mutex::new(Vec::new()));
-        let files: Arc<Mutex<Vec<String>>> = Arc::new(Mutex::new(Vec::new()));
-        let mut downloads: Vec<tauri::async_runtime::JoinHandle<()>> = Vec::new();
-        while !preempt.is_cancelled() {
-            let ev = match tokio::time::timeout(POLL_INTERVAL, events.recv()).await {
-                Ok(Some(ev)) => ev,
-                Ok(None) => {
-                    // The event source is gone for good (Router dropped). Transient disconnects
-                    // never reach here — the Router reconnects indefinitely — so this is a real
-                    // loss: leave the card untouched and let the coordinator drop this surface.
-                    if preempt.is_cancelled() {
-                        break;
+        let route_id = format!(
+            "{}|{}",
+            config.base_url.trim_end_matches('/'),
+            config.app_id.trim()
+        );
+        if saved
+            .target_id
+            .as_ref()
+            .is_some_and(|target| target != &open_id)
+            || saved.route_id.as_ref().is_some_and(|bot| bot != &route_id)
+        {
+            return QuestionOutcome::Lost;
+        }
+        if !ctx
+            .commit(
+                "feishu",
+                &serde_json::json!({"targetId": open_id, "routeId": route_id}),
+                preempt,
+            )
+            .await
+        {
+            return QuestionOutcome::Interrupted;
+        }
+        if let Some(answer) = saved.answer.take() {
+            if let Some(id) = &saved.message_id {
+                let card = finalized_question(
+                    ctx,
+                    title,
+                    Some(&answer),
+                    i18n::tr(ctx.lang, "channel.fsSubmitted"),
+                );
+                let _ = client.patch_card(id, &card).await;
+            }
+            return QuestionOutcome::Answered(answer);
+        }
+        if saved.text_mode {
+            return ask_question_text(client, events, &open_id, ctx, preempt).await;
+        }
+        if preempt.is_cancelled() && saved.message_id.is_none() {
+            return QuestionOutcome::Interrupted;
+        }
+        let mut selected = saved.selected_options.clone();
+        let message_id = match saved.message_id.clone() {
+            Some(id) => id,
+            None => match client
+                .send_card(&question_card(ctx, title, &selected))
+                .await
+            {
+                Ok(id) => {
+                    if !ctx
+                        .commit("feishu", &serde_json::json!({"messageId": id}), preempt)
+                        .await
+                    {
+                        return QuestionOutcome::Interrupted;
                     }
-                    events.clear_active(Some(&message_id), &open_id);
-                    return QuestionOutcome::Lost;
+                    id
                 }
-                Err(_) => continue, // 超时：回到循环顶部重新检查 cancelled
-            };
-            match ev {
-                FsInbound::Card { data, ack } => {
-                    let parsed = card::parse_card_submit(&data, ctx.options);
-                    match &parsed {
-                        Some(s) => crate::feishu::ws::debug_log(&format!(
-                            "[feishu] card submit: open_id_match={} message_id_match={} (got open_id={}, message_id={})",
-                            s.open_id == open_id,
-                            s.message_id == message_id,
-                            s.open_id,
-                            s.message_id
-                        )),
-                        None => crate::feishu::ws::debug_log(&format!(
-                            "[feishu] card action received but not a form submit (no form_value); raw event={}",
-                            data
-                        )),
-                    }
-                    match parsed {
-                        Some(s) if s.message_id == message_id && s.open_id == open_id => {
-                            // 单选：勾选器在表单外，提交的 form_value 无选项，用会话自管的选中态。
-                            let selected_final = if ctx.single {
-                                selected_single.clone()
-                            } else {
-                                s.selected_options.clone()
-                            };
-                            // 终态卡片（禁用表单 + 保留勾选 + 回显补充文字 + 按钮「已提交」）。
-                            let finalized = card::build_finalized_card_with_todo(
-                                &card::Finalized {
-                                    title,
-                                    text: ctx.text,
-                                    is_markdown: ctx.is_markdown,
-                                    options: ctx.options,
-                                    selected: &selected_final,
-                                    user_input: s.user_input.as_deref(),
-                                    input_placeholder: placeholder,
-                                    note_label: note_label_text,
-                                    button_label: i18n::tr(ctx.lang, "channel.fsSubmitted"),
-                                    recommended_prefix,
-                                    single: ctx.single,
-                                    select_only: ctx.select_only,
-                                },
-                                todo_text_prefix,
-                                todo_badge_prefix,
-                            );
-                            // 立刻经 Router 同步回包更新卡片 → 按钮 Loading 直接变终态（无闪烁）。
-                            // 不再追加 OpenAPI patch_card：那次二次渲染正是残留「快速回弹」的来源。
-                            let _ = ack
-                                .send_and_wait(Some(card::callback_update_card(finalized)))
-                                .await;
-                            // 收尾并发下载（不在 3 秒关键路径）。
-                            for h in downloads {
-                                let _ = h.await;
-                            }
-                            events.clear_active(Some(&message_id), &open_id);
-                            let images = std::mem::take(&mut *images.lock().unwrap());
-                            let files = std::mem::take(&mut *files.lock().unwrap());
-                            return QuestionOutcome::Answered(QuestionAnswer {
-                                selected_options: selected_final,
-                                user_input: s.user_input,
-                                images,
-                                files,
-                                todo_ids: Vec::new(),
-                                todo_selections: Vec::new(),
-                            });
+                Err(error) => {
+                    eprintln!("[feishu] card delivery failed: {error}");
+                    let _ = ctx.save("feishu", &serde_json::json!({"textMode": true}));
+                    return ask_question_text(client, events, &open_id, ctx, preempt).await;
+                }
+            },
+        };
+        events.set_active(Some(&message_id), &open_id);
+        let attachments = AttachmentProgress::new(ctx, "feishu", &saved);
+        let mut downloads = attachments
+            .pending()
+            .into_iter()
+            .map(|pending| start_attachment_download(client, pending, &attachments, ctx.lang))
+            .collect::<Vec<_>>();
+        let mut submission = saved.submission;
+        let mut finalized_by_callback = false;
+        while submission.is_none() {
+            let event = if preempt.is_handoff() {
+                match events.try_recv() {
+                    Some(event) => event,
+                    None => break,
+                }
+            } else {
+                if preempt.is_cancelled() {
+                    break;
+                }
+                match tokio::time::timeout(POLL_INTERVAL, events.recv()).await {
+                    Ok(Some(event)) => event,
+                    Ok(None) => {
+                        if preempt.is_cancelled() {
+                            break;
                         }
-                        // 非提交回调：单选勾选器 toggle → 互斥更新选中态并重渲染卡片。
+                        events.clear_active(Some(&message_id), &open_id);
+                        return QuestionOutcome::Lost;
+                    }
+                    Err(_) => continue,
+                }
+            };
+            match event {
+                FsInbound::Card { data, ack } => {
+                    match card::parse_card_submit(&data, ctx.options) {
+                        Some(reply)
+                            if reply.message_id == message_id && reply.open_id == open_id =>
+                        {
+                            let answer = QuestionAnswer {
+                                selected_options: if ctx.single {
+                                    selected.clone()
+                                } else {
+                                    reply.selected_options
+                                },
+                                user_input: reply.user_input,
+                                ..Default::default()
+                            };
+                            if !ctx
+                                .commit_response(
+                                    "feishu",
+                                    &serde_json::json!({"submission": answer}),
+                                    preempt,
+                                )
+                                .await
+                            {
+                                let _ = ack.send(None);
+                                break;
+                            }
+                            let card = finalized_question(
+                                ctx,
+                                title,
+                                Some(&answer),
+                                i18n::tr(ctx.lang, "channel.fsSubmitted"),
+                            );
+                            finalized_by_callback = ack
+                                .send_and_wait(Some(card::callback_update_card(card)))
+                                .await
+                                .is_ok();
+                            submission = Some(answer);
+                        }
                         _ => {
                             if ctx.single {
-                                if let Some((oid, mid, idx)) = card::parse_toggle(&data) {
-                                    if mid == message_id
-                                        && oid == open_id
-                                        && idx < ctx.options.len()
+                                if let Some((actor, id, index)) = card::parse_toggle(&data) {
+                                    if id == message_id
+                                        && actor == open_id
+                                        && index < ctx.options.len()
                                     {
-                                        toggle_single(&mut selected_single, &ctx.options[idx].text);
-                                        let updated = card::build_question_card_with_todo(
-                                            title,
-                                            ctx.text,
-                                            ctx.options,
-                                            ctx.is_markdown,
-                                            ctx.single,
-                                            ctx.select_only,
-                                            &selected_single,
-                                            placeholder,
-                                            submit_label,
-                                            recommended_prefix,
-                                            todo_text_prefix,
-                                            todo_badge_prefix,
+                                        toggle_single(&mut selected, &ctx.options[index].text);
+                                        let _ = ctx.save(
+                                            "feishu",
+                                            &serde_json::json!({"selectedOptions": selected}),
                                         );
-                                        let _ = ack.send(Some(card::callback_update_card(updated)));
+                                        let _ = ack.send(Some(card::callback_update_card(
+                                            question_card(ctx, title, &selected),
+                                        )));
                                         continue;
                                     }
                                 }
                             }
-                            // 非本卡片 / 其它：回空 ACK，继续等待。
                             let _ = ack.send(None);
                         }
                     }
                 }
                 FsInbound::Message(event) => {
-                    if event_open_id(&event) == open_id {
-                        let lang = ctx.lang;
-                        // 即时回执 / 引导（spec R2/R3）：spawn 不阻塞事件循环（保证卡片提交即时处理）。
-                        // 斜线命令交 handle_inbound 独占响应，会话层不回引导（避免重复）。
-                        if let Some(reply) = super::conversation::answer_inbound_reply(
-                            ack_kind(&event),
-                            crate::autochannel::AckMode::Card,
-                            &message_text(&event),
-                            "feishu",
-                            lang,
-                        ) {
-                            let ack_client = client.clone();
-                            tauri::async_runtime::spawn(async move {
-                                send_inbound_reply(&ack_client, reply, lang).await;
-                            });
+                    if event_open_id(&event) != open_id {
+                        continue;
+                    }
+                    if let Some((kind, id, _)) = parse_message(&event) {
+                        if matches!(kind.as_str(), "image" | "file") {
+                            if !attachments.queue(id.clone(), event.clone()).await {
+                                continue;
+                            }
+                            downloads.push(start_attachment_download(
+                                client,
+                                PendingAttachment {
+                                    id,
+                                    event: event.clone(),
+                                },
+                                &attachments,
+                                ctx.lang,
+                            ));
                         }
-                        // 并发下载：spawn 后立刻回到循环收事件，避免大文件下载卡住提交处理。
+                    }
+                    if let Some(reply) = super::conversation::answer_inbound_reply(
+                        ack_kind(&event),
+                        crate::autochannel::AckMode::Card,
+                        &message_text(&event),
+                        "feishu",
+                        ctx.lang,
+                    ) {
                         let client = client.clone();
-                        let images = images.clone();
-                        let files = files.clone();
-                        downloads.push(tauri::async_runtime::spawn(async move {
-                            accumulate_attachment(&client, &event, &images, &files, lang).await;
-                        }));
+                        let lang = ctx.lang;
+                        tauri::async_runtime::spawn(async move {
+                            send_inbound_reply(&client, reply, lang).await;
+                        });
                     }
                 }
             }
         }
-
-        // Interrupted (preempted / cancelled): best-effort PATCH the card to terminal.
-        // Preempted → "Answered via X"; cancelled (with/without source) → "Cancelled [by X]".
-        let status = match preempt.reason() {
-            Some(Interruption::AnsweredBy(w)) => {
-                i18n::tr(ctx.lang, "channel.fsAnsweredVia").replace("{source}", &w)
+        if let Some(mut answer) = submission {
+            for download in downloads {
+                let _ = download.await;
             }
-            Some(Interruption::Cancelled(src)) if !src.is_empty() => {
-                i18n::tr(ctx.lang, "channel.fsCancelledBy").replace("{source}", &src)
+            attachments.fill(&mut answer);
+            if ctx
+                .commit_response("feishu", &serde_json::json!({"answer": answer}), preempt)
+                .await
+            {
+                if !finalized_by_callback {
+                    let card = finalized_question(
+                        ctx,
+                        title,
+                        Some(&answer),
+                        i18n::tr(ctx.lang, "channel.fsSubmitted"),
+                    );
+                    let _ = client.patch_card(&message_id, &card).await;
+                }
+                events.clear_active(Some(&message_id), &open_id);
+                return QuestionOutcome::Answered(answer);
+            }
+        } else if preempt.is_handoff() {
+            for download in downloads {
+                let _ = download.await;
+            }
+        }
+        if preempt.is_handoff() {
+            events.clear_active(Some(&message_id), &open_id);
+            return QuestionOutcome::Interrupted;
+        }
+        let status = match preempt.reason() {
+            Some(Interruption::AnsweredBy(winner)) => {
+                i18n::tr(ctx.lang, "channel.fsAnsweredVia").replace("{source}", &winner)
+            }
+            Some(Interruption::Cancelled(source)) if !source.is_empty() => {
+                i18n::tr(ctx.lang, "channel.fsCancelledBy").replace("{source}", &source)
             }
             _ => i18n::tr(ctx.lang, "channel.fsCancelled").to_string(),
         };
-        // 被抢答收尾：同样复刻钉钉禁用表单——本端未作答，故不勾选、不回显，按钮文案为「已在 X 回答」。
-        let finalized = card::build_finalized_card_with_todo(
-            &card::Finalized {
-                title,
-                text: ctx.text,
-                is_markdown: ctx.is_markdown,
-                options: ctx.options,
-                selected: &[],
-                user_input: None,
-                input_placeholder: placeholder,
-                note_label: note_label_text,
-                button_label: &status,
-                recommended_prefix,
-                single: ctx.single,
-                select_only: ctx.select_only,
-            },
-            todo_text_prefix,
-            todo_badge_prefix,
-        );
-        let finalize_action = match client.patch_card(&message_id, &finalized).await {
+        let final_card = finalized_question(ctx, title, None, &status);
+        let action = match client.patch_card(&message_id, &final_card).await {
             Ok(()) => "card_finalize_succeeded",
             Err(error) => {
                 eprintln!("[feishu] failed to finalize interrupted card: {error}");
                 "card_finalize_failed"
             }
         };
-        crate::daemon::lifecycle::log_runtime_event("channel_feishu", finalize_action, None);
+        crate::daemon::lifecycle::log_runtime_event("channel_feishu", action, None);
         events.clear_active(Some(&message_id), &open_id);
         QuestionOutcome::Interrupted
     }
@@ -475,6 +497,71 @@ impl MessagingChannel for FeishuSession {
     }
 }
 
+fn question_card(ctx: &QuestionCtx<'_>, title: &str, selected: &[String]) -> Value {
+    card::build_question_card_with_todo(
+        title,
+        ctx.text,
+        ctx.options,
+        ctx.is_markdown,
+        ctx.single,
+        ctx.select_only,
+        selected,
+        i18n::tr(ctx.lang, "channel.fsInputPlaceholder"),
+        i18n::tr(ctx.lang, "channel.fsSubmitButton"),
+        i18n::tr(ctx.lang, "channel.feishuRecommendedPrefix"),
+        i18n::tr(ctx.lang, "whatsNext.todoPrefix"),
+        i18n::tr(ctx.lang, "channel.feishuTodoPrefix"),
+    )
+}
+
+fn finalized_question(
+    ctx: &QuestionCtx<'_>,
+    title: &str,
+    answer: Option<&QuestionAnswer>,
+    status: &str,
+) -> Value {
+    card::build_finalized_card_with_todo(
+        &card::Finalized {
+            title,
+            text: ctx.text,
+            is_markdown: ctx.is_markdown,
+            options: ctx.options,
+            selected: answer.map_or(&[], |answer| answer.selected_options.as_slice()),
+            user_input: answer.and_then(|answer| answer.user_input.as_deref()),
+            input_placeholder: i18n::tr(ctx.lang, "channel.fsInputPlaceholder"),
+            note_label: i18n::tr(ctx.lang, "channel.fsNoteLabel"),
+            button_label: status,
+            recommended_prefix: i18n::tr(ctx.lang, "channel.feishuRecommendedPrefix"),
+            single: ctx.single,
+            select_only: ctx.select_only,
+        },
+        i18n::tr(ctx.lang, "whatsNext.todoPrefix"),
+        i18n::tr(ctx.lang, "channel.feishuTodoPrefix"),
+    )
+}
+
+fn start_attachment_download(
+    client: &FeishuClient,
+    pending: PendingAttachment,
+    progress: &AttachmentProgress,
+    lang: Lang,
+) -> tauri::async_runtime::JoinHandle<()> {
+    let client = client.clone();
+    let progress = progress.clone();
+    let operation = progress.begin_download();
+    tauri::async_runtime::spawn(async move {
+        let Ok(_operation) = operation else {
+            return;
+        };
+        let images = Arc::new(Mutex::new(Vec::new()));
+        let files = Arc::new(Mutex::new(Vec::new()));
+        accumulate_attachment(&client, &pending.event, &images, &files, lang).await;
+        let received_images = std::mem::take(&mut *images.lock().unwrap());
+        let received_files = std::mem::take(&mut *files.lock().unwrap());
+        progress.complete(&pending.id, received_images, received_files);
+    })
+}
+
 /// 兜底：纯文本 + 编号选项问一题（卡片投放失败时使用）。用户回一条消息即完成该题。
 async fn ask_question_text(
     client: &FeishuClient,
@@ -483,34 +570,63 @@ async fn ask_question_text(
     ctx: &QuestionCtx<'_>,
     preempt: &Preemption,
 ) -> QuestionOutcome {
+    let saved = match ctx.saved::<QuestionProgress>("feishu") {
+        Ok(saved) => saved,
+        Err(_) => return QuestionOutcome::Lost,
+    };
+    if let Some(answer) = saved.answer {
+        return QuestionOutcome::Answered(answer);
+    }
     // 编号回复按原文映射（编号清单展示用显示文本，见 build_question_text）。
     let option_texts: Vec<String> = ctx.options.iter().map(|o| o.text.clone()).collect();
     let body = build_question_text(ctx);
-    if let Err(e) = client.send_text(&body).await {
-        eprintln!(
-            "{}{}",
-            i18n::warn_prefix(ctx.lang),
-            i18n::tr(ctx.lang, "channel.fsQuestionSendFailed").replace("{e}", &e.to_string())
-        );
-        // Neither the card nor the plain-text fallback reached the human: this surface cannot
-        // carry the question. Waiting here would only hide the failure from the caller.
-        return QuestionOutcome::Lost;
+    if !saved.text_sent {
+        if let Err(e) = client.send_text(&body).await {
+            eprintln!(
+                "{}{}",
+                i18n::warn_prefix(ctx.lang),
+                i18n::tr(ctx.lang, "channel.fsQuestionSendFailed").replace("{e}", &e.to_string())
+            );
+            // Neither the card nor the plain-text fallback reached the human: this surface cannot
+            // carry the question. Waiting here would only hide the failure from the caller.
+            return QuestionOutcome::Lost;
+        }
+        if !ctx
+            .commit(
+                "feishu",
+                &serde_json::json!({"textMode": true, "textSent": true}),
+                preempt,
+            )
+            .await
+        {
+            return QuestionOutcome::Interrupted;
+        }
     }
 
     // 文本兜底无卡片：认领本 open_id 的聊天消息即可（不登记卡片精确路由）。
     events.set_active(None, open_id);
 
-    while !preempt.is_cancelled() {
-        let ev = match tokio::time::timeout(POLL_INTERVAL, events.recv()).await {
-            Ok(Some(ev)) => ev,
-            Ok(None) => {
-                if preempt.is_cancelled() {
-                    break;
-                }
-                events.clear_active(None, open_id);
-                return QuestionOutcome::Lost;
+    loop {
+        let ev = if preempt.is_handoff() {
+            match events.try_recv() {
+                Some(event) => event,
+                None => break,
             }
-            Err(_) => continue,
+        } else {
+            if preempt.is_cancelled() {
+                break;
+            }
+            match tokio::time::timeout(POLL_INTERVAL, events.recv()).await {
+                Ok(Some(ev)) => ev,
+                Ok(None) => {
+                    if preempt.is_cancelled() {
+                        break;
+                    }
+                    events.clear_active(None, open_id);
+                    return QuestionOutcome::Lost;
+                }
+                Err(_) => continue,
+            }
         };
         match ev {
             FsInbound::Message(event) => {
@@ -523,6 +639,12 @@ async fn ask_question_text(
                     message_to_answer(client, &event, &option_texts, ctx.select_only, ctx.single)
                         .await
                 {
+                    if !ctx
+                        .commit_response("feishu", &serde_json::json!({"answer": answer}), preempt)
+                        .await
+                    {
+                        break;
+                    }
                     // 接受 → 确认（spec R2 文本兜底）。
                     if let Some(reply) = super::conversation::answer_inbound_reply(
                         kind,

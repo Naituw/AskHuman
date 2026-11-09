@@ -72,6 +72,33 @@ use support::{Dedup, Outbox};
 #[allow(clippy::double_must_use)]
 #[async_trait]
 pub trait Host: Send + Sync + 'static {
+    fn update_status(&self) -> Option<String> {
+        None
+    }
+    fn updating(&self) -> bool {
+        false
+    }
+
+    fn pending_ios_requests(&self) -> Result<Vec<String>, String> {
+        Ok(Vec::new())
+    }
+
+    fn load_recovery(&self) -> Result<Option<Value>, String> {
+        Ok(None)
+    }
+
+    fn save_recovery(&self, _value: &Value) -> Result<(), String> {
+        Ok(())
+    }
+
+    fn submission_receipt(
+        &self,
+        _id: &str,
+        _phone: &str,
+        _hash: &str,
+    ) -> Result<super::store::JournalLookup, String> {
+        Ok(super::store::JournalLookup::New)
+    }
     /// Unix milliseconds. Tests substitute a virtual clock.
     fn now_ms(&self) -> i64 {
         std::time::SystemTime::now()
@@ -278,6 +305,7 @@ pub(crate) enum Cmd {
         outcome: PushOutcome,
     },
     Shutdown(oneshot::Sender<()>),
+    Suspend(oneshot::Sender<Result<(), String>>),
     /// Shutdown of a gateway that is being replaced (see [`IosGateway::retire`]).
     Retire(oneshot::Sender<()>),
     /// Work that continues inside the actor once something asynchronous finished (a host call, a
@@ -303,6 +331,14 @@ pub struct IosGateway {
 }
 
 impl IosGateway {
+    pub async fn suspend(&self) -> Result<(), String> {
+        let (tx, rx) = oneshot::channel();
+        self.cmd
+            .send(Cmd::Suspend(tx))
+            .map_err(|_| "iOS gateway unavailable".to_string())?;
+        rx.await
+            .map_err(|_| "iOS gateway stopped before saving its state".to_string())?
+    }
     /// Starts the gateway actor. The transport and its event stream are created by the caller
     /// (the real client in the daemon, the loopback broker in tests).
     pub fn start(deps: GatewayDeps) -> Self {
@@ -566,6 +602,10 @@ pub(crate) struct Revs {
 }
 
 pub(crate) struct Actor {
+    last_update_status: Option<String>,
+    recovery_loaded: bool,
+    recovered_deliveries: HashMap<String, HashMap<String, requests::PhoneDelivery>>,
+    last_checkpoint: Option<Value>,
     pub host: Arc<dyn Host>,
     pub cfg: IosChannelConfig,
     pub user: String,
@@ -630,6 +670,58 @@ pub(crate) fn sanitize_name(raw: &str) -> String {
 }
 
 impl Actor {
+    fn inbox_ready(&self) -> bool {
+        self.recovery_loaded
+            && !self.host.updating()
+            && self
+                .host
+                .pending_ios_requests()
+                .is_ok_and(|ids| ids.iter().all(|id| self.requests.find(id).is_some()))
+    }
+
+    fn load_recovery(&mut self) -> Result<(), String> {
+        let saved = self.host.load_recovery()?;
+        if let Some(saved) = saved {
+            if saved["macId"].as_str() != Some(&self.mac_id) {
+                self.recovery_loaded = true;
+                return Ok(());
+            }
+            if saved["version"] != 1 {
+                return Err("unsupported mobile checkpoint".into());
+            }
+            let deliveries = serde_json::from_value(saved["deliveries"].clone())
+                .map_err(|error| error.to_string())?;
+            let uploads = Uploads::restore(saved["uploads"].clone(), self.store.dir())
+                .map_err(|error| error.to_string())?;
+            self.recovered_deliveries = deliveries;
+            self.uploads = uploads;
+        }
+        self.recovery_loaded = true;
+        self.sync_at = Some(self.now() + 250);
+        Ok(())
+    }
+
+    fn checkpoint(&mut self, sync: bool) -> Result<(), String> {
+        if !self.recovery_loaded {
+            return Err("mobile checkpoint is still loading".into());
+        }
+        let mut deliveries = self.recovered_deliveries.clone();
+        for pending in &self.requests.pending {
+            deliveries.insert(pending.view.id.clone(), pending.phones.clone());
+        }
+        let uploads = if sync {
+            self.uploads.snapshot().map_err(|error| error.to_string())?
+        } else {
+            serde_json::to_value(&self.uploads).map_err(|error| error.to_string())?
+        };
+        let snapshot = serde_json::json!({"version":1, "macId":self.mac_id, "deliveries":deliveries, "uploads":uploads});
+        if self.last_checkpoint.as_ref() != Some(&snapshot) {
+            self.host.save_recovery(&snapshot)?;
+            self.last_checkpoint = Some(snapshot);
+        }
+        Ok(())
+    }
+
     fn new(
         host: Arc<dyn Host>,
         cfg: IosChannelConfig,
@@ -643,6 +735,10 @@ impl Actor {
         let mac_id = store.state.mac_id.clone();
         let outbox = Outbox::spawn(transport.clone());
         let mut actor = Self {
+            last_update_status: None,
+            recovery_loaded: false,
+            recovered_deliveries: HashMap::new(),
+            last_checkpoint: None,
             user: cfg.username.clone(),
             mac_id,
             epoch: hex16(),
@@ -696,6 +792,9 @@ impl Actor {
             actor.rt.remove(&id);
         }
         actor.store.journal_prune(now);
+        if let Err(error) = actor.load_recovery() {
+            eprintln!("askhuman: waiting to recover mobile delivery: {error}");
+        }
         actor.sweep_upload_files();
         actor.refresh_status();
         actor
@@ -737,6 +836,13 @@ impl Actor {
             tokio::select! {
                 Some(event) = events.recv() => self.on_transport(event).await,
                 cmd = cmds.recv() => match cmd {
+                    Some(Cmd::Suspend(done)) => {
+                        let result = self.checkpoint(true);
+                        if result.is_ok() { self.shutdown().await; }
+                        let stopped = result.is_ok();
+                        let _ = done.send(result);
+                        if stopped { break; }
+                    }
                     Some(Cmd::Shutdown(done)) => {
                         self.shutdown().await;
                         let _ = done.send(());
@@ -755,6 +861,9 @@ impl Actor {
                     }
                 },
                 _ = ticker.tick() => self.tick().await,
+            }
+            if let Err(error) = self.checkpoint(false) {
+                eprintln!("askhuman: waiting to save mobile delivery: {error}");
             }
         }
     }
@@ -793,7 +902,7 @@ impl Actor {
             }
             Cmd::PushResult { phone_id, outcome } => self.on_push_result(&phone_id, outcome),
             Cmd::Run(work) => work(self),
-            Cmd::Shutdown(_) | Cmd::Retire(_) => unreachable!("handled in run"),
+            Cmd::Shutdown(_) | Cmd::Suspend(_) | Cmd::Retire(_) => unreachable!("handled in run"),
         }
     }
 
@@ -909,6 +1018,7 @@ impl Actor {
 
     pub(crate) fn publish_presence(&self, online: bool) {
         let presence = Presence {
+            u: self.host.update_status(),
             o: online as u8,
             t: self.now() / 1000,
             r: "mac".into(),
@@ -1272,6 +1382,10 @@ impl Actor {
     pub(crate) fn send_stream_snapshot(&mut self, phone_id: &str, stream: &str) {
         match stream {
             "inbox" => {
+                if !self.inbox_ready() {
+                    self.sync_at = Some(self.now() + 250);
+                    return;
+                }
                 let snapshot = self.inbox_snapshot();
                 self.send(phone_id, &snapshot);
             }
@@ -1364,6 +1478,19 @@ impl Actor {
 
     async fn tick(&mut self) {
         let now = self.now();
+        let update = self.host.update_status();
+        if update != self.last_update_status {
+            self.last_update_status = update;
+            if self.connected {
+                self.publish_presence(true);
+            }
+        }
+        if !self.recovery_loaded {
+            if let Err(error) = self.load_recovery() {
+                eprintln!("askhuman: waiting to recover mobile delivery: {error}");
+                return;
+            }
+        }
         self.tick_pairing(now).await;
         self.tick_requests(now).await;
         self.prune_uploads(now);

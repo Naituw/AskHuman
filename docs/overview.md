@@ -28,7 +28,7 @@
 - **独立 Popup Helper**（可选 `channels.popup.windowMode=independent`）：每请求一个窗口，沿用旧冷热池及焦点仲裁；模式切换只影响新请求，保留在途窗口和草稿。
 - **GUI Host**（macOS/Linux/Windows 每用户至多 1 个、长命）：承载菜单栏/托盘，以及全局唯一的设置、历史、待办、Agent、Interject、新建任务与 Fork 窗口；各打开入口通过自有 IPC 路由到宿主。
 
-**关键约定**：每种 IM 渠道全局只保留一条连接；每个请求仅首个终态回答生效；IPC 和运行状态均为用户私有；既有 stdout、结果区块、退出码和配置兼容契约保持不变。Daemon 排空换新见 `docs/specs/daemon-graceful-drain.md`。自身盘上更新由 daemon 在排空后自行接班（macOS/Linux exec 稳定安装入口），不依赖托盘或新 CLI；显式停止、信号和闲退不自启，崩溃自愈仍未提供。
+**关键约定**：每种 IM 渠道全局只保留一条连接；每个请求仅首个终态回答生效；IPC 和运行状态均为用户私有；既有 stdout、结果区块、退出码和配置兼容契约保持不变。Daemon 排空换新见 `docs/specs/daemon-graceful-drain.md`。自身盘上更新在全部在途调用与窗口具备恢复能力时保存原题并即时交接，CLI/窗口重连，IM 接管原卡，iOS 保留草稿与提交；能力不足时保留旧服务并继续受理兼容新题，旧调用结束后接班。macOS/Linux exec 稳定安装入口，不依赖托盘或新 CLI；显式停止、信号和闲退不自启，崩溃自愈仍未提供。恢复身份、可靠首答、交接屏障及首次上线边界见 [即时换新](specs/daemon-live-update.md)。
 
 **多份二进制并存**：握手比较的是二进制内容指纹，所以内容不同的两份 AskHuman（npm 全局安装 + `install.sh` 本地构建等）会轮流把对方的 Daemon 顶掉。Daemon 因此记录每次让位的原因与客户端，并在同一对二进制 10 分钟内互顶 ≥2 次后不再为「内容不同但协议号相同」的客户端让位（hold）；`daemon status`、`doctor` 与 `install.sh` 会指出多份安装、PATH 遮蔽和 hold。设计见同一份 spec 的 D10–D12 与 §6。
 
@@ -158,6 +158,7 @@ AskHuman/
         tray_menu.rs         托盘菜单模型与最小 diff
         away_capsule.rs      macOS 离开模式桌面胶囊与「欢迎回来」（展示数据与判定是平台无关的纯函数，窗口只在 macOS）
         coordinator.rs       首答胜出与其它渠道取消
+        popup_recovery.rs    窗口 IPC 重连与未确认提交续送，保留已挂载表单
         popup_inbox.rs · popup_inbox_geometry.rs  共享宿主请求状态及三区几何事务
         popup_canvas.rs · swift/PopupCanvas.swift  过渡固定画布与普通原生自适应布局；小窗的缩放由 swift/PopupCollapse.swift 逐帧动画
         popup_activation.rs · swift/PopupActivation.swift  Popup Host 的应用级激活状态（小窗的切走缩回）
@@ -241,8 +242,10 @@ AskHuman/
         composer.rs          Interject 窗口的 daemon 连接
       daemon/
         mod.rs               跨平台 daemon 子命令入口与共享 server core 映射
+        recovery.rs · recovery/  私有事务恢复存储、进程存活证明与 daemon 自持消费身份
         runtime/
           mod.rs             状态与类型、serve 主循环、连接分发与请求提交
+          live_update.rs     可恢复调用、恢复屏障、渠道暂停/接管与后台自动交接
           watch.rs           watch 订阅持久化、tick 刷新与卡片回调
           select.rs          跨渠道单选卡发送、路由与回调分发
           inbound.rs         IM 入站命令层与共享命令处理
@@ -300,7 +303,7 @@ AskHuman/
 
 > 常量在 `src-tauri/src/ipc/mod.rs`；换新、排空与互顶的约定见 `docs/specs/daemon-graceful-drain.md`（D5、D10–D12）。
 
-CLI、Popup Host、GUI Host 与 Daemon 用同一份 NDJSON 消息类型（`ClientMsg` / `ServerMsg` 及其载荷）通信。握手（`ClientHello`）要求**协议号严格相等**，且二进制内容指纹一致，否则 Daemon 让位换新；没有版本协商，也没有降级模式——新 Daemon 不会为旧协议号的客户端保留旧行为，而是换成客户端那一份。唯一例外是 hold（上一节「多份二进制并存」）：协议号相同、内容不同的客户端会被当前 Daemon 直接服务，所以**同一协议号内必须保持互通**。
+CLI、Popup Host、GUI Host 与 Daemon 共用 NDJSON 消息类型（`ClientMsg` / `ServerMsg` 及其载荷）。原有 `ClientHello` 要求**协议号严格相等**，指纹不同时按排空、更新意图与多安装 hold 规则处理。可恢复调用和窗口先读 Status 的恢复能力，再使用独立版本的 `Recover` 入口跨后台换代，避免旧进程把新版后台换回自己的映像。hold 也会让同号不同内容的客户端与当前 Daemon 通信，所以**同一协议号内必须保持互通**。
 
 改 `ipc/mod.rs` 里的消息类型前，先按下表判断要不要 +1：
 
@@ -314,6 +317,10 @@ CLI、Popup Host、GUI Host 与 Daemon 用同一份 NDJSON 消息类型（`Clien
 +1 的代价是每个跨号的客户端与 Daemon 互相让位、旧客户端无法与新 Daemon 共存，所以能用「加可选字段」解决的不要 +1。+1 时：改常量，在下面的历史补一行（日期、提交、变更点），并在 `daemon-graceful-drain.md` 记下升级过渡期的影响。
 
 **历史**（当前为 5）：1 = Daemon 骨架（`9660532`，2026-06-07）；2 = 结构化确认（`2c76c44`，2026-07-11）；3 = 共享作答窗口，新增 `PopupHostHello` / `PopupHostIdle` / `PopupHostAccepted` / `PopupSubmissionAck` / `PopupRequestKind` 等（`799334f`，2026-10-06）；4 = iOS 渠道管理，新增 `ClientMsg::Ios` / `ServerMsg::Ios`（`IosOp` / `IosResult`）（`128bffd`，2026-10-25）；5 = Cursor Desktop 新建任务，新增 `ClientMsg::CursorDesktop`（载荷 `Operation`）/ `ServerMsg::CursorDesktop`（载荷 `Result<Value, String>`），与 Codex Desktop 同构（`2600561`，2026-11-03）；同一个尚未发布的 5 还含 Mac 控制台给 Cursor Desktop 聊天直发消息的 `ClientMsg::AgentMessage`（载荷 `ConsoleMessage`）/ `ServerMsg::AgentMessage`（载荷 `Result<Value, String>`）（2026-11-04）；还有离开模式的 `ClientMsg::Away`（载荷 `AwayOp`）/ `ServerMsg::Away`（载荷 `AwaySnapshot`）（2026-11-05；`Answer.directive`、`TaskRequest.escalate`、`AskRequest.escalated` / `quick_reply` / `quick_replies` 与托盘 / Agent 快照里的 `away` 都是带 `#[serde(default)]` 的可选字段，不另计）——5 没有发布版，所以并入而不再 +1，5 一发布，之后新增变体就必须 +1。对应发布版：0.4.3–0.8.2 为 1，0.9.1–0.13.2 为 2，0.14.2–0.15.1 为 3，0.16.0 为 4，0.16.0 之后的下一个发布版起为 5。排空相关的增量（`HelloStatus::Draining`、`ServerMsg::Draining`、`Stop.force`、`StatusInfo.draining`）和 `StatusInfo` 的二进制信息字段都没有 +1。
+
+恢复能力另用带默认值的 `StatusInfo.recoveryVersion` 协商，`Recover` / `Recovery` 信封只在声明能力的连接间使用。
+旧端始终走原入口并只收到原消息，所以保持协议号 5。稳定恢复入口绕过指纹让位，避免存活旧 CLI/窗口将新后台换回旧构建。
+每次扩展继续审计全部发送点和窗口广播，具体约束见 [即时换新](specs/daemon-live-update.md)。
 
 ## 前端 ↔ 后端命令（`commands.rs` ↔ `lib/ipc.ts`）
 

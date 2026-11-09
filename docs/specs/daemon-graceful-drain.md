@@ -1,5 +1,11 @@
 # 需求：Daemon 优雅排空换新（graceful drain）
 
+> 2026-11-09 新增可恢复换新路径。自身更新在调用和窗口均支持恢复时保存原题并直接交接，
+> 不再等待人类作答。能力不足时保留旧服务并接收兼容新题，待旧调用结束再交接。
+> 本文的排空流程继续定义显式 stop/restart、协议不兼容让位与旧版迁移边界，
+> 可恢复更新的状态、失败重试及验收见 [即时换新](daemon-live-update.md)。
+
+
 > 状态：已实现并用于 Daemon 换新、stop 与 restart。2026-10-22 补充「多份二进制互相顶替」的刹车与可观测性：D10–D12、§6（`daemon/restart_guard.rs`、`cli/install_check.rs`）。
 > 关联计划：`docs/plans/daemon-graceful-drain.md`
 > 影响面：Daemon 生命周期（`daemon/mod.rs`）、IPC 协议消息（`ipc/mod.rs`，仅增量字段/枚举值，PROTOCOL_VERSION 不变）、CLI 客户端（`client/mod.rs`）、`daemon stop/restart/status` 子命令、`scripts/install.sh`（及 `install-windows.ps1`）。**不改**正常提问流程的任何行为、stdout 契约、退出码语义。
@@ -16,7 +22,7 @@
 
 ## 2. 目标
 
-一句话：**换新不打断在途，新提问等待换新完成。**
+以下描述排空路径。兼容的自身更新保存原题后短暂交接，新提问正常受理，见[即时换新](daemon-live-update.md)。
 
 - Agent A 的提问挂起中（等人作答），Agent B 安装新二进制并再次提问：A 完全无感；B 的 CLI 打印等待提示并阻塞，待 A 的请求完结、旧 Daemon 退出后，自动拉起新 Daemon 并正常弹出 B 的提问。
 - 人始终拥有「立即换新」的强制手段（明知会打断在途请求）。
@@ -25,20 +31,20 @@
 
 | 编号 | 决策项 | 结论 |
 |---|---|---|
-| D1 | 总体方案 | **方案 A：优雅排空（drain）**。检测到过时（二进制指纹 / 协议版本变化）且有在途请求时，Daemon 进入 draining 状态：在途请求继续服务直至全部完结；排空期**拒绝新 Submit**；排空完成后换新；2026-11-05 起，自身盘上更新由 daemon 自行接班，不依赖 CLI（见 D14）。仅客户端版本不同的让位仍由客户端拉起。否决：B（排空期由旧 Daemon 继续接新题——会用旧代码服务新语义，且新字段反序列化可能失败，如 `-o!` 的 `OptionItem`）；C（在途请求状态移交新 Daemon——复杂度过高，记为远期方向）；D（`ASKHUMAN_DAEMON_AUTORESTART=0` 手工管理——仅保留为逃生口，不作为默认方案） |
+| D1 | 总体方案 | 兼容的自身更新采用[即时换新](daemon-live-update.md)，保存原题并短暂交接。新版服务遇到缺少恢复能力的旧调用或窗口时继续受理兼容新题，待旧调用结束再交接。显式 stop/restart、协议不兼容让位及首次旧服务迁移继续采用下述安全排空流程，排空期拒绝新 Submit |
 | D2 | 新提问的等待行为 | **无限等待**（不超时放弃），CLI 在等待期间**周期性输出 stderr 提示**：剩余在途请求数 + 「回答现有弹窗后本问题会自动弹出」+ 强制换新命令提示（`AskHuman daemon restart --force`）。等待不消耗既有的「提交重试次数」预算 |
 | D7 | 等待的结束条件（2026-09-16 修正） | 等待按**实例**判定，而非按「连不上」：CLI 记住排空中 daemon 的 pid，每 500ms 查 `Status`；`Status` 无应答、**pid 变化**或 **不再 draining** 三者任一即结束等待、转向新 daemon 提交。剩余在途数只取自 pid 匹配的旧 daemon。原因：旧 daemon 退出后 ≤1s 内新 daemon 就会被任一 `ensure_running()` 调用方（agent hook、GUI Host、其他等待中的 CLI）拉起，只测连通性的 CLI 会把健康的新 daemon 当成仍在排空而永远等下去（实测有 CLI 卡了 3 天）。`daemon stop/restart` 的 graceful 等待与 `wait_until_down` 同样按 pid 判定 |
 | D8 | 拉起串行化 | `ensure_running()` 的「拉起 + 等就绪」段跨进程持 `~/.askhuman/spawn.lock`，拿锁后先重新握手；macOS 上 launchd 仍报任务进程存活时不 `bootout`（bootout = SIGTERM，会杀掉兄弟进程刚拉起、可能已受理请求的实例），仅在等就绪超时后才以替换模式重拉，保留对失活实例的自愈 |
 | D9 | SIGTERM 语义 | Daemon 收到 SIGTERM（launchd bootout / 登出 / `kill <pid>`）等同 graceful `daemon stop`：有在途请求则进入 drain，否则立即退出；两种都写 daemon.log。launchd 的 exit timeout（5s）仍会在其后 SIGKILL，故 bootout 触发的 drain 有界 |
 | D3 | stop / restart 语义 | `daemon stop` / `daemon restart` **默认也走 graceful drain**（有在途请求时等待其完结，期间拒新提问）；新增 `--force` 标志 = 立即终止（即旧版行为，在途请求按现状收尾为 Cancelled） |
-| D4 | 可观测性配套 | `daemon status` 显示 draining 状态与在途请求数；`install.sh`（及 Windows 版）在开始时检测 Daemon 在途请求数，>0 则输出提示（换新将在这些请求完结后自动发生 / 可 `--force` 立即），**不强杀** |
+| D4 | 可观测性配套 | `daemon status` 显示 draining 与在途数。安装脚本提示支持恢复的提问将自动重连，旧调用安全结束后换新。窗口与 iOS 显示简短更新/恢复状态，技术原因写内部日志 |
 | D5 | 协议演进 | （当时的状态；现行协议号及何时 +1 的规则见 `docs/overview.md`「IPC 协议号」与本文 D10。）`PROTOCOL_VERSION` 保持 1（全部为增量演进，新旧消息互相可解）：`HelloStatus` 增 `Draining`；`ServerMsg` 增 `Draining { active }`（Submit 被拒时回复）；`ClientMsg::Stop` 增 `force: bool`（serde default，旧 Daemon 解析时忽略额外字段）；`StatusInfo` 增 `draining: bool`（serde default）。过渡期边界：**旧二进制 CLI** 收到新枚举值会解码失败 → 按现状报 `daemon connection lost` 退 3，可接受（正常流程下旧 CLI 不会再发起新握手：盘上已是新二进制） |
 | D6 | 首次升级例外 | 本特性发布后的**第一次**升级仍由旧代码的 Daemon 主导（立即退出、打断在途），无法避免；其后所有升级享受 drain |
 | D10 | 互相顶替的刹车（hold，2026-10-22） | 同一对二进制（按内容指纹）10 分钟内已互相顶替 ≥2 次后，第 3 次起 Daemon **不再**因「客户端二进制与自己内容不同」而让位：回 `HelloStatus::Ok`，照常服务该客户端（同一协议号、内容不同的客户端共用当前 Daemon）。只拦这一种让位：自身盘上二进制被换（那是升级）、客户端协议号不同、`ASKHUMAN_DAEMON_AUTORESTART=0` 的行为都不变。hold 的状态：内存里一份「粘性」状态（任何内容不同的客户端 Hello 都续期，30 分钟没有这种 Hello 即结束，Daemon 退出即清），外加持久化的换新历史 `~/.askhuman/state/daemon-restarts.json`（≤50 条 / ≤24 小时），让刚重启的新 Daemon 立刻重新推出 hold、不参与新一轮互顶。`daemon stop` / `daemon restart` 会清掉历史（人为重置）。连装新构建每次都是新内容，凑不成「同一对」，不受影响。分析见 §6 |
 | D11 | 协议号不同的客户端永不 hold | 旧协议号客户端收到 `Restarting` 后会等待并最终以替换策略（`SpawnPolicy::Replace`）杀掉仍存活的 Daemon，也解码不了新版消息，让它们与新 Daemon 共存没有安全的办法，所以协议号不同永远让位。由此也要求**同一协议号内必须保持互通**（hold 之后，同号不同内容的二进制会真的互相通信）：新增枚举变体、改字段含义等会让旧端出错的改动都要 +1，见 `docs/overview.md`「IPC 协议号」 |
 | D12 | 可观测性（2026-10-22） | 每次让位都在 `daemon.log` 写明原因（`client binary differs` / `own binary changed on disk` / `protocol version differs`）、客户端版本 / 协议号 / pid / 路径，以及 Daemon 自己的 exe 与指纹；`started` 行带 `exe=` 与 `fp=`；hold 开始写一行详细说明，之后至多每 5 分钟一行。`daemon status` 增 `binary` 行与 hold 警告；`StatusInfo` 增 `exePath` / `fingerprint` / `binaryConflict`（都带 `serde(default)`，新旧互相忽略）。`AskHuman doctor` 增 Install 小节，`doctor install [--warn-only] [--json]` 可单独运行：列出 PATH 上的各份二进制（按内容指纹区分，npm shim 解析到真实平台包），指出排第一的是哪份，并提示 ① 当前二进制被 PATH 里更靠前的另一份遮蔽 ② PATH 上有内容不同的多份 ③ Daemon 来自另一个文件 ④ hold 正在生效；并列出近 1 小时的换新记录。指向同一个文件的多个入口（例如 `~/.local/bin/AskHuman` 是链到 npm 包内二进制的符号链接，装一次所有名字同时更新）算同一份、不报警：单文件布局本身没有不一致，`install.sh` 照常写到链接指向的文件。`install.sh` 装完后调用 `doctor install --warn-only`（无冲突时静默；Dev Instance 只跳过 PATH 比对）。不做托盘 / 菜单栏提示；Windows 脚本与「hooks / MCP 配置里写死路径」的扫描之后再做（见 `docs/PROGRESS.md`） |
 | D13 | daemon 自持的错误卡不算在途请求（2026-11-03） | Agent 最终失败的错误卡（`native_request_id` 以 `failure:` / `failure-control:` 开头）是 daemon 替用户持有的卡，没有调用方在等，最长挂 24 小时；若计入「在途请求」，用户这时换新会让所有新提问排队到有人回答这张卡为止。`RequestRegistry::active_count()`（排空判定、`daemon status`、SIGTERM / `daemon stop` 是否排空）因此不计它们（菜单栏图标与「待答」列表用 `in_flight_count()`，仍计入）；卡自己写入 `~/.askhuman/state/failure-cards.json`，关停时（accept 循环退出后、取消请求之前）冻结该记录，新 daemon 启动后恢复。见 `docs/specs/agent-failure-inbox.md` §5.1 |
-| D14 | 自身更新必须自行接班（2026-11-05） | 自身盘上二进制被替换的换新由 daemon 负责：有在途则答完再换，无在途直接换；不依赖托盘或新的客户端。macOS/Linux 在清理旧资源后 exec 稳定安装入口，保留 PID，单实例锁在 exec 边界释放；Windows 使用有界的接班进程等待单实例锁。显式 stop、SIGTERM 和自然闲退不自行重拉，停止优先于更新意图；仅客户端版本/内容不同仍沿用客户端接班，防止互顶。系统调用失败有界并保留本地诊断，托盘显示失败而非永久等待。崩溃自愈不包含在本次。设计与验收见 [更新接班及错误卡](daemon-update-and-failure-recovery.md)。 |
+| D14 | 自身更新必须自行接班 | 自身盘上二进制替换由 daemon 负责。支持恢复时直接交接并接管原题，旧调用能力不足时保持服务直到可安全交接。Unix exec 稳定安装入口，Windows 使用有界接班进程。显式 stop、SIGTERM 与闲退保留停止语义，单轮失败有界并由程序恢复与重试。详见[即时换新](daemon-live-update.md)及[更新接班](daemon-update-and-failure-recovery.md) |
 
 ## 4. 约束与既有规则（不可破坏）
 

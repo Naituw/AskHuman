@@ -29,7 +29,10 @@ impl Channel for PopupChannel {
         // 窗口已由 setup 创建；用户操作经 submit_popup / cancel_popup 命令进入协调器。
     }
 
-    fn interrupt(&self, _reason: &Interruption) {
+    fn interrupt(&self, reason: &Interruption) {
+        if matches!(reason, Interruption::Handoff) {
+            return;
+        }
         // The popup just closes regardless of why (winner answered / request cancelled).
         if let Some(w) = self.app.get_webview_window("popup") {
             let _ = w.close();
@@ -69,6 +72,17 @@ impl Channel for GuiHelperPopupChannel {
     fn interrupt(&self, reason: &Interruption) {
         // The popup ignores the reason text and just closes; pass a string for diagnostics only.
         let winner = match reason {
+            Interruption::Handoff => {
+                if let Ok(slot) = self.gui.lock() {
+                    if let Some(tx) = slot.as_ref() {
+                        let _ = tx.send(crate::ipc::ServerMsg::Recovery {
+                            version: crate::daemon::recovery::VERSION,
+                            event: serde_json::json!({"event": "updating"}),
+                        });
+                    }
+                }
+                return;
+            }
             Interruption::AnsweredBy(w) => w.clone(),
             Interruption::Cancelled(src) => src.clone(),
         };

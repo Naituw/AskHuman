@@ -1,9 +1,162 @@
 //! Shared Popup Host dispatch, authenticated request routing, and bounded recovery.
 use super::*;
 use crate::daemon::popup_inbox::{Lease, Recovery};
+use std::collections::HashSet;
 
 /// Upper bound on captured popup host stderr that may reach the daemon log.
 const POPUP_HOST_STDERR_LIMIT: usize = 8192;
+
+#[derive(Clone, serde::Serialize, serde::Deserialize)]
+pub(super) struct PopupBinding {
+    #[serde(default)]
+    pub birth: Option<String>,
+    pub token: String,
+    pub pid: u32,
+}
+
+pub(super) fn context(
+    entry: &InteractionEntry,
+) -> Option<Arc<crate::daemon::recovery::RequestContext>> {
+    match entry {
+        InteractionEntry::Ask(entry) => entry.request().recovery.clone(),
+        InteractionEntry::Confirm(entry) => entry.coordinator.recovery(),
+    }
+}
+
+pub(super) fn save_independent_lease(
+    entry: &InteractionEntry,
+    pid: u32,
+    tx: &tokio::sync::mpsc::UnboundedSender<ServerMsg>,
+) -> bool {
+    let Some(context) = context(entry) else {
+        return false;
+    };
+    let binding = PopupBinding {
+        birth: crate::daemon::recovery::process_birth(pid),
+        token: entry.token().to_string(),
+        pid,
+    };
+    if let Err(error) = context.save("popup/independent", &binding) {
+        log(&format!("cannot save popup lease: {error}"));
+        return false;
+    }
+    let _ = tx.send(ServerMsg::Recovery {
+        version: crate::daemon::recovery::VERSION,
+        event: serde_json::to_value(crate::daemon::recovery::Event::PopupLease {
+            token: binding.token,
+        })
+        .unwrap(),
+    });
+    true
+}
+
+pub(super) fn retained_popup(entry: &InteractionEntry) -> bool {
+    context(entry)
+        .and_then(|context| {
+            context
+                .load::<PopupBinding>("popup/independent")
+                .ok()
+                .flatten()
+        })
+        .is_some_and(|binding| {
+            crate::daemon::recovery::process_alive(binding.pid, binding.birth.as_deref())
+        })
+}
+
+pub(super) async fn reconnect_popup(
+    token: String,
+    pid: u32,
+    request_id: Option<String>,
+    reader: Reader,
+    mut writer: Writer,
+    state: &Arc<ServerState>,
+) {
+    while state
+        .recovery
+        .as_ref()
+        .is_some_and(|runtime| runtime.is_restoring())
+    {
+        if state.closing.load(Ordering::SeqCst) {
+            return;
+        }
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    }
+    let entries = state
+        .registry
+        .in_flight_entries()
+        .into_iter()
+        .map(InteractionEntry::Ask)
+        .chain(
+            state
+                .registry
+                .in_flight_confirm_entries()
+                .into_iter()
+                .map(InteractionEntry::Confirm),
+        );
+    let entry = entries.into_iter().find(|entry| {
+        context(entry)
+            .and_then(|context| {
+                context
+                    .load::<PopupBinding>("popup/independent")
+                    .ok()
+                    .flatten()
+            })
+            .is_some_and(|binding| binding.token == token && binding.pid == pid)
+    });
+    if let Some(entry) = entry {
+        let (tx, mut messages) = tokio::sync::mpsc::unbounded_channel();
+        let write_task = tokio::spawn(async move {
+            while let Some(message) = messages.recv().await {
+                if ipc::write_msg(&mut writer, &message).await.is_err() {
+                    break;
+                }
+            }
+        });
+        match entry {
+            InteractionEntry::Ask(entry) => serve_gui(entry, reader, tx, write_task, state).await,
+            InteractionEntry::Confirm(entry) => {
+                serve_confirm_gui(entry, reader, tx, write_task, state).await
+            }
+        }
+    } else if let Some(id) = request_id {
+        if let Some(runtime) = &state.recovery {
+            let binding = runtime
+                .store
+                .load_checkpoint(&id, "popup/independent")
+                .ok()
+                .flatten()
+                .and_then(|value| serde_json::from_value::<PopupBinding>(value).ok());
+            if binding.is_some_and(|binding| binding.token == token && binding.pid == pid) {
+                let winner =
+                    super::live_update::saved_winner(state, &id).unwrap_or_else(|| "system".into());
+                let _ = ipc::write_msg(
+                    &mut writer,
+                    &ServerMsg::Cancel {
+                        request_id: id,
+                        winner,
+                    },
+                )
+                .await;
+            }
+        }
+    } else if let Some(entry) = state.registry.attach_gui(&token) {
+        let (tx, mut messages) = tokio::sync::mpsc::unbounded_channel();
+        let _ = save_independent_lease(&entry, pid, &tx);
+        let write_task = tokio::spawn(async move {
+            while let Some(message) = messages.recv().await {
+                if ipc::write_msg(&mut writer, &message).await.is_err() {
+                    break;
+                }
+            }
+        });
+        match entry {
+            InteractionEntry::Ask(entry) => serve_gui(entry, reader, tx, write_task, state).await,
+            InteractionEntry::Confirm(entry) => {
+                serve_confirm_gui(entry, reader, tx, write_task, state).await
+            }
+        }
+    }
+}
 
 async fn capture_popup_stderr(
     mut stream: impl tokio::io::AsyncRead + Unpin,
@@ -90,7 +243,10 @@ fn connect_entry(entry: &InteractionEntry, tx: &tokio::sync::mpsc::UnboundedSend
         }
     }
 }
-fn detach_entry(entry: &InteractionEntry, tx: &tokio::sync::mpsc::UnboundedSender<ServerMsg>) {
+pub(super) fn detach_entry(
+    entry: &InteractionEntry,
+    tx: &tokio::sync::mpsc::UnboundedSender<ServerMsg>,
+) -> bool {
     let (slot, connected) = match entry {
         InteractionEntry::Ask(entry) => (&entry.gui, &entry.gui_connected),
         InteractionEntry::Confirm(entry) => (&entry.gui, &entry.gui_connected),
@@ -102,7 +258,9 @@ fn detach_entry(entry: &InteractionEntry, tx: &tokio::sync::mpsc::UnboundedSende
     {
         *slot = None;
         connected.store(false, Ordering::SeqCst);
+        return true;
     }
+    false
 }
 pub(super) fn show_entry(
     entry: &InteractionEntry,
@@ -266,7 +424,7 @@ fn spawn_inbox_host(lease: Lease, state: &Arc<ServerState>) -> bool {
     });
     true
 }
-fn recover_inbox(state: &Arc<ServerState>, generation: u64) {
+pub(super) fn recover_inbox(state: &Arc<ServerState>, generation: u64) {
     prune_inbox(state);
     let prewarm = warm_mode_enabled(state, crate::config::PopupWindowMode::Merged)
         && !state.draining.load(Ordering::SeqCst);
@@ -352,6 +510,31 @@ pub(super) async fn handle_popup_host<R, W>(
     R: tokio::io::AsyncBufRead + Unpin + Send,
     W: tokio::io::AsyncWrite + Unpin + Send + 'static,
 {
+    handle_popup_host_supported(token, None, Vec::new(), reader, writer, state).await;
+}
+
+pub(super) async fn handle_popup_host_supported<R, W>(
+    token: String,
+    pid: Option<u32>,
+    known_ids: Vec<String>,
+    reader: R,
+    writer: W,
+    state: &Arc<ServerState>,
+) where
+    R: tokio::io::AsyncBufRead + Unpin + Send,
+    W: tokio::io::AsyncWrite + Unpin + Send + 'static,
+{
+    let known_ids: HashSet<String> = known_ids.into_iter().collect();
+    while state
+        .recovery
+        .as_ref()
+        .is_some_and(|runtime| runtime.is_restoring())
+    {
+        if state.closing.load(Ordering::SeqCst) {
+            return;
+        }
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    }
     // An idle/prewarmed GUI must not keep the daemon alive. The callers waiting for their
     // independent requests provide liveness, including while the host is recovering.
     state.active.fetch_sub(1, Ordering::SeqCst);
@@ -366,6 +549,18 @@ pub(super) async fn handle_popup_host<R, W>(
         log("rejected unreserved popup host connection");
         return;
     };
+    if let Some(pid) = pid {
+        let saved = {
+            let mut host = state.popup_inbox.lock().unwrap();
+            host.enable_recovery(pid);
+            host.saved()
+        };
+        if let Some(runtime) = &state.recovery {
+            if let Err(error) = runtime.store.set_metadata("popup/host", &saved) {
+                log(&format!("cannot save popup host lease: {error}"));
+            }
+        }
+    }
     let failed = Arc::new(tokio::sync::Notify::new());
     let writer_failed = failed.clone();
     let write_task = tokio::spawn(async move {
@@ -381,10 +576,49 @@ pub(super) async fn handle_popup_host<R, W>(
         }
         writer_failed.notify_one();
     });
+    for id in &known_ids {
+        if state.popup_inbox.lock().unwrap().get(id).is_some() {
+            continue;
+        }
+        let restored = state
+            .registry
+            .in_flight_entries()
+            .into_iter()
+            .map(InteractionEntry::Ask)
+            .chain(
+                state
+                    .registry
+                    .in_flight_confirm_entries()
+                    .into_iter()
+                    .map(InteractionEntry::Confirm),
+            )
+            .find(|entry| entry.request_id() == id);
+        if let Some(entry) = restored {
+            if let InteractionEntry::Confirm(entry) = &entry {
+                entry.start_delivery("popup");
+            }
+            state
+                .popup_inbox
+                .lock()
+                .unwrap()
+                .enqueue(id.clone(), entry.seq(), entry);
+        }
+    }
     prune_inbox(state);
     let requests = state.popup_inbox.lock().unwrap().requests();
     for request in requests {
         show_entry(&request.value, &tx, state);
+    }
+    for id in &known_ids {
+        if state.popup_inbox.lock().unwrap().get(id).is_none() {
+            let winner =
+                super::live_update::saved_winner(state, &id).unwrap_or_else(|| "system".into());
+            let _ = tx.send(ServerMsg::PopupSubmissionAck {
+                request_id: id.clone(),
+                winner: Some(winner),
+                error: None,
+            });
+        }
     }
     {
         let update = state.update.lock().unwrap();
@@ -441,10 +675,12 @@ pub(super) async fn handle_popup_host<R, W>(
                     if let InteractionEntry::Ask(entry) = entry {
                         entry.gui_ready.store(true, Ordering::SeqCst);
                     }
-                    let _ = tx.send(ServerMsg::PresentPopup {
-                        request_id,
-                        presentation: PopupPresentation::Foreground,
-                    });
+                    if !known_ids.contains(&request_id) {
+                        let _ = tx.send(ServerMsg::PresentPopup {
+                            request_id,
+                            presentation: PopupPresentation::Foreground,
+                        });
+                    }
                 }
             }
             ClientMsg::ConfirmReady { request_id } => {
@@ -464,20 +700,30 @@ pub(super) async fn handle_popup_host<R, W>(
                 annotations,
             } => {
                 let entry = state.popup_inbox.lock().unwrap().get(&request_id);
+                if entry
+                    .as_ref()
+                    .and_then(context)
+                    .is_some_and(|context| context.is_suspended())
+                {
+                    continue;
+                }
                 let (winner, error) = match entry {
                     Some(InteractionEntry::Ask(entry)) => {
-                        // Stashed before the race is decided; dropped again when another surface wins.
-                        if action == ChannelAction::Send {
-                            entry.set_directive(directive);
-                        }
-                        let won = entry.coordinator.try_submit(ChannelResult {
-                            action,
-                            answers,
-                            source_channel_id: "popup".into(),
-                            annotations,
-                        });
+                        let won = entry.coordinator.try_submit_with_directive(
+                            ChannelResult {
+                                action,
+                                answers,
+                                source_channel_id: "popup".into(),
+                                annotations,
+                            },
+                            directive,
+                        );
                         if !won {
-                            entry.set_directive(None);
+                            if entry.request().recovery.is_some()
+                                && entry.coordinator.winner_channel_id().is_none()
+                            {
+                                continue;
+                            }
                         }
                         (
                             Some(if won {
@@ -510,12 +756,25 @@ pub(super) async fn handle_popup_host<R, W>(
                 comment,
             } => {
                 let entry = state.popup_inbox.lock().unwrap().get(&request_id);
+                if entry
+                    .as_ref()
+                    .and_then(context)
+                    .is_some_and(|context| context.is_suspended())
+                {
+                    continue;
+                }
                 let (winner, error) = match entry {
                     Some(InteractionEntry::Confirm(entry)) if entry.is_ready("popup") => {
                         match entry
                             .coordinator
                             .submit_wire(choice_index, comment, "popup")
                         {
+                            Ok(false)
+                                if entry.coordinator.recovery().is_some()
+                                    && entry.coordinator.winner_channel_id().is_none() =>
+                            {
+                                continue
+                            }
                             Ok(won) => (
                                 Some(if won {
                                     "popup".into()
@@ -527,6 +786,12 @@ pub(super) async fn handle_popup_host<R, W>(
                                 }),
                                 None,
                             ),
+                            Err(error)
+                                if entry.coordinator.recovery().is_some()
+                                    && error.starts_with("unable to save") =>
+                            {
+                                continue
+                            }
                             Err(error) => (None, Some(error)),
                         }
                     }
@@ -566,7 +831,11 @@ pub(super) async fn handle_popup_host<R, W>(
     drop(tx);
     if retired {
         let _ = write_task.await;
-    } else {
+    } else if !state
+        .recovery
+        .as_ref()
+        .is_some_and(|runtime| runtime.suspending.load(Ordering::SeqCst))
+    {
         write_task.abort();
         recover_inbox(state, generation);
     }

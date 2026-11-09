@@ -64,9 +64,103 @@ pub struct TgRouter {
     task: Mutex<Option<tokio::task::JoinHandle<()>>>,
 }
 
+struct Cursor {
+    store: Arc<crate::daemon::recovery::Store>,
+    key: String,
+    route: String,
+    target: String,
+    ready: Arc<dyn Fn() -> bool + Send + Sync>,
+}
+
+impl Cursor {
+    fn waiting_for_routes(&self, routes: &Arc<Mutex<Routes>>) -> anyhow::Result<bool> {
+        if !(self.ready)() {
+            return Ok(true);
+        }
+        let mut expected = Vec::new();
+        for saved in self.store.requests()? {
+            if saved.outcome.is_some() || saved.decision.is_some() {
+                continue;
+            }
+            let key = match &saved.request.task {
+                crate::daemon::recovery::Task::Ask(_) => {
+                    let conversation = self
+                        .store
+                        .load_checkpoint(&saved.request.id, "conversation/telegram")?;
+                    let index = conversation
+                        .as_ref()
+                        .and_then(|value| value["answers"].as_array())
+                        .map_or(0, Vec::len);
+                    format!("question/telegram/{index}")
+                }
+                crate::daemon::recovery::Task::Confirm(_) => "confirm/telegram".to_string(),
+            };
+            let Some(progress) = self.store.load_checkpoint(&saved.request.id, &key)? else {
+                continue;
+            };
+            let target = progress
+                .get("targetId")
+                .or_else(|| progress.get("target"))
+                .and_then(Value::as_str);
+            let route = progress
+                .get("routeId")
+                .or_else(|| progress.get("route"))
+                .and_then(Value::as_str);
+            if target != Some(&self.target)
+                || route != Some(&self.route)
+                || !progress["answer"].is_null()
+            {
+                continue;
+            }
+            if let Some(id) = progress["messageId"]
+                .as_str()
+                .and_then(|id| id.parse::<i64>().ok())
+            {
+                expected.push(id);
+            }
+        }
+        let routes = routes.lock().unwrap();
+        Ok(expected.iter().any(|id| !routes.cards.contains_key(id)))
+    }
+}
+
 impl TgRouter {
     /// 校验配置并启动单一长轮询 Reader 任务。失败返回英文错误（调用方按界面语言警告并跳过）。
     pub async fn connect(config: &TelegramChannelConfig) -> Result<Arc<Self>, String> {
+        Self::connect_with_cursor(config, None).await
+    }
+
+    pub(crate) async fn connect_recoverable(
+        config: &TelegramChannelConfig,
+        store: Arc<crate::daemon::recovery::Store>,
+        ready: Arc<dyn Fn() -> bool + Send + Sync>,
+    ) -> Result<Arc<Self>, String> {
+        use sha2::Digest;
+        let route = format!(
+            "{:x}",
+            sha2::Sha256::digest(
+                format!("{}|{}", config.api_base_url, config.bot_token).as_bytes()
+            )
+        );
+        let cursor = Cursor {
+            store,
+            key: format!("telegram/{route}/offset"),
+            route,
+            target: config
+                .chat_id
+                .trim()
+                .parse::<i64>()
+                .map_err(|error| error.to_string())?
+                .to_string(),
+            ready,
+        };
+        Self::connect_with_cursor(config, Some(cursor)).await
+    }
+
+    async fn connect_with_cursor(
+        config: &TelegramChannelConfig,
+        cursor: Option<Cursor>,
+    ) -> Result<Arc<Self>, String> {
         let client = TelegramClient::new(
             config.bot_token.clone(),
             config.chat_id.clone(),
@@ -74,7 +168,14 @@ impl TgRouter {
         )
         .map_err(|e| e.to_string())?;
         let routes = Arc::new(Mutex::new(Routes::default()));
-        let task = tokio::spawn(reader_task(client, routes.clone()));
+        let offset = cursor
+            .as_ref()
+            .map(|cursor| cursor.store.metadata::<i64>(&cursor.key))
+            .transpose()
+            .map_err(|error| error.to_string())?
+            .flatten()
+            .unwrap_or(0);
+        let task = tokio::spawn(reader_task(client, routes.clone(), cursor, offset));
         Ok(Arc::new(Self {
             routes,
             next_route: AtomicU64::new(1),
@@ -85,7 +186,19 @@ impl TgRouter {
         }))
     }
 
-    /// 轮询器是否仍在运行（Telegram 长轮询会自愈瞬时错误，故一旦建连通常恒为 true）。
+    /// Stop receiving before request actors checkpoint their queued input.
+    pub async fn pause(&self) {
+        let task = self.task.lock().unwrap().take();
+        if let Some(task) = task {
+            task.abort();
+            let _ = task.await;
+        }
+        self.alive.store(false, Ordering::SeqCst);
+        let mut routes = self.routes.lock().unwrap();
+        routes.sinks.clear();
+        routes.observers.clear();
+    }
+
     pub fn is_alive(&self) -> bool {
         self.alive.load(Ordering::SeqCst)
     }
@@ -179,6 +292,11 @@ impl RoutedTg {
     pub async fn recv(&mut self) -> Option<TgInbound> {
         self.rx.recv().await
     }
+
+    /// Drain events already accepted before the reader stopped for an update.
+    pub fn try_recv(&mut self) -> Option<TgInbound> {
+        self.rx.try_recv().ok()
+    }
 }
 
 impl Drop for RoutedTg {
@@ -191,9 +309,27 @@ impl Drop for RoutedTg {
 }
 
 /// Reader 任务：独占长轮询，单一 offset，循环收更新并按路由表分发。瞬时错误退避重试（自愈）。
-async fn reader_task(client: TelegramClient, routes: Arc<Mutex<Routes>>) {
-    let mut offset: i64 = 0;
+async fn reader_task(
+    client: TelegramClient,
+    routes: Arc<Mutex<Routes>>,
+    cursor: Option<Cursor>,
+    mut offset: i64,
+) {
     loop {
+        if let Some(cursor) = &cursor {
+            match cursor.waiting_for_routes(&routes) {
+                Ok(false) => {}
+                Ok(true) => {
+                    tokio::time::sleep(Duration::from_millis(50)).await;
+                    continue;
+                }
+                Err(error) => {
+                    eprintln!("askhuman: waiting to restore Telegram routes: {error}");
+                    tokio::time::sleep(Duration::from_secs(1)).await;
+                    continue;
+                }
+            }
+        }
         let updates = match client.get_updates(offset, LONGPOLL_SECS).await {
             Ok(u) => u,
             Err(_) => {
@@ -202,10 +338,19 @@ async fn reader_task(client: TelegramClient, routes: Arc<Mutex<Routes>>) {
             }
         };
         for update in updates {
-            if let Some(uid) = update.get("update_id").and_then(|v| v.as_i64()) {
-                offset = uid + 1;
-            }
+            let next = update
+                .get("update_id")
+                .and_then(Value::as_i64)
+                .map(|id| id + 1)
+                .unwrap_or(offset);
             dispatch(&client, &routes, update).await;
+            if let Some(cursor) = &cursor {
+                while let Err(error) = cursor.store.set_metadata(&cursor.key, &next) {
+                    eprintln!("askhuman: waiting to save Telegram polling position: {error}");
+                    tokio::time::sleep(Duration::from_secs(1)).await;
+                }
+            }
+            offset = next;
         }
     }
 }

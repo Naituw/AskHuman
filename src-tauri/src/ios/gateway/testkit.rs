@@ -8,6 +8,7 @@ use std::time::Duration;
 
 use async_trait::async_trait;
 use serde::de::DeserializeOwned;
+use serde_json::Value;
 use tokio::sync::mpsc::UnboundedReceiver;
 
 use super::requests::{AskSink, ConfirmSink};
@@ -38,6 +39,9 @@ pub const USER: &str = "u1";
 /// Clock follows tokio's (pausable) time, so tests run instantly and deterministically. The
 /// scripted fields stand in for the daemon's Agent registry, terminal and interject queue.
 pub struct TestHost {
+    pub recovery: Mutex<Option<Value>>,
+    pub updating: std::sync::atomic::AtomicBool,
+    pub pending_ios: Mutex<Vec<String>>,
     start: tokio::time::Instant,
     pub slot: Mutex<SlotInfo>,
     pub agents: Mutex<Vec<AgentView>>,
@@ -86,6 +90,9 @@ pub struct TestHost {
 impl TestHost {
     pub fn new() -> Arc<Self> {
         Arc::new(Self {
+            recovery: Mutex::new(None),
+            updating: std::sync::atomic::AtomicBool::new(false),
+            pending_ios: Mutex::new(Vec::new()),
             start: tokio::time::Instant::now(),
             slot: Mutex::new(SlotInfo {
                 active: true,
@@ -170,6 +177,22 @@ impl TestHost {
 
 #[async_trait]
 impl Host for TestHost {
+    fn updating(&self) -> bool {
+        self.updating.load(Ordering::SeqCst)
+    }
+
+    fn pending_ios_requests(&self) -> Result<Vec<String>, String> {
+        Ok(self.pending_ios.lock().unwrap().clone())
+    }
+
+    fn load_recovery(&self) -> Result<Option<Value>, String> {
+        Ok(self.recovery.lock().unwrap().clone())
+    }
+
+    fn save_recovery(&self, value: &Value) -> Result<(), String> {
+        *self.recovery.lock().unwrap() = Some(value.clone());
+        Ok(())
+    }
     fn now_ms(&self) -> i64 {
         BASE_MS + self.start.elapsed().as_millis() as i64
     }
@@ -180,6 +203,7 @@ impl Host for TestHost {
 
     fn caps(&self) -> Caps {
         Caps {
+            live_update: false,
             new_task: true,
             interject: true,
             watch: true,
@@ -434,6 +458,7 @@ impl PushClient for FakePusher {
 // ---------------------------------------------------------------- sinks
 
 pub struct FakeAsk {
+    pub unavailable: AtomicBool,
     pub results: Mutex<Vec<ChannelResult>>,
     pub win: AtomicBool,
     pub lost: Mutex<Vec<String>>,
@@ -447,6 +472,7 @@ pub struct FakeAsk {
 impl FakeAsk {
     pub fn new() -> Arc<Self> {
         Arc::new(Self {
+            unavailable: AtomicBool::new(false),
             results: Mutex::new(Vec::new()),
             win: AtomicBool::new(true),
             lost: Mutex::new(Vec::new()),
@@ -458,6 +484,9 @@ impl FakeAsk {
 
 impl AskSink for FakeAsk {
     fn try_submit(&self, result: ChannelResult) -> bool {
+        if self.unavailable.load(Ordering::SeqCst) {
+            return false;
+        }
         self.results.lock().unwrap().push(result);
         let won = self.win.load(Ordering::SeqCst);
         *self.decided.lock().unwrap() = Some(if won { "ios" } else { "popup" }.into());
@@ -520,6 +549,7 @@ impl ConfirmSink for FakeConfirm {
 
 pub fn sample_ask(id: &str) -> (Arc<AskRequest>, RequestView) {
     let ask = AskRequest {
+        recovery: None,
         id: id.to_string(),
         is_markdown: true,
         message: MessagePrompt {
@@ -705,6 +735,7 @@ impl Fixture {
         let will = Will {
             topic: wire::topic_presence(USER, &mac_id),
             payload: serde_json::to_vec(&Presence {
+                u: None,
                 o: 0,
                 t: 0,
                 r: "mac".into(),
@@ -749,6 +780,14 @@ impl Fixture {
     /// Stops the gateway and starts a new one on the same storage and broker.
     pub async fn restart(self) -> Self {
         self.gateway.shutdown().await;
+        let Self {
+            broker, host, dir, ..
+        } = self;
+        Self::build(dir, broker, host).await
+    }
+
+    pub async fn handoff(self) -> Self {
+        self.gateway.suspend().await.unwrap();
         let Self {
             broker, host, dir, ..
         } = self;
@@ -804,6 +843,7 @@ impl TestPhone {
         let will = Will {
             topic: wire::topic_presence(USER, &phone_id),
             payload: serde_json::to_vec(&Presence {
+                u: None,
                 o: 0,
                 t: 0,
                 r: "phone".into(),
@@ -845,6 +885,7 @@ impl TestPhone {
 
     pub async fn set_presence(&self, online: bool, foreground: bool) {
         let presence = Presence {
+            u: None,
             o: online as u8,
             t: BASE_MS / 1000,
             r: "phone".into(),

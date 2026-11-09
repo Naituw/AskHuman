@@ -63,6 +63,9 @@ pub enum OutputFormat {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct AskRequest {
+    /// Process-local persistence handle. Delivery payloads carry only the request's stable ID.
+    #[serde(skip)]
+    pub recovery: Option<std::sync::Arc<crate::daemon::recovery::RequestContext>>,
     pub id: String,
     /// 是否按 Markdown 渲染（全局，对所有问题生效）。
     pub is_markdown: bool,
@@ -141,6 +144,7 @@ pub enum EscalationReason {
 impl AskRequest {
     pub fn new(message: MessagePrompt, questions: Vec<Question>, is_markdown: bool) -> Self {
         Self {
+            recovery: None,
             id: uuid::Uuid::new_v4().to_string(),
             is_markdown,
             message,

@@ -10,6 +10,7 @@ use super::restart_guard;
 use crate::agents::registry::AgentRegistry;
 use crate::agents::{AgentKind, LifecycleEvent};
 use crate::app::confirm_coordinator::ConfirmOutcome;
+use crate::app::RenderOutcome;
 use crate::channels::dingding::DingTalkChannel;
 use crate::channels::feishu::FeishuChannel;
 use crate::channels::popup::GuiHelperPopupChannel;
@@ -33,7 +34,7 @@ use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use tokio::io::BufReader;
-use transport::{OwnedReadHalf, OwnedWriteHalf, Stream};
+use transport::Stream;
 
 mod agent_control;
 mod away_ops;
@@ -46,6 +47,7 @@ mod ios;
 mod ios_agents;
 mod ios_tasks;
 mod ios_todos;
+mod live_update;
 mod select;
 mod subs;
 mod task_launch;
@@ -63,7 +65,8 @@ use subs::*;
 use todo::*;
 use watch::*;
 
-type Reader = BufReader<OwnedReadHalf>;
+type Reader = Box<dyn tokio::io::AsyncBufRead + Unpin + Send>;
+type Writer = Box<dyn tokio::io::AsyncWrite + Unpin + Send>;
 
 /// 无活动且无连接持续此时长后自动退出。可用 `ASKHUMAN_DAEMON_IDLE_SECS` 覆盖（便于测试）。
 const DEFAULT_IDLE_SECS: u64 = 300;
@@ -223,12 +226,22 @@ fn run_cmd(background: bool) -> i32 {
     crate::integrations::agent_launch::log_lookup_misses(true);
     // 复用 tauri 的全局（多线程）tokio 运行时，使各 Channel 的 `tauri::async_runtime::spawn`
     // 与 Daemon 自身的任务跑在同一运行时上（不初始化任何 GUI / AppKit）。
-    let intent = Arc::new(Mutex::new(super::handoff::Intent::default()));
-    let code = tauri::async_runtime::block_on(serve(&lock, intent.clone()));
-    if *intent.lock().unwrap() == super::handoff::Intent::ReplaceOwnBinary {
-        return super::handoff::replace(lock, background);
+    loop {
+        super::recovery::set_handoff(false);
+        let intent = Arc::new(Mutex::new(super::handoff::Intent::default()));
+        let code = tauri::async_runtime::block_on(serve(&lock, intent.clone()));
+        if *intent.lock().unwrap() != super::handoff::Intent::ReplaceOwnBinary {
+            return code;
+        }
+        let replacement = super::handoff::replace(&lock, background);
+        #[cfg(unix)]
+        if replacement != 0 {
+            log("update executable could not start; recovering requests in the current daemon");
+            std::thread::sleep(Duration::from_secs(1));
+            continue;
+        }
+        return replacement;
     }
-    code
 }
 
 struct ServerState {
@@ -247,10 +260,13 @@ struct ServerState {
     shutdown: tokio::sync::Notify,
     /// 排空状态（graceful drain）：true 时拒绝新 Submit/Detect，在途请求服务到完结后退出。
     draining: AtomicBool,
+    drain_watch_started: AtomicBool,
+    force_stop: AtomicBool,
     exit_intent: Mutex<super::handoff::Intent>,
     closing: AtomicBool,
     /// 活动请求登记表。
     registry: Arc<RequestRegistry>,
+    recovery: Option<Arc<live_update::Runtime>>,
     /// Cross-process popup focus owner and background cascade order.
     popup_focus: Mutex<PopupFocusArbiter>,
     popup_inbox: Mutex<super::popup_inbox::Host<InteractionEntry>>,
@@ -346,10 +362,13 @@ fn test_state(directory: &std::path::Path) -> Arc<ServerState> {
         active: AtomicUsize::new(1),
         last_active: Mutex::new(Instant::now()),
         shutdown: Default::default(),
+        drain_watch_started: AtomicBool::new(false),
+        force_stop: AtomicBool::new(false),
         draining: AtomicBool::new(true),
         exit_intent: Mutex::new(Default::default()),
         closing: AtomicBool::new(false),
         registry: RequestRegistry::new(),
+        recovery: None,
         popup_focus: Mutex::new(PopupFocusArbiter::new()),
         popup_inbox: Mutex::new(Default::default()),
         dd_router: Default::default(),
@@ -930,12 +949,13 @@ fn check_pending_update(state: &Arc<ServerState>) {
                 now_fp.short(),
             ));
             request_exit(state, super::handoff::Intent::ReplaceOwnBinary);
-            begin_drain(state);
+            live_update::begin(state);
         }
     }
 }
 
 async fn serve(_lock: &LockGuard, exit: Arc<Mutex<super::handoff::Intent>>) -> i32 {
+    super::recovery::enter_daemon();
     let listener = match transport::bind() {
         Ok(l) => l,
         Err(e) => {
@@ -1012,6 +1032,15 @@ async fn serve(_lock: &LockGuard, exit: Arc<Mutex<super::handoff::Intent>>) -> i
     let agents = Arc::new(AgentRegistry::load(
         &failure_confirmations.retention_snapshot(),
     ));
+    let recovery = loop {
+        match live_update::Runtime::open() {
+            Ok(runtime) => break Some(runtime),
+            Err(error) => {
+                log(&format!("waiting to open request recovery: {error}"));
+                tokio::time::sleep(Duration::from_secs(2)).await;
+            }
+        }
+    };
     let state = Arc::new(ServerState {
         startup_fp,
         exe_path,
@@ -1020,10 +1049,13 @@ async fn serve(_lock: &LockGuard, exit: Arc<Mutex<super::handoff::Intent>>) -> i
         active: AtomicUsize::new(0),
         last_active: Mutex::new(Instant::now()),
         shutdown: tokio::sync::Notify::new(),
+        drain_watch_started: AtomicBool::new(false),
+        force_stop: AtomicBool::new(false),
         draining: AtomicBool::new(false),
         exit_intent: Mutex::new(Default::default()),
         closing: AtomicBool::new(false),
         registry: RequestRegistry::new(),
+        recovery,
         popup_focus: Mutex::new(PopupFocusArbiter::new()),
         popup_inbox: Mutex::new(super::popup_inbox::Host::default()),
         dd_router: tokio::sync::Mutex::new(None),
@@ -1056,6 +1088,25 @@ async fn serve(_lock: &LockGuard, exit: Arc<Mutex<super::handoff::Intent>>) -> i
     });
 
     let mut background_tasks = Vec::new();
+    if let Some(recovery) = state.recovery.clone() {
+        let state = state.clone();
+        background_tasks.push(tokio::spawn(async move {
+            loop {
+                if state.closing.load(Ordering::SeqCst) {
+                    break;
+                }
+                if recovery.is_restoring() {
+                    if let Err(error) = recovery.restore(&state).await {
+                        log(&format!("waiting to restore pending requests: {error}"));
+                    }
+                } else if let Err(error) = recovery.maintain() {
+                    log(&format!("cannot maintain recovery callers: {error}"));
+                }
+                recovery.repair_surfaces(&state).await;
+                tokio::time::sleep(Duration::from_secs(2)).await;
+            }
+        }));
+    }
     #[cfg(target_os = "macos")]
     if crate::todo_sync::service::is_enabled() && crate::todo_sync::service::supported() {
         std::thread::spawn(crate::todo_sync::service::maintain_helper);
@@ -1149,6 +1200,7 @@ async fn serve(_lock: &LockGuard, exit: Arc<Mutex<super::handoff::Intent>>) -> i
                 // agent 时才计空闲。空闲 agent 不保活；版本更新 drain 由 begin_drain 独立处理、不受此影响。
                 // 另：有活跃 /watch 订阅时不退（卡片要持续就地刷新；订阅随 agent 结束而消亡，有界）。
                 if state.active.load(Ordering::SeqCst) == 0
+                    && state.registry.active_count() == 0
                     && state.agents.working_count() == 0
                     && !has_agent_subs(&state)
                     && !state
@@ -1334,11 +1386,23 @@ async fn serve(_lock: &LockGuard, exit: Arc<Mutex<super::handoff::Intent>>) -> i
     }
 
     super::handoff::healthy(startup_fp);
+    let mut connections = Vec::<tokio::task::JoinHandle<()>>::new();
     loop {
         tokio::select! {
             _ = state.shutdown.notified() => {
+                if *state.exit_intent.lock().unwrap() == super::handoff::Intent::Stop {
+                    if let Some(runtime) = &state.recovery {
+                        runtime.abort_update(&state).await;
+                    }
+                }
+                if *state.exit_intent.lock().unwrap() == super::handoff::Intent::Stop
+                    && !state.force_stop.load(Ordering::SeqCst) && state.registry.active_count() > 0 {
+                    begin_drain(&state);
+                    continue;
+                }
                 #[cfg(windows)]
-                if *state.exit_intent.lock().unwrap() == super::handoff::Intent::ReplaceOwnBinary {
+                if *state.exit_intent.lock().unwrap() == super::handoff::Intent::ReplaceOwnBinary
+                    && !state.recovery.as_ref().is_some_and(|runtime| runtime.committed.load(Ordering::SeqCst)) {
                     if let Err(error) = super::handoff::prepare() {
                         log(&format!("update handoff preparation failed; keeping the old daemon: {error}"));
                         request_exit(&state, super::handoff::Intent::Stop);
@@ -1352,7 +1416,8 @@ async fn serve(_lock: &LockGuard, exit: Arc<Mutex<super::handoff::Intent>>) -> i
             accepted = listener.accept() => match accepted {
                 Ok((stream, _addr)) => {
                     let st = state.clone();
-                    tokio::spawn(async move { handle_conn(stream, st).await; });
+                    connections.retain(|task| !task.is_finished());
+                    connections.push(tokio::spawn(async move { handle_conn(stream, st).await; }));
                 }
                 Err(e) => log(&format!("accept error: {}", e)),
             }
@@ -1375,8 +1440,20 @@ async fn serve(_lock: &LockGuard, exit: Arc<Mutex<super::handoff::Intent>>) -> i
     // user dealing with them: freeze their record first so the successor brings them back.
     state.failure_confirmations.freeze();
     state.popup_focus.lock().unwrap().clear();
-    if state.registry.cancel_all_requests() > 0 {
-        tokio::time::sleep(Duration::from_millis(2000)).await;
+    let handing_off = state
+        .recovery
+        .as_ref()
+        .is_some_and(|runtime| runtime.committed.load(Ordering::SeqCst))
+        && *state.exit_intent.lock().unwrap() == super::handoff::Intent::ReplaceOwnBinary;
+    if !handing_off {
+        if let Some(runtime) = &state.recovery {
+            if let Err(error) = runtime.cancel_pending() {
+                log(&format!("cannot retain shutdown cancellations: {error}"));
+            }
+        }
+        if state.registry.cancel_all_requests() > 0 {
+            tokio::time::sleep(Duration::from_millis(2000)).await;
+        }
     }
 
     // 第 15 轮定案：graceful 关停（drain/stop/install 换新）前把活动单选/确认卡定格「已失效」，
@@ -1400,6 +1477,22 @@ async fn serve(_lock: &LockGuard, exit: Arc<Mutex<super::handoff::Intent>>) -> i
     *state.fs_router.lock().await = None;
     *state.tg_router.lock().await = None;
     *state.sl_router.lock().await = None;
+    for connection in &connections {
+        connection.abort();
+    }
+    for connection in connections {
+        let _ = connection.await;
+    }
+    state.popup_inbox.lock().unwrap().detach();
+    for entry in state.registry.in_flight_entries() {
+        entry.gui.lock().unwrap().take();
+    }
+    for entry in state.registry.in_flight_confirm_entries() {
+        entry.gui.lock().unwrap().take();
+    }
+    if let Some(runtime) = &state.recovery {
+        runtime.release_workers();
+    }
     cleanup();
     log("stopped");
     0
@@ -1495,6 +1588,10 @@ fn permission_rule_infos(
 
 /// 控制阶段的产物：收到接管型消息（提交 / GUI 握手）或连接关闭。
 enum Control {
+    Recover {
+        version: u32,
+        operation: serde_json::Value,
+    },
     Submit(Box<TaskRequest>),
     SubmitConfirm(Box<ConfirmTask>),
     Gui(String),
@@ -1521,12 +1618,15 @@ enum Control {
 async fn handle_conn(stream: Stream, state: Arc<ServerState>) {
     state.active.fetch_add(1, Ordering::SeqCst);
     let (r, w) = stream.into_split();
-    let mut reader = BufReader::new(r);
-    let mut w = w;
+    let mut reader: Reader = Box::new(BufReader::new(r));
+    let mut w: Writer = Box::new(w);
 
     let control = control_loop(&mut reader, &mut w, &state).await;
     let passive = matches!(control, Control::PassiveClosed);
     match control {
+        Control::Recover { version, operation } => {
+            live_update::handle(version, operation, reader, w, &state).await
+        }
         Control::Submit(task) => handle_submit(*task, reader, w, &state).await,
         Control::SubmitConfirm(task) => handle_submit_confirm(*task, reader, w, &state).await,
         Control::Gui(token) => handle_gui(token, reader, w, &state).await,
@@ -1552,11 +1652,7 @@ async fn handle_conn(stream: Stream, state: Arc<ServerState>) {
 }
 
 /// 控制阶段：处理 Hello / Status / Stop（即时应答）；遇到 Submit / GuiHello 返回以便接管连接。
-async fn control_loop(
-    reader: &mut Reader,
-    w: &mut OwnedWriteHalf,
-    state: &Arc<ServerState>,
-) -> Control {
+async fn control_loop(reader: &mut Reader, w: &mut Writer, state: &Arc<ServerState>) -> Control {
     loop {
         let msg: Option<ClientMsg> = match ipc::read_msg(reader).await {
             Ok(m) => m,
@@ -1573,6 +1669,9 @@ async fn control_loop(
             return Control::Closed;
         }
         match msg {
+            ClientMsg::Recover { version, operation } => {
+                return Control::Recover { version, operation }
+            }
             ClientMsg::CodexDesktop { operation } => {
                 let result = crate::codex_desktop::shared().execute(operation).await;
                 let _ = ipc::write_msg(w, &ServerMsg::CodexDesktop { result }).await;
@@ -1650,8 +1749,14 @@ async fn control_loop(
                     }
                 }
                 // 过时且有在途请求 → 进入排空（不打断在途）；无在途 → 立即换新（零延迟）。
-                let draining = stale && auto_restart && state.registry.active_count() > 0;
-                let restarting = stale && auto_restart && !draining;
+                let live_update = stale
+                    && auto_restart
+                    && own_changed
+                    && !protocol_differs
+                    && state.recovery.is_some();
+                let draining =
+                    stale && auto_restart && !live_update && state.registry.active_count() > 0;
+                let restarting = stale && auto_restart && !live_update && !draining;
                 let ack = HelloAck {
                     agent_lifecycle_version: 1,
                     protocol_version: ipc::PROTOCOL_VERSION,
@@ -1700,6 +1805,10 @@ async fn control_loop(
                 } else {
                     String::new()
                 };
+                if live_update {
+                    request_exit(state, super::handoff::Intent::ReplaceOwnBinary);
+                    live_update::begin(state);
+                }
                 if draining || restarting {
                     request_exit(
                         state,
@@ -1727,6 +1836,10 @@ async fn control_loop(
             }
             ClientMsg::Status => {
                 let info = StatusInfo {
+                    recovery_version: state
+                        .recovery
+                        .as_ref()
+                        .map_or(0, |_| super::recovery::VERSION),
                     development_verification_version: crate::development::CAPABILITY_VERSION,
                     development_remote_outlets: with_ios(
                         available_im_channels(&state.config_snapshot()),
@@ -1761,6 +1874,7 @@ async fn control_loop(
                 let _ = ipc::write_msg(w, &ServerMsg::Status(info)).await;
             }
             ClientMsg::Stop { force } => {
+                state.force_stop.store(force, Ordering::SeqCst);
                 request_exit(state, super::handoff::Intent::Stop);
                 let _ = ipc::write_msg(w, &ServerMsg::Stopping).await;
                 // 默认 graceful：有在途请求时排空后退出；`--force` 或无在途 → 立即退出。
@@ -2264,8 +2378,9 @@ fn request_exit(state: &ServerState, next: super::handoff::Intent) {
 }
 
 fn begin_drain(state: &Arc<ServerState>) {
-    if state.draining.swap(true, Ordering::SeqCst) {
-        return; // 已在排空。
+    state.draining.store(true, Ordering::SeqCst);
+    if state.drain_watch_started.swap(true, Ordering::SeqCst) {
+        return;
     }
     // 方案6：进入排空即回收热实例（它是旧二进制；新 daemon 起来后再补热）。`draining` 已置位，
     // 故后续不会再补热；排空期到来的请求走冷路径（现有 drain 语义）。
@@ -2292,11 +2407,26 @@ fn begin_drain(state: &Arc<ServerState>) {
 /// Surface attachment is layered on top of this lifecycle; until one becomes ready, callers
 /// receive an explicit fallback and continue with the agent's native approval UI.
 async fn handle_submit_confirm(
-    mut task: ConfirmTask,
-    mut reader: Reader,
-    mut w: OwnedWriteHalf,
+    task: ConfirmTask,
+    reader: Reader,
+    writer: Writer,
     state: &Arc<ServerState>,
 ) {
+    handle_submit_confirm_recoverable(task, reader, writer, state, None).await;
+}
+
+async fn handle_submit_confirm_recoverable(
+    mut task: ConfirmTask,
+    mut reader: Reader,
+    mut w: Writer,
+    state: &Arc<ServerState>,
+    recovery: Option<Arc<super::recovery::RequestContext>>,
+) {
+    let admission = match &state.recovery {
+        Some(runtime) => Some(runtime.admit().await),
+        None => None,
+    };
+    let restoring = recovery.as_ref().is_some_and(|context| context.restoring);
     if let Err(error) = crate::development::verification::validate_confirm(&mut task) {
         let _ = ipc::write_msg(&mut w, &ServerMsg::Warn { text: error }).await;
         let _ = ipc::write_msg(
@@ -2329,7 +2459,7 @@ async fn handle_submit_confirm(
         .await;
         return;
     }
-    if task.development.is_none() {
+    if !restoring && task.development.is_none() {
         let project = crate::project::for_session(
             Some(&task.agent_kind),
             Some(&task.agent_session_id),
@@ -2358,7 +2488,7 @@ async fn handle_submit_confirm(
     // YOLO mode (D53) is the last check and needs no query: any Codex permission task
     // (memory metadata present) auto-allows while the session Yolo rule is on. Relaxed and
     // yolo allows are audit-logged with the request substance.
-    if task.agent_kind == "codex" && task.memory.is_some() {
+    if !restoring && task.agent_kind == "codex" && task.memory.is_some() {
         let query = task.memory.as_ref().and_then(|memory| memory.query.clone());
         // Audit text for a YOLO allow: the concrete query target when present, else the
         // popup summary (e.g. dangerous command popups carry no query).
@@ -2455,13 +2585,23 @@ async fn handle_submit_confirm(
             .has_active_session(kind, &task.agent_session_id)
             .then(|| task.agent_session_id.clone())
     });
-    let (entry, mut final_rx) = match state
-        .registry
-        .create_confirm(task, agent_console_session_id)
-    {
+    let created = match recovery {
+        Some(context) => {
+            state
+                .registry
+                .create_confirm_recoverable(task, agent_console_session_id, context)
+        }
+        None => state
+            .registry
+            .create_confirm(task, agent_console_session_id),
+    };
+    let (entry, mut final_rx) = match created {
         Ok(created) => created,
         Err(error) => {
             log(&format!("invalid confirmation request: {error}"));
+            if error.starts_with("unable to save confirmation") {
+                return;
+            }
             let _ = ipc::write_msg(
                 &mut w,
                 &ServerMsg::ConfirmFallback {
@@ -2472,6 +2612,12 @@ async fn handle_submit_confirm(
             return;
         }
     };
+    if restoring {
+        if let Err(error) = entry.coordinator.restore_decision() {
+            log(&format!("cannot restore confirmation decision: {error}"));
+            return;
+        }
+    }
     let request_id = entry.request_id.clone();
     if ipc::write_msg(
         &mut w,
@@ -2534,6 +2680,10 @@ async fn handle_submit_confirm(
     }
     ensure_inbound_listeners(state).await;
 
+    if let Some(context) = entry.coordinator.recovery() {
+        context.mark_ready();
+    }
+    drop(admission);
     let outcome = tokio::select! {
         outcome = final_rx.recv() => outcome,
         _ = tokio::time::sleep_until(entry.deadline) => {
@@ -2550,6 +2700,10 @@ async fn handle_submit_confirm(
         }
     };
 
+    let outcome = match outcome {
+        Some(outcome) => Some(live_update::save_confirm(&entry, outcome).await),
+        None => None,
+    };
     match outcome {
         Some(ConfirmOutcome::Final(result)) => {
             let _ = ipc::write_msg(&mut w, &ServerMsg::ConfirmFinal { result }).await;
@@ -2606,11 +2760,25 @@ fn marks_session_working(auto: bool, from_mcp: bool, native_request_id: Option<&
 
 /// CLI 提交一次任务：建请求、spawn GUI Helper、流式回结果；CLI 断开则取消。
 async fn handle_submit(
-    mut task: TaskRequest,
-    mut reader: Reader,
-    mut w: OwnedWriteHalf,
+    task: TaskRequest,
+    reader: Reader,
+    writer: Writer,
     state: &Arc<ServerState>,
 ) {
+    handle_submit_recoverable(task, reader, writer, state, None).await;
+}
+
+async fn handle_submit_recoverable(
+    mut task: TaskRequest,
+    mut reader: Reader,
+    mut w: Writer,
+    state: &Arc<ServerState>,
+    recovery: Option<Arc<super::recovery::RequestContext>>,
+) {
+    let admission = match &state.recovery {
+        Some(runtime) => Some(runtime.admit().await),
+        None => None,
+    };
     if let Err(error) = crate::development::verification::validate_task(&mut task).and_then(|()| {
         crate::daemon::away::validate_escalation_reason(
             task.escalation_reason.as_deref(),
@@ -2705,20 +2873,39 @@ async fn handle_submit(
     // user's behalf, or let it through marked as an escalation. This runs after the registry
     // refresh above (the session still counts as active) and before coalescing, so an automatic
     // reply never reaches the replay cache or the user's `ask-received` hook (spec N4).
-    let escalated = match state.away.judge_task(&task, now_ms()) {
-        crate::daemon::away::Verdict::Deliver => None,
-        crate::daemon::away::Verdict::Escalated(reason) => Some(reason),
-        crate::daemon::away::Verdict::Reply(reply) => {
-            finish_auto_reply(state, &task, reply, &mut w).await;
-            return;
-        }
+    let original = match recovery.as_ref().filter(|context| context.restoring) {
+        Some(context) => match context.store.request(&context.id) {
+            Ok(Some(saved)) => saved.request.show,
+            Ok(None) => {
+                log("saved request is missing during restoration");
+                return;
+            }
+            Err(error) => {
+                log(&format!("waiting to restore request presentation: {error}"));
+                return;
+            }
+        },
+        None => None,
     };
-    crate::daemon::away::decorate_escalation(&mut task, escalated);
+    let escalated = match original.as_ref() {
+        Some(show) => show.interaction.ask().and_then(|request| request.escalated),
+        None => match state.away.judge_task(&task, now_ms()) {
+            crate::daemon::away::Verdict::Deliver => None,
+            crate::daemon::away::Verdict::Escalated(reason) => Some(reason),
+            crate::daemon::away::Verdict::Reply(reply) => {
+                finish_auto_reply(state, &task, reply, &mut w).await;
+                return;
+            }
+        },
+    };
+    if original.is_none() {
+        crate::daemon::away::decorate_escalation(&mut task, escalated);
+    }
 
     // 重复提问收敛（spec duplicate-ask-coalescing）：agent 那一轮被中断后往往原样重发同一个
     // 提问，而旧的 CLI 进程不会被杀，旧卡片仍然有效。这里在建新请求之前先看两件事——
     // 同一个提问是不是还挂在人面前（合流），或者刚刚已经被回答过（重放）。
-    if let Some(session_key) = ask_dedup::session_key(&task) {
+    if let Some(session_key) = ask_dedup::session_key(&task).filter(|_| original.is_none()) {
         // A card still waiting for the human is matched with the coalescing fingerprint, which
         // ignores what the todo queue decides on whats-next / Stop cards (spec D2/D3). An answer
         // that was already handed out is replayed only for the strict fingerprint (D5).
@@ -2727,7 +2914,30 @@ async fn handle_submit(
             .registry
             .try_attach(&session_key, &coalesce_fingerprint)
         {
-            handle_coalesced(entry, follower_rx, reader, w).await;
+            let legacy = if let Some(context) = &recovery {
+                if let Some(target) = &entry.request().recovery {
+                    if let Err(error) = context.store.coalesce(&context.id, &target.id) {
+                        entry.release_waiter();
+                        log(&format!("cannot retain coalesced recovery caller: {error}"));
+                        return;
+                    }
+                }
+                None
+            } else {
+                match live_update::legacy_waiter(&task, &entry) {
+                    Ok(legacy) => legacy,
+                    Err(error) => {
+                        entry.release_waiter();
+                        log(&format!("cannot retain legacy coalesced caller: {error}"));
+                        return;
+                    }
+                }
+            };
+            if let Some(context) = &recovery {
+                context.mark_ready();
+            }
+            drop(admission);
+            handle_coalesced(entry, follower_rx, reader, w, legacy).await;
             return;
         }
         let fingerprint = ask_dedup::fingerprint(&task);
@@ -2764,17 +2974,31 @@ async fn handle_submit(
         }
     }
 
-    let (entry, mut final_rx) =
-        state
+    let created = match recovery {
+        Some(context) => {
+            state
+                .registry
+                .create_recoverable(task, agent_console_session_id, escalated, context)
+        }
+        None => Ok(state
             .registry
-            .create_escalated(task, agent_console_session_id, escalated);
+            .create_escalated(task, agent_console_session_id, escalated)),
+    };
+    let (entry, mut final_rx) = match created {
+        Ok(created) => created,
+        Err(error) => {
+            log(&format!("cannot register recoverable request: {error}"));
+            return;
+        }
+    };
     let request_id = entry.request_id.clone();
     let session_key = entry.session_key.clone();
     crate::perf::mark(&perf_id, "dmn.created");
     log(&format!("request {} accepted", request_id));
 
     // Fire `ask-received` once per accepted request, independent of popup state.
-    if probe_policy.ask_received_hook
+    if original.is_none()
+        && probe_policy.ask_received_hook
         && !entry
             .request()
             .message
@@ -2859,6 +3083,35 @@ async fn handle_submit(
 
     // 以下都已不在弹窗关键路径上（与上面已 spawn 的 helper 并行执行）：
     // 确保入站消费在线（自身按「有工作中 agent」自门控；与开关无关，使 /status 等命令独立可用）。
+    let direct_delivery = entry
+        .request()
+        .message
+        .development
+        .as_ref()
+        .is_none_or(|info| {
+            info.relay || info.delivery == crate::development::verification::Delivery::Channels
+        });
+    if probe_policy.im == crate::onboarding::probe::ImScope::All
+        && direct_delivery
+        && ios_can_deliver(state, &state.config_snapshot())
+        && !entry.coordinator.has_channel("ios")
+    {
+        let session = ios_session_ref(
+            state,
+            entry_agent_kind(&entry, kind_env),
+            entry.agent_session_id.as_deref(),
+        );
+        if let Some(channel) = ios_channel_for(state, &request_id, session) {
+            let origin = im_conversation_origin(&entry, kind_env);
+            attach_channel(
+                &entry,
+                channel,
+                entry.request(),
+                &origin,
+                &entry.coordinator,
+            );
+        }
+    }
     ensure_inbound_listeners(state).await;
     // 挂接可用的 IM 渠道（钉钉/…）到本请求的协调器，与弹窗并行抢答。哪些面真正活着由协调器
     // 的渠道表跟踪（会话打不开 / 送达失败会自行退出），这里的返回值只用于埋点。
@@ -2922,6 +3175,11 @@ async fn handle_submit(
     // fails the request (exit 3 + stderr) as soon as the last surface is gone — including the
     // static "no popup and no IM" case, which arrives through `final_rx` like any other outcome —
     // instead of letting the CLI wait for an answer nobody can give.
+    if original.is_some() {
+        if let Err(error) = entry.coordinator.restore_answer() {
+            log(&format!("cannot resume accepted answer: {error}"));
+        }
+    }
     entry.coordinator.mark_surfaces_settled();
 
     // 看门狗：弹窗已拉起但限定时间内未连上 → 弹窗面判失败；IM 渠道若仍在则请求继续等答。
@@ -2931,11 +3189,15 @@ async fn handle_submit(
 
     // 等待结果或 CLI 断开。本连接断开时只有在**没有其它调用方还在等**这份结果时才取消整个
     // 请求（spec duplicate-ask-coalescing D4）：合流上来的调用方仍需要人回答完的答案。
+    if let Some(context) = entry.request().recovery.as_ref() {
+        context.mark_ready();
+    }
+    drop(admission);
     let mut caller_gone = false;
     let outcome = loop {
         // 本连接已断且再无人等这份结果 → 取消整个请求（最后离场的可能是合流上来的调用方，
         // 它只会唤醒这里，收尾统一在提交连接做）。
-        if caller_gone && entry.waiter_count() == 0 {
+        if caller_gone && entry.waiter_count() == 0 && !entry.coordinator.is_finalizing() {
             log(&format!(
                 "request {} cli disconnected; cancelling",
                 request_id
@@ -2982,7 +3244,14 @@ async fn handle_submit(
 
     // A directive that came with the accepted answer (quick-reply menu) is applied now and its
     // guidance joins what the Agent receives, followers included.
-    let outcome = outcome.map(|o| finish_with_directive(state, &entry, o));
+    let outcome = outcome
+        .map(|o| finish_with_directive(state, &entry, o))
+        .unwrap_or(RenderOutcome {
+            stdout: String::new(),
+            stderr: None,
+            exit_code: 3,
+        });
+    let outcome = Some(live_update::save_ask(&entry, outcome).await);
 
     // 先把结果分发给合流上来的调用方，再走本连接自己的收尾。
     if let Some(o) = outcome.as_ref() {
@@ -3108,7 +3377,8 @@ async fn handle_coalesced(
     entry: Arc<request::RequestEntry>,
     mut follower_rx: tokio::sync::mpsc::UnboundedReceiver<crate::app::RenderOutcome>,
     mut reader: Reader,
-    mut w: OwnedWriteHalf,
+    mut w: Writer,
+    mut legacy: Option<live_update::LegacyWaiter>,
 ) {
     let request_id = entry.request_id.clone();
     log(&format!(
@@ -3151,6 +3421,9 @@ async fn handle_coalesced(
                 },
             )
             .await;
+            if let Some(waiter) = &mut legacy {
+                waiter.delivered = true;
+            }
         }
         // 结果通道关闭（请求被取消）：与主路径同口径判异常退出码。
         None => {
@@ -3168,7 +3441,7 @@ async fn handle_coalesced(
 }
 
 /// GUI Helper 连接：凭 token 关联请求，随后进入 `serve_gui`（下发 show、收 answer 投递协调器）。
-async fn handle_gui(token: String, reader: Reader, w: OwnedWriteHalf, state: &Arc<ServerState>) {
+async fn handle_gui(token: String, reader: Reader, w: Writer, state: &Arc<ServerState>) {
     let Some(entry) = state.registry.attach_gui(&token) else {
         log("gui hello with unknown token; closing");
         return;
@@ -3213,9 +3486,7 @@ async fn serve_gui(
             request_id: entry.request_id.clone(),
             winner: "system".to_string(),
         });
-        if let Ok(mut slot) = entry.gui.lock() {
-            *slot = None;
-        }
+        inbox::detach_entry(&InteractionEntry::Ask(entry.clone()), &gui_tx);
         drop(gui_tx);
         let _ = writer.await;
         return;
@@ -3273,13 +3544,11 @@ async fn serve_gui(
     // 握手即带上当前自更新态（有更新 / 待生效），使弹窗一打开就知道，无需等下次广播。
     {
         let u = state.update.lock().unwrap();
-        if u.available || u.pending {
-            let _ = gui_tx.send(ServerMsg::UpdateState {
-                available: u.available,
-                latest_version: u.latest_version.clone(),
-                pending: u.pending,
-            });
-        }
+        let _ = gui_tx.send(ServerMsg::UpdateState {
+            available: u.available,
+            latest_version: u.latest_version.clone(),
+            pending: u.pending,
+        });
     }
 
     // Keep the socket alive after a terminal decision until the native window confirms dismissal.
@@ -3290,6 +3559,7 @@ async fn serve_gui(
     let mut awaiting_dismissal = false;
     let mut answer_received = false;
     let mut dismissal_received = false;
+    let mut failed = false;
     loop {
         tokio::select! {
             msg = reader.read::<ClientMsg>() => {
@@ -3336,9 +3606,6 @@ async fn serve_gui(
                         if answer_received {
                             continue;
                         }
-                        if action == ChannelAction::Send {
-                            entry.set_directive(directive);
-                        }
                         let result = match action {
                             ChannelAction::Send => ChannelResult {
                                 action: ChannelAction::Send,
@@ -3348,7 +3615,11 @@ async fn serve_gui(
                             },
                             ChannelAction::Cancel => ChannelResult::cancel("popup"),
                         };
-                        entry.coordinator.submit(result);
+                        let won = entry.coordinator.try_submit_with_directive(result, directive);
+                        if entry.request().recovery.is_some() {
+                            if !won && entry.coordinator.winner_channel_id().is_none() { continue; }
+                            let _ = gui_tx.send(ServerMsg::PopupSubmissionAck { request_id: entry.request_id.clone(), winner: entry.coordinator.winner_channel_id(), error: None });
+                        }
                         answer_received = true;
                         awaiting_dismissal = true;
                         dismiss_timeout.as_mut().reset(
@@ -3357,19 +3628,7 @@ async fn serve_gui(
                     }
                     Ok(Some(_)) => {}
                     Ok(None) | Err(_) => {
-                        // Helper 断开且未作答：进程崩溃 / 被杀，不是人的决定。用户主动关窗与 ⌘Q
-                        // 都会先发 `Answer{Cancel}`，走不到这里。丢掉弹窗面即可：还有 IM 卡就让人
-                        // 继续在那里答；一个面都不剩时由协调器以退出码 3 收尾（不伪装成用户取消）。
-                        if !answer_received && !entry.coordinator.is_finalizing() {
-                            log(&format!(
-                                "request {} popup helper disconnected before answering; dropping the popup surface",
-                                entry.request_id
-                            ));
-                            entry.coordinator.surface_lost(
-                                "popup",
-                                "popup closed unexpectedly before an answer was given",
-                            );
-                        }
+                        failed = !answer_received && !entry.coordinator.is_finalizing();
                         break;
                     }
                 }
@@ -3384,13 +3643,16 @@ async fn serve_gui(
         }
     }
 
-    // 收尾：清空发送端槽位并丢弃发送端 → 写任务结束 → GUI 连接关闭 → Helper 收到 EOF 退出。
-    if let Ok(mut slot) = entry.gui.lock() {
-        *slot = None;
+    let detached = inbox::detach_entry(&InteractionEntry::Ask(entry.clone()), &gui_tx);
+    if detached && failed {
+        entry.coordinator.surface_lost(
+            "popup",
+            "popup closed unexpectedly before an answer was given",
+        );
     }
     drop(gui_tx);
     let _ = writer.await;
-    if !dismissal_received {
+    if detached && !dismissal_received {
         update_popup_focus(state, |focus| focus.disconnected(&entry.request_id));
     }
 }
@@ -3412,13 +3674,11 @@ async fn serve_confirm_gui(
 
     {
         let update = state.update.lock().unwrap();
-        if update.available || update.pending {
-            let _ = gui_tx.send(ServerMsg::UpdateState {
-                available: update.available,
-                latest_version: update.latest_version.clone(),
-                pending: update.pending,
-            });
-        }
+        let _ = gui_tx.send(ServerMsg::UpdateState {
+            available: update.available,
+            latest_version: update.latest_version.clone(),
+            pending: update.pending,
+        });
     }
 
     let mut reader = ipc::MessageReader::new(reader);
@@ -3464,7 +3724,7 @@ async fn serve_confirm_gui(
                     Ok(Some(ClientMsg::ConfirmReady { request_id }))
                         if request_id == entry.request_id =>
                     {
-                        if !entry.mark_ready("popup", String::new()) {
+                        if !entry.is_ready("popup") && !entry.mark_ready("popup", String::new()) {
                             failed = true;
                             break;
                         }
@@ -3474,6 +3734,7 @@ async fn serve_confirm_gui(
                         choice_index,
                         comment,
                     })) if request_id == entry.request_id => {
+                        if entry.coordinator.recovery().is_some_and(|context| context.is_suspended()) { continue; }
                         if !entry.is_ready("popup") {
                             log(&format!(
                                 "confirmation answer arrived before popup ready for {}",
@@ -3486,17 +3747,23 @@ async fn serve_confirm_gui(
                             comment,
                             "popup",
                         ) {
-                            Ok(_) => {
+                            Ok(won) => {
+                                if entry.coordinator.recovery().is_some() {
+                                    if !won && entry.coordinator.winner_channel_id().is_none() { continue; }
+                                    let _ = gui_tx.send(ServerMsg::PopupSubmissionAck { request_id: entry.request_id.clone(), winner: entry.coordinator.winner_channel_id(), error: None });
+                                }
                                 answer_received = true;
                                 awaiting_dismissal = true;
                                 dismiss_timeout.as_mut().reset(
                                     tokio::time::Instant::now() + Duration::from_millis(750),
                                 );
                             }
-                            Err(error) => log(&format!(
-                                "invalid popup confirmation answer for {}: {error}",
-                                entry.request_id
-                            )),
+                            Err(error) => {
+                                log(&format!("invalid popup confirmation answer for {}: {error}", entry.request_id));
+                                if entry.coordinator.recovery().is_some() && !error.starts_with("unable to save") && !error.starts_with("updating") {
+                                    let _ = gui_tx.send(ServerMsg::PopupSubmissionAck { request_id: entry.request_id.clone(), winner: None, error: Some(error) });
+                                }
+                            }
                         }
                     }
                     Ok(Some(_)) => {}
@@ -3506,6 +3773,7 @@ async fn serve_confirm_gui(
                     }
                 }
             }
+            _ = entry.pause.notified() => break,
             _ = entry.cancel.notified(), if !awaiting_dismissal => {
                 awaiting_dismissal = true;
                 dismiss_timeout.as_mut().reset(
@@ -3516,17 +3784,15 @@ async fn serve_confirm_gui(
         }
     }
 
-    if let Ok(mut slot) = entry.gui.lock() {
-        *slot = None;
-    }
-    if failed && entry.mark_failed("popup", "popup helper disconnected") {
+    let detached = inbox::detach_entry(&InteractionEntry::Confirm(entry.clone()), &gui_tx);
+    if detached && failed && entry.mark_failed("popup", "popup helper disconnected") {
         entry
             .coordinator
             .fallback(ConfirmFallbackReason::NoAvailableChannel);
     }
     drop(gui_tx);
     let _ = writer.await;
-    if !dismissal_received {
+    if detached && !dismissal_received {
         update_popup_focus(state, |focus| focus.disconnected(&entry.request_id));
     }
 }
@@ -3534,7 +3800,16 @@ async fn serve_confirm_gui(
 /// 方案6 预热弹窗连接（`--popup --warm` 拉起的进程 → `GuiWarmReady`）：建专用写端、入热池待命，
 /// 等二选一——① `dispatch_popup` 领用并经 `assign` 交来请求 entry → 进入 `serve_gui`；
 /// ② 连接 EOF/holder 死亡 → 清池 + 触发补热。**非保活**（不计入 `active`，同托盘订阅）。
-async fn handle_gui_warm(mut reader: Reader, w: OwnedWriteHalf, state: &Arc<ServerState>) {
+async fn handle_gui_warm(reader: Reader, w: Writer, state: &Arc<ServerState>) {
+    handle_gui_warm_supported(reader, w, state, None).await;
+}
+
+async fn handle_gui_warm_supported(
+    mut reader: Reader,
+    w: Writer,
+    state: &Arc<ServerState>,
+    recovery_pid: Option<u32>,
+) {
     // 非保活：抵消 `handle_conn` 入口的 active+1，使「仅有待命热实例」时 daemon 仍可空闲退出。
     state.active.fetch_sub(1, Ordering::SeqCst);
 
@@ -3582,12 +3857,19 @@ async fn handle_gui_warm(mut reader: Reader, w: OwnedWriteHalf, state: &Arc<Serv
 
     match assigned {
         // 被领用：与冷路径同尾段（下发 show + 读应答）。
-        Some(entry) => match entry {
-            InteractionEntry::Ask(entry) => serve_gui(entry, reader, gui_tx, writer, state).await,
-            InteractionEntry::Confirm(entry) => {
-                serve_confirm_gui(entry, reader, gui_tx, writer, state).await
+        Some(entry) => {
+            if let Some(pid) = recovery_pid {
+                inbox::save_independent_lease(&entry, pid, &gui_tx);
             }
-        },
+            match entry {
+                InteractionEntry::Ask(entry) => {
+                    serve_gui(entry, reader, gui_tx, writer, state).await
+                }
+                InteractionEntry::Confirm(entry) => {
+                    serve_confirm_gui(entry, reader, gui_tx, writer, state).await
+                }
+            }
+        }
         // 热进程死亡 / 被回收：若池中仍是本槽则清空。
         None => {
             {
@@ -3692,6 +3974,13 @@ async fn ensure_dd_router(
     client_secret: &str,
 ) -> Option<Arc<DdRouter>> {
     let mut guard = state.dd_router.lock().await;
+    if state
+        .recovery
+        .as_ref()
+        .is_some_and(|runtime| runtime.suspending.load(Ordering::SeqCst))
+    {
+        return None;
+    }
     if let Some(r) = guard.as_ref() {
         if r.is_alive() {
             return Some(r.clone());
@@ -3719,6 +4008,13 @@ async fn ensure_fs_router(
     cfg: &crate::config::FeishuChannelConfig,
 ) -> Option<Arc<FsRouter>> {
     let mut guard = state.fs_router.lock().await;
+    if state
+        .recovery
+        .as_ref()
+        .is_some_and(|runtime| runtime.suspending.load(Ordering::SeqCst))
+    {
+        return None;
+    }
     if let Some(r) = guard.as_ref() {
         if r.is_alive() {
             return Some(r.clone());
@@ -3746,12 +4042,34 @@ async fn ensure_tg_router(
     cfg: &crate::config::TelegramChannelConfig,
 ) -> Option<Arc<TgRouter>> {
     let mut guard = state.tg_router.lock().await;
+    if state
+        .recovery
+        .as_ref()
+        .is_some_and(|runtime| runtime.suspending.load(Ordering::SeqCst))
+    {
+        return None;
+    }
     if let Some(r) = guard.as_ref() {
         if r.is_alive() {
             return Some(r.clone());
         }
     }
-    match TgRouter::connect(cfg).await {
+    let connected = match &state.recovery {
+        Some(runtime) => {
+            let weak = Arc::downgrade(runtime);
+            TgRouter::connect_recoverable(
+                cfg,
+                runtime.store.clone(),
+                Arc::new(move || {
+                    weak.upgrade()
+                        .is_some_and(|runtime| !runtime.is_restoring())
+                }),
+            )
+            .await
+        }
+        None => TgRouter::connect(cfg).await,
+    };
+    match connected {
         Ok(r) => {
             log("telegram router connected");
             *guard = Some(r.clone());
@@ -3772,6 +4090,13 @@ async fn ensure_sl_router(
     cfg: &crate::config::SlackChannelConfig,
 ) -> Option<Arc<SlRouter>> {
     let mut guard = state.sl_router.lock().await;
+    if state
+        .recovery
+        .as_ref()
+        .is_some_and(|runtime| runtime.suspending.load(Ordering::SeqCst))
+    {
+        return None;
+    }
     if let Some(r) = guard.as_ref() {
         if r.is_alive() {
             return Some(r.clone());
@@ -4018,7 +4343,7 @@ fn im_conversation_origin(
 async fn attach_im_channels(
     entry: &Arc<RequestEntry>,
     state: &Arc<ServerState>,
-    w: &mut OwnedWriteHalf,
+    w: &mut Writer,
     lang: Lang,
     popup_available: bool,
     known_agent_kind: Option<AgentKind>,
@@ -4055,7 +4380,7 @@ async fn attach_im_channels(
         None => Vec::new(),
     };
     let available = available_im_channels(&config);
-    let candidates = match only {
+    let mut candidates = match only {
         // A request scoped to one channel (the setup wizard's round-trip check) goes there and
         // nowhere else: neither the active slot nor iOS adds anything.
         Some(id) => scoped_candidates(id, &available),
@@ -4075,6 +4400,11 @@ async fn attach_im_channels(
             ios_can_deliver(state, &config),
         ),
     };
+    retain_delivery_routes(
+        entry.request().recovery.as_ref(),
+        &mut candidates,
+        &available,
+    );
     if candidates.is_empty() {
         return false;
     }
@@ -4082,107 +4412,7 @@ async fn attach_im_channels(
     // deliver to IM; Popup has already been dispatched and remains independent of this budget.
     let agent_kind = agent_kind_for_im(known_agent_kind, from_mcp, agent_resolution).await;
 
-    if candidates.contains(&"dingding") {
-        let dd = &config.channels.dingding;
-        match ensure_dd_router(state, dd.client_id.trim(), dd.client_secret.trim()).await {
-            Some(router) => {
-                let ch: Arc<dyn Channel> = Arc::new(DingTalkChannel::shared(dd.clone(), router));
-                let origin = im_conversation_origin(entry, agent_kind);
-                attached |= attach_channel(entry, ch, &request, &origin, &sink);
-            }
-            None => {
-                let _ = ipc::write_msg(
-                    w,
-                    &ServerMsg::Warn {
-                        text: format!(
-                            "{}{}",
-                            crate::i18n::warn_prefix(lang),
-                            crate::i18n::tr(lang, "channel.ddConfigInvalidSkip")
-                                .replace("{e}", "Stream connection failed"),
-                        ),
-                    },
-                )
-                .await;
-            }
-        }
-    }
-
-    if candidates.contains(&"feishu") {
-        let fs = &config.channels.feishu;
-        match ensure_fs_router(state, fs).await {
-            Some(router) => {
-                let ch: Arc<dyn Channel> = Arc::new(FeishuChannel::shared(fs.clone(), router));
-                let origin = im_conversation_origin(entry, agent_kind);
-                attached |= attach_channel(entry, ch, &request, &origin, &sink);
-            }
-            None => {
-                let _ = ipc::write_msg(
-                    w,
-                    &ServerMsg::Warn {
-                        text: format!(
-                            "{}{}",
-                            crate::i18n::warn_prefix(lang),
-                            crate::i18n::tr(lang, "channel.fsConfigInvalidSkip")
-                                .replace("{e}", "WebSocket connection failed"),
-                        ),
-                    },
-                )
-                .await;
-            }
-        }
-    }
-
-    if candidates.contains(&"telegram") {
-        let tg = &config.channels.telegram;
-        match ensure_tg_router(state, tg).await {
-            Some(router) => {
-                let ch: Arc<dyn Channel> = Arc::new(TelegramChannel::shared(tg.clone(), router));
-                let origin = im_conversation_origin(entry, agent_kind);
-                attached |= attach_channel(entry, ch, &request, &origin, &sink);
-            }
-            None => {
-                let _ = ipc::write_msg(
-                    w,
-                    &ServerMsg::Warn {
-                        text: format!(
-                            "{}{}",
-                            crate::i18n::warn_prefix(lang),
-                            crate::i18n::tr(lang, "channel.tgConfigInvalidSkip")
-                                .replace("{e}", "poller start failed"),
-                        ),
-                    },
-                )
-                .await;
-            }
-        }
-    }
-
-    if candidates.contains(&"slack") {
-        let sl = &config.channels.slack;
-        match ensure_sl_router(state, sl).await {
-            Some(router) => {
-                let ch: Arc<dyn Channel> = Arc::new(SlackChannel::shared(sl.clone(), router));
-                let origin = im_conversation_origin(entry, agent_kind);
-                attached |= attach_channel(entry, ch, &request, &origin, &sink);
-            }
-            None => {
-                let _ = ipc::write_msg(
-                    w,
-                    &ServerMsg::Warn {
-                        text: format!(
-                            "{}{}",
-                            crate::i18n::warn_prefix(lang),
-                            crate::i18n::tr(lang, "channel.slConfigInvalidSkip")
-                                .replace("{e}", "Socket Mode connection failed"),
-                        ),
-                    },
-                )
-                .await;
-            }
-        }
-    }
-
-    if candidates.contains(&"ios") {
+    if candidates.contains(&"ios") && !entry.coordinator.has_channel("ios") {
         let session = ios_session_ref(
             state,
             entry_agent_kind(entry, agent_kind),
@@ -4208,6 +4438,106 @@ async fn attach_im_channels(
         }
     }
 
+    if candidates.contains(&"dingding") && !entry.coordinator.has_channel("dingding") {
+        let dd = &config.channels.dingding;
+        match ensure_dd_router(state, dd.client_id.trim(), dd.client_secret.trim()).await {
+            Some(router) => {
+                let ch: Arc<dyn Channel> = Arc::new(DingTalkChannel::shared(dd.clone(), router));
+                let origin = im_conversation_origin(entry, agent_kind);
+                attached |= attach_channel(entry, ch, &request, &origin, &sink);
+            }
+            None => {
+                let _ = ipc::write_msg(
+                    w,
+                    &ServerMsg::Warn {
+                        text: format!(
+                            "{}{}",
+                            crate::i18n::warn_prefix(lang),
+                            crate::i18n::tr(lang, "channel.ddConfigInvalidSkip")
+                                .replace("{e}", "Stream connection failed"),
+                        ),
+                    },
+                )
+                .await;
+            }
+        }
+    }
+
+    if candidates.contains(&"feishu") && !entry.coordinator.has_channel("feishu") {
+        let fs = &config.channels.feishu;
+        match ensure_fs_router(state, fs).await {
+            Some(router) => {
+                let ch: Arc<dyn Channel> = Arc::new(FeishuChannel::shared(fs.clone(), router));
+                let origin = im_conversation_origin(entry, agent_kind);
+                attached |= attach_channel(entry, ch, &request, &origin, &sink);
+            }
+            None => {
+                let _ = ipc::write_msg(
+                    w,
+                    &ServerMsg::Warn {
+                        text: format!(
+                            "{}{}",
+                            crate::i18n::warn_prefix(lang),
+                            crate::i18n::tr(lang, "channel.fsConfigInvalidSkip")
+                                .replace("{e}", "WebSocket connection failed"),
+                        ),
+                    },
+                )
+                .await;
+            }
+        }
+    }
+
+    if candidates.contains(&"telegram") && !entry.coordinator.has_channel("telegram") {
+        let tg = &config.channels.telegram;
+        match ensure_tg_router(state, tg).await {
+            Some(router) => {
+                let ch: Arc<dyn Channel> = Arc::new(TelegramChannel::shared(tg.clone(), router));
+                let origin = im_conversation_origin(entry, agent_kind);
+                attached |= attach_channel(entry, ch, &request, &origin, &sink);
+            }
+            None => {
+                let _ = ipc::write_msg(
+                    w,
+                    &ServerMsg::Warn {
+                        text: format!(
+                            "{}{}",
+                            crate::i18n::warn_prefix(lang),
+                            crate::i18n::tr(lang, "channel.tgConfigInvalidSkip")
+                                .replace("{e}", "poller start failed"),
+                        ),
+                    },
+                )
+                .await;
+            }
+        }
+    }
+
+    if candidates.contains(&"slack") && !entry.coordinator.has_channel("slack") {
+        let sl = &config.channels.slack;
+        match ensure_sl_router(state, sl).await {
+            Some(router) => {
+                let ch: Arc<dyn Channel> = Arc::new(SlackChannel::shared(sl.clone(), router));
+                let origin = im_conversation_origin(entry, agent_kind);
+                attached |= attach_channel(entry, ch, &request, &origin, &sink);
+            }
+            None => {
+                let _ = ipc::write_msg(
+                    w,
+                    &ServerMsg::Warn {
+                        text: format!(
+                            "{}{}",
+                            crate::i18n::warn_prefix(lang),
+                            crate::i18n::tr(lang, "channel.slConfigInvalidSkip")
+                                .replace("{e}", "Socket Mode connection failed"),
+                        ),
+                    },
+                )
+                .await;
+            }
+        }
+    }
+
     attached
 }
 
@@ -4221,12 +4551,40 @@ fn attach_channel(
     origin: &crate::channels::ConversationOrigin,
     sink: &crate::channels::ResultSink,
 ) -> bool {
-    if entry.coordinator.is_finalizing() {
+    if entry.coordinator.is_finalizing()
+        || entry
+            .request()
+            .recovery
+            .as_ref()
+            .is_some_and(|context| context.is_suspended())
+    {
         return false;
     }
-    entry.coordinator.register(ch.clone());
+    if !entry.coordinator.register(ch.clone()) {
+        return false;
+    }
     ch.start(request, origin, sink.clone());
     true
+}
+
+fn retain_delivery_routes(
+    context: Option<&Arc<super::recovery::RequestContext>>,
+    candidates: &mut Vec<&'static str>,
+    available: &[&'static str],
+) {
+    let Some(context) = context else {
+        return;
+    };
+    match context.channels() {
+        Ok(saved) => {
+            for id in available {
+                if saved.iter().any(|saved| saved == id) && !candidates.contains(id) {
+                    candidates.push(*id);
+                }
+            }
+        }
+        Err(error) => log(&format!("cannot restore delivery routes: {error}")),
+    }
 }
 
 fn confirm_im_candidates(
@@ -4246,7 +4604,7 @@ fn confirm_im_candidates(
         .map(|watch| watch.channel.clone())
         .collect();
     let available = available_im_channels(config);
-    with_ios(
+    let mut candidates = with_ios(
         select_im_delivery_candidates(
             config.channels.auto_activation
                 && !entry.development.as_ref().is_some_and(|info| info.relay),
@@ -4256,7 +4614,13 @@ fn confirm_im_candidates(
             popup_available,
         ),
         ios_can_deliver(state, config),
-    )
+    );
+    retain_delivery_routes(
+        entry.coordinator.recovery().as_ref(),
+        &mut candidates,
+        &available,
+    );
+    candidates
 }
 
 async fn attach_confirm_im_channels(
@@ -4265,7 +4629,11 @@ async fn attach_confirm_im_channels(
     config: &AppConfig,
     candidates: &[&str],
 ) {
-    for channel in candidates {
+    for channel in candidates
+        .iter()
+        .filter(|channel| **channel == "ios")
+        .chain(candidates.iter().filter(|channel| **channel != "ios"))
+    {
         match *channel {
             "feishu" => match ensure_fs_router(state, &config.channels.feishu).await {
                 Some(router) => crate::channels::confirm::start_feishu(
@@ -4712,6 +5080,9 @@ fn dispatch_interaction_popup(
     perf_id: &str,
     perf_autodismiss: bool,
 ) -> bool {
+    if inbox::retained_popup(&entry) {
+        return true;
+    }
     if merged_popup(state) {
         crate::perf::mark(perf_id, "dmn.assigned");
         dispatch_inbox_popup(entry, state)

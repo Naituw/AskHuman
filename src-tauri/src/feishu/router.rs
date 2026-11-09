@@ -121,6 +121,19 @@ impl FsRouter {
     }
 
     /// 连接是否仍然存活（Reader 任务未退出）。
+    /// Stop receiving before request actors checkpoint their queued input.
+    pub async fn pause(&self) {
+        let task = self.task.lock().unwrap().take();
+        if let Some(task) = task {
+            task.abort();
+            let _ = task.await;
+        }
+        self.alive.store(false, Ordering::SeqCst);
+        let mut routes = self.routes.lock().unwrap();
+        routes.sinks.clear();
+        routes.observers.clear();
+    }
+
     pub fn is_alive(&self) -> bool {
         self.alive.load(Ordering::SeqCst)
     }
@@ -201,6 +214,11 @@ impl RoutedFs {
     /// 收下一个分发给本会话的事件；`None` 表示连接关闭。
     pub async fn recv(&mut self) -> Option<FsInbound> {
         self.rx.recv().await
+    }
+
+    /// Drain events already accepted before the reader stopped for an update.
+    pub fn try_recv(&mut self) -> Option<FsInbound> {
+        self.rx.try_recv().ok()
     }
 }
 

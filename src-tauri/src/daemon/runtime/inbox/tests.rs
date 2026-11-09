@@ -349,10 +349,13 @@ fn state() -> Arc<ServerState> {
         active: AtomicUsize::new(1),
         last_active: Mutex::new(Instant::now()),
         shutdown: Default::default(),
+        drain_watch_started: AtomicBool::new(false),
+        force_stop: AtomicBool::new(false),
         draining: AtomicBool::new(true),
         exit_intent: Mutex::new(Default::default()),
         closing: AtomicBool::new(false),
         registry: RequestRegistry::new(),
+        recovery: None,
         popup_focus: Mutex::new(PopupFocusArbiter::new()),
         popup_inbox: Mutex::new(Default::default()),
         dd_router: Default::default(),
@@ -753,4 +756,102 @@ async fn prewarmed_idle_host_retires_after_drain_without_reconnecting() {
     }
     handler.await.unwrap();
     assert!(state.popup_inbox.lock().unwrap().generation().is_none());
+}
+
+#[test]
+fn an_old_popup_connection_cannot_detach_the_reconnected_window() {
+    let state = state();
+    let (entry, _) = request(&state);
+    let interaction = InteractionEntry::Ask(entry.clone());
+    let (old, _) = tokio::sync::mpsc::unbounded_channel();
+    let (current, _) = tokio::sync::mpsc::unbounded_channel();
+    connect_entry(&interaction, &old);
+    connect_entry(&interaction, &current);
+    assert!(!detach_entry(&interaction, &old));
+    assert!(entry.gui_connected.load(Ordering::SeqCst));
+    assert!(entry
+        .gui
+        .lock()
+        .unwrap()
+        .as_ref()
+        .unwrap()
+        .same_channel(&current));
+    assert!(detach_entry(&interaction, &current));
+    assert!(!entry.gui_connected.load(Ordering::SeqCst));
+}
+
+#[tokio::test]
+async fn a_restored_ready_form_does_not_take_focus_again() {
+    let state = state();
+    let (entry, _result) = request(&state);
+    let lease = state.popup_inbox.lock().unwrap().start().unwrap();
+    let (client, server) = tokio::io::duplex(16 * 1024);
+    let (read, mut write) = tokio::io::split(client);
+    let (server_read, server_write) = tokio::io::split(server);
+    let task_state = state.clone();
+    let known = vec![entry.request_id.clone()];
+    let task = tokio::spawn(async move {
+        handle_popup_host_supported(
+            lease.token,
+            Some(std::process::id()),
+            known,
+            tokio::io::BufReader::new(server_read),
+            server_write,
+            &task_state,
+        )
+        .await;
+    });
+    let mut reader = ipc::MessageReader::new(tokio::io::BufReader::new(read));
+    loop {
+        if matches!(next(&mut reader).await, ServerMsg::UpdateState { .. }) {
+            break;
+        }
+    }
+    ipc::write_msg(
+        &mut write,
+        &ClientMsg::PopupReady {
+            request_id: entry.request_id.clone(),
+            window_number: None,
+        },
+    )
+    .await
+    .unwrap();
+    assert!(
+        tokio::time::timeout(Duration::from_millis(200), reader.read::<ServerMsg>())
+            .await
+            .is_err()
+    );
+    assert!(entry.gui_ready.load(Ordering::SeqCst));
+    task.abort();
+}
+
+#[tokio::test]
+async fn independent_popup_reconnect_clears_the_previous_update_banner() {
+    let state = state();
+    let (entry, _result) = request(&state);
+    let token = entry.token.clone();
+    let (client, server) = tokio::io::duplex(16 * 1024);
+    let (read, _write) = tokio::io::split(client);
+    let (server_read, server_write) = tokio::io::split(server);
+    let task_state = state.clone();
+    let task = tokio::spawn(async move {
+        handle_gui(
+            token,
+            Box::new(tokio::io::BufReader::new(server_read)),
+            Box::new(server_write),
+            &task_state,
+        )
+        .await;
+    });
+    let mut reader = ipc::MessageReader::new(tokio::io::BufReader::new(read));
+    assert!(matches!(next(&mut reader).await, ServerMsg::Show(_)));
+    assert!(matches!(
+        next(&mut reader).await,
+        ServerMsg::UpdateState {
+            pending: false,
+            available: false,
+            ..
+        }
+    ));
+    task.abort();
 }

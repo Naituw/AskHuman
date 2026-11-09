@@ -14,7 +14,8 @@
 //! （回显已选项 + 补充文字 + 状态行，移除控件）；ack 在 `ws` 层收帧即完成，无需 oneshot 回包。
 
 use super::conversation::{
-    run_conversation, InboundReply, MessagingChannel, QuestionCtx, QuestionOutcome,
+    run_conversation, AttachmentProgress, InboundReply, MessagingChannel, PendingAttachment,
+    QuestionCtx, QuestionOutcome, QuestionProgress,
 };
 use super::{Channel, ConversationOrigin, Interruption, Preemption, ResultSink};
 use crate::config::SlackChannelConfig;
@@ -25,6 +26,7 @@ use crate::slack::client::SlackClient;
 use crate::slack::markdown;
 use crate::slack::router::{RoutedSl, SlInbound, SlRouter};
 use serde_json::Value;
+use sha2::Digest;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
@@ -249,7 +251,6 @@ impl MessagingChannel for SlackSession {
         } else {
             ctx.header
         };
-
         let Self {
             client,
             events,
@@ -262,69 +263,111 @@ impl MessagingChannel for SlackSession {
             return QuestionOutcome::Lost;
         };
         let user_id = config.user_id.trim().to_string();
-
-        let options_label = i18n::tr(ctx.lang, "channel.slOptionsLabel");
-        let input_label = i18n::tr(ctx.lang, "channel.slInputLabel");
-        let placeholder = i18n::tr(ctx.lang, "channel.slInputPlaceholder");
-        let submit_label = i18n::tr(ctx.lang, "channel.slSubmitButton");
-        // 每张卡片唯一 nonce 拼入 input 块 block_id：规避 Slack 按 block_id 缓存输入草稿
-        // 导致新卡片回填上一题的输入/勾选。
-        let nonce = next_card_nonce();
-        let card = blockkit::build_question_card(
-            title,
-            ctx.text,
-            ctx.options,
-            ctx.is_markdown,
-            ctx.single,
-            ctx.select_only,
-            options_label,
-            input_label,
-            placeholder,
-            submit_label,
-            i18n::tr(ctx.lang, "channel.slackRecommended"),
-            &nonce,
-        );
-        // 通知/回退文本（折叠态、推送预览）。
-        let notify = fallback_notify(title, ctx);
-
-        // 1. 投放互动卡片；失败 → 回退纯文本编号方案。
-        let message_ts = match client.post_message(dm, Some(&card), &notify).await {
-            Ok(ts) => ts,
-            Err(e) => {
-                eprintln!(
-                    "{}{}",
-                    i18n::warn_prefix(ctx.lang),
-                    i18n::tr(ctx.lang, "channel.slCardDeliverFailed")
-                        .replace("{e}", &e.to_string())
-                );
-                return ask_question_text(client, events, dm, &user_id, ctx, preempt).await;
+        let mut saved = match ctx.saved::<QuestionProgress>("slack") {
+            Ok(saved) => saved,
+            Err(error) => {
+                eprintln!("[slack] cannot restore question: {error}");
+                return QuestionOutcome::Lost;
             }
         };
-
-        // 登记卡片精确路由（按 message_ts）+ 认领本 user_id 的聊天消息。
-        events.set_active(Some(&message_ts), &user_id);
-
-        // 2. 等卡片「提交」；作答期间收到的图片/文件**并发下载**（不阻塞收事件循环）。
-        let images: Arc<Mutex<Vec<ImageAttachment>>> = Arc::new(Mutex::new(Vec::new()));
-        let files: Arc<Mutex<Vec<String>>> = Arc::new(Mutex::new(Vec::new()));
-        let mut downloads: Vec<tauri::async_runtime::JoinHandle<()>> = Vec::new();
-        let mut selected_single = None;
-        while !preempt.is_cancelled() {
-            let ev = match tokio::time::timeout(POLL_INTERVAL, events.recv()).await {
-                Ok(Some(ev)) => ev,
-                Ok(None) => {
-                    // Event source gone for good (Router dropped); transient disconnects are
-                    // absorbed by the Router's endless reconnect. Leave the card untouched and let
-                    // the coordinator drop this surface instead of stamping "cancelled" on it.
-                    if preempt.is_cancelled() {
-                        break;
+        if saved
+            .target_id
+            .as_ref()
+            .is_some_and(|target| target != &user_id)
+            || saved.route_id.as_ref().is_some_and(|route| route != dm)
+        {
+            return QuestionOutcome::Lost;
+        }
+        let nonce = saved.nonce.clone().unwrap_or_else(next_card_nonce);
+        if !ctx
+            .commit(
+                "slack",
+                &serde_json::json!({"targetId": user_id, "routeId": dm, "nonce": nonce}),
+                preempt,
+            )
+            .await
+        {
+            return QuestionOutcome::Interrupted;
+        }
+        let notify = fallback_notify(title, ctx);
+        if let Some(answer) = saved.answer.take() {
+            if let Some(id) = &saved.message_id {
+                let card = finalized_question(
+                    ctx,
+                    title,
+                    Some(&answer),
+                    i18n::tr(ctx.lang, "channel.slSubmitted"),
+                );
+                let _ = client.update_message(dm, id, Some(&card), &notify).await;
+            }
+            return QuestionOutcome::Answered(answer);
+        }
+        if saved.text_mode {
+            return ask_question_text(client, events, dm, &user_id, ctx, preempt).await;
+        }
+        if preempt.is_cancelled() && saved.message_id.is_none() {
+            return QuestionOutcome::Interrupted;
+        }
+        let mut selected_single = saved.selected_options.first().and_then(|selected| {
+            ctx.options
+                .iter()
+                .position(|option| &option.text == selected)
+        });
+        let message_ts = match saved.message_id.clone() {
+            Some(id) => id,
+            None => {
+                let input = (!saved.input.is_empty()).then_some(saved.input.as_str());
+                let card = question_card(ctx, title, &nonce, selected_single, input);
+                match client.post_message(dm, Some(&card), &notify).await {
+                    Ok(id) => {
+                        if !ctx
+                            .commit("slack", &serde_json::json!({"messageId": id}), preempt)
+                            .await
+                        {
+                            return QuestionOutcome::Interrupted;
+                        }
+                        id
                     }
-                    events.clear_active(Some(&message_ts), &user_id);
-                    return QuestionOutcome::Lost;
+                    Err(error) => {
+                        eprintln!("[slack] card delivery failed: {error}");
+                        let _ = ctx.save("slack", &serde_json::json!({"textMode": true}));
+                        return ask_question_text(client, events, dm, &user_id, ctx, preempt).await;
+                    }
                 }
-                Err(_) => continue, // 超时：回到循环顶部重新检查 cancelled
+            }
+        };
+        events.set_active(Some(&message_ts), &user_id);
+        let attachments = AttachmentProgress::new(ctx, "slack", &saved);
+        let mut downloads = attachments
+            .pending()
+            .into_iter()
+            .map(|pending| start_attachment_download(client, pending, &attachments, ctx.lang))
+            .collect::<Vec<_>>();
+        let mut submission = saved.submission;
+        let mut finalized = false;
+        while submission.is_none() {
+            let event = if preempt.is_handoff() {
+                match events.try_recv() {
+                    Some(event) => event,
+                    None => break,
+                }
+            } else {
+                if preempt.is_cancelled() {
+                    break;
+                }
+                match tokio::time::timeout(POLL_INTERVAL, events.recv()).await {
+                    Ok(Some(event)) => event,
+                    Ok(None) => {
+                        if preempt.is_cancelled() {
+                            break;
+                        }
+                        events.clear_active(Some(&message_ts), &user_id);
+                        return QuestionOutcome::Lost;
+                    }
+                    Err(_) => continue,
+                }
             };
-            match ev {
+            match event {
                 SlInbound::Interactive(payload) => {
                     if let Some(selection) = blockkit::parse_single_select(&payload) {
                         if ctx.single
@@ -334,113 +377,154 @@ impl MessagingChannel for SlackSession {
                             && (selection.channel_id.is_empty() || selection.channel_id == dm)
                         {
                             selected_single = Some(selection.index);
-                            let updated = blockkit::build_question_card_with_state(
+                            let _ = ctx.save(
+                                "slack",
+                                &serde_json::json!({
+                                    "selectedOptions": [ctx.options[selection.index].text],
+                                    "input": selection.user_input.as_deref().unwrap_or(""),
+                                }),
+                            );
+                            let card = question_card(
+                                ctx,
                                 title,
-                                ctx.text,
-                                ctx.options,
-                                ctx.is_markdown,
-                                ctx.single,
-                                ctx.select_only,
-                                options_label,
-                                input_label,
-                                placeholder,
-                                submit_label,
-                                i18n::tr(ctx.lang, "channel.slackRecommended"),
                                 &nonce,
                                 selected_single,
                                 selection.user_input.as_deref(),
                             );
                             let _ = client
-                                .update_message(dm, &message_ts, Some(&updated), &notify)
+                                .update_message(dm, &message_ts, Some(&card), &notify)
                                 .await;
                         }
                         continue;
                     }
-                    let Some(s) =
+                    let Some(reply) =
                         blockkit::parse_submit_with_single(&payload, ctx.options, selected_single)
                     else {
                         continue;
                     };
-                    if s.message_ts != message_ts || (!user_id.is_empty() && s.user_id != user_id) {
-                        continue; // 非本题卡片 / 非目标用户
+                    if reply.message_ts != message_ts
+                        || (!user_id.is_empty() && reply.user_id != user_id)
+                    {
+                        continue;
                     }
-                    // 静态终态卡片（移除控件 + 回显选择与补充文字 + 状态行「已提交」）。
-                    let finalized = blockkit::build_finalized_card(&blockkit::Finalized {
+                    let answer = QuestionAnswer {
+                        selected_options: reply.selected_options,
+                        user_input: reply.user_input,
+                        ..Default::default()
+                    };
+                    if !ctx
+                        .commit_response(
+                            "slack",
+                            &serde_json::json!({"submission": answer}),
+                            preempt,
+                        )
+                        .await
+                    {
+                        break;
+                    }
+                    let card = finalized_question(
+                        ctx,
                         title,
-                        text: ctx.text,
-                        is_markdown: ctx.is_markdown,
-                        selected: &s.selected_options,
-                        user_input: s.user_input.as_deref(),
-                        status: i18n::tr(ctx.lang, "channel.slSubmitted"),
-                    });
-                    let _ = client
-                        .update_message(dm, &message_ts, Some(&finalized), &notify)
-                        .await;
-                    // 收尾并发下载。
-                    for h in downloads {
-                        let _ = h.await;
-                    }
-                    events.clear_active(Some(&message_ts), &user_id);
-                    let images = std::mem::take(&mut *images.lock().unwrap());
-                    let files = std::mem::take(&mut *files.lock().unwrap());
-                    return QuestionOutcome::Answered(QuestionAnswer {
-                        selected_options: s.selected_options,
-                        user_input: s.user_input,
-                        images,
-                        files,
-                        todo_ids: Vec::new(),
-                        todo_selections: Vec::new(),
-                    });
+                        Some(&answer),
+                        i18n::tr(ctx.lang, "channel.slSubmitted"),
+                    );
+                    finalized = client
+                        .update_message(dm, &message_ts, Some(&card), &notify)
+                        .await
+                        .is_ok();
+                    submission = Some(answer);
                 }
                 SlInbound::Message(event) => {
-                    if event_user(&event) == user_id {
-                        let lang = ctx.lang;
-                        // 即时回执 / 引导（spec R2/R3）：spawn 不阻塞事件循环（保证卡片提交即时处理）。
-                        // 斜线命令交 handle_inbound 独占响应，会话层不回引导（避免重复）。
-                        if let Some(reply) = super::conversation::answer_inbound_reply(
-                            ack_kind(&event),
-                            crate::autochannel::AckMode::Card,
-                            event.get("text").and_then(|v| v.as_str()).unwrap_or(""),
-                            "slack",
-                            lang,
-                        ) {
-                            let ack_client = client.clone();
-                            let ack_dm = dm.to_string();
-                            tauri::async_runtime::spawn(async move {
-                                send_inbound_reply(&ack_client, &ack_dm, reply, lang).await;
+                    if event_user(&event) != user_id {
+                        continue;
+                    }
+                    if ack_kind(&event).is_some() {
+                        let id = event
+                            .get("ts")
+                            .and_then(Value::as_str)
+                            .map(str::to_string)
+                            .unwrap_or_else(|| {
+                                format!(
+                                    "{:x}",
+                                    sha2::Sha256::digest(
+                                        serde_json::to_vec(&event).unwrap_or_default()
+                                    )
+                                )
                             });
+                        if !attachments.queue(id.clone(), event.clone()).await {
+                            continue;
                         }
+                        downloads.push(start_attachment_download(
+                            client,
+                            PendingAttachment {
+                                id,
+                                event: event.clone(),
+                            },
+                            &attachments,
+                            ctx.lang,
+                        ));
+                    }
+                    if let Some(reply) = super::conversation::answer_inbound_reply(
+                        ack_kind(&event),
+                        crate::autochannel::AckMode::Card,
+                        event.get("text").and_then(Value::as_str).unwrap_or(""),
+                        "slack",
+                        ctx.lang,
+                    ) {
                         let client = client.clone();
-                        let images = images.clone();
-                        let files = files.clone();
-                        downloads.push(tauri::async_runtime::spawn(async move {
-                            accumulate_attachments(&client, &event, &images, &files, lang).await;
-                        }));
+                        let dm = dm.to_string();
+                        let lang = ctx.lang;
+                        tauri::async_runtime::spawn(async move {
+                            send_inbound_reply(&client, &dm, reply, lang).await;
+                        });
                     }
                 }
             }
         }
-
-        // 被抢答 / 取消：把卡片更新为静态终态（本端未作答 → 不回显选择，仅状态行）。
-        let status = match preempt.reason() {
-            Some(Interruption::AnsweredBy(w)) => {
-                i18n::tr(ctx.lang, "channel.slAnsweredVia").replace("{source}", &w)
+        if let Some(mut answer) = submission {
+            for download in downloads {
+                let _ = download.await;
             }
-            Some(Interruption::Cancelled(src)) if !src.is_empty() => {
-                i18n::tr(ctx.lang, "channel.slCancelledBy").replace("{source}", &src)
+            attachments.fill(&mut answer);
+            if ctx
+                .commit_response("slack", &serde_json::json!({"answer": answer}), preempt)
+                .await
+            {
+                if !finalized {
+                    let card = finalized_question(
+                        ctx,
+                        title,
+                        Some(&answer),
+                        i18n::tr(ctx.lang, "channel.slSubmitted"),
+                    );
+                    let _ = client
+                        .update_message(dm, &message_ts, Some(&card), &notify)
+                        .await;
+                }
+                events.clear_active(Some(&message_ts), &user_id);
+                return QuestionOutcome::Answered(answer);
+            }
+        } else if preempt.is_handoff() {
+            for download in downloads {
+                let _ = download.await;
+            }
+        }
+        if preempt.is_handoff() {
+            events.clear_active(Some(&message_ts), &user_id);
+            return QuestionOutcome::Interrupted;
+        }
+        let status = match preempt.reason() {
+            Some(Interruption::AnsweredBy(winner)) => {
+                i18n::tr(ctx.lang, "channel.slAnsweredVia").replace("{source}", &winner)
+            }
+            Some(Interruption::Cancelled(source)) if !source.is_empty() => {
+                i18n::tr(ctx.lang, "channel.slCancelledBy").replace("{source}", &source)
             }
             _ => i18n::tr(ctx.lang, "channel.slCancelled").to_string(),
         };
-        let finalized = blockkit::build_finalized_card(&blockkit::Finalized {
-            title,
-            text: ctx.text,
-            is_markdown: ctx.is_markdown,
-            selected: &[],
-            user_input: None,
-            status: &status,
-        });
+        let card = finalized_question(ctx, title, None, &status);
         let _ = client
-            .update_message(dm, &message_ts, Some(&finalized), &notify)
+            .update_message(dm, &message_ts, Some(&card), &notify)
             .await;
         events.clear_active(Some(&message_ts), &user_id);
         QuestionOutcome::Interrupted
@@ -452,6 +536,69 @@ impl MessagingChannel for SlackSession {
     }
 }
 
+fn question_card(
+    ctx: &QuestionCtx<'_>,
+    title: &str,
+    nonce: &str,
+    selected: Option<usize>,
+    input: Option<&str>,
+) -> Value {
+    blockkit::build_question_card_with_state(
+        title,
+        ctx.text,
+        ctx.options,
+        ctx.is_markdown,
+        ctx.single,
+        ctx.select_only,
+        i18n::tr(ctx.lang, "channel.slOptionsLabel"),
+        i18n::tr(ctx.lang, "channel.slInputLabel"),
+        i18n::tr(ctx.lang, "channel.slInputPlaceholder"),
+        i18n::tr(ctx.lang, "channel.slSubmitButton"),
+        i18n::tr(ctx.lang, "channel.slackRecommended"),
+        nonce,
+        selected,
+        input,
+    )
+}
+
+fn finalized_question(
+    ctx: &QuestionCtx<'_>,
+    title: &str,
+    answer: Option<&QuestionAnswer>,
+    status: &str,
+) -> Value {
+    blockkit::build_finalized_card(&blockkit::Finalized {
+        title,
+        text: ctx.text,
+        is_markdown: ctx.is_markdown,
+        selected: answer.map_or(&[], |answer| answer.selected_options.as_slice()),
+        user_input: answer.and_then(|answer| answer.user_input.as_deref()),
+        status,
+    })
+}
+
+fn start_attachment_download(
+    client: &SlackClient,
+    pending: PendingAttachment,
+    progress: &AttachmentProgress,
+    lang: Lang,
+) -> tauri::async_runtime::JoinHandle<()> {
+    let client = client.clone();
+    let progress = progress.clone();
+    let operation = progress.begin_download();
+    tauri::async_runtime::spawn(async move {
+        let Ok(_operation) = operation else {
+            return;
+        };
+        let images = Arc::new(Mutex::new(Vec::new()));
+        let files = Arc::new(Mutex::new(Vec::new()));
+        accumulate_attachments(&client, &pending.event, &images, &files, lang).await;
+        let received_images = std::mem::take(&mut *images.lock().unwrap());
+        let received_files = std::mem::take(&mut *files.lock().unwrap());
+        progress.complete(&pending.id, received_images, received_files);
+    })
+}
+
 /// 兜底：纯文本 + 编号选项问一题（卡片投放失败时使用）。用户回一条消息即完成该题。
 async fn ask_question_text(
     client: &SlackClient,
@@ -461,34 +608,63 @@ async fn ask_question_text(
     ctx: &QuestionCtx<'_>,
     preempt: &Preemption,
 ) -> QuestionOutcome {
+    let saved = match ctx.saved::<QuestionProgress>("slack") {
+        Ok(saved) => saved,
+        Err(_) => return QuestionOutcome::Lost,
+    };
+    if let Some(answer) = saved.answer {
+        return QuestionOutcome::Answered(answer);
+    }
     // 编号回复按原文映射（编号清单展示用显示文本，见 build_question_text）。
     let option_texts: Vec<String> = ctx.options.iter().map(|o| o.text.clone()).collect();
     let body = build_question_text(ctx);
-    if let Err(e) = client.post_text(dm, &body).await {
-        eprintln!(
-            "{}{}",
-            i18n::warn_prefix(ctx.lang),
-            i18n::tr(ctx.lang, "channel.slQuestionSendFailed").replace("{e}", &e.to_string())
-        );
-        // Neither the card nor the plain-text fallback reached the human: this surface cannot
-        // carry the question. Waiting here would only hide the failure from the caller.
-        return QuestionOutcome::Lost;
+    if !saved.text_sent {
+        if let Err(e) = client.post_text(dm, &body).await {
+            eprintln!(
+                "{}{}",
+                i18n::warn_prefix(ctx.lang),
+                i18n::tr(ctx.lang, "channel.slQuestionSendFailed").replace("{e}", &e.to_string())
+            );
+            // Neither the card nor the plain-text fallback reached the human: this surface cannot
+            // carry the question. Waiting here would only hide the failure from the caller.
+            return QuestionOutcome::Lost;
+        }
+        if !ctx
+            .commit(
+                "slack",
+                &serde_json::json!({"textMode": true, "textSent": true}),
+                preempt,
+            )
+            .await
+        {
+            return QuestionOutcome::Interrupted;
+        }
     }
 
     // 文本兜底无卡片：认领本 user_id 的聊天消息即可（不登记卡片精确路由）。
     events.set_active(None, user_id);
 
-    while !preempt.is_cancelled() {
-        let ev = match tokio::time::timeout(POLL_INTERVAL, events.recv()).await {
-            Ok(Some(ev)) => ev,
-            Ok(None) => {
-                if preempt.is_cancelled() {
-                    break;
-                }
-                events.clear_active(None, user_id);
-                return QuestionOutcome::Lost;
+    loop {
+        let ev = if preempt.is_handoff() {
+            match events.try_recv() {
+                Some(event) => event,
+                None => break,
             }
-            Err(_) => continue,
+        } else {
+            if preempt.is_cancelled() {
+                break;
+            }
+            match tokio::time::timeout(POLL_INTERVAL, events.recv()).await {
+                Ok(Some(ev)) => ev,
+                Ok(None) => {
+                    if preempt.is_cancelled() {
+                        break;
+                    }
+                    events.clear_active(None, user_id);
+                    return QuestionOutcome::Lost;
+                }
+                Err(_) => continue,
+            }
         };
         match ev {
             SlInbound::Message(event) => {
@@ -511,6 +687,12 @@ async fn ask_question_text(
                 )
                 .await
                 {
+                    if !ctx
+                        .commit_response("slack", &serde_json::json!({"answer": answer}), preempt)
+                        .await
+                    {
+                        break;
+                    }
                     // 接受 → 确认（spec R2 文本兜底）。
                     if let Some(reply) = super::conversation::answer_inbound_reply(
                         kind,

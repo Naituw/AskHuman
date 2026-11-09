@@ -1,5 +1,11 @@
 # iOS 渠道概览
 
+可恢复后台更新由 `daemon/recovery.rs` 与 Gateway 共同处理。原题持久身份、答案/回执事务、
+通知事实与上传检查点跨交接保存，Gateway 等原 iOS 待答面全部恢复再发快照。
+AHCore 保留更新期间的草稿和原提交 ID，完成新 epoch 同步后自动续送。
+`Caps.liveUpdate` 与 Presence 可选 `u` 保持旧手机互通，详细契约见 [即时换新](specs/daemon-live-update.md)。
+
+
 > 本文是 `docs/overview.md` 的专题补充，记录 iOS 渠道（实验功能）当前的实现地图与不变量；需求决策见 `docs/specs/ios-channel.md`，实现步骤见 `docs/plans/ios-channel.md`，用户使用说明见 `docs/wiki/ios-setup.md`。
 
 ## 形态

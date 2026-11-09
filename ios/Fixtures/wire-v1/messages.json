@@ -12,6 +12,7 @@
 
     {"type": "hello", "body": {"nonce": "q3ZkL1m0Xw4", "proto": 1, "appVer": "1.0 (1)", "deviceName": "Wutian iPhone"}},
     {"type": "hello.ack", "body": {"nonce": "q3ZkL1m0Xw4", "epoch": "0123456789abcdef", "macName": "Home Mac", "caps": {"newTask": false, "interject": true, "watch": true, "todos": false, "answerTodos": false, "away": false}, "slot": {"active": true, "autoActivation": true}}},
+    {"type": "hello.ack", "body": {"nonce": "q3ZkL1m0Xw4", "epoch": "0123456789abcdef", "macName": "Home Mac", "caps": {"newTask": false, "interject": true, "watch": true, "todos": false, "answerTodos": false, "away": false, "liveUpdate": true}, "slot": {"active": true, "autoActivation": true}}, "name": "live-update"},
     {"type": "error", "name": "min", "body": {"ref": "m1", "code": "unknown_type"}},
     {"type": "error", "name": "full", "body": {"ref": "m2", "code": "clock_skew", "message": "message timestamp outside the allowed window"}},
     {"type": "resync", "body": {"stream": "inbox"}},

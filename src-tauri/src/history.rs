@@ -242,7 +242,7 @@ fn record_at(path: &Path, entry: HistoryEntry, limit: u32) {
     // limit == 0 stops recording new entries, but existing ones are still trimmed to the limit
     // (i.e. cleared) on the same schedule as a positive limit. Skip touching disk when there is
     // nothing to add and nothing to clear.
-    if limit > 0 {
+    if limit > 0 && !entries.iter().any(|saved| saved.id == entry.id) {
         entries.push(entry);
     } else if entries.is_empty() {
         return;
@@ -575,6 +575,17 @@ mod tests {
             answers: Vec::new(),
             annotations: Vec::new(),
         }
+    }
+
+    #[test]
+    fn a_restored_request_does_not_append_its_history_again() {
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("history.jsonl");
+        record_at(&path, entry("same", "/project", 1), 200);
+        record_at(&path, entry("same", "/project", 2), 200);
+        let saved = read_all_at(&path);
+        assert_eq!(saved.len(), 1);
+        assert_eq!(saved[0].timestamp_ms, 1);
     }
 
     #[test]

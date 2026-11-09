@@ -5,6 +5,7 @@
 
 pub mod composer;
 pub mod diagnostics;
+pub(crate) mod recovery;
 
 use crate::daemon::lifecycle;
 use crate::daemon::spawn;
@@ -915,10 +916,16 @@ pub fn run_confirm(mut task: crate::ipc::ConfirmTask) -> Option<crate::models::C
         .build()
         .ok()?;
     let result = runtime.block_on(async move {
+        if task.development.is_none() && recovery::available().await {
+            return recovery::confirm(task).await;
+        }
         if task.development.as_ref().is_some_and(|info| info.relay) {
             crate::development::relay::check_peer().await.ok()?;
         } else {
             ensure_running().await.ok()?;
+        }
+        if task.development.is_none() && recovery::available().await {
+            return recovery::confirm(task).await;
         }
         let (mut reader, mut writer) = connect_split().await.ok()?;
         ipc::write_msg(&mut writer, &ClientMsg::Hello(hello()))
@@ -1027,6 +1034,10 @@ async fn run_ask_observed(
 ) -> AskFinal {
     use crate::ipc::ServerMsg;
 
+    if recovery::ask_enabled(&task) && recovery::available().await {
+        return recovery::ask(task, verbose, accepted).await;
+    }
+
     // 外层循环：撞上 Daemon 排空（draining）时无限等待其下线，然后重置重试预算重来。
     // 内层：提交前最多重试若干次，覆盖「自启就绪竞争」与「撞上 Daemon 换新」的瞬时失败。
     // 提交被受理后不再重试（避免重复弹窗）。
@@ -1053,6 +1064,9 @@ async fn run_ask_observed(
                 Err(error) => {
                     return daemon_start_error(verbose, &error);
                 }
+            }
+            if recovery::ask_enabled(&task) && recovery::available().await {
+                return recovery::ask(task, verbose, accepted).await;
             }
             if task
                 .message

@@ -85,4 +85,11 @@ final class MessageFixtureTests: XCTestCase {
         let presence = try? AHJSON.decoder.decode(Presence.self, from: Data(#"{"o":1,"t":5,"r":"mac","e":"abc"}"#.utf8))
         XCTAssertEqual(presence, Presence(o: 1, t: 5, r: "mac", fg: 0, e: "abc"))
     }
+    func testLiveUpdatePresenceKeepsBackwardCompatibility() throws {
+        let current = Presence(o: 0, t: 5, r: "mac", fg: 0, e: "abc", u: "updating")
+        XCTAssertEqual(try AHJSON.tree(current)["u"], .string("updating"))
+        let old = try AHJSON.decoder.decode(Presence.self, from: Data(#"{"o":1,"t":5,"r":"mac","e":"abc"}"#.utf8))
+        XCTAssertNil(old.u)
+    }
+
 }

@@ -16,6 +16,8 @@ extension PhoneEngine {
         guard var mac = macs[macId], snapshot.epoch == mac.epoch else { return }
         mac.inboxRev = snapshot.rev
         mac.sync = .synced
+        let recoveredUpdate = mac.recoveringUpdate && mac.presence?.u == nil
+        if recoveredUpdate { mac.recoveringUpdate = false }
         macs[macId] = mac
         let now = clock.now()
 
@@ -48,6 +50,7 @@ extension PhoneEngine {
         for item in outbox.values.sorted(by: { $0.createdAt < $1.createdAt }) where item.macId == macId && timers["ack." + item.clientMsgId] == nil {
             await transmit(item)
         }
+        if recoveredUpdate { await resumeTransfers(macId) }
         await ensureForegroundPresence()
     }
 
@@ -293,6 +296,7 @@ extension PhoneEngine {
 
     /// Sends (or re-sends) an outbox item and starts its acknowledgement timer.
     func transmit(_ item: OutboxItem) async {
+        if macs[item.macId]?.recoveringUpdate == true { return }
         var current = item
         current.attempts += 1
         outbox[item.clientMsgId] = current
@@ -312,6 +316,7 @@ extension PhoneEngine {
     }
 
     func ackTimedOut(_ clientMsgId: String) {
+        if let item = outbox[clientMsgId], macs[item.macId]?.recoveringUpdate == true { return }
         markFailed(clientMsgId, reason: "timeout")
         publish()
     }

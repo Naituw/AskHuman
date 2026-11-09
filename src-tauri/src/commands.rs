@@ -1375,11 +1375,15 @@ pub async fn submit_popup(
             .await;
     }
     if let Some(bridge) = app.try_state::<crate::app::GuiBridge>() {
-        bridge.send_answer(
-            submission.answers,
-            submission.directive,
-            submission.annotations,
-        );
+        return bridge
+            .submit(crate::ipc::ClientMsg::Answer {
+                request_id: bridge.request_id(),
+                action: crate::models::ChannelAction::Send,
+                answers: submission.answers,
+                directive: submission.directive,
+                annotations: submission.annotations,
+            })
+            .await;
     }
     Ok(())
 }
@@ -1408,8 +1412,13 @@ pub async fn submit_confirm_action(
     let bridge = app
         .try_state::<crate::app::GuiBridge>()
         .ok_or_else(|| "confirmation popup requires a daemon bridge".to_string())?;
-    bridge.send_confirm_answer(choice_index, comment);
-    Ok(())
+    bridge
+        .submit(crate::ipc::ClientMsg::ConfirmAnswer {
+            request_id: bridge.request_id(),
+            choice_index,
+            comment,
+        })
+        .await
 }
 
 #[tauri::command]

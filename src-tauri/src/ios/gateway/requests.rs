@@ -16,6 +16,7 @@ use crate::ios::push::PushOutcome;
 use crate::ios::store::{JournalEntry, JournalLookup, JournalResult};
 use crate::ios::views;
 use crate::ios::views::AssetSource;
+use crate::ios::wire::Msg;
 use crate::ios::wire::{
     self, t, AnswerAck, AnswerSubmit, ConfirmAck, ConfirmDecide, PushPlain, RelayPush,
     RequestSummary, RequestView, INLINE_REQUEST_BYTES, MAX_PLAIN_BYTES, PUSH_FALLBACK_SECS,
@@ -40,12 +41,31 @@ const MAX_ANSWER_TEXT_CHARS: usize = 64 * 1024;
 
 /// The question side of a request: where answers go.
 pub trait AskSink: Send + Sync + 'static {
+    fn operation(&self) -> Result<Option<crate::daemon::recovery::Operation>, ()> {
+        Ok(None)
+    }
     /// Feedback belongs in the inbox but must not ring for the same failure again.
     fn quiet_feedback(&self) -> bool {
         false
     }
     /// Submits the answer; `true` when this submission decided the request.
     fn try_submit(&self, result: ChannelResult) -> bool;
+    fn try_submit_identified(
+        &self,
+        result: ChannelResult,
+        _receipt: &crate::daemon::recovery::Receipt,
+        directive: Option<crate::daemon::away::Directive>,
+    ) -> bool {
+        let carries_directive = directive.is_some() && result.action == ChannelAction::Send;
+        if carries_directive {
+            self.set_directive(directive);
+        }
+        let accepted = self.try_submit(result);
+        if !accepted && carries_directive {
+            self.set_directive(None);
+        }
+        accepted
+    }
     /// Channel that decided the request, once it is decided.
     fn winner(&self) -> Option<String>;
     /// The surface can no longer reach a phone; the request keeps waiting elsewhere.
@@ -58,12 +78,23 @@ pub trait AskSink: Send + Sync + 'static {
 
 /// The confirmation side of a request.
 pub trait ConfirmSink: Send + Sync + 'static {
+    fn operation(&self) -> Result<Option<crate::daemon::recovery::Operation>, ()> {
+        Ok(None)
+    }
     /// Explicit development relays cannot wait for the daily idle notification policy.
     fn immediate_notification(&self) -> bool {
         false
     }
     /// `Ok(true)` decided, `Ok(false)` already decided, `Err` invalid input.
     fn decide(&self, wire_index: usize, comment: Option<String>) -> Result<bool, String>;
+    fn decide_identified(
+        &self,
+        wire_index: usize,
+        comment: Option<String>,
+        _receipt: &crate::daemon::recovery::Receipt,
+    ) -> Result<bool, String> {
+        self.decide(wire_index, comment)
+    }
     fn winner(&self) -> Option<String>;
     fn surface_lost(&self, reason: &str);
 }
@@ -75,6 +106,12 @@ pub enum Sink {
 }
 
 impl Sink {
+    fn operation(&self) -> Result<Option<crate::daemon::recovery::Operation>, ()> {
+        match self {
+            Self::Ask(sink) => sink.operation(),
+            Self::Confirm(sink) => sink.operation(),
+        }
+    }
     fn winner(&self) -> Option<String> {
         match self {
             Sink::Ask(s) => s.winner(),
@@ -128,7 +165,7 @@ impl Resolution {
 
 // ---------------------------------------------------------------- bookkeeping
 
-#[derive(Default)]
+#[derive(Clone, Default, serde::Serialize, serde::Deserialize)]
 pub(crate) struct PhoneDelivery {
     pub mqtt_sent_ms: Option<i64>,
     pub acked: bool,
@@ -520,8 +557,12 @@ impl Actor {
         let inline = json.len() <= INLINE_REQUEST_BYTES;
         let rev = self.revs.inbox;
         let mut reached = false;
+        let mut recovered = self
+            .recovered_deliveries
+            .remove(&pending.view.id)
+            .unwrap_or_default();
         for phone_id in &targets {
-            let mut delivery = PhoneDelivery::default();
+            let mut delivery = recovered.remove(phone_id).unwrap_or_default();
             if self.is_live(phone_id) && self.connected {
                 let request = if inline {
                     pending.view.clone()
@@ -821,6 +862,15 @@ impl Actor {
         hash: &str,
     ) -> Option<JournalLookup> {
         let lookup = self.store.journal_lookup(client_msg_id, phone_id, hash);
+        // Decisions have their own durable compare-and-set and may safely resume before ACK.
+        if matches!(msg_type, t::ANSWER_SUBMIT | t::CONFIRM_DECIDE)
+            && matches!(
+                lookup,
+                JournalLookup::Interrupted | JournalLookup::Replay(None)
+            )
+        {
+            return None;
+        }
         if lookup == JournalLookup::New {
             self.store.journal_put(
                 client_msg_id,
@@ -839,7 +889,28 @@ impl Actor {
     }
 
     pub(super) async fn on_answer_submit(&mut self, phone_id: &str, submit: AnswerSubmit) {
+        if !self.inbox_ready() {
+            return;
+        }
+        let _operation = match self
+            .requests
+            .find(&submit.request_id)
+            .map(|pending| pending.sink.operation())
+            .transpose()
+        {
+            Ok(operation) => operation.flatten(),
+            Err(()) => return,
+        };
         let hash = answer_hash(&submit);
+        if self.replay_receipt(
+            phone_id,
+            &submit.client_msg_id,
+            &hash,
+            &submit.request_id,
+            false,
+        ) {
+            return;
+        }
         if let Some(lookup) =
             self.replay_or_start(phone_id, &submit.client_msg_id, t::ANSWER_SUBMIT, &hash)
         {
@@ -852,7 +923,26 @@ impl Actor {
             );
             return;
         }
-        let (status, reason) = self.try_answer(phone_id, &submit);
+        let receipt = crate::daemon::recovery::Receipt {
+            phone_id: phone_id.to_string(),
+            client_msg_id: submit.client_msg_id.clone(),
+            hash,
+            result: JournalResult {
+                msg_type: t::ANSWER_ACK.into(),
+                body: AnswerAck {
+                    client_msg_id: submit.client_msg_id.clone(),
+                    request_id: submit.request_id.clone(),
+                    status: "accepted".into(),
+                    reason: None,
+                }
+                .to_value(),
+            },
+            at_ms: self.now(),
+        };
+        let (status, reason) = self.try_answer(phone_id, &submit, &receipt);
+        if status == "retry" {
+            return;
+        }
         let ack = AnswerAck {
             client_msg_id: submit.client_msg_id.clone(),
             request_id: submit.request_id.clone(),
@@ -871,7 +961,28 @@ impl Actor {
     }
 
     pub(super) async fn on_confirm_decide(&mut self, phone_id: &str, decide: ConfirmDecide) {
+        if !self.inbox_ready() {
+            return;
+        }
+        let _operation = match self
+            .requests
+            .find(&decide.request_id)
+            .map(|pending| pending.sink.operation())
+            .transpose()
+        {
+            Ok(operation) => operation.flatten(),
+            Err(()) => return,
+        };
         let hash = decide_hash(&decide);
+        if self.replay_receipt(
+            phone_id,
+            &decide.client_msg_id,
+            &hash,
+            &decide.request_id,
+            true,
+        ) {
+            return;
+        }
         if let Some(lookup) =
             self.replay_or_start(phone_id, &decide.client_msg_id, t::CONFIRM_DECIDE, &hash)
         {
@@ -884,7 +995,26 @@ impl Actor {
             );
             return;
         }
-        let (status, reason) = self.try_decide(&decide);
+        let receipt = crate::daemon::recovery::Receipt {
+            phone_id: phone_id.to_string(),
+            client_msg_id: decide.client_msg_id.clone(),
+            hash,
+            result: JournalResult {
+                msg_type: t::CONFIRM_ACK.into(),
+                body: ConfirmAck {
+                    client_msg_id: decide.client_msg_id.clone(),
+                    request_id: decide.request_id.clone(),
+                    status: "accepted".into(),
+                    reason: None,
+                }
+                .to_value(),
+            },
+            at_ms: self.now(),
+        };
+        let (status, reason) = self.try_decide(&decide, &receipt);
+        if status == "retry" {
+            return;
+        }
         let ack = ConfirmAck {
             client_msg_id: decide.client_msg_id.clone(),
             request_id: decide.request_id.clone(),
@@ -899,6 +1029,27 @@ impl Actor {
                 Resolution::AnsweredByPhone(phone_id.to_string()),
             )
             .await;
+        }
+    }
+
+    fn replay_receipt(
+        &mut self,
+        phone: &str,
+        id: &str,
+        hash: &str,
+        request: &str,
+        confirm: bool,
+    ) -> bool {
+        match self.host.submission_receipt(id, phone, hash) {
+            Ok(JournalLookup::New) => false,
+            Ok(lookup) => {
+                self.send_journal_reply(phone, lookup, id, request, confirm);
+                true
+            }
+            Err(error) => {
+                eprintln!("askhuman: waiting to restore mobile submission receipt: {error}");
+                true
+            }
         }
     }
 
@@ -1007,6 +1158,7 @@ impl Actor {
         &mut self,
         phone_id: &str,
         submit: &AnswerSubmit,
+        receipt: &crate::daemon::recovery::Receipt,
     ) -> (&'static str, Option<String>) {
         let Some(pending) = self.requests.find(&submit.request_id) else {
             return self.closed_status(&submit.request_id);
@@ -1034,18 +1186,14 @@ impl Actor {
             },
             _ => return ("invalid", Some("unknown action".into())),
         };
-        // Stashed before the race is decided; dropped again when another surface wins.
-        let carries_directive = directive.is_some() && submit.action == "send";
-        if carries_directive {
-            sink.set_directive(directive);
-        }
-        if sink.try_submit(result) {
+        if sink.try_submit_identified(result, receipt, directive) {
+            self.finish_reply_uploads(submit);
             ("accepted", None)
         } else {
-            if carries_directive {
-                sink.set_directive(None);
+            match sink.winner() {
+                Some(winner) => ("lost", Some(winner)),
+                None => ("retry", None),
             }
-            ("lost", sink.winner())
         }
     }
 
@@ -1152,7 +1300,7 @@ impl Actor {
             .cloned()
             .collect();
         let mut uploads = self
-            .take_uploads(phone_id, &submit.request_id, &all_ids)?
+            .reply_uploads(phone_id, &submit.request_id, &all_ids)?
             .into_iter();
         for item in &submit.answers {
             let answer = &mut answers[item.q];
@@ -1170,10 +1318,6 @@ impl Actor {
                     media_type,
                     filename: Some(file.name.clone()),
                 });
-                // The image travels inside the answer; the staged copy is no longer needed.
-                if let Some(dir) = file.path.parent() {
-                    let _ = std::fs::remove_dir_all(dir);
-                }
             }
             for _ in &item.files {
                 let Some(file) = uploads.next() else { break };
@@ -1183,7 +1327,11 @@ impl Actor {
         Ok(answers)
     }
 
-    fn try_decide(&mut self, decide: &ConfirmDecide) -> (&'static str, Option<String>) {
+    fn try_decide(
+        &mut self,
+        decide: &ConfirmDecide,
+        receipt: &crate::daemon::recovery::Receipt,
+    ) -> (&'static str, Option<String>) {
         let Some(pending) = self.requests.find(&decide.request_id) else {
             return self.closed_status(&decide.request_id);
         };
@@ -1213,9 +1361,17 @@ impl Actor {
             .filter(|t| !t.is_empty())
             .map(str::to_string);
         let sink = sink.clone();
-        match sink.decide(index, comment) {
+        match sink.decide_identified(index, comment, receipt) {
             Ok(true) => ("accepted", None),
-            Ok(false) => ("lost", sink.winner()),
+            Ok(false) => match sink.winner() {
+                Some(winner) => ("lost", Some(winner)),
+                None => ("retry", None),
+            },
+            Err(reason)
+                if reason.starts_with("unable to save") || reason.starts_with("updating") =>
+            {
+                ("retry", None)
+            }
             Err(reason) => ("invalid", Some(reason)),
         }
     }

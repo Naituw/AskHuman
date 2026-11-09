@@ -27,6 +27,7 @@ struct Terminal {
 }
 #[derive(Default)]
 struct Inner {
+    updating: bool,
     requests: HashMap<String, ShowPayload>,
     terminal: HashSet<String>,
     active: Option<String>,
@@ -98,6 +99,7 @@ impl Inner {
     }
 }
 pub struct Inbox {
+    recoverable: bool,
     inner: Mutex<Inner>,
     tx: UnboundedSender<ClientMsg>,
     generation: u64,
@@ -106,6 +108,7 @@ pub struct Inbox {
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Snapshot {
+    updating: bool,
     pub requests: Vec<ShowPayload>,
     recovered: bool,
     presented: bool,
@@ -114,11 +117,16 @@ pub struct Snapshot {
 impl Inbox {
     pub fn new(tx: UnboundedSender<ClientMsg>, generation: u64, recovered: bool) -> Self {
         Self {
+            recoverable: false,
             inner: Mutex::new(Inner::default()),
             tx,
             generation,
             recovered,
         }
+    }
+    fn with_recovery(mut self, recoverable: bool) -> Self {
+        self.recoverable = recoverable;
+        self
     }
     pub fn snapshot(&self) -> Snapshot {
         let state = self.inner.lock().unwrap();
@@ -129,6 +137,7 @@ impl Inbox {
                 .then_with(|| a.request_id.cmp(&b.request_id))
         });
         Snapshot {
+            updating: state.updating,
             requests,
             recovered: self.recovered,
             presented: state.presented,
@@ -246,14 +255,22 @@ impl Inbox {
             self.inner.lock().unwrap().submissions.remove(id);
             return Err(error);
         }
-        match tokio::time::timeout(std::time::Duration::from_secs(5), result).await {
-            Ok(Ok(result)) => result,
-            Ok(Err(_)) => {
-                Err("popup daemon connection closed before acknowledging the answer".into())
-            }
-            Err(_) => {
-                self.inner.lock().unwrap().expire_submission(id);
-                Err("popup answer acknowledgement timed out".into())
+        let mut result = result;
+        loop {
+            match tokio::time::timeout(std::time::Duration::from_secs(5), &mut result).await {
+                Ok(Ok(result)) => return result,
+                Ok(Err(_)) => {
+                    return Err(
+                        "popup daemon connection closed before acknowledging the answer".into(),
+                    );
+                }
+                Err(_) => {
+                    if self.recoverable || self.inner.lock().unwrap().updating {
+                        continue;
+                    }
+                    self.inner.lock().unwrap().expire_submission(id);
+                    return Err("popup answer acknowledgement timed out".into());
+                }
             }
         }
     }
@@ -267,6 +284,19 @@ impl Inbox {
     }
     pub fn receive(&self, app: &AppHandle, message: ServerMsg) {
         match message {
+            ServerMsg::Recovery {
+                version: crate::daemon::recovery::VERSION,
+                event,
+            } => {
+                use crate::daemon::recovery::Event;
+                let updating = match serde_json::from_value::<Event>(event) {
+                    Ok(Event::Updating) => true,
+                    Ok(Event::Updated) => false,
+                    _ => return,
+                };
+                self.inner.lock().unwrap().updating = updating;
+                let _ = app.emit("popup-connection", updating);
+            }
             ServerMsg::Show(show) => {
                 let mut state = self.inner.lock().unwrap();
                 if !state.insert(show.clone()) {
@@ -422,7 +452,7 @@ impl Inbox {
 
 pub(super) fn setup(app: &mut tauri::App, ipc: super::PopupIpc) -> tauri::Result<()> {
     let (generation, recovered) = ipc.host.expect("shared popup requires a host lease");
-    app.manage(Inbox::new(ipc.gui_tx, generation, recovered));
+    app.manage(Inbox::new(ipc.gui_tx, generation, recovered).with_recovery(ipc.recoverable));
     let app = app.handle().clone();
     tauri::async_runtime::spawn(async move {
         let mut reader = ipc.reader;

@@ -100,6 +100,7 @@ public enum Wire {
 
 /// Retained presence message (plaintext; carries no content).
 public struct Presence: Codable, Equatable, Sendable {
+    public var u: String?
     /// 1 online, 0 offline.
     public var o: Int
     public var t: Int64
@@ -110,7 +111,8 @@ public struct Presence: Codable, Equatable, Sendable {
     /// Mac gateway epoch (changes on every start).
     public var e: String?
 
-    public init(o: Int, t: Int64, r: String, fg: Int = 0, e: String? = nil) {
+    public init(o: Int, t: Int64, r: String, fg: Int = 0, e: String? = nil, u: String? = nil) {
+        self.u = u
         self.o = o
         self.t = t
         self.r = r
@@ -125,6 +127,7 @@ public struct Presence: Codable, Equatable, Sendable {
         r = try c.decode(String.self, forKey: .r)
         fg = try c.decodeIfPresent(Int.self, forKey: .fg) ?? 0
         e = try c.decodeIfPresent(String.self, forKey: .e)
+        u = try c.decodeIfPresent(String.self, forKey: .u)
     }
 }
 

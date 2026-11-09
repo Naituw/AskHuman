@@ -72,6 +72,7 @@ export default {
   },
   popup: {
     inbox: {
+      updating: "Updating AskHuman. Your input stays here, and submissions resume automatically.",
       sending: "Sending…", submitting: "Submitting…",
       pending: "Waiting for answers", unknownProject: "No project", untitled: "Question", unread: "Unread", draft: "Draft", resize: "Resize request list", dismiss: "Dismiss notice",
       later: "Answer later", laterLabel: "Later", undoLater: "Undo answer later",
@@ -198,10 +199,10 @@ export default {
       button: "Update",
       updating: "Updating…",
       applyHint:
-        "The update takes effect after you finish answering — it won't interrupt you.",
-      startedHint: "Update started; it applies once you finish answering.",
+        "The background service updates automatically. Your questions and input are kept.",
+      startedHint: "Update started. Your questions and input are kept, and the connection resumes automatically.",
       pendingBanner:
-        "A new version will take effect once all popups are answered — please reply soon.",
+        "A new version is installed. The background service updates automatically while keeping your questions and input.",
       failed: "Update failed",
       rateLimited:
         "GitHub requests are rate-limited (shared IP quota exhausted). Try again later or download manually.",
@@ -998,8 +999,8 @@ export default {
       updateAvailable: "New version {version} available",
       update: "Update",
       updating: "Updating…",
-      applyAfterAnswer: "The update takes effect after you finish answering.",
-      updatedRestartHint: "Updated — takes effect on the next prompt.",
+      applyAfterAnswer: "The background service updates automatically while keeping your questions and input.",
+      updatedRestartHint: "A new version is installed. The background service is updating automatically.",
       restartSettings: "Restart settings",
       viewAllReleases: "View all releases",
       releaseNotes: "Release notes",

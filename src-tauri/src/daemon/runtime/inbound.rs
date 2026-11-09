@@ -1962,7 +1962,9 @@ pub(super) async fn backfill_inflight(
             continue;
         }
         if let Some(ch) = build_im_channel(channel_id, &entry, config, state).await {
-            entry.coordinator.register(ch.clone());
+            if !entry.coordinator.register(ch.clone()) {
+                continue;
+            }
             let origin = super::im_conversation_origin(&entry, None);
             ch.start(entry.request(), &origin, entry.coordinator.clone());
             n += 1;

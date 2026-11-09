@@ -96,6 +96,8 @@ pub fn is_valid_broker_user(user: &str) -> bool {
 /// Retained presence message (plaintext; carries no content).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Presence {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub u: Option<String>,
     /// 1 online, 0 offline.
     pub o: u8,
     pub t: i64,
@@ -219,6 +221,8 @@ fn is_zero(v: &u64) -> bool {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Caps {
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub live_update: bool,
     pub new_task: bool,
     pub interject: bool,
     pub watch: bool,
@@ -1720,6 +1724,7 @@ mod tests {
     #[test]
     fn the_notes_fields_are_additive_in_both_directions() {
         let caps = |annotations: bool| Caps {
+            live_update: false,
             new_task: true,
             interject: true,
             watch: true,

@@ -13,6 +13,7 @@ extension RequestConnection {
     func notice(offlineText: LocalizedStringKey) -> RequestConnectionNotice? {
         switch self {
         case .ready: nil
+        case .updating: RequestConnectionNotice(text: "Your Mac is updating. Your input is kept and sending resumes automatically.", progressing: true)
         case .connecting: RequestConnectionNotice(text: "Connecting…", progressing: true)
         case .reconnecting: RequestConnectionNotice(text: "Connection interrupted. Retrying…", progressing: true)
         case .refused: RequestConnectionNotice(text: "Connection refused. Check the connection settings on your Mac.", warning: true)

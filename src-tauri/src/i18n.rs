@@ -1506,8 +1506,8 @@ pub fn tr(lang: Lang, key: &'static str) -> &'static str {
         "tray.updateTargetFallback" => pick(lang, "New version", "新版本"),
         "tray.updatePendingWaiting" => pick(
             lang,
-            "↑ {v} installed — waiting for {n} in-flight request(s) before restarting daemon (won't interrupt them)",
-            "↑ {v} 已安装 — 等待 {n} 个在途请求完成后重启 daemon（不会中断作答）",
+            "↑ {v} installed — updating automatically, keeping {n} pending request(s)",
+            "↑ {v} 已安装 — 将自动更新，保留 {n} 个待答问题",
         ),
         "tray.updatePendingRestarting" => pick(
             lang,
@@ -1580,8 +1580,8 @@ pub fn tr(lang: Lang, key: &'static str) -> &'static str {
         ),
         "tray.applyUpdate" => pick(
             lang,
-            "Update to v{v} (applies after answering)",
-            "更新到 v{v}（答完后生效）",
+            "Update to v{v} (keeps your answers)",
+            "更新到 v{v}（保留当前作答）",
         ),
         "tray.prepareManualUpdate" => pick(
             lang,

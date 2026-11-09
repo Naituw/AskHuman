@@ -118,8 +118,8 @@ final class TestMac: @unchecked Sendable {
         client.disconnect()
     }
 
-    func publishPresence(online: Bool) async {
-        let presence = Presence(o: online ? 1 : 0, t: clock.nowMs() / 1000, r: "mac", e: online ? epoch : nil)
+    func publishPresence(online: Bool, update: String? = nil) async {
+        let presence = Presence(o: online ? 1 : 0, t: clock.nowMs() / 1000, r: "mac", e: online ? epoch : nil, u: update)
         _ = await client.publish(topic: Wire.topicPresence(user: user, deviceId: macId), payload: try! AHJSON.encoder.encode(presence), retain: true)
     }
 

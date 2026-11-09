@@ -209,8 +209,8 @@ private struct MacRow: View {
             VStack(alignment: .leading, spacing: 3) {
                 Text(mac.name).font(.headline)
                 HStack(spacing: 6) {
-                    StatusDot(color: mac.link.color)
-                    Text(mac.link.title).font(.footnote).foregroundStyle(.secondary)
+                    StatusDot(color: mac.isUpdating ? .secondary : mac.link.color)
+                    if mac.isUpdating { Text("Updating…") } else if mac.update == "pending" { Text("Update pending") } else { Text(mac.link.title) }
                     if mac.link != .online, let seen = mac.lastSeenAt {
                         Text("· last seen \(Text(seen, style: .relative)) ago")
                     }

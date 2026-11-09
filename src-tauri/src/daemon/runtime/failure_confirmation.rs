@@ -79,6 +79,7 @@ struct HandledTurn {
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 struct Saved {
+    delivery_key: Option<String>,
     result: String,
     /// Anchors the card's lifetime across daemon replacements.
     created_ms: u64,
@@ -100,6 +101,8 @@ struct SavedFile {
 #[derive(Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct SavedCard {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    delivery_key: Option<String>,
     kind: String,
     session_id: String,
     result_id: String,
@@ -229,9 +232,15 @@ impl Cards {
             .get(&(kind, sid.to_string()))
             .filter(|s| s.result == result)
             .is_some_and(|s| s.attempted);
+        let delivery_key = inner
+            .saved
+            .get(&(kind, sid.to_string()))
+            .filter(|saved| saved.result == result)
+            .and_then(|saved| saved.delivery_key.clone());
         inner.saved.insert(
             (kind, sid.into()),
             Saved {
+                delivery_key,
                 result: result.into(),
                 created_ms,
                 attempt,
@@ -257,6 +266,7 @@ impl Cards {
         inner.saved.insert(
             key,
             Saved {
+                delivery_key: None,
                 result: result.into(),
                 created_ms: now_ms(),
                 attempt: None,
@@ -375,6 +385,70 @@ impl Cards {
             .cloned()
     }
 
+    pub(super) fn reconcile_deliveries(
+        &self,
+        store: &super::super::recovery::Store,
+    ) -> anyhow::Result<()> {
+        let keys: std::collections::HashSet<_> = self
+            .inner
+            .lock()
+            .unwrap()
+            .saved
+            .values()
+            .filter_map(|saved| saved.delivery_key.clone())
+            .collect();
+        for (key, record) in store.owned_records("failure/")? {
+            if !keys.contains(&key) && record.effect == super::super::recovery::OwnedEffect::Waiting
+            {
+                store.cancel_owned(&key)?;
+            }
+        }
+        Ok(())
+    }
+
+    fn delivery(&self, kind: AgentKind, sid: &str, result: &str) -> Option<String> {
+        let mut inner = self.inner.lock().unwrap();
+        let saved = inner
+            .saved
+            .get_mut(&(kind, sid.into()))
+            .filter(|saved| saved.result == result)?;
+        if let Some(key) = &saved.delivery_key {
+            return Some(key.clone());
+        }
+        let key = format!("failure/{}", uuid::Uuid::new_v4());
+        saved.delivery_key = Some(key.clone());
+        if self.persist(&inner) {
+            return Some(key);
+        }
+        inner
+            .saved
+            .get_mut(&(kind, sid.into()))
+            .unwrap()
+            .delivery_key = None;
+        None
+    }
+
+    fn advance_delivery(&self, kind: AgentKind, sid: &str, result: &str) -> bool {
+        let mut inner = self.inner.lock().unwrap();
+        let Some(saved) = inner
+            .saved
+            .get_mut(&(kind, sid.into()))
+            .filter(|saved| saved.result == result)
+        else {
+            return true;
+        };
+        let previous = saved.delivery_key.take();
+        if self.persist(&inner) {
+            return true;
+        }
+        inner
+            .saved
+            .get_mut(&(kind, sid.into()))
+            .unwrap()
+            .delivery_key = previous;
+        false
+    }
+
     fn attempt(&self, kind: AgentKind, sid: &str, result: &str, attempt: Option<Attempt>) -> bool {
         let mut inner = self.inner.lock().unwrap();
         let Some(saved) = inner
@@ -405,6 +479,7 @@ impl Cards {
             .saved
             .iter()
             .map(|((kind, sid), saved)| SavedCard {
+                delivery_key: saved.delivery_key.clone(),
                 kind: kind.as_str().into(),
                 session_id: sid.clone(),
                 result_id: saved.result.clone(),
@@ -440,6 +515,7 @@ fn load(file: &std::path::Path, now: u64) -> HashMap<(AgentKind, String), Saved>
             .then_some((
                 (kind, card.session_id),
                 Saved {
+                    delivery_key: card.delivery_key,
                     result: card.result_id,
                     created_ms: card.created_ms,
                     attempt: card.attempt,
@@ -702,9 +778,25 @@ fn start_card(state: &Arc<ServerState>, kind: AgentKind, sid: &str, result: Turn
     tokio::spawn(async move {
         let deadline_ms = created_ms.saturating_add(CARD_LIFETIME.as_millis() as u64);
         let mut feedback = String::new();
+        let mut consumed: Option<crate::client::recovery::OwnedHandle> = None;
         loop {
             if state.closing.load(Ordering::SeqCst) {
                 return;
+            }
+            if let Some(handle) = consumed.take() {
+                while !state
+                    .failure_confirmations
+                    .advance_delivery(kind, &sid, &result.id)
+                {
+                    if state.closing.load(Ordering::SeqCst) {
+                        return;
+                    }
+                    log("waiting to save the next failure card delivery");
+                    tokio::time::sleep(Duration::from_secs(1)).await;
+                }
+                if handle.effect == super::super::recovery::OwnedEffect::Waiting {
+                    handle.complete(true).await;
+                }
             }
             if now_ms() >= deadline_ms
                 || !current(&state, kind, &sid, &result.id)
@@ -812,11 +904,53 @@ fn start_card(state: &Arc<ServerState>, kind: AgentKind, sid: &str, result: Turn
             if let Some(gateway) = ios_gateway(&state) {
                 gateway.hold_failure(&key, &result.id);
             }
-            let ask = async {
-                while state.registry.waiting_for_session(&sid) {
-                    tokio::time::sleep(Duration::from_millis(250)).await;
+            let recoverable = info.is_none() && state.recovery.is_some();
+            let delivery = loop {
+                if !recoverable {
+                    break None;
                 }
-                crate::client::internal_ask(task, &accepted).await
+                if let Some(key) = state.failure_confirmations.delivery(kind, &sid, &result.id) {
+                    break Some(key);
+                }
+                if state.closing.load(Ordering::SeqCst) || !current(&state, kind, &sid, &result.id)
+                {
+                    return;
+                }
+                log("waiting to save the failure card identity");
+                tokio::time::sleep(Duration::from_secs(1)).await;
+            };
+            let already_presented = delivery.as_ref().is_some_and(|key| {
+                crate::client::recovery::owned_request_id(key)
+                    .ok()
+                    .flatten()
+                    .is_some()
+            });
+            let ask = async {
+                if !already_presented {
+                    while state.registry.waiting_for_session(&sid) {
+                        tokio::time::sleep(Duration::from_millis(250)).await;
+                    }
+                }
+                if let Some(delivery) = delivery {
+                    let (outcome, handle) = crate::client::recovery::run_owned_observed(
+                        delivery,
+                        super::super::recovery::Task::Ask(Box::new(task)),
+                        Some(&accepted),
+                    )
+                    .await;
+                    match outcome {
+                        super::super::recovery::Outcome::Ask(outcome) => {
+                            (outcome.stdout, outcome.exit_code, Some(handle))
+                        }
+                        _ if handle.effect == super::super::recovery::OwnedEffect::Complete => {
+                            (String::new(), 0, None)
+                        }
+                        _ => (String::new(), 3, Some(handle)),
+                    }
+                } else {
+                    let (stdout, code) = crate::client::internal_ask(task, &accepted).await;
+                    (stdout, code, None)
+                }
             };
             let answer = tokio::select! {
                 _ = cancel.notified() => None,
@@ -828,7 +962,7 @@ fn start_card(state: &Arc<ServerState>, kind: AgentKind, sid: &str, result: Turn
             };
             if let Some(info) = info.filter(|i| !i.relay) {
                 match &answer {
-                    Some((stdout, code)) => {
+                    Some((stdout, code, _)) => {
                         let _ = crate::development::verification::complete(&info, stdout, *code);
                     }
                     None => {
@@ -840,9 +974,10 @@ fn start_card(state: &Arc<ServerState>, kind: AgentKind, sid: &str, result: Turn
             if state.closing.load(Ordering::SeqCst) {
                 return;
             }
-            let Some((stdout, code)) = answer else {
+            let Some((stdout, code, handle)) = answer else {
                 break;
             };
+            consumed = handle;
             if code != 0 {
                 // Infrastructure failure is not an acknowledgment. Leave the persistent card for
                 // this daemon's next recovery, or its successor.
@@ -881,16 +1016,26 @@ fn start_card(state: &Arc<ServerState>, kind: AgentKind, sid: &str, result: Turn
             } else {
                 "failure-confirmation".into()
             };
+            if let Some(handle) = &consumed {
+                if !handle.claim().await {
+                    return;
+                }
+            }
             let attempt = Attempt {
                 phone,
                 message: uuid::Uuid::new_v4().to_string(),
             };
-            if !state
-                .failure_confirmations
-                .attempt(kind, &sid, &result.id, Some(attempt.clone()))
-            {
-                feedback = match lang { Lang::Zh => "未能保存接续记录，没有发送。请检查磁盘空间后重试。", Lang::En => "Could not save the continuation record. Nothing was sent; check disk space and retry." }.into();
-                continue;
+            while !state.failure_confirmations.attempt(
+                kind,
+                &sid,
+                &result.id,
+                Some(attempt.clone()),
+            ) {
+                if state.closing.load(Ordering::SeqCst) {
+                    return;
+                }
+                log("waiting to save the failure continuation intent");
+                tokio::time::sleep(Duration::from_secs(1)).await;
             }
             let response = super::agent_control::send(
                 &state,
@@ -932,6 +1077,11 @@ fn start_card(state: &Arc<ServerState>, kind: AgentKind, sid: &str, result: Turn
                 .to_string();
         }
         state.failure_confirmations.finish(kind, &sid, &result.id);
+        if let Some(handle) = consumed {
+            if handle.effect == super::super::recovery::OwnedEffect::Waiting {
+                handle.complete(true).await;
+            }
+        }
         state.agents.release_failure(kind, &sid, &result.id);
         state.agents.persist();
     });
@@ -971,6 +1121,33 @@ mod tests {
             .collect();
         saved.sort_by(|a, b| a.1.cmp(&b.1));
         saved
+    }
+
+    #[test]
+    fn a_pending_failure_delivery_keeps_its_identity_across_daemon_restarts() {
+        let dir = tempfile::tempdir().unwrap();
+        let file = dir.path().join("cards.json");
+        let first = {
+            let cards = Cards::persistent(file.clone());
+            cards.remember(AgentKind::Codex, "session", "result");
+            cards
+                .delivery(AgentKind::Codex, "session", "result")
+                .unwrap()
+        };
+        let cards = Cards::persistent(file);
+        assert_eq!(
+            cards
+                .delivery(AgentKind::Codex, "session", "result")
+                .unwrap(),
+            first
+        );
+        assert!(cards.advance_delivery(AgentKind::Codex, "session", "result"));
+        assert_ne!(
+            cards
+                .delivery(AgentKind::Codex, "session", "result")
+                .unwrap(),
+            first
+        );
     }
 
     #[test]

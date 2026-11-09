@@ -8,7 +8,7 @@ pub(super) async fn handle_detect(
     req: &DetectRequest,
     state: &Arc<ServerState>,
     reader: &mut Reader,
-    w: &mut OwnedWriteHalf,
+    w: &mut Writer,
 ) {
     let lang = Lang::resolve(&req.lang);
     let work = async {

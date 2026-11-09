@@ -392,8 +392,12 @@ pub fn run_windows_worker(args: &[String]) -> Result<()> {
         let gui_host_was_running = crate::ipc::transport::connect_role("gui-host")
             .await
             .is_ok();
-        let _ = crate::client::request_stop(false).await;
-        crate::client::wait_until_down(std::time::Duration::from_secs(24 * 60 * 60)).await;
+        // A capable daemon keeps serving until the verified replacement triggers its handoff.
+        // Older daemons still finish their legacy callers before the installation proceeds.
+        if !crate::client::recovery::available().await {
+            let _ = crate::client::request_stop(false).await;
+            crate::client::wait_until_down(std::time::Duration::from_secs(24 * 60 * 60)).await;
+        }
         let _ = crate::gui_host::shutdown_if_running().await;
         for _ in 0..300 {
             if crate::ipc::transport::connect_role("gui-host")

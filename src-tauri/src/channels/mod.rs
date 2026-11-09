@@ -134,6 +134,8 @@ impl ConversationOrigin {
 /// in the wording of the card's terminal state.
 #[derive(Clone)]
 pub enum Interruption {
+    /// A daemon handoff preserves this surface and its progress for the next instance.
+    Handoff,
     /// Another channel answered first; carries the winner's display name.
     AnsweredBy(String),
     /// The whole request was cancelled; carries the cancel source display name (empty = generic).
@@ -166,6 +168,10 @@ impl Preemption {
 
     pub fn is_cancelled(&self) -> bool {
         self.cancelled.load(Ordering::SeqCst)
+    }
+
+    pub fn is_handoff(&self) -> bool {
+        matches!(self.reason(), Some(Interruption::Handoff))
     }
 
     /// The interruption reason (None until interrupted).

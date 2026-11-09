@@ -1803,3 +1803,34 @@ async fn continuation_feedback_stays_in_the_inbox_without_another_push_or_ack_fa
         "a feedback does not ring again in the background"
     );
 }
+
+#[tokio::test(start_paused = true)]
+async fn a_restored_question_keeps_its_notification_and_snapshot_waits_for_its_surface() {
+    let fx = Fixture::new().await;
+    let mut phone = fx.live_phone().await;
+    phone.set_presence(true, false).await;
+    deliver_ask(&fx, "req1");
+    tokio::time::sleep(SECOND).await;
+    assert_eq!(fx.pusher.count(), 1);
+    fx.host.pending_ios.lock().unwrap().push("req1".into());
+    let fx = fx.handoff().await;
+    phone.set_presence(true, true).await;
+    phone.clear_queue();
+    phone.hello().await;
+    assert!(
+        !phone
+            .gets(t::INBOX_SNAPSHOT, Duration::from_millis(500))
+            .await
+    );
+    deliver_ask(&fx, "req1");
+    let snapshot: wire::InboxSnapshot = phone.recv_body(t::INBOX_SNAPSHOT).await;
+    assert_eq!(snapshot.items.len(), 1);
+    assert_eq!(snapshot.items[0].id, "req1");
+    phone.set_presence(true, false).await;
+    tokio::time::sleep(SECOND).await;
+    assert_eq!(
+        fx.pusher.count(),
+        0,
+        "the successor must reuse the recorded push fact"
+    );
+}

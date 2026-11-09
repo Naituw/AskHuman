@@ -164,6 +164,7 @@ pub struct ConfirmEntry {
     pub gui: GuiSlot,
     pub gui_connected: AtomicBool,
     pub cancel: Arc<Notify>,
+    pub pause: Arc<Notify>,
     /// Set when the winning remember choice could not be persisted and the decision was
     /// degraded to allow-once (spec codex-permission-remember D25); surfaces append a note.
     pub memory_save_failed: Arc<AtomicBool>,
@@ -206,11 +207,32 @@ impl InteractionEntry {
 }
 
 impl ConfirmEntry {
+    pub fn retry_delivery(&self, channel: &str) -> bool {
+        let mut delivery = self.delivery.lock().unwrap();
+        if matches!(
+            delivery.get(channel),
+            Some(ConfirmDeliveryState::Starting | ConfirmDeliveryState::Ready { .. })
+        ) {
+            return false;
+        }
+        delivery.insert(channel.into(), ConfirmDeliveryState::Starting);
+        drop(delivery);
+        self.start_delivery(channel);
+        true
+    }
     pub fn start_delivery(&self, channel_id: impl Into<String>) {
+        let channel_id = channel_id.into();
+        if channel_id != "popup" {
+            if let Some(context) = self.coordinator.recovery() {
+                if let Err(error) = context.remember_channel(&channel_id) {
+                    eprintln!("askhuman: cannot save confirmation delivery routes: {error}");
+                }
+            }
+        }
         self.delivery
             .lock()
             .unwrap()
-            .entry(channel_id.into())
+            .entry(channel_id)
             .or_insert(ConfirmDeliveryState::Starting);
     }
 
@@ -343,6 +365,7 @@ pub fn create_internal_confirm(
         gui: Arc::new(Mutex::new(None)),
         gui_connected: AtomicBool::new(false),
         cancel: Arc::new(Notify::new()),
+        pause: Arc::new(Notify::new()),
         memory_save_failed: Arc::new(AtomicBool::new(false)),
     });
     entry.start_delivery(source_channel);
@@ -471,7 +494,52 @@ impl RequestRegistry {
         agent_console_session_id: Option<String>,
         escalated: Option<crate::models::EscalationReason>,
     ) -> (Arc<RequestEntry>, UnboundedReceiver<RenderOutcome>) {
-        let request_id = uuid::Uuid::new_v4().to_string();
+        self.create_ask(task, agent_console_session_id, escalated, None, None)
+    }
+
+    pub fn create_recoverable(
+        &self,
+        task: TaskRequest,
+        agent_console_session_id: Option<String>,
+        escalated: Option<crate::models::EscalationReason>,
+        recovery: Arc<super::recovery::RequestContext>,
+    ) -> anyhow::Result<(Arc<RequestEntry>, UnboundedReceiver<RenderOutcome>)> {
+        let mut saved = recovery
+            .store
+            .request(&recovery.id)?
+            .ok_or_else(|| anyhow::anyhow!("saved recovery request is missing"))?
+            .request;
+        let restored = saved.show.clone();
+        saved.task = super::recovery::Task::Ask(Box::new(task.clone()));
+        let (entry, receiver) = self.create_ask(
+            task,
+            agent_console_session_id,
+            escalated,
+            Some(recovery.clone()),
+            restored,
+        );
+        let mut show = entry.show.clone();
+        show.sequence = entry.seq;
+        saved.show = Some(show);
+        if let Err(error) = recovery.store.present(&saved) {
+            self.remove(&entry.request_id);
+            return Err(error);
+        }
+        Ok((entry, receiver))
+    }
+
+    fn create_ask(
+        &self,
+        task: TaskRequest,
+        agent_console_session_id: Option<String>,
+        escalated: Option<crate::models::EscalationReason>,
+        recovery: Option<Arc<super::recovery::RequestContext>>,
+        restored: Option<ShowPayload>,
+    ) -> (Arc<RequestEntry>, UnboundedReceiver<RenderOutcome>) {
+        let request_id = recovery
+            .as_ref()
+            .map(|context| context.id.clone())
+            .unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
         let token = uuid::Uuid::new_v4().to_string();
         let lang = Lang::resolve(&task.lang);
         // 在 task 被逐字段 move 前取出会话 ID（供在途豁免按 session_id 刷新）。
@@ -509,6 +577,10 @@ impl RequestRegistry {
             &crate::config::AppConfig::load_without_secrets().general,
             lang,
         );
+        if let Some(original) = restored.as_ref().and_then(|show| show.interaction.ask()) {
+            request = original.clone();
+        }
+        request.recovery = recovery;
 
         let (final_tx, final_rx) = tokio::sync::mpsc::unbounded_channel();
         let coordinator = Coordinator::new_ipc(
@@ -535,7 +607,7 @@ impl RequestRegistry {
 
         let show_agent_session_id = task.agent_session_id.clone();
         let show_mcp_instance_id = task.mcp_instance_id.clone();
-        let show = ShowPayload {
+        let mut show = ShowPayload {
             caller_cwd: task.caller_cwd,
             request_id: request_id.clone(),
             sequence: 0,
@@ -557,10 +629,21 @@ impl RequestRegistry {
             // 提问创建时刻：弹窗相对时间的锚点（预热弹窗领用时即为真正到达时刻）。
             created_at_ms: crate::perf::now_ms() as u64,
         };
+        let seq = if let Some(original) = restored {
+            let seq = original.sequence;
+            let interaction = show.interaction;
+            show = original;
+            show.interaction = interaction;
+            self.next_seq
+                .fetch_max(seq.saturating_add(1), Ordering::SeqCst);
+            seq
+        } else {
+            self.next_seq.fetch_add(1, Ordering::SeqCst)
+        };
 
         let entry = Arc::new(RequestEntry {
             request_id: request_id.clone(),
-            seq: self.next_seq.fetch_add(1, Ordering::SeqCst),
+            seq,
             token: token.clone(),
             coordinator,
             show,
@@ -616,6 +699,45 @@ impl RequestRegistry {
         task: ConfirmTask,
         agent_console_session_id: Option<String>,
     ) -> Result<(Arc<ConfirmEntry>, UnboundedReceiver<ConfirmOutcome>), String> {
+        self.create_confirm_inner(task, agent_console_session_id, None, None)
+    }
+
+    pub fn create_confirm_recoverable(
+        &self,
+        task: ConfirmTask,
+        agent_console_session_id: Option<String>,
+        recovery: Arc<super::recovery::RequestContext>,
+    ) -> Result<(Arc<ConfirmEntry>, UnboundedReceiver<ConfirmOutcome>), String> {
+        let mut saved = recovery
+            .store
+            .request(&recovery.id)
+            .map_err(|error| format!("unable to save confirmation: {error}"))?
+            .ok_or_else(|| "unable to save confirmation: saved request is missing".to_string())?
+            .request;
+        saved.task = super::recovery::Task::Confirm(Box::new(task.clone()));
+        let (entry, receiver) = self.create_confirm_inner(
+            task,
+            agent_console_session_id,
+            Some(recovery.clone()),
+            saved.show.clone(),
+        )?;
+        let mut show = entry.show.clone();
+        show.sequence = entry.seq;
+        saved.show = Some(show);
+        if let Err(error) = recovery.store.present(&saved) {
+            self.remove_confirm(&entry.request_id);
+            return Err(format!("unable to save confirmation: {error}"));
+        }
+        Ok((entry, receiver))
+    }
+
+    fn create_confirm_inner(
+        &self,
+        task: ConfirmTask,
+        agent_console_session_id: Option<String>,
+        recovery: Option<Arc<super::recovery::RequestContext>>,
+        restored: Option<ShowPayload>,
+    ) -> Result<(Arc<ConfirmEntry>, UnboundedReceiver<ConfirmOutcome>), String> {
         const REQUIRED_CONTEXT: [&str; 6] = [
             "agent",
             "project",
@@ -652,16 +774,30 @@ impl RequestRegistry {
                 .collect();
             memory.validate(&choice_ids)?;
         }
-        let request_id = uuid::Uuid::new_v4().to_string();
+        let request_id = recovery
+            .as_ref()
+            .map(|context| context.id.clone())
+            .unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
         let token = uuid::Uuid::new_v4().to_string();
         let created_at_ms = crate::perf::now_ms() as u64;
         const TTL_SECS: u64 = 24 * 60 * 60;
         let expires_at_ms = created_at_ms.saturating_add(TTL_SECS * 1000);
-        let request = Arc::new(task.spec.into_request(
-            request_id.clone(),
-            created_at_ms,
-            expires_at_ms,
-        )?);
+        let mut request =
+            task.spec
+                .into_request(request_id.clone(), created_at_ms, expires_at_ms)?;
+        if let Some(ShowPayload {
+            interaction: InteractionRequest::Confirm(original),
+            ..
+        }) = &restored
+        {
+            request = original.clone();
+        }
+        let remaining = std::time::Duration::from_millis(
+            request
+                .expires_at_ms
+                .saturating_sub(crate::perf::now_ms() as u64),
+        );
+        let request = Arc::new(request);
         let (final_tx, final_rx) = tokio::sync::mpsc::unbounded_channel();
         let memory_save_failed = Arc::new(AtomicBool::new(false));
         let finalizer = memory_finalizer(
@@ -670,6 +806,9 @@ impl RequestRegistry {
             memory_save_failed.clone(),
         );
         let coordinator = ConfirmCoordinator::with_finalizer(request.clone(), final_tx, finalizer);
+        if let Some(context) = recovery {
+            coordinator.set_recovery(context);
+        }
         let show = ShowPayload {
             caller_cwd: task.caller_cwd,
             request_id: request_id.clone(),
@@ -691,10 +830,18 @@ impl RequestRegistry {
             perf_autodismiss: false,
             created_at_ms,
         };
+        let (show, seq) = if let Some(original) = restored {
+            self.next_seq
+                .fetch_max(original.sequence.saturating_add(1), Ordering::SeqCst);
+            let seq = original.sequence;
+            (original, seq)
+        } else {
+            (show, self.next_seq.fetch_add(1, Ordering::SeqCst))
+        };
         let entry = Arc::new(ConfirmEntry {
             development: task.development,
             request_id: request_id.clone(),
-            seq: self.next_seq.fetch_add(1, Ordering::SeqCst),
+            seq,
             token: token.clone(),
             coordinator,
             request,
@@ -705,12 +852,13 @@ impl RequestRegistry {
             agent_kind: task.agent_kind,
             agent_session_id: task.agent_session_id,
             caller_pid: task.caller_pid,
-            deadline: tokio::time::Instant::now() + std::time::Duration::from_secs(TTL_SECS),
+            deadline: tokio::time::Instant::now() + remaining,
             delivery: Mutex::new(HashMap::new()),
             gui: Arc::new(Mutex::new(None)),
             gui_connected: AtomicBool::new(false),
             cancel: Arc::new(Notify::new()),
             memory_save_failed,
+            pause: Arc::new(Notify::new()),
         });
         let mut inner = self.inner.lock().unwrap();
         inner.confirm_by_id.insert(request_id, entry.clone());

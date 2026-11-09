@@ -9,8 +9,138 @@ use crate::models::{
 };
 use std::sync::Arc;
 
+#[derive(Clone, Default, serde::Serialize, serde::Deserialize)]
+#[serde(default, rename_all = "camelCase")]
+pub struct QuestionProgress {
+    pub target_id: Option<String>,
+    pub route_id: Option<String>,
+    pub nonce: Option<String>,
+    pub message_id: Option<String>,
+    pub text_mode: bool,
+    pub text_sent: bool,
+    pub selected_options: Vec<String>,
+    pub input: String,
+    pub images: Vec<crate::models::ImageAttachment>,
+    pub files: Vec<String>,
+    pub pending_attachments: Vec<PendingAttachment>,
+    pub completed_attachments: Vec<String>,
+    pub processed_events: Vec<String>,
+    pub submission: Option<QuestionAnswer>,
+    pub answer: Option<QuestionAnswer>,
+}
+
+#[derive(Clone, serde::Serialize, serde::Deserialize)]
+pub struct PendingAttachment {
+    pub id: String,
+    pub event: serde_json::Value,
+}
+
+#[derive(Clone)]
+pub struct AttachmentProgress {
+    pub images: Arc<std::sync::Mutex<Vec<crate::models::ImageAttachment>>>,
+    pub files: Arc<std::sync::Mutex<Vec<String>>>,
+    pending: Arc<std::sync::Mutex<Vec<PendingAttachment>>>,
+    completed: Arc<std::sync::Mutex<Vec<String>>>,
+    recovery: Option<Arc<crate::daemon::recovery::RequestContext>>,
+    key: String,
+}
+
+impl AttachmentProgress {
+    pub fn new(ctx: &QuestionCtx<'_>, channel: &str, saved: &QuestionProgress) -> Self {
+        Self {
+            images: Arc::new(std::sync::Mutex::new(saved.images.clone())),
+            files: Arc::new(std::sync::Mutex::new(saved.files.clone())),
+            pending: Arc::new(std::sync::Mutex::new(saved.pending_attachments.clone())),
+            completed: Arc::new(std::sync::Mutex::new(saved.completed_attachments.clone())),
+            recovery: ctx.recovery.cloned(),
+            key: ctx.recovery_key(channel),
+        }
+    }
+
+    pub fn pending(&self) -> Vec<PendingAttachment> {
+        self.pending.lock().unwrap().clone()
+    }
+
+    pub fn begin_download(&self) -> Result<Option<crate::daemon::recovery::Operation>, ()> {
+        match &self.recovery {
+            Some(context) => context.operation().map(Some).ok_or(()),
+            None => Ok(None),
+        }
+    }
+
+    pub async fn queue(&self, id: String, event: serde_json::Value) -> bool {
+        {
+            let mut pending = self.pending.lock().unwrap();
+            if pending.iter().any(|item| item.id == id)
+                || self.completed.lock().unwrap().contains(&id)
+            {
+                return false;
+            }
+            pending.push(PendingAttachment { id, event });
+        }
+        loop {
+            let result = self.save_queue();
+            if result.is_ok() {
+                return true;
+            }
+            eprintln!("askhuman: waiting to save an incoming attachment");
+            tokio::time::sleep(std::time::Duration::from_secs(1)).await;
+        }
+    }
+
+    fn save_queue(&self) -> anyhow::Result<()> {
+        if let Some(context) = &self.recovery {
+            let pending = self.pending.lock().unwrap();
+            let completed = self.completed.lock().unwrap();
+            context.save(
+                &self.key,
+                &serde_json::json!({
+                    "pendingAttachments": *pending, "completedAttachments": *completed,
+                }),
+            )?;
+        }
+        Ok(())
+    }
+
+    pub fn complete(
+        &self,
+        id: &str,
+        received_images: Vec<crate::models::ImageAttachment>,
+        received_files: Vec<String>,
+    ) {
+        let mut images = self.images.lock().unwrap();
+        let mut files = self.files.lock().unwrap();
+        let mut pending = self.pending.lock().unwrap();
+        let mut completed = self.completed.lock().unwrap();
+        if completed.iter().any(|item| item == id) {
+            return;
+        }
+        images.extend(received_images);
+        files.extend(received_files);
+        pending.retain(|item| item.id != id);
+        completed.push(id.to_string());
+        if let Some(context) = &self.recovery {
+            if let Err(error) = context.save(
+                &self.key,
+                &serde_json::json!({
+                    "images": *images, "files": *files,
+                    "pendingAttachments": *pending, "completedAttachments": *completed,
+                }),
+            ) {
+                eprintln!("askhuman: waiting to save a received attachment: {error}");
+            }
+        }
+    }
+
+    pub fn fill(&self, answer: &mut QuestionAnswer) {
+        answer.images = self.images.lock().unwrap().clone();
+        answer.files = self.files.lock().unwrap().clone();
+    }
+}
+
 /// 单道题的上下文（传给 `ask_question`）。
 pub struct QuestionCtx<'a> {
+    pub recovery: Option<&'a Arc<crate::daemon::recovery::RequestContext>>,
     /// Fully assembled title with per-request source / Agent / project context.
     pub header: &'a str,
     pub text: &'a str,
@@ -163,6 +293,68 @@ pub trait MessagingChannel: Send {
 /// Rules shared by all IM transports:
 /// - A single question without a Message uses `Question from {source} · {agent} · {project}`.
 /// - Otherwise the shared Message is sent first, then every question carries the same origin.
+#[derive(Default, serde::Serialize, serde::Deserialize)]
+struct ConversationProgress {
+    message_attempted: bool,
+    answers: Vec<QuestionAnswer>,
+}
+
+impl QuestionCtx<'_> {
+    pub fn recovery_key(&self, channel: &str) -> String {
+        format!("question/{channel}/{}", self.index)
+    }
+
+    pub fn saved<T: serde::de::DeserializeOwned + Default>(
+        &self,
+        channel: &str,
+    ) -> anyhow::Result<T> {
+        match self.recovery {
+            Some(context) => Ok(context
+                .load(&self.recovery_key(channel))?
+                .unwrap_or_default()),
+            None => Ok(T::default()),
+        }
+    }
+
+    pub fn save<T: serde::Serialize>(&self, channel: &str, state: &T) -> anyhow::Result<()> {
+        if let Some(context) = self.recovery {
+            context.save(&self.recovery_key(channel), state)?;
+        }
+        Ok(())
+    }
+
+    pub async fn commit<T: serde::Serialize>(
+        &self,
+        channel: &str,
+        state: &T,
+        preempt: &Preemption,
+    ) -> bool {
+        loop {
+            if self.save(channel, state).is_ok() {
+                return true;
+            }
+            if preempt.is_cancelled() && !preempt.is_handoff() {
+                return false;
+            }
+            eprintln!("askhuman: waiting to save an IM response");
+            tokio::time::sleep(std::time::Duration::from_secs(1)).await;
+        }
+    }
+
+    pub async fn commit_response<T: serde::Serialize>(
+        &self,
+        channel: &str,
+        state: &T,
+        preempt: &Preemption,
+    ) -> bool {
+        if preempt.is_cancelled() && !preempt.is_handoff() {
+            return false;
+        }
+        self.commit(channel, state, preempt).await
+            && (!preempt.is_cancelled() || preempt.is_handoff())
+    }
+}
+
 pub async fn run_conversation(
     channel: &mut dyn MessagingChannel,
     request: &AskRequest,
@@ -170,27 +362,79 @@ pub async fn run_conversation(
     preempt: Arc<Preemption>,
     sink: ResultSink,
 ) {
+    let _operation = match &request.recovery {
+        Some(context) => match context.operation() {
+            Some(operation) => Some(operation),
+            None => {
+                channel.close().await;
+                return;
+            }
+        },
+        None => None,
+    };
+    let key = format!("conversation/{}", channel.id());
+    let mut progress = match request
+        .recovery
+        .as_ref()
+        .map(|context| context.load::<ConversationProgress>(&key))
+        .transpose()
+    {
+        Ok(progress) => progress.flatten().unwrap_or_default(),
+        Err(error) => {
+            eprintln!("askhuman: cannot restore channel progress: {error}");
+            surface_lost(channel, &sink).await;
+            return;
+        }
+    };
     let n = request.questions.len();
+    if progress.answers.len() > n {
+        surface_lost(channel, &sink).await;
+        return;
+    }
     let has_message = !request.message.text.trim().is_empty() || !request.message.files.is_empty();
     let lang = Lang::current();
-    let mut answers: Vec<QuestionAnswer> = Vec::with_capacity(n);
-
-    if n == 1 && !has_message {
-        let q = &request.questions[0];
-        let header = question_title(origin, lang, 0, n, has_message);
+    if preempt.is_cancelled() {
+        channel.close().await;
+        sink.notify_finalized();
+        return;
+    }
+    if !(n == 1 && !has_message) && !progress.message_attempted {
+        let header = origin.source_title(lang, "channel.messageFrom");
+        channel
+            .send_message_prompt(&request.message, request.is_markdown, &header, lang)
+            .await;
+        progress.message_attempted = true;
+        save_progress(request, &key, &progress);
+    }
+    for (index, question) in request
+        .questions
+        .iter()
+        .enumerate()
+        .skip(progress.answers.len())
+    {
+        if preempt.is_cancelled() {
+            channel.close().await;
+            sink.notify_finalized();
+            return;
+        }
+        let header = question_title(origin, lang, index, n, has_message);
         let ctx = QuestionCtx {
+            recovery: request.recovery.as_ref(),
             header: &header,
-            text: &q.message,
-            options: &q.predefined_options,
+            text: &question.message,
+            options: &question.predefined_options,
             is_markdown: request.is_markdown,
             select_only: request.select_only,
             single: request.single,
-            index: 0,
-            total: 1,
+            index,
+            total: n,
             lang,
         };
         match channel.ask_question(&ctx, &preempt).await {
-            QuestionOutcome::Answered(answer) => answers.push(answer),
+            QuestionOutcome::Answered(answer) => {
+                progress.answers.push(answer);
+                save_progress(request, &key, &progress);
+            }
             QuestionOutcome::Interrupted => {
                 channel.close().await;
                 sink.notify_finalized();
@@ -201,47 +445,23 @@ pub async fn run_conversation(
                 return;
             }
         }
-    } else {
-        let message_header = origin.source_title(lang, "channel.messageFrom");
-        channel
-            .send_message_prompt(&request.message, request.is_markdown, &message_header, lang)
-            .await;
-        for (index, question) in request.questions.iter().enumerate() {
-            let header = question_title(origin, lang, index, n, has_message);
-            let ctx = QuestionCtx {
-                header: &header,
-                text: &question.message,
-                options: &question.predefined_options,
-                is_markdown: request.is_markdown,
-                select_only: request.select_only,
-                single: request.single,
-                index,
-                total: n,
-                lang,
-            };
-            match channel.ask_question(&ctx, &preempt).await {
-                QuestionOutcome::Answered(answer) => answers.push(answer),
-                QuestionOutcome::Interrupted => {
-                    channel.close().await;
-                    sink.notify_finalized();
-                    return;
-                }
-                QuestionOutcome::Lost => {
-                    surface_lost(channel, &sink).await;
-                    return;
-                }
-            }
-        }
     }
-
     let source_channel_id = channel.id().to_string();
     channel.close().await;
     sink.submit(ChannelResult {
         action: ChannelAction::Send,
-        answers,
+        answers: progress.answers,
         source_channel_id,
         annotations: Vec::new(),
     });
+}
+
+fn save_progress(request: &AskRequest, key: &str, progress: &ConversationProgress) {
+    if let Some(context) = &request.recovery {
+        if let Err(error) = context.save(key, progress) {
+            eprintln!("askhuman: waiting to save channel progress: {error}");
+        }
+    }
 }
 
 /// The channel dropped out mid-request (undeliverable question / event source closed). Tell the

@@ -11,7 +11,8 @@
 //! （`MessagingChannel`）+ 薄外层 `DingTalkChannel`。
 
 use super::conversation::{
-    run_conversation, InboundReply, MessagingChannel, QuestionCtx, QuestionOutcome,
+    run_conversation, AttachmentProgress, InboundReply, MessagingChannel, PendingAttachment,
+    QuestionCtx, QuestionOutcome, QuestionProgress,
 };
 use super::{Channel, ConversationOrigin, Interruption, Preemption, ResultSink};
 use crate::config::DingTalkChannelConfig;
@@ -22,6 +23,7 @@ use crate::dingtalk::textfile::{self, TextAction};
 use crate::i18n::{self, Lang};
 use crate::models::{ImageAttachment, MessagePrompt, QuestionAnswer};
 use serde_json::{json, Value};
+use sha2::Digest;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
@@ -268,29 +270,12 @@ impl MessagingChannel for DingTalkSession {
         ctx: &QuestionCtx<'_>,
         preempt: &Preemption,
     ) -> QuestionOutcome {
-        // 题首：无则用兜底标题。
         let title = if ctx.header.is_empty() {
             i18n::tr(ctx.lang, "channel.ddTitleFallback")
         } else {
             ctx.header
         };
         let template_id = effective_template_id(&self.config).to_string();
-        let out_track_id = uuid::Uuid::new_v4().to_string();
-        // 选项以 `[{id,md}]` 下发（md 富文本含推荐绿色徽标）；模板回传选项 id（下标），
-        // 提交时经 restore_selected 按下标还原原文。单选/严格由 single/allow_input 变量控制。
-        let recommended_label = i18n::tr(ctx.lang, "channel.dingtalkRecommended");
-        let param_map = card::build_card_param_map_with_todo(
-            title,
-            ctx.text,
-            ctx.options,
-            ctx.single,
-            ctx.select_only,
-            recommended_label,
-            i18n::tr(ctx.lang, "whatsNext.todoPrefix"),
-            i18n::tr(ctx.lang, "channel.dingtalkTodo"),
-        );
-        let private_param_map = card::build_card_private_map();
-
         let Self {
             client,
             events,
@@ -300,125 +285,218 @@ impl MessagingChannel for DingTalkSession {
             return QuestionOutcome::Lost;
         };
         let user_id = config.user_id.trim().to_string();
-
-        // 先登记卡片精确路由 + 认领本 user 的聊天消息（投放前登记，规避「秒答」竞态）。
-        events.set_active(Some(&out_track_id), &user_id);
-
-        // 1. 投放互动卡片；失败 → 撤销卡片路由，回退纯文本编号方案。
-        if let Err(e) = client
-            .create_and_deliver_card(&out_track_id, &template_id, param_map, private_param_map)
+        let mut saved = match ctx.saved::<QuestionProgress>("dingding") {
+            Ok(saved) => saved,
+            Err(error) => {
+                eprintln!("[dingding] cannot restore question: {error}");
+                return QuestionOutcome::Lost;
+            }
+        };
+        if saved
+            .target_id
+            .as_ref()
+            .is_some_and(|target| target != &user_id)
+            || saved
+                .route_id
+                .as_ref()
+                .is_some_and(|route| route != config.client_id.trim())
+        {
+            return QuestionOutcome::Lost;
+        }
+        if !ctx
+            .commit(
+                "dingding",
+                &json!({"targetId": user_id, "routeId": config.client_id.trim()}),
+                preempt,
+            )
             .await
         {
-            eprintln!(
-                "{}{}",
-                i18n::warn_prefix(ctx.lang),
-                i18n::tr(ctx.lang, "channel.ddCardDeliverFailed").replace("{e}", &e.to_string())
-            );
-            events.clear_active(Some(&out_track_id), "");
+            return QuestionOutcome::Interrupted;
+        }
+        if let Some(answer) = saved.answer.take() {
+            if let Some(id) = &saved.message_id {
+                mark_submitted(client, id, ctx.lang).await;
+            }
+            return QuestionOutcome::Answered(answer);
+        }
+        if saved.text_mode {
             return ask_question_text(client, events, &user_id, ctx, preempt).await;
         }
-
-        // 2. 等卡片「提交」；作答期间收到的图片/文件**并发下载**（不阻塞收事件循环，保证提交一到
-        //    就能被立刻处理、即时回 ACK，A 方案）。下载结果累积进共享集合，提交时再收尾。
-        let images: Arc<Mutex<Vec<ImageAttachment>>> = Arc::new(Mutex::new(Vec::new()));
-        let files: Arc<Mutex<Vec<String>>> = Arc::new(Mutex::new(Vec::new()));
-        let mut downloads: Vec<tauri::async_runtime::JoinHandle<()>> = Vec::new();
-        while !preempt.is_cancelled() {
-            let ev = match tokio::time::timeout(POLL_INTERVAL, events.recv()).await {
-                Ok(Some(ev)) => ev,
-                Ok(None) => {
-                    // Event source gone for good (Router dropped); transient disconnects are
-                    // absorbed by the Router's endless reconnect. Leave the card untouched and let
-                    // the coordinator drop this surface instead of stamping "cancelled" on it.
-                    if preempt.is_cancelled() {
-                        break;
-                    }
-                    events.clear_active(Some(&out_track_id), &user_id);
-                    return QuestionOutcome::Lost;
+        if preempt.is_cancelled() && saved.message_id.is_none() {
+            return QuestionOutcome::Interrupted;
+        }
+        let out_track_id = saved
+            .message_id
+            .clone()
+            .unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
+        events.set_active(Some(&out_track_id), &user_id);
+        if saved.message_id.is_none() {
+            let parameters = card::build_card_param_map_with_todo(
+                title,
+                ctx.text,
+                ctx.options,
+                ctx.single,
+                ctx.select_only,
+                i18n::tr(ctx.lang, "channel.dingtalkRecommended"),
+                i18n::tr(ctx.lang, "whatsNext.todoPrefix"),
+                i18n::tr(ctx.lang, "channel.dingtalkTodo"),
+            );
+            if let Err(error) = client
+                .create_and_deliver_card(
+                    &out_track_id,
+                    &template_id,
+                    parameters,
+                    card::build_card_private_map(),
+                )
+                .await
+            {
+                eprintln!("[dingding] card delivery failed: {error}");
+                events.clear_active(Some(&out_track_id), "");
+                let _ = ctx.save("dingding", &json!({"textMode": true}));
+                return ask_question_text(client, events, &user_id, ctx, preempt).await;
+            }
+            if !ctx
+                .commit("dingding", &json!({"messageId": out_track_id}), preempt)
+                .await
+            {
+                return QuestionOutcome::Interrupted;
+            }
+        }
+        let attachments = AttachmentProgress::new(ctx, "dingding", &saved);
+        let mut downloads = attachments
+            .pending()
+            .into_iter()
+            .map(|pending| start_attachment_download(client, pending, &attachments, ctx.lang))
+            .collect::<Vec<_>>();
+        let mut submission = saved.submission;
+        while submission.is_none() {
+            let event = if preempt.is_handoff() {
+                match events.try_recv() {
+                    Some(event) => event,
+                    None => break,
                 }
-                Err(_) => continue, // 超时：回到循环顶部重新检查 cancelled
+            } else {
+                if preempt.is_cancelled() {
+                    break;
+                }
+                match tokio::time::timeout(POLL_INTERVAL, events.recv()).await {
+                    Ok(Some(event)) => event,
+                    Ok(None) => {
+                        if preempt.is_cancelled() {
+                            break;
+                        }
+                        events.clear_active(Some(&out_track_id), &user_id);
+                        return QuestionOutcome::Lost;
+                    }
+                    Err(_) => continue,
+                }
             };
-            match ev {
-                DdInbound::Card { data, ack } => {
-                    match card::parse_card_submit(&data) {
-                        Some(s) if s.out_track_id == out_track_id && s.user_id == user_id => {
-                            // 立刻回成功裁决：消除「请求失败」、置灰点击者（不在此等任何慢活）。
-                            let _ = ack.send_and_wait(card::submit_ack_success()).await;
-                            // 收尾并发下载（不在 3 秒关键路径），再经 OpenAPI 写公有终态文案。
-                            for h in downloads {
-                                let _ = h.await;
-                            }
-                            let submitted_text = i18n::tr(ctx.lang, "channel.ddSubmitted");
-                            let _ = client
-                                .update_card_private(
-                                    &out_track_id,
-                                    json!({ "submit_status": submitted_text }),
-                                    json!({ "submitted": "true" }),
-                                )
-                                .await;
-                            events.clear_active(Some(&out_track_id), &user_id);
-                            let images = std::mem::take(&mut *images.lock().unwrap());
-                            let files = std::mem::take(&mut *files.lock().unwrap());
-                            return QuestionOutcome::Answered(QuestionAnswer {
-                                selected_options: restore_selected(s.selected_indices, ctx.options),
-                                user_input: s.user_input,
-                                images,
-                                files,
-                                todo_ids: Vec::new(),
-                                todo_selections: Vec::new(),
-                            });
-                        }
-                        // 非本卡片（理论上不会路由到此）：回空包让 Router 别空等，继续。
-                        _ => {
+            match event {
+                DdInbound::Card { data, ack } => match card::parse_card_submit(&data) {
+                    Some(reply)
+                        if reply.out_track_id == out_track_id && reply.user_id == user_id =>
+                    {
+                        let answer = QuestionAnswer {
+                            selected_options: restore_selected(reply.selected_indices, ctx.options),
+                            user_input: reply.user_input,
+                            ..Default::default()
+                        };
+                        if !ctx
+                            .commit_response("dingding", &json!({"submission": answer}), preempt)
+                            .await
+                        {
                             let _ = ack.send(json!({}));
+                            break;
                         }
+                        let _ = ack.send_and_wait(card::submit_ack_success()).await;
+                        submission = Some(answer);
                     }
-                }
+                    _ => {
+                        let _ = ack.send(json!({}));
+                    }
+                },
                 DdInbound::Bot(data) => {
-                    if bot_message_belongs(&data, &user_id) {
-                        let lang = ctx.lang;
-                        // 即时回执 / 引导（spec R2/R3）：spawn 不阻塞事件循环（保证卡片提交即时处理）。
-                        // 斜线命令交 handle_inbound 独占响应，会话层不回引导（避免重复）。
-                        if let Some(reply) = super::conversation::answer_inbound_reply(
-                            ack_kind(&data),
-                            crate::autochannel::AckMode::Card,
-                            &bot_text(&data),
-                            "dingding",
-                            lang,
-                        ) {
-                            let ack_client = client.clone();
-                            tauri::async_runtime::spawn(async move {
-                                send_inbound_reply(&ack_client, reply, lang).await;
+                    if !bot_message_belongs(&data, &user_id) {
+                        continue;
+                    }
+                    if ack_kind(&data).is_some() {
+                        let id = data
+                            .get("msgId")
+                            .and_then(Value::as_str)
+                            .map(str::to_string)
+                            .unwrap_or_else(|| {
+                                format!(
+                                    "{:x}",
+                                    sha2::Sha256::digest(
+                                        serde_json::to_vec(&data).unwrap_or_default()
+                                    )
+                                )
                             });
+                        if !attachments.queue(id.clone(), data.clone()).await {
+                            continue;
                         }
-                        // 并发下载：spawn 后立刻回到循环收事件，避免大文件下载卡住提交处理。
+                        downloads.push(start_attachment_download(
+                            client,
+                            PendingAttachment {
+                                id,
+                                event: data.clone(),
+                            },
+                            &attachments,
+                            ctx.lang,
+                        ));
+                    }
+                    if let Some(reply) = super::conversation::answer_inbound_reply(
+                        ack_kind(&data),
+                        crate::autochannel::AckMode::Card,
+                        &bot_text(&data),
+                        "dingding",
+                        ctx.lang,
+                    ) {
                         let client = client.clone();
-                        let images = images.clone();
-                        let files = files.clone();
-                        downloads.push(tauri::async_runtime::spawn(async move {
-                            accumulate_attachment(&client, &data, &images, &files, lang).await;
-                        }));
+                        let lang = ctx.lang;
+                        tauri::async_runtime::spawn(async move {
+                            send_inbound_reply(&client, reply, lang).await;
+                        });
                     }
                 }
             }
         }
-
-        // Interrupted (preempted / cancelled): best-effort finalize the card.
-        // Preempted → "Answered via X"; cancelled (with/without source) → "Cancelled [by X]".
-        let status = match preempt.reason() {
-            Some(Interruption::AnsweredBy(w)) => {
-                i18n::tr(ctx.lang, "channel.ddAnsweredVia").replace("{source}", &w)
+        if let Some(mut answer) = submission {
+            for download in downloads {
+                let _ = download.await;
             }
-            Some(Interruption::Cancelled(src)) if !src.is_empty() => {
-                i18n::tr(ctx.lang, "channel.ddCancelledBy").replace("{source}", &src)
+            attachments.fill(&mut answer);
+            if ctx
+                .commit_response("dingding", &json!({"answer": answer}), preempt)
+                .await
+            {
+                mark_submitted(client, &out_track_id, ctx.lang).await;
+                events.clear_active(Some(&out_track_id), &user_id);
+                return QuestionOutcome::Answered(answer);
+            }
+        } else if preempt.is_handoff() {
+            for download in downloads {
+                let _ = download.await;
+            }
+        }
+        if preempt.is_handoff() {
+            events.clear_active(Some(&out_track_id), &user_id);
+            return QuestionOutcome::Interrupted;
+        }
+        let status = match preempt.reason() {
+            Some(Interruption::AnsweredBy(winner)) => {
+                i18n::tr(ctx.lang, "channel.ddAnsweredVia").replace("{source}", &winner)
+            }
+            Some(Interruption::Cancelled(source)) if !source.is_empty() => {
+                i18n::tr(ctx.lang, "channel.ddCancelledBy").replace("{source}", &source)
             }
             _ => i18n::tr(ctx.lang, "channel.ddCancelled").to_string(),
         };
         let _ = client
             .update_card_private(
                 &out_track_id,
-                json!({ "submit_status": status }),
-                json!({ "submitted": "true" }),
+                json!({"submit_status": status}),
+                json!({"submitted": "true"}),
             )
             .await;
         events.clear_active(Some(&out_track_id), &user_id);
@@ -431,6 +509,38 @@ impl MessagingChannel for DingTalkSession {
     }
 }
 
+async fn mark_submitted(client: &DingTalkClient, id: &str, lang: Lang) {
+    let _ = client
+        .update_card_private(
+            id,
+            json!({"submit_status": i18n::tr(lang, "channel.ddSubmitted")}),
+            json!({"submitted": "true"}),
+        )
+        .await;
+}
+
+fn start_attachment_download(
+    client: &DingTalkClient,
+    pending: PendingAttachment,
+    progress: &AttachmentProgress,
+    lang: Lang,
+) -> tauri::async_runtime::JoinHandle<()> {
+    let client = client.clone();
+    let progress = progress.clone();
+    let operation = progress.begin_download();
+    tauri::async_runtime::spawn(async move {
+        let Ok(_operation) = operation else {
+            return;
+        };
+        let images = Arc::new(Mutex::new(Vec::new()));
+        let files = Arc::new(Mutex::new(Vec::new()));
+        accumulate_attachment(&client, &pending.event, &images, &files, lang).await;
+        let received_images = std::mem::take(&mut *images.lock().unwrap());
+        let received_files = std::mem::take(&mut *files.lock().unwrap());
+        progress.complete(&pending.id, received_images, received_files);
+    })
+}
+
 /// 兜底：纯文本 + 编号选项问一题（卡片投放失败时使用）。用户回一条消息即完成该题。
 async fn ask_question_text(
     client: &DingTalkClient,
@@ -439,6 +549,13 @@ async fn ask_question_text(
     ctx: &QuestionCtx<'_>,
     preempt: &Preemption,
 ) -> QuestionOutcome {
+    let saved = match ctx.saved::<QuestionProgress>("dingding") {
+        Ok(saved) => saved,
+        Err(_) => return QuestionOutcome::Lost,
+    };
+    if let Some(answer) = saved.answer {
+        return QuestionOutcome::Answered(answer);
+    }
     let title = if ctx.header.is_empty() {
         i18n::tr(ctx.lang, "channel.ddTitleFallback")
     } else {
@@ -447,36 +564,58 @@ async fn ask_question_text(
     // 编号回复按原文映射（编号清单展示用显示文本，见 build_question_text）。
     let option_texts: Vec<String> = ctx.options.iter().map(|o| o.text.clone()).collect();
     let body = build_question_text(ctx, ctx.is_markdown);
-    let send_res = if ctx.is_markdown {
-        client.send_oto_markdown(title, &body).await
-    } else {
-        client.send_oto_text(&body).await
-    };
-    if let Err(e) = send_res {
-        eprintln!(
-            "{}{}",
-            i18n::warn_prefix(ctx.lang),
-            i18n::tr(ctx.lang, "channel.ddQuestionSendFailed").replace("{e}", &e.to_string())
-        );
-        // Neither the card nor the plain-text fallback reached the human: this surface cannot
-        // carry the question. Waiting here would only hide the failure from the caller.
-        return QuestionOutcome::Lost;
+    if !saved.text_sent {
+        let send_res = if ctx.is_markdown {
+            client.send_oto_markdown(title, &body).await
+        } else {
+            client.send_oto_text(&body).await
+        };
+        if let Err(e) = send_res {
+            eprintln!(
+                "{}{}",
+                i18n::warn_prefix(ctx.lang),
+                i18n::tr(ctx.lang, "channel.ddQuestionSendFailed").replace("{e}", &e.to_string())
+            );
+            // Neither the card nor the plain-text fallback reached the human: this surface cannot
+            // carry the question. Waiting here would only hide the failure from the caller.
+            return QuestionOutcome::Lost;
+        }
+        if !ctx
+            .commit(
+                "dingding",
+                &json!({"textMode": true, "textSent": true}),
+                preempt,
+            )
+            .await
+        {
+            return QuestionOutcome::Interrupted;
+        }
     }
 
     // 文本兜底无卡片：认领本 user 的聊天消息即可（不登记卡片精确路由）。
     events.set_active(None, user_id);
 
-    while !preempt.is_cancelled() {
-        let ev = match tokio::time::timeout(POLL_INTERVAL, events.recv()).await {
-            Ok(Some(ev)) => ev,
-            Ok(None) => {
-                if preempt.is_cancelled() {
-                    break;
-                }
-                events.clear_active(None, user_id);
-                return QuestionOutcome::Lost;
+    loop {
+        let ev = if preempt.is_handoff() {
+            match events.try_recv() {
+                Some(event) => event,
+                None => break,
             }
-            Err(_) => continue,
+        } else {
+            if preempt.is_cancelled() {
+                break;
+            }
+            match tokio::time::timeout(POLL_INTERVAL, events.recv()).await {
+                Ok(Some(ev)) => ev,
+                Ok(None) => {
+                    if preempt.is_cancelled() {
+                        break;
+                    }
+                    events.clear_active(None, user_id);
+                    return QuestionOutcome::Lost;
+                }
+                Err(_) => continue,
+            }
         };
         match ev {
             DdInbound::Bot(data) => {
@@ -489,6 +628,12 @@ async fn ask_question_text(
                     message_to_answer(client, &data, &option_texts, ctx.select_only, ctx.single)
                         .await
                 {
+                    if !ctx
+                        .commit_response("dingding", &json!({"answer": answer}), preempt)
+                        .await
+                    {
+                        break;
+                    }
                     // 接受 → 确认（spec R2 文本兜底）。
                     if let Some(reply) = super::conversation::answer_inbound_reply(
                         kind,

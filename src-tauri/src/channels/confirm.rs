@@ -11,8 +11,113 @@ use std::time::Duration;
 const DELIVERY_TIMEOUT: Duration = Duration::from_secs(60);
 const DEFAULT_DINGTALK_PERMISSION_TEMPLATE_ID: &str = "3a5ce2de-99b8-4a79-a4ea-622897526645.schema";
 
+#[derive(Default, serde::Serialize, serde::Deserialize)]
+#[serde(default, rename_all = "camelCase")]
+struct Progress {
+    target: String,
+    route: String,
+    message_id: Option<String>,
+    auxiliary_message_id: Option<i64>,
+    selected: Option<usize>,
+    comment: String,
+    pending: Option<usize>,
+    processed_events: Vec<String>,
+}
+
+impl Progress {
+    fn load(
+        entry: &ConfirmEntry,
+        channel: &str,
+        target: &str,
+        route: &str,
+    ) -> anyhow::Result<Self> {
+        let saved = entry
+            .coordinator
+            .recovery()
+            .map(|context| context.load::<Self>(&format!("confirm/{channel}")))
+            .transpose()?
+            .flatten();
+        match saved {
+            Some(saved) if saved.target != target || saved.route != route => {
+                anyhow::bail!("confirmation target changed while the card was pending")
+            }
+            Some(saved) => Ok(saved),
+            None => Ok(Self {
+                target: target.to_string(),
+                route: route.to_string(),
+                selected: entry.request.choice_form_view().default_index,
+                ..Self::default()
+            }),
+        }
+    }
+
+    async fn save(&self, entry: &ConfirmEntry, channel: &str) {
+        if let Some(context) = entry.coordinator.recovery() {
+            while let Err(error) = context.save(&format!("confirm/{channel}"), self) {
+                eprintln!("askhuman: waiting to save a confirmation card: {error}");
+                tokio::time::sleep(Duration::from_secs(1)).await;
+            }
+        }
+    }
+
+    async fn submit(
+        &mut self,
+        entry: &ConfirmEntry,
+        channel: &str,
+        index: usize,
+        comment: Option<String>,
+    ) -> Result<bool, String> {
+        entry
+            .request
+            .resolve_submission(index, comment.clone(), channel)?;
+        self.selected = Some(index);
+        self.comment = comment.clone().unwrap_or_default();
+        self.pending = Some(index);
+        self.save(entry, channel).await;
+        entry.coordinator.submit_wire(index, comment, channel)
+    }
+
+    async fn restore_submission(&self, entry: &ConfirmEntry, channel: &str) {
+        if let Some(index) = self.pending {
+            let _ = entry
+                .coordinator
+                .submit_wire(index, Some(self.comment.clone()), channel);
+        }
+    }
+
+    fn seen(&self, id: &str) -> bool {
+        self.processed_events.iter().any(|saved| saved == id)
+    }
+
+    fn remember(&mut self, id: String) {
+        self.processed_events.push(id);
+        if self.processed_events.len() > 512 {
+            self.processed_events.remove(0);
+        }
+    }
+}
+
+fn route_identity(value: &str) -> String {
+    use sha2::Digest;
+    format!("{:x}", sha2::Sha256::digest(value.as_bytes()))
+}
+
+fn paused(entry: &ConfirmEntry) -> bool {
+    entry
+        .coordinator
+        .recovery()
+        .is_some_and(|context| context.is_suspended())
+}
+
 fn fail(entry: &ConfirmEntry, channel: &str, reason: impl Into<String>) {
     if entry.mark_failed(channel, reason) {
+        if entry
+            .coordinator
+            .recovery()
+            .is_some_and(|context| context.is_recovering() || context.is_suspended())
+        {
+            return;
+        }
         entry
             .coordinator
             .fallback(ConfirmFallbackReason::NoAvailableChannel);
@@ -353,6 +458,14 @@ pub fn start_dingtalk(
     router: Arc<crate::dingtalk::router::DdRouter>,
 ) {
     tokio::spawn(async move {
+        let recovery = entry.coordinator.recovery();
+        let _operation = match &recovery {
+            Some(context) => match context.operation() {
+                Some(operation) => Some(operation),
+                None => return,
+            },
+            None => None,
+        };
         let channel = "dingding";
         let lang = Lang::resolve(&entry.lang);
         let client = match crate::dingtalk::client::DingTalkClient::new(&config) {
@@ -363,6 +476,14 @@ pub fn start_dingtalk(
             }
         };
         let target = client.user_id().to_string();
+        let mut progress = match Progress::load(&entry, channel, &target, &config.client_id) {
+            Ok(progress) => progress,
+            Err(error) => {
+                fail(&entry, channel, error.to_string());
+                return;
+            }
+        };
+        progress.restore_submission(&entry, channel).await;
         let task_input = choice_cards::is_task_input_form(&entry.request);
         let template = if task_input {
             crate::channels::dingding::effective_template_id(&config)
@@ -376,23 +497,30 @@ pub fn start_dingtalk(
         };
         let public = dingtalk_param_map(&entry.request, lang);
         let private = crate::dingtalk::card::build_card_private_map();
-        let out_track_id = format!("permission-{}", uuid::Uuid::new_v4());
+        let out_track_id = progress
+            .message_id
+            .clone()
+            .unwrap_or_else(|| format!("permission-{}", uuid::Uuid::new_v4()));
         let mut events = router.register();
-        match tokio::time::timeout(
-            DELIVERY_TIMEOUT,
-            client.create_and_deliver_card(&out_track_id, template, public, private),
-        )
-        .await
-        {
-            Ok(Ok(())) => {}
-            Ok(Err(error)) => {
-                fail(&entry, channel, error.to_string());
-                return;
+        if progress.message_id.is_none() {
+            match tokio::time::timeout(
+                DELIVERY_TIMEOUT,
+                client.create_and_deliver_card(&out_track_id, template, public, private),
+            )
+            .await
+            {
+                Ok(Ok(())) => {}
+                Ok(Err(error)) => {
+                    fail(&entry, channel, error.to_string());
+                    return;
+                }
+                Err(_) => {
+                    fail(&entry, channel, "DingTalk delivery timed out");
+                    return;
+                }
             }
-            Err(_) => {
-                fail(&entry, channel, "DingTalk delivery timed out");
-                return;
-            }
+            progress.message_id = Some(out_track_id.clone());
+            progress.save(&entry, channel).await;
         }
         events.set_active(Some(&out_track_id), &target);
         if !entry.mark_ready(channel, out_track_id.clone()) {
@@ -405,6 +533,7 @@ pub fn start_dingtalk(
                 )
                 .await;
             let deadline = entry.deadline;
+            drop(_operation);
             drop(entry);
             keep_dingtalk_tombstone(events, client, out_track_id, target, status, deadline).await;
             return;
@@ -413,7 +542,8 @@ pub fn start_dingtalk(
         loop {
             tokio::select! {
                 _ = entry.cancel.notified() => break,
-                inbound = events.recv() => match inbound {
+                _ = entry.pause.notified() => continue,
+                inbound = async { if paused(&entry) { events.try_recv() } else { events.recv().await } } => match inbound {
                     Some(crate::dingtalk::router::DdInbound::Card { data, ack }) => {
                         let Some(submit) = crate::dingtalk::card::parse_card_submit(&data) else {
                             let _ = ack.send(serde_json::json!({}));
@@ -433,14 +563,14 @@ pub fn start_dingtalk(
                             let _ = ack.send(serde_json::json!({}));
                             continue;
                         };
-                        if entry.coordinator.submit_wire(index, submit.user_input, channel).is_ok() {
+                        if progress.submit(&entry, channel, index, submit.user_input).await.is_ok() {
                             let _ = ack.send(crate::dingtalk::card::submit_ack_success());
                             break;
                         }
                         let _ = ack.send(serde_json::json!({}));
                     }
                     Some(_) => {}
-                    None => { disconnected = true; break; }
+                    None => { if paused(&entry) { return; } disconnected = true; break; }
                 }
             }
         }
@@ -456,6 +586,7 @@ pub fn start_dingtalk(
             )
             .await;
         let deadline = entry.deadline;
+        drop(_operation);
         drop(entry);
         keep_dingtalk_tombstone(events, client, out_track_id, target, status, deadline).await;
     });
@@ -467,6 +598,14 @@ pub fn start_feishu(
     router: Arc<crate::feishu::router::FsRouter>,
 ) {
     tokio::spawn(async move {
+        let recovery = entry.coordinator.recovery();
+        let _operation = match &recovery {
+            Some(context) => match context.operation() {
+                Some(operation) => Some(operation),
+                None => return,
+            },
+            None => None,
+        };
         let channel = "feishu";
         let lang = Lang::resolve(&entry.lang);
         let client = match crate::feishu::client::FeishuClient::new(&config) {
@@ -482,31 +621,52 @@ pub fn start_feishu(
         };
         let target = client.open_id().to_string();
         let mut events = router.register();
-        let mut selected = entry.request.choice_form_view().default_index;
-        let mut comment = String::new();
+        let mut progress = match Progress::load(
+            &entry,
+            channel,
+            &target,
+            &format!("{}|{}", config.base_url, config.app_id),
+        ) {
+            Ok(progress) => progress,
+            Err(error) => {
+                fail(&entry, channel, error.to_string());
+                return;
+            }
+        };
+        progress.restore_submission(&entry, channel).await;
+        let mut selected = progress.selected;
+        let mut comment = progress.comment.clone();
         let initial = choice_cards::feishu_card(&entry.request, selected, &comment, lang);
-        let message_id =
-            match tokio::time::timeout(DELIVERY_TIMEOUT, client.send_card(&initial)).await {
-                Ok(Ok(message_id)) if !message_id.is_empty() => message_id,
-                Ok(Ok(_)) => {
-                    fail(&entry, channel, "empty Feishu message id");
-                    return;
-                }
-                Ok(Err(error)) => {
-                    fail(&entry, channel, error.to_string());
-                    return;
-                }
-                Err(_) => {
-                    fail(&entry, channel, "Feishu delivery timed out");
-                    return;
-                }
-            };
+        let message_id = if let Some(message_id) = progress.message_id.clone() {
+            message_id
+        } else {
+            let message_id =
+                match tokio::time::timeout(DELIVERY_TIMEOUT, client.send_card(&initial)).await {
+                    Ok(Ok(message_id)) if !message_id.is_empty() => message_id,
+                    Ok(Ok(_)) => {
+                        fail(&entry, channel, "empty Feishu message id");
+                        return;
+                    }
+                    Ok(Err(error)) => {
+                        fail(&entry, channel, error.to_string());
+                        return;
+                    }
+                    Err(_) => {
+                        fail(&entry, channel, "Feishu delivery timed out");
+                        return;
+                    }
+                };
+            progress.message_id = Some(message_id.clone());
+            progress.save(&entry, channel).await;
+            message_id
+        };
         events.set_active(Some(&message_id), &target);
         if !entry.mark_ready(channel, message_id.clone()) {
             let final_card =
                 choice_cards::feishu_final_card(&entry.request, &final_status(&entry, lang), lang);
             let _ = client.patch_card(&message_id, &final_card).await;
             let deadline = entry.deadline;
+            drop(_operation);
             drop(entry);
             keep_feishu_tombstone(events, client, message_id, target, final_card, deadline).await;
             return;
@@ -516,7 +676,8 @@ pub fn start_feishu(
         loop {
             tokio::select! {
                 _ = entry.cancel.notified() => break,
-                inbound = events.recv() => match inbound {
+                _ = entry.pause.notified() => continue,
+                inbound = async { if paused(&entry) { events.try_recv() } else { events.recv().await } } => match inbound {
                     Some(crate::feishu::router::FsInbound::Card { data, ack }) => {
                         let input_id = entry.request.presentation.input().map(|input| input.id.as_str());
                         match choice_cards::parse_feishu_action(&data, input_id) {
@@ -525,6 +686,9 @@ pub fn start_feishu(
                             {
                                 if let Some(draft) = draft { comment = draft; }
                                 selected = Some(index);
+                                progress.selected = selected;
+                                progress.comment = comment.clone();
+                                progress.save(&entry, channel).await;
                                 let card = choice_cards::feishu_card(&entry.request, selected, &comment, lang);
                                 let _ = ack.send(Some(crate::feishu::card::callback_update_card(card)));
                             }
@@ -538,14 +702,17 @@ pub fn start_feishu(
                                 if let Some(value) = submitted {
                                     comment = value;
                                 }
-                                match entry.coordinator.submit_wire(index, Some(comment.clone()), channel) {
+                                match progress.submit(&entry, channel, index, Some(comment.clone())).await {
                                     Ok(_) => {
                                         let final_card = choice_cards::feishu_final_card(&entry.request, &final_status(&entry, lang), lang);
                                         let _ = ack.send(Some(crate::feishu::card::callback_update_card(final_card)));
                                         break;
                                     }
                                     Err(_) => {
-                                        let card = choice_cards::feishu_card(&entry.request, selected, &comment, lang);
+                                        progress.selected = selected;
+                                progress.comment = comment.clone();
+                                progress.save(&entry, channel).await;
+                                let card = choice_cards::feishu_card(&entry.request, selected, &comment, lang);
                                         let _ = ack.send(Some(crate::feishu::card::callback_update_card(card)));
                                     }
                                 }
@@ -554,7 +721,7 @@ pub fn start_feishu(
                         }
                     }
                     Some(_) => {}
-                    None => { disconnected = true; break; }
+                    None => { if paused(&entry) { return; } disconnected = true; break; }
                 }
             }
         }
@@ -565,6 +732,7 @@ pub fn start_feishu(
             choice_cards::feishu_final_card(&entry.request, &final_status(&entry, lang), lang);
         let _ = client.patch_card(&message_id, &final_card).await;
         let deadline = entry.deadline;
+        drop(_operation);
         drop(entry);
         keep_feishu_tombstone(events, client, message_id, target, final_card, deadline).await;
     });
@@ -576,6 +744,14 @@ pub fn start_slack(
     router: Arc<crate::slack::router::SlRouter>,
 ) {
     tokio::spawn(async move {
+        let recovery = entry.coordinator.recovery();
+        let _operation = match &recovery {
+            Some(context) => match context.operation() {
+                Some(operation) => Some(operation),
+                None => return,
+            },
+            None => None,
+        };
         let channel = "slack";
         let lang = Lang::resolve(&entry.lang);
         let client = match crate::slack::client::SlackClient::new(&config) {
@@ -601,29 +777,44 @@ pub fn start_slack(
                 return;
             }
         };
-        let mut selected = entry.request.choice_form_view().default_index;
-        let mut comment = String::new();
-        let mut events = router.register();
-        let initial = choice_cards::slack_blocks(&entry.request, selected, &comment, lang);
-        let message_id = match tokio::time::timeout(
-            DELIVERY_TIMEOUT,
-            client.post_message(&dm, Some(&initial), &entry.request.title),
-        )
-        .await
-        {
-            Ok(Ok(message_id)) if !message_id.is_empty() => message_id,
-            Ok(Ok(_)) => {
-                fail(&entry, channel, "empty Slack message ts");
-                return;
-            }
-            Ok(Err(error)) => {
+        let mut progress = match Progress::load(&entry, channel, &target, &dm) {
+            Ok(progress) => progress,
+            Err(error) => {
                 fail(&entry, channel, error.to_string());
                 return;
             }
-            Err(_) => {
-                fail(&entry, channel, "Slack delivery timed out");
-                return;
-            }
+        };
+        progress.restore_submission(&entry, channel).await;
+        let mut selected = progress.selected;
+        let mut comment = progress.comment.clone();
+        let mut events = router.register();
+        let initial = choice_cards::slack_blocks(&entry.request, selected, &comment, lang);
+        let message_id = if let Some(message_id) = progress.message_id.clone() {
+            message_id
+        } else {
+            let message_id = match tokio::time::timeout(
+                DELIVERY_TIMEOUT,
+                client.post_message(&dm, Some(&initial), &entry.request.title),
+            )
+            .await
+            {
+                Ok(Ok(message_id)) if !message_id.is_empty() => message_id,
+                Ok(Ok(_)) => {
+                    fail(&entry, channel, "empty Slack message ts");
+                    return;
+                }
+                Ok(Err(error)) => {
+                    fail(&entry, channel, error.to_string());
+                    return;
+                }
+                Err(_) => {
+                    fail(&entry, channel, "Slack delivery timed out");
+                    return;
+                }
+            };
+            progress.message_id = Some(message_id.clone());
+            progress.save(&entry, channel).await;
+            message_id
         };
         events.set_active(Some(&message_id), &target);
         if !entry.mark_ready(channel, message_id.clone()) {
@@ -634,6 +825,7 @@ pub fn start_slack(
                 .await;
             let deadline = entry.deadline;
             let title = entry.request.title.clone();
+            drop(_operation);
             drop(entry);
             keep_slack_tombstone(
                 events, client, dm, message_id, target, title, blocks, deadline,
@@ -646,7 +838,8 @@ pub fn start_slack(
         loop {
             tokio::select! {
                 _ = entry.cancel.notified() => break,
-                inbound = events.recv() => match inbound {
+                _ = entry.pause.notified() => continue,
+                inbound = async { if paused(&entry) { events.try_recv() } else { events.recv().await } } => match inbound {
                     Some(crate::slack::router::SlInbound::Interactive(payload)) => {
                         let input_id = entry.request.presentation.input().map(|input| input.id.as_str());
                         match choice_cards::parse_slack_action(&payload, input_id) {
@@ -655,6 +848,9 @@ pub fn start_slack(
                             {
                                 if let Some(draft) = draft { comment = draft; }
                                 selected = Some(index);
+                                progress.selected = selected;
+                                progress.comment = comment.clone();
+                                progress.save(&entry, channel).await;
                                 let blocks = choice_cards::slack_blocks(&entry.request, selected, &comment, lang);
                                 let _ = client.update_message(&dm, &message_id, Some(&blocks), &entry.request.title).await;
                             }
@@ -664,7 +860,7 @@ pub fn start_slack(
                                 let Some(index) = submitted_index.or(selected) else { continue; };
                                 selected = Some(index);
                                 if let Some(value) = submitted { comment = value; }
-                                if entry.coordinator.submit_wire(index, Some(comment.clone()), channel).is_ok() {
+                                if progress.submit(&entry, channel, index, Some(comment.clone())).await.is_ok() {
                                     break;
                                 }
                             }
@@ -675,6 +871,8 @@ pub fn start_slack(
                         let actor = event.get("user").and_then(|value| value.as_str()).unwrap_or("");
                         let thread = event.get("thread_ts").and_then(|value| value.as_str()).unwrap_or("");
                         let text = event.get("text").and_then(|value| value.as_str()).unwrap_or("").trim();
+                        let event_id = event.get("ts").and_then(|value| value.as_str()).unwrap_or("");
+                        if !event_id.is_empty() && progress.seen(event_id) { continue; }
                         if actor == target && thread == message_id && !text.is_empty() {
                             let input_index = entry.request.presentation.input()
                                 .filter(|input| input.always_visible)
@@ -687,7 +885,11 @@ pub fn start_slack(
                             if comment.chars().count() + extra + text.chars().count() <= max_chars {
                                 if !comment.is_empty() { comment.push('\n'); }
                                 comment.push_str(text);
+                                if !event_id.is_empty() { progress.remember(event_id.to_string()); }
                                 selected = Some(input_index);
+                                progress.selected = selected;
+                                progress.comment = comment.clone();
+                                progress.save(&entry, channel).await;
                                 let blocks = choice_cards::slack_blocks(&entry.request, selected, &comment, lang);
                                 let _ = client.update_message(&dm, &message_id, Some(&blocks), &entry.request.title).await;
                             } else {
@@ -696,7 +898,7 @@ pub fn start_slack(
                             }
                         }
                     }
-                    None => { disconnected = true; break; }
+                    None => { if paused(&entry) { return; } disconnected = true; break; }
                 }
             }
         }
@@ -710,6 +912,7 @@ pub fn start_slack(
             .await;
         let deadline = entry.deadline;
         let title = entry.request.title.clone();
+        drop(_operation);
         drop(entry);
         keep_slack_tombstone(
             events, client, dm, message_id, target, title, blocks, deadline,
@@ -725,6 +928,24 @@ struct IosConfirmSink {
 }
 
 impl crate::ios::gateway::requests::ConfirmSink for IosConfirmSink {
+    fn operation(&self) -> Result<Option<crate::daemon::recovery::Operation>, ()> {
+        self.entry
+            .coordinator
+            .recovery()
+            .map(|context| context.operation().map(Some).ok_or(()))
+            .unwrap_or(Ok(None))
+    }
+
+    fn decide_identified(
+        &self,
+        wire_index: usize,
+        comment: Option<String>,
+        receipt: &crate::daemon::recovery::Receipt,
+    ) -> Result<bool, String> {
+        self.entry
+            .coordinator
+            .submit_wire_identified(wire_index, comment, "ios", Some(receipt))
+    }
     fn immediate_notification(&self) -> bool {
         self.entry
             .development
@@ -756,6 +977,14 @@ pub fn start_ios(
 ) {
     use crate::ios::gateway::requests::{DeliverRequest, Resolution, Sink};
     tokio::spawn(async move {
+        let recovery = entry.coordinator.recovery();
+        let _operation = match &recovery {
+            Some(context) => match context.operation() {
+                Some(operation) => Some(operation),
+                None => return,
+            },
+            None => None,
+        };
         let channel = "ios";
         let origin = crate::channels::ConversationOrigin::new(
             &entry.source,
@@ -782,6 +1011,7 @@ pub fn start_ios(
         loop {
             tokio::select! {
                 _ = entry.cancel.notified() => break,
+                _ = entry.pause.notified() => return,
                 _ = tokio::time::sleep(Duration::from_millis(500)) => {
                     if entry.coordinator.is_terminal() {
                         break;
@@ -816,8 +1046,17 @@ pub fn start_telegram(
     router: Arc<crate::telegram::router::TgRouter>,
 ) {
     tokio::spawn(async move {
+        let recovery = entry.coordinator.recovery();
+        let _operation = match &recovery {
+            Some(context) => match context.operation() {
+                Some(operation) => Some(operation),
+                None => return,
+            },
+            None => None,
+        };
         let channel = "telegram";
         let lang = Lang::resolve(&entry.lang);
+        let route = route_identity(&format!("{}|{}", config.api_base_url, config.bot_token));
         let client = match crate::telegram::TelegramClient::new(
             config.bot_token,
             config.chat_id,
@@ -829,8 +1068,17 @@ pub fn start_telegram(
                 return;
             }
         };
-        let mut selected = entry.request.choice_form_view().default_index;
-        let mut comment = String::new();
+        let mut progress =
+            match Progress::load(&entry, channel, &client.chat_id().to_string(), &route) {
+                Ok(progress) => progress,
+                Err(error) => {
+                    fail(&entry, channel, error.to_string());
+                    return;
+                }
+            };
+        progress.restore_submission(&entry, channel).await;
+        let mut selected = progress.selected;
+        let mut comment = progress.comment.clone();
         let mut events = router.register();
         let initial = choice_cards::telegram_html(&entry.request, selected, &comment, None, lang);
         let force_reply = choice_cards::is_task_input_form(&entry.request)
@@ -850,28 +1098,44 @@ pub fn start_telegram(
         } else {
             choice_cards::telegram_keyboard(&entry.request, selected)
         };
-        let message_id = match tokio::time::timeout(
-            DELIVERY_TIMEOUT,
-            client.send_message(&initial, Some("HTML"), Some(keyboard)),
-        )
-        .await
-        {
-            Ok(Ok(message_id)) if message_id != 0 => message_id,
-            Ok(Ok(_)) => {
-                fail(&entry, channel, "empty Telegram message id");
-                return;
+        let message_id = if let Some(message_id) = &progress.message_id {
+            match message_id.parse::<i64>() {
+                Ok(id) => id,
+                Err(_) => {
+                    fail(&entry, channel, "invalid saved Telegram message id");
+                    return;
+                }
             }
-            Ok(Err(error)) => {
-                fail(&entry, channel, error.to_string());
-                return;
-            }
-            Err(_) => {
-                fail(&entry, channel, "Telegram delivery timed out");
-                return;
-            }
+        } else {
+            let message_id = match tokio::time::timeout(
+                DELIVERY_TIMEOUT,
+                client.send_message(&initial, Some("HTML"), Some(keyboard)),
+            )
+            .await
+            {
+                Ok(Ok(message_id)) if message_id != 0 => message_id,
+                Ok(Ok(_)) => {
+                    fail(&entry, channel, "empty Telegram message id");
+                    return;
+                }
+                Ok(Err(error)) => {
+                    fail(&entry, channel, error.to_string());
+                    return;
+                }
+                Err(_) => {
+                    fail(&entry, channel, "Telegram delivery timed out");
+                    return;
+                }
+            };
+            progress.message_id = Some(message_id.to_string());
+            progress.save(&entry, channel).await;
+            message_id
         };
         events.set_active(client.chat_id(), message_id);
-        let cancel_message_id = if force_reply {
+        let cancel_message_id = if let Some(id) = progress.auxiliary_message_id {
+            events.set_card_route(id);
+            Some(id)
+        } else if force_reply {
             let dismiss = entry.request.dismiss_index();
             let label = entry
                 .request
@@ -885,6 +1149,8 @@ pub fn start_telegram(
             }]] });
             match client.send_message(label, None, Some(markup)).await {
                 Ok(id) if id != 0 => {
+                    progress.auxiliary_message_id = Some(id);
+                    progress.save(&entry, channel).await;
                     events.set_card_route(id);
                     Some(id)
                 }
@@ -905,6 +1171,7 @@ pub fn start_telegram(
                 .edit_message_text(message_id, &html, Some("HTML"), None)
                 .await;
             let deadline = entry.deadline;
+            drop(_operation);
             drop(entry);
             keep_telegram_tombstone(events, client, message_id, html, deadline).await;
             return;
@@ -914,9 +1181,12 @@ pub fn start_telegram(
         loop {
             tokio::select! {
                 _ = entry.cancel.notified() => break,
-                inbound = events.recv() => match inbound {
+                _ = entry.pause.notified() => continue,
+                inbound = async { if paused(&entry) { events.try_recv() } else { events.recv().await } } => match inbound {
                     Some(crate::telegram::router::TgInbound::Callback(callback)) => {
                         let callback_id = callback.get("id").and_then(|value| value.as_str()).unwrap_or("");
+                        let event_id = format!("callback:{callback_id}");
+                        if progress.seen(&event_id) { if !callback_id.is_empty() { client.answer_callback_query(callback_id).await; } continue; }
                         let data = callback.get("data").and_then(|value| value.as_str()).unwrap_or("");
                         match choice_cards::parse_telegram_callback(data) {
                             // D14: option taps only update the draft; the explicit
@@ -924,12 +1194,16 @@ pub fn start_telegram(
                             // Exception: the force-reply task form's only inline button
                             // is the dedicated cancel escape hatch, which stays one-tap.
                             Some(choice_cards::TelegramAction::Select(index)) if index < entry.request.choices.len() => {
-                                client.answer_callback_query(callback_id).await;
                                 if force_reply || direct_task_confirmation {
                                     selected = Some(index);
-                                    if entry.coordinator.submit_wire(index, Some(comment.clone()), channel).is_ok() { break; }
+                                    if progress.submit(&entry, channel, index, Some(comment.clone())).await.is_ok() { client.answer_callback_query(callback_id).await; break; }
                                 } else if selected != Some(index) {
                                     selected = Some(index);
+                                    progress.selected = selected;
+                                    progress.comment = comment.clone();
+                                    progress.remember(event_id.clone());
+                                    progress.save(&entry, channel).await;
+                                    client.answer_callback_query(callback_id).await;
                                     let keyboard = choice_cards::telegram_keyboard(&entry.request, selected);
                                     let html = choice_cards::telegram_html(&entry.request, selected, &comment, None, lang);
                                     let _ = client.edit_message_text(message_id, &html, Some("HTML"), Some(keyboard)).await;
@@ -937,8 +1211,7 @@ pub fn start_telegram(
                             }
                             Some(choice_cards::TelegramAction::Submit) => match selected {
                                 Some(index) if !force_reply => {
-                                    client.answer_callback_query(callback_id).await;
-                                    if entry.coordinator.submit_wire(index, Some(comment.clone()), channel).is_ok() { break; }
+                                        if progress.submit(&entry, channel, index, Some(comment.clone())).await.is_ok() { client.answer_callback_query(callback_id).await; break; }
                                 }
                                 _ => {
                                     let text = if lang == Lang::Zh { "请先选择一个选项。" } else { "Select an option first." };
@@ -949,7 +1222,9 @@ pub fn start_telegram(
                             _ => client.answer_callback_query(callback_id).await,
                         }
                     }
-                    Some(crate::telegram::router::TgInbound::Text { text, reply_to_message_id, .. }) => {
+                    Some(crate::telegram::router::TgInbound::Text { text, reply_to_message_id, message_id: incoming_id, .. }) => {
+                        let event_id = format!("text:{incoming_id}");
+                        if progress.seen(&event_id) { continue; }
                         if reply_to_message_id == Some(message_id) {
                             let text = text.trim();
                             let input_index = entry.request.presentation.input()
@@ -964,8 +1239,12 @@ pub fn start_telegram(
                                 if !comment.is_empty() { comment.push('\n'); }
                                 comment.push_str(text);
                                 selected = Some(input_index);
+                                progress.selected = selected;
+                                progress.comment = comment.clone();
+                                progress.remember(event_id);
+                                progress.save(&entry, channel).await;
                                 if force_reply {
-                                    if entry.coordinator.submit_wire(input_index, Some(comment.clone()), channel).is_ok() { break; }
+                                    if progress.submit(&entry, channel, input_index, Some(comment.clone())).await.is_ok() { break; }
                                 } else {
                                     let keyboard = choice_cards::telegram_keyboard(&entry.request, selected);
                                     let html = choice_cards::telegram_html(&entry.request, selected, &comment, None, lang);
@@ -977,7 +1256,7 @@ pub fn start_telegram(
                             }
                         }
                     }
-                    None => { disconnected = true; break; }
+                    None => { if paused(&entry) { return; } disconnected = true; break; }
                 }
             }
         }
@@ -1001,6 +1280,7 @@ pub fn start_telegram(
             events.clear_card_route(cancel_id);
         }
         let deadline = entry.deadline;
+        drop(_operation);
         drop(entry);
         keep_telegram_tombstone(events, client, message_id, html, deadline).await;
     });

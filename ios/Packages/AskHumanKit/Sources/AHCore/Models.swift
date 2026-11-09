@@ -28,6 +28,8 @@ public enum MacLink: Sendable, Equatable {
 }
 
 public struct MacState: Identifiable, Sendable, Equatable {
+    public var update: String?
+    public var isUpdating: Bool { update == "updating" || update == "recovering" }
     public var id: String
     /// Name shown to the user: the alias when set, else the Mac's own name.
     public var name: String
@@ -47,8 +49,9 @@ public struct MacState: Identifiable, Sendable, Equatable {
 
     public init(
         id: String, name: String, macName: String, alias: String?, link: MacLink, caps: Caps, slot: SlotInfo?,
-        pairedAt: Date, lastSeenAt: Date?, pendingCount: Int, pushStatus: String?, away: AwayState? = nil
+        pairedAt: Date, lastSeenAt: Date?, pendingCount: Int, pushStatus: String?, away: AwayState? = nil, update: String? = nil
     ) {
+        self.update = update
         self.id = id
         self.name = name
         self.macName = macName

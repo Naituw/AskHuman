@@ -162,10 +162,9 @@ fn exec_native(target: &std::path::Path) -> std::io::Error {
 
 /// The caller retains the singleton lock throughout cleanup and until the exec boundary.
 /// Windows' child waits on that same lock; it never kills or replaces a sibling's daemon.
-pub(super) fn replace(lock: LockGuard, _background: bool) -> i32 {
+pub(super) fn replace(lock: &LockGuard, _background: bool) -> i32 {
     #[cfg(windows)]
     if PREPARED.load(std::sync::atomic::Ordering::SeqCst) {
-        drop(lock);
         return 0;
     }
     let target = match crate::executable::launch_path() {
@@ -207,7 +206,6 @@ pub(super) fn replace(lock: LockGuard, _background: bool) -> i32 {
     }
     record.failed = true;
     save(&record);
-    drop(lock);
     1
 }
 

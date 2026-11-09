@@ -4,10 +4,18 @@ use std::collections::{BTreeMap, VecDeque};
 use std::time::{Duration, Instant};
 use tokio::sync::mpsc::UnboundedSender;
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct Lease {
     pub generation: u64,
     pub token: String,
+}
+
+#[derive(Clone, serde::Serialize, serde::Deserialize)]
+pub struct SavedHost {
+    pub lease: Lease,
+    pub pid: u32,
+    #[serde(default)]
+    pub birth: Option<String>,
 }
 enum Phase {
     Absent,
@@ -33,6 +41,8 @@ pub struct Host<T> {
     failures: VecDeque<Instant>,
     recovered: bool,
     focus: Option<String>,
+    recovery_pid: Option<u32>,
+    recovery_birth: Option<String>,
 }
 impl<T> Default for Host<T> {
     fn default() -> Self {
@@ -43,10 +53,50 @@ impl<T> Default for Host<T> {
             failures: VecDeque::new(),
             recovered: false,
             focus: None,
+            recovery_pid: None,
+            recovery_birth: None,
         }
     }
 }
 impl<T: Clone> Host<T> {
+    pub fn restore(saved: SavedHost) -> Self {
+        Self {
+            generation: saved.lease.generation,
+            phase: Phase::Starting(saved.lease),
+            recovery_pid: Some(saved.pid),
+            recovery_birth: saved.birth,
+            recovered: true,
+            ..Self::default()
+        }
+    }
+
+    pub fn enable_recovery(&mut self, pid: u32) {
+        self.recovery_pid = Some(pid);
+        self.recovery_birth = crate::daemon::recovery::process_birth(pid);
+    }
+
+    pub fn saved(&self) -> Option<SavedHost> {
+        let lease = match &self.phase {
+            Phase::Starting(lease) | Phase::Connected(lease, _) => lease,
+            Phase::Absent => return None,
+        };
+        Some(SavedHost {
+            lease: lease.clone(),
+            pid: self.recovery_pid?,
+            birth: self.recovery_birth.clone(),
+        })
+    }
+
+    pub fn can_suspend(&self) -> bool {
+        self.requests.is_empty() || self.saved().is_some()
+    }
+
+    pub fn detach(&mut self) {
+        if let Phase::Connected(lease, _) = &self.phase {
+            self.phase = Phase::Starting(lease.clone());
+        }
+    }
+
     pub fn start(&mut self) -> Option<Lease> {
         if !matches!(self.phase, Phase::Absent) {
             return None;
@@ -57,6 +107,8 @@ impl<T: Clone> Host<T> {
             token: uuid::Uuid::new_v4().to_string(),
         };
         self.phase = Phase::Starting(lease.clone());
+        self.recovery_pid = None;
+        self.recovery_birth = None;
         Some(lease)
     }
 

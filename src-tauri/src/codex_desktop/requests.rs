@@ -5,20 +5,21 @@ use crate::{
     models::*,
 };
 use serde_json::{json, Value};
-use std::{collections::HashSet, sync::Arc, time::Duration};
+use std::{
+    collections::{HashMap, HashSet},
+    sync::Arc,
+    time::Duration,
+};
 
 #[derive(Default)]
 pub struct Tracker {
     seen: HashSet<String>,
+    tasks: HashMap<String, (String, tokio::task::JoinHandle<()>)>,
 }
 impl Tracker {
     pub fn tick(&mut self, bridge: &Arc<Bridge>, waiting: &[(String, String, String)]) {
         let sessions = bridge.sessions.lock().unwrap().clone();
         let mut live = HashSet::new();
-        if sessions.is_empty() {
-            self.seen.clear();
-            return;
-        }
         let permission_enabled = crate::integrations::agent_permission::enabled(
             crate::integrations::agent_rules::AgentTarget::Codex,
         );
@@ -29,7 +30,7 @@ impl Tracker {
             .is_some_and(|text| text.contains(crate::integrations::agent_permission::MARKER));
         for (sid, s) in sessions.iter().filter(|(_, s)| s.connected) {
             for request in &live_requests(s) {
-                let key = format!("{sid}:{:?}:{request}", s.owner);
+                let key = owned_key(sid, s, request);
                 live.insert(key.clone());
                 if self.seen.contains(&key) {
                     continue;
@@ -43,29 +44,67 @@ impl Tracker {
                     self.seen.insert(key);
                     continue;
                 }
-                if waiting.iter().any(|(id, _, _)| id == sid) {
+                if waiting.iter().any(|(id, _, _)| id == sid)
+                    && !crate::client::recovery::owned_exists(&key).unwrap_or(false)
+                {
                     continue;
                 }
                 let Some(message) = prepare(sid, s, request) else {
                     self.seen.insert(key);
                     continue;
                 };
-                self.seen.insert(key);
+                self.seen.insert(key.clone());
                 let b = bridge.clone();
                 let id = sid.clone();
                 let s = s.clone();
                 let request = request.clone();
-                tokio::spawn(async move {
+                let task = tokio::spawn(async move {
                     if let Err(error) = forward(&b, &id, &s, &request, message).await {
                         if let Some(session) = b.sessions.lock().unwrap().get_mut(&id) {
                             session.error = Some(format!("Answer in Codex App: {error}"));
                         }
                     }
                 });
+                self.tasks.insert(key, (sid.clone(), task));
             }
         }
-        self.seen.retain(|key| live.contains(key));
+        if let Err(error) = reconcile_consumers(&sessions, &live) {
+            eprintln!("askhuman: waiting to reconcile native questions: {error}");
+        }
+        self.tasks.retain(|key, (sid, task)| {
+            let authoritative = sessions.get(sid).is_some_and(|session| session.connected);
+            if authoritative && !live.contains(key) {
+                task.abort();
+                return false;
+            }
+            !task.is_finished()
+        });
+        self.seen
+            .retain(|key| live.contains(key) || self.tasks.contains_key(key));
     }
+}
+
+impl Drop for Tracker {
+    fn drop(&mut self) {
+        for (_, task) in self.tasks.values() {
+            task.abort();
+        }
+    }
+}
+
+fn owned_key(sid: &str, session: &Session, request: &Value) -> String {
+    use sha2::Digest;
+    let identity = json!([
+        sid,
+        session.owner,
+        request["id"],
+        request["method"],
+        request["params"]
+    ]);
+    format!(
+        "codex/{:x}",
+        sha2::Sha256::digest(serde_json::to_vec(&identity).unwrap())
+    )
 }
 
 fn prepare(sid: &str, s: &Session, r: &Value) -> Option<ClientMsg> {
@@ -196,10 +235,44 @@ fn option_text(o: &Value) -> String {
         None => label.into(),
     }
 }
-fn still_pending(bridge: &Bridge, sid: &str, owner: &Option<String>, r: &Value) -> bool {
-    bridge
-        .session(sid)
-        .is_some_and(|s| s.connected && &s.owner == owner && live_requests(&s).contains(r))
+fn still_pending(bridge: &Bridge, sid: &str, owner: &Option<String>, r: &Value) -> Option<bool> {
+    let session = bridge.session(sid).filter(|session| session.connected)?;
+    Some(
+        &session.owner == owner
+            && live_requests(&session)
+                .iter()
+                .any(|current| owned_key(sid, &session, current) == owned_key(sid, &session, r)),
+    )
+}
+
+fn reconcile_consumers(
+    sessions: &HashMap<String, Session>,
+    live: &HashSet<String>,
+) -> anyhow::Result<()> {
+    let path = crate::paths::config_dir().join("state/requests.sqlite3");
+    if !path.exists() || !sessions.values().any(|session| session.connected) {
+        return Ok(());
+    }
+    let store = crate::daemon::recovery::Store::open(&path)?;
+    for (key, record) in store.owned_records("codex/")? {
+        if record.effect != crate::daemon::recovery::OwnedEffect::Waiting || live.contains(&key) {
+            continue;
+        }
+        let sid = match record.task.as_ref() {
+            Some(crate::daemon::recovery::Task::Ask(task)) => task.agent_session_id.as_deref(),
+            Some(crate::daemon::recovery::Task::Confirm(task)) => {
+                Some(task.agent_session_id.as_str())
+            }
+            None => None,
+        };
+        if sid
+            .and_then(|sid| sessions.get(sid))
+            .is_some_and(|session| session.connected)
+        {
+            store.cancel_owned(&key)?;
+        }
+    }
+    Ok(())
 }
 
 /// Async questions are part of the live desktop snapshot, never read from rollout history.
@@ -268,53 +341,109 @@ async fn forward(
     r: &Value,
     message: ClientMsg,
 ) -> Result<(), String> {
-    let stream = ipc::transport::connect().await.map_err(|e| e.to_string())?;
-    let (reader, mut writer) = stream.into_split();
-    let mut reader = tokio::io::BufReader::new(reader);
-    ipc::write_msg(&mut writer, &message)
-        .await
-        .map_err(|e| e.to_string())?;
-    let receive = async {
-        loop {
-            match ipc::read_msg::<_, ServerMsg>(&mut reader)
-                .await
-                .map_err(|e| e.to_string())?
-            {
-                Some(ServerMsg::ConfirmFinal { result }) => {
-                    return Ok(Some(json!({"decision":result.action_id})))
+    let key = owned_key(sid, s, r);
+    let (decision, continuation) = if crate::client::recovery::available().await {
+        let task = match &message {
+            ClientMsg::Submit(task) => crate::daemon::recovery::Task::Ask(Box::new(task.clone())),
+            ClientMsg::SubmitConfirm(task) => crate::daemon::recovery::Task::Confirm(task.clone()),
+            _ => return Ok(()),
+        };
+        let receive = crate::client::recovery::run_owned(key.clone(), task);
+        tokio::pin!(receive);
+        let (outcome, handle) = loop {
+            tokio::select! {
+                result = &mut receive => break result,
+                _ = tokio::time::sleep(Duration::from_millis(500)) => {
+                    if still_pending(bridge, sid, &s.owner, r) == Some(false) { let _ = crate::client::recovery::cancel_owned(&key); return Ok(()); }
                 }
-                Some(ServerMsg::Final {
-                    stdout,
-                    exit_code: 0,
-                }) => {
-                    return serde_json::from_str(&stdout)
-                        .map(Some)
-                        .map_err(|e| format!("Invalid question answer: {e}"))
-                }
-                Some(
-                    ServerMsg::Accepted { .. }
-                    | ServerMsg::ConfirmAccepted { .. }
-                    | ServerMsg::Warn { .. },
-                ) => {}
-                _ => return Ok(None),
             }
+        };
+        if handle.effect != crate::daemon::recovery::OwnedEffect::Waiting {
+            return Ok(());
         }
+        let decision = match outcome {
+            crate::daemon::recovery::Outcome::Confirm(result) => {
+                json!({"decision":result.action_id})
+            }
+            crate::daemon::recovery::Outcome::Ask(result) if result.exit_code == 0 => {
+                match serde_json::from_str(&result.stdout) {
+                    Ok(decision) => decision,
+                    Err(error) => {
+                        handle.complete(true).await;
+                        return Err(format!("Invalid question answer: {error}"));
+                    }
+                }
+            }
+            _ => {
+                handle.complete(true).await;
+                return Ok(());
+            }
+        };
+        (decision, Some(handle))
+    } else {
+        let stream = ipc::transport::connect().await.map_err(|e| e.to_string())?;
+        let (reader, mut writer) = stream.into_split();
+        let mut reader = tokio::io::BufReader::new(reader);
+        ipc::write_msg(&mut writer, &message)
+            .await
+            .map_err(|e| e.to_string())?;
+        let receive = async {
+            loop {
+                match ipc::read_msg::<_, ServerMsg>(&mut reader)
+                    .await
+                    .map_err(|e| e.to_string())?
+                {
+                    Some(ServerMsg::ConfirmFinal { result }) => {
+                        return Ok(Some(json!({"decision":result.action_id})))
+                    }
+                    Some(ServerMsg::Final {
+                        stdout,
+                        exit_code: 0,
+                    }) => {
+                        return serde_json::from_str(&stdout)
+                            .map(Some)
+                            .map_err(|e| format!("Invalid question answer: {e}"))
+                    }
+                    Some(
+                        ServerMsg::Accepted { .. }
+                        | ServerMsg::ConfirmAccepted { .. }
+                        | ServerMsg::Warn { .. },
+                    ) => {}
+                    _ => return Ok(None),
+                }
+            }
+        };
+        tokio::pin!(receive);
+        let decision = loop {
+            tokio::select! {
+                result=&mut receive=>match result? {Some(answer)=>break answer,None=>return Ok(())},
+                _=tokio::time::sleep(Duration::from_millis(500))=>if still_pending(bridge,sid,&s.owner,r) == Some(false) {return Ok(());}
+            }
+        };
+        (decision, None)
     };
-    tokio::pin!(receive);
-    let decision = loop {
-        tokio::select! {
-            result=&mut receive=>match result? {Some(answer)=>break answer,None=>return Ok(())},
-            _=tokio::time::sleep(Duration::from_millis(500))=>if !still_pending(bridge,sid,&s.owner,r) {return Ok(());}
+    while still_pending(bridge, sid, &s.owner, r).is_none() {
+        tokio::time::sleep(Duration::from_millis(500)).await;
+    }
+    if still_pending(bridge, sid, &s.owner, r) == Some(false) {
+        if let Some(handle) = &continuation {
+            handle.complete(true).await;
         }
-    };
-    if !still_pending(bridge, sid, &s.owner, r) {
         return Ok(());
     }
     let Some((method, payload)) = response(r, &decision) else {
+        if let Some(handle) = &continuation {
+            handle.complete(true).await;
+        }
         return Ok(());
     };
+    if let Some(handle) = &continuation {
+        if !handle.claim().await {
+            return Ok(());
+        }
+    }
     // Sending once is deliberate: native transport failures have unknown outcomes.
-    if r["method"] == "askhuman/requestUserInputAsync" {
+    let sent = if r["method"] == "askhuman/requestUserInputAsync" {
         let replies=r["params"]["questions"].as_array().unwrap().iter().map(|q|json!({"questionItemId":q["id"],"question":q["question"],"answer":payload["response"]["answers"][q["id"].as_str().unwrap()]["answers"].as_array().unwrap().iter().filter_map(Value::as_str).collect::<Vec<_>>().join("\n")})).collect::<Vec<_>>();
         bridge
             .execute(super::Operation::Send {
@@ -324,13 +453,19 @@ async fn forward(
                     json!(replies)
                 ),
                 files: vec![],
-                id: uuid::Uuid::new_v4().to_string(),
+                id: continuation
+                    .as_ref()
+                    .map(|handle| handle.call.id.clone())
+                    .unwrap_or_else(|| uuid::Uuid::new_v4().to_string()),
             })
-            .await?;
+            .await
     } else {
-        bridge.call(sid, method, payload).await?;
+        bridge.call(sid, method, payload).await
+    };
+    if let Some(handle) = &continuation {
+        handle.complete(sent.is_ok()).await;
     }
-    Ok(())
+    sent.map(|_| ())
 }
 fn response(r: &Value, answer: &Value) -> Option<(&'static str, Value)> {
     let mut payload = json!({"requestId":r["id"]});

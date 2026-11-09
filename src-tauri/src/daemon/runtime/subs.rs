@@ -76,11 +76,7 @@ pub(super) fn broadcast_agents_state(state: &Arc<ServerState>) {
 /// 状态窗口订阅连接：注册发送端、立即推一次快照，随后专用写任务持续推送；读端接收
 /// `AgentsFocus`（控制台焦点会话，spec gui-agent-console C8）并探测断开。
 /// 该连接保持期间计入 `active`（连同「工作中」agent 一起阻止 daemon 闲退，spec D18）。
-pub(super) async fn handle_agents_sub(
-    mut reader: Reader,
-    w: OwnedWriteHalf,
-    state: &Arc<ServerState>,
-) {
+pub(super) async fn handle_agents_sub(mut reader: Reader, w: Writer, state: &Arc<ServerState>) {
     let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel::<ServerMsg>();
     let mut w = w;
     let writer = tokio::spawn(async move {
@@ -223,11 +219,7 @@ pub(super) fn broadcast_tray_state(state: &Arc<ServerState>) {
 /// **关键：非保活。** `handle_conn` 在连接建立时对 `active` 自增了 1；这里立即 `fetch_sub(1)`
 /// 抵消，连接存续期间净占用为 0，再于退出前 `fetch_add(1)` 让 `handle_conn` 末尾的 `fetch_sub(1)`
 /// 归零。配合空闲判定不引用 `tray_subs`，从而图标订阅**不会**把 daemon 续命（spec D5 核心）。
-pub(super) async fn handle_tray_sub(
-    mut reader: Reader,
-    w: OwnedWriteHalf,
-    state: &Arc<ServerState>,
-) {
+pub(super) async fn handle_tray_sub(mut reader: Reader, w: Writer, state: &Arc<ServerState>) {
     state.active.fetch_sub(1, Ordering::SeqCst);
 
     let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel::<ServerMsg>();
@@ -301,7 +293,7 @@ pub(super) fn interject_append(
 /// **非保活**（同 `handle_tray_sub` 抵消法）：composer 可能开着放几个小时，不能借此续命 daemon。
 pub(super) async fn handle_interject_composer(
     mut reader: Reader,
-    mut w: OwnedWriteHalf,
+    mut w: Writer,
     state: &Arc<ServerState>,
     session_id: String,
 ) {
@@ -350,7 +342,7 @@ pub(super) async fn handle_interject_composer(
 /// **非保活**（同 `handle_tray_sub` 抵消法）：等待可长达数小时，不能借此续命 daemon。
 pub(super) async fn handle_interject_hold(
     mut reader: Reader,
-    mut w: OwnedWriteHalf,
+    mut w: Writer,
     state: &Arc<ServerState>,
     session_id: String,
     rx: tokio::sync::oneshot::Receiver<crate::agents::interject::WaitOutcome>,

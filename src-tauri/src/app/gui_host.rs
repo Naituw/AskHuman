@@ -2858,7 +2858,7 @@ mod tests {
         assert_eq!(
             item(&nodes, "st.update_pending"),
             (
-                "↑ v1.2.0 installed — waiting for 2 in-flight request(s) before restarting daemon (won't interrupt them)",
+                "↑ v1.2.0 installed — updating automatically, keeping 2 pending request(s)",
                 false,
             )
         );

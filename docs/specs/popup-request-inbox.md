@@ -1,5 +1,10 @@
 # 多请求统一作答窗口
 
+> 可恢复 daemon 更新时 Host 保持进程和原表单，按稳定租约重连并续送未确认答案。
+> EOF 清理按连接身份匹配，更新中使用简短状态条。普通关闭与故障边界继续按本文，
+> 跨版本恢复协议与交接见 [即时换新](daemon-live-update.md)。
+
+
 > 状态：2026-10-07，macOS 正式实现已安装；未读 ripple v2 实机效果已获用户确认。
 > 用户要求：Spec → Vue 3 + Tauri 2 demo → 用户确认满意 → 正式实现。不得以浏览器截图替代原生扩窗验收。
 > 实施计划见 [popup-request-inbox](../plans/popup-request-inbox.md)，当前实现地图见 [Popup UI 概览](../overview-popup-ui.md)。2026-10-08 已补齐 Windows 11 VM 的合并窗口核心流程与到达动效，见计划 §27；Linux、真实 IM 及 DPI/多屏等外部验收仍按 PROGRESS 的延期安排。

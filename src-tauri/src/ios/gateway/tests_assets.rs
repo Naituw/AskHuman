@@ -602,3 +602,91 @@ async fn upload_file_names_cannot_escape_their_directory() {
     let expected = fx.dir.path().join("uploads").join(&id).join("passwd");
     assert_eq!(std::path::PathBuf::from(path), expected);
 }
+
+#[tokio::test(start_paused = true)]
+async fn an_upload_resumes_at_its_saved_chunk_after_a_daemon_handoff() {
+    let fx = Fixture::new().await;
+    let mut phone = fx.live_phone().await;
+    deliver_with_assets(&fx, "req1", Vec::new());
+    phone.recv(t::REQUEST_NEW).await;
+    let data = bytes(ASSET_CHUNK_BYTES * 5 + 17, 23);
+    let id = crypto::new_id();
+    let begin = begin(
+        &id,
+        "resume.bin",
+        "application/octet-stream",
+        &data,
+        Some("req1"),
+    );
+    phone.send(&begin).await;
+    assert_eq!(ack(&mut phone).await.next_index, 0);
+    for (index, piece) in data.chunks(ASSET_CHUNK_BYTES).take(4).enumerate() {
+        phone.send(&chunk(&id, index as u64, piece)).await;
+    }
+    assert_eq!(ack(&mut phone).await.next_index, 4);
+    fx.host.pending_ios.lock().unwrap().push("req1".into());
+    let fx = fx.handoff().await;
+    let sink = deliver_with_assets(&fx, "req1", Vec::new());
+    phone.clear_queue();
+    phone.hello().await;
+    phone.send(&begin).await;
+    assert_eq!(ack(&mut phone).await.next_index, 4);
+    for (index, piece) in data.chunks(ASSET_CHUNK_BYTES).enumerate().skip(4) {
+        phone.send(&chunk(&id, index as u64, piece)).await;
+    }
+    assert_eq!(ack(&mut phone).await.status, "complete");
+    let fx = fx.handoff().await;
+    let _ = sink;
+    let sink = deliver_with_assets(&fx, "req1", Vec::new());
+    phone.clear_queue();
+    phone.hello().await;
+    phone.send(&begin).await;
+    assert_eq!(ack(&mut phone).await.status, "complete");
+    phone
+        .send(&submit(
+            "restored-upload",
+            "req1",
+            vec![with_attachments(0, &[], &[&id])],
+        ))
+        .await;
+    let result: wire::AnswerAck = phone.recv_body(t::ANSWER_ACK).await;
+    assert_eq!(result.status, "accepted");
+    let results = sink.results.lock().unwrap();
+    assert_eq!(
+        std::fs::read(&results[0].answers[0].files[0]).unwrap(),
+        data
+    );
+}
+
+#[tokio::test(start_paused = true)]
+async fn an_uncommitted_submission_keeps_its_upload_for_the_same_submission_retry() {
+    let fx = Fixture::new().await;
+    let mut phone = fx.live_phone().await;
+    let sink = deliver_with_assets(&fx, "req1", Vec::new());
+    phone.recv(t::REQUEST_NEW).await;
+    let data = b"keep until accepted";
+    let id = crypto::new_id();
+    upload(&mut phone, &id, "keep.txt", "text/plain", data, "req1").await;
+    let submission = submit("same-retry", "req1", vec![with_attachments(0, &[], &[&id])]);
+    sink.unavailable
+        .store(true, std::sync::atomic::Ordering::SeqCst);
+    phone.send(&submission).await;
+    assert!(
+        !phone
+            .gets(t::ANSWER_ACK, std::time::Duration::from_millis(500))
+            .await
+    );
+    assert!(sink.results.lock().unwrap().is_empty());
+    sink.unavailable
+        .store(false, std::sync::atomic::Ordering::SeqCst);
+    phone.send(&submission).await;
+    let ack: wire::AnswerAck = phone.recv_body(t::ANSWER_ACK).await;
+    assert_eq!(ack.status, "accepted");
+    assert_eq!(ack.client_msg_id, "same-retry");
+    let results = sink.results.lock().unwrap();
+    assert_eq!(results.len(), 1);
+    assert_eq!(
+        std::fs::read(&results[0].answers[0].files[0]).unwrap(),
+        data
+    );
+}

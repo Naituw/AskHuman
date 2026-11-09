@@ -42,6 +42,7 @@ pub struct ConfirmCoordinator {
     finalizer: Option<ConfirmFinalizer>,
     /// Serializes submissions so the finalizer runs at most once, for the winner only.
     submit_lock: Mutex<()>,
+    recovery: Mutex<Option<Arc<crate::daemon::recovery::RequestContext>>>,
 }
 
 impl ConfirmCoordinator {
@@ -60,11 +61,37 @@ impl ConfirmCoordinator {
             tx,
             finalizer,
             submit_lock: Mutex::new(()),
+            recovery: Mutex::new(None),
         })
     }
 
     pub fn request(&self) -> &ConfirmRequest {
         &self.request
+    }
+
+    pub(crate) fn set_recovery(&self, recovery: Arc<crate::daemon::recovery::RequestContext>) {
+        *self.recovery.lock().unwrap() = Some(recovery);
+    }
+
+    pub fn recovery(&self) -> Option<Arc<crate::daemon::recovery::RequestContext>> {
+        self.recovery.lock().unwrap().clone()
+    }
+
+    pub(crate) fn restore_decision(&self) -> anyhow::Result<bool> {
+        let _submission = self.submit_lock.lock().unwrap();
+        let Some(context) = self.recovery() else {
+            return Ok(false);
+        };
+        let saved = context.store.request(&context.id)?;
+        let Some(decision) = saved.and_then(|saved| saved.decision) else {
+            return Ok(false);
+        };
+        let result: ConfirmResult = serde_json::from_value(decision["confirm"].clone())?;
+        if !self.terminal.try_set(Terminal::Final(result.clone())) {
+            return Ok(false);
+        }
+        let _ = self.tx.send(ConfirmOutcome::Final(result));
+        Ok(true)
     }
 
     /// Resolve a wire choice and emit it only if this call wins the terminal gate.
@@ -75,6 +102,16 @@ impl ConfirmCoordinator {
         comment: Option<String>,
         source_channel_id: impl Into<String>,
     ) -> Result<bool, String> {
+        self.submit_wire_identified(choice_index, comment, source_channel_id, None)
+    }
+
+    pub(crate) fn submit_wire_identified(
+        &self,
+        choice_index: usize,
+        comment: Option<String>,
+        source_channel_id: impl Into<String>,
+        receipt: Option<&crate::daemon::recovery::Receipt>,
+    ) -> Result<bool, String> {
         let result = self
             .request
             .resolve_submission(choice_index, comment, source_channel_id)?;
@@ -82,10 +119,32 @@ impl ConfirmCoordinator {
         if self.terminal.is_set() {
             return Ok(false);
         }
+        let recovery = self.recovery();
+        let _operation = match recovery.as_ref() {
+            Some(context) => Some(
+                context
+                    .operation()
+                    .ok_or_else(|| "updating; please retry shortly".to_string())?,
+            ),
+            None => None,
+        };
         let result = match &self.finalizer {
             Some(finalizer) => finalizer(result),
             None => result,
         };
+        if let Some(context) = recovery {
+            let saved = context
+                .store
+                .decide_with_receipt(
+                    &context.id,
+                    &serde_json::json!({"confirm": result}),
+                    receipt,
+                )
+                .map_err(|_| "unable to save this response; please retry".to_string())?;
+            if !saved {
+                return Ok(false);
+            }
+        }
         if !self.terminal.try_set(Terminal::Final(result.clone())) {
             return Ok(false);
         }
@@ -94,6 +153,21 @@ impl ConfirmCoordinator {
     }
 
     pub fn fallback(&self, reason: ConfirmFallbackReason) -> bool {
+        let _submission = self.submit_lock.lock().unwrap();
+        if self
+            .recovery()
+            .as_ref()
+            .is_some_and(|context| context.is_suspended())
+        {
+            return false;
+        }
+        if reason == ConfirmFallbackReason::NoAvailableChannel
+            && self
+                .recovery()
+                .is_some_and(|context| context.is_recovering())
+        {
+            return false;
+        }
         if !self.terminal.try_set(Terminal::Fallback(reason)) {
             return false;
         }
@@ -104,6 +178,7 @@ impl ConfirmCoordinator {
     /// Caller disconnected or daemon is being forcibly stopped. There is no receiver left, so
     /// this closes the gate without emitting a synthetic human decision or fallback frame.
     pub fn cancel(&self) -> bool {
+        let _submission = self.submit_lock.lock().unwrap();
         self.terminal.try_set(Terminal::Cancelled)
     }
 

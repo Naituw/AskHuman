@@ -1,6 +1,26 @@
 {
   "sourceLanguage" : "en",
   "strings" : {
+    "Your Mac is updating. Your input is kept and sending resumes automatically." : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Mac 正在更新，输入已保留，提交会自动继续。"
+          }
+        }
+      }
+    },
+    "Update pending" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "等待自动更新"
+          }
+        }
+      }
+    },
     "%@ (offline)" : {
       "localizations" : {
         "zh-Hans" : {
