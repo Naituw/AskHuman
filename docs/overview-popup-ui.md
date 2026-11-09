@@ -118,6 +118,13 @@ Message、题干及 Confirm 的 Markdown 链接共用 `lib/markdownLinks.ts`，�
 拒绝本地路径的 SPA 回退、其他页面与新窗口请求；允许原文档片段和 Mermaid sandbox 文档。
 被拦截动作只记录固定 `popup_navigation / blocked` 日志，不记录链接路径。DOM 点击仍负责系统打开。
 
+## 系统结束会话
+
+macOS 的系统关机、重启与注销由 `swift/SessionEnd.swift` 的 workspace 通知和 Quit Apple Event 原因识别。
+`app/session_exit.rs` 在 GUI 退出前对当前实例发送限时的 force stop，daemon 在确认停止前提交 closing 状态。
+宿主创建与断连恢复均检查该状态，系统退出期间取消在途请求并静默退出。
+普通宿主故障继续使用有界重建。行为约定见 [合并作答窗口](specs/popup-request-inbox.md#51-系统结束会话)。
+
 ## 稍后回答与小窗
 
 合并窗口里可把一条请求标记为「稍后回答」：只是本轮内存里的显示标记，不回答、不取消，仍可浏览和作答，一轮结束即清。

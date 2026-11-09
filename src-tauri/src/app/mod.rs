@@ -21,6 +21,7 @@ mod popup_recovery;
 mod popup_size;
 pub(crate) mod popup_title;
 pub mod popup_transition;
+mod session_exit;
 pub mod terminal_gate;
 pub mod tray_menu;
 
@@ -1082,6 +1083,7 @@ fn launch(state: AppState, view: View, popup_ipc: Option<PopupIpc>) -> tauri::Re
             }
         })
         .setup(move |app| {
+            session_exit::observe(app.handle());
             #[cfg(not(target_os = "macos"))]
             app.manage(popup_preview_actions::MenuOwner::default());
             // 方案6：预热弹窗待命期不该入坞——尽早设 accessory（在设 Dock 图标 / 建窗前），避免常驻 Dock 图标。
@@ -1432,6 +1434,11 @@ fn launch(state: AppState, view: View, popup_ipc: Option<PopupIpc>) -> tauri::Re
         stderr_redirect::silence();
     }
     app.run(move |app_handle, event| {
+        if matches!(&event, RunEvent::ExitRequested { .. } | RunEvent::Exit)
+            && session_exit::is_ending()
+        {
+            return;
+        }
         if let Some(inbox) = app_handle.try_state::<popup_inbox::Inbox>() {
             if let RunEvent::ExitRequested { code, api, .. } = &event {
                 if code.is_none() {

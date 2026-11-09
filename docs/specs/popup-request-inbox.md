@@ -214,6 +214,31 @@ Stop 取消沿用允许结束的语义。Claude 接管的内置提问沿用其�
 Sidebar 是否显示仍按本轮已展开状态处理。Esc 保留关闭查找、语音、附件等已有优先级，
 确认层打开时仅关闭确认层，不暗中取消请求。
 
+### 5.1 系统结束会话
+
+2026-11-09 用户确认，macOS 关机、重启或注销开始时，取消本实例的在途待答并静默退出。
+历史故障中，Popup Host 先收到系统退出而断连，daemon 约 29 秒后才收到 SIGTERM。
+这段间隔曾触发故障重建，并显示「作答窗口已恢复。尚未提交的草稿已丢失，请重新填写」。
+
+AppKit 的 `applicationShouldTerminate:` 回调读取当前 Quit Apple Event 的 `kAEQuitReason`，识别 `kAEShutDown`、`kAERestart` 和 `kAEReallyLogOut`。
+到 `willTerminate` 通知和 Tauri 的最终退出回调时，当前 Apple Event 已被清除，因此判定必须在前一个回调完成。
+同时在 workspace 的 notificationCenter 观察 willPowerOffNotification，覆盖会话结束通知。
+睡眠、唤醒、普通关闭、普通 Quit 和单独 SIGTERM 保持各自既有路径。[Apple 会话生命周期](https://developer.apple.com/library/archive/documentation/MacOSX/Conceptual/BPSystemStartup/Chapters/Lifecycle.html)、[willPowerOffNotification](https://developer.apple.com/documentation/appkit/nsworkspace/willpoweroffnotification)
+
+GUI 在退出前向选定实例发送已有的 `Stop(force=true)`，最多等两秒，并沿用 fixture peer 身份校验。
+停止请求接收时先提交 force_stop、closing 和 draining，再回复 Stopping，后续 graceful stop 无法撤销已提交的 force stop。
+宿主创建和断连恢复检查 closing，关闭期的 EOF 因此进入原有取消收尾。
+普通崩溃继续使用有界恢复，更新接班继续受既有恢复协议管理。
+
+实现位于 `swift/SessionEnd.swift`、`app/session_exit.rs` 及 daemon Stop／inbox 边界。
+`scripts/session-end.node-test.mjs` 验证退出原因、睡眠与 workspace 通知，
+`scripts/session-end-smoke.mjs` 向私有 popup PID 定向发送 Quit 事件，覆盖三种系统原因、独立弹窗及普通故障恢复。
+
+2026-11-09 本机验证通过，Rust 2921 项、Node 209 项、严格 clippy 和既有 daemon 接班 smoke 均通过。
+私有实窗的四种系统退出场景均返回取消，daemon 停止且作答宿主没有替代进程，普通崩溃仍恢复待答。
+候选已通过 install.sh 安装。用户完成日常待答后，已正常重启并确认旧作答宿主换新，四条 IM 连接恢复正常。
+整机关机仍需日常观察，具体步骤保留在 PROGRESS。
+
 ## 6. 原生几何与附件共存
 
 参考附件预览的工作区计算、冻结主区域、绘制后几何事务和受限尺寸恢复规则，扩展到左右附区。

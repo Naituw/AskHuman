@@ -1896,7 +1896,12 @@ async fn control_loop(reader: &mut Reader, w: &mut Writer, state: &Arc<ServerSta
                 let _ = ipc::write_msg(w, &ServerMsg::Status(info)).await;
             }
             ClientMsg::Stop { force } => {
-                state.force_stop.store(force, Ordering::SeqCst);
+                if force {
+                    // Commit the stop before acknowledging it to an exiting GUI process.
+                    state.force_stop.store(true, Ordering::SeqCst);
+                    state.closing.store(true, Ordering::SeqCst);
+                    state.draining.store(true, Ordering::SeqCst);
+                }
                 request_exit(state, super::handoff::Intent::Stop);
                 let _ = ipc::write_msg(w, &ServerMsg::Stopping).await;
                 // 默认 graceful：有在途请求时排空后退出；`--force` 或无在途 → 立即退出。

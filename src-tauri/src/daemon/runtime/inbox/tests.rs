@@ -539,6 +539,30 @@ struct Observed<R> {
     reader: R,
     consumed: Option<tokio::sync::oneshot::Sender<()>>,
 }
+
+#[tokio::test]
+async fn a_committed_stop_keeps_host_disconnect_out_of_recovery() {
+    let state = state();
+    let (_entry, mut result) = request(&state);
+    let generation = {
+        let mut host = state.popup_inbox.lock().unwrap();
+        let mut lease = host.start().unwrap();
+        // Exhaust the restart budget so a regression cannot launch a GUI child.
+        for _ in 0..2 {
+            lease = match host.disconnected(lease.generation, Instant::now(), true) {
+                Recovery::Restart(lease) => lease,
+                _ => panic!("expected recovery lease"),
+            };
+        }
+        lease.generation
+    };
+    state.closing.store(true, Ordering::SeqCst);
+    recover_inbox(&state, generation);
+    let host = state.popup_inbox.lock().unwrap();
+    assert_eq!(host.generation(), Some(generation));
+    assert_eq!(host.requests().len(), 1);
+    assert!(result.try_recv().is_err());
+}
 impl<R: AsyncRead + Unpin> AsyncRead for Observed<R> {
     fn poll_read(
         mut self: Pin<&mut Self>,

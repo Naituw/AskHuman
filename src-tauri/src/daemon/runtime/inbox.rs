@@ -422,6 +422,9 @@ fn spawn_inbox_process(exe: &std::path::Path, token: &str) -> std::io::Result<u3
 }
 
 fn spawn_inbox_host(lease: Lease, state: &Arc<ServerState>) -> bool {
+    if state.closing.load(Ordering::SeqCst) {
+        return false;
+    }
     let result = std::env::current_exe().and_then(|exe| spawn_inbox_process(&exe, &lease.token));
     if let Err(error) = result {
         log(&format!("failed to start popup host: {error}"));
@@ -443,6 +446,9 @@ fn spawn_inbox_host(lease: Lease, state: &Arc<ServerState>) -> bool {
     true
 }
 pub(super) fn recover_inbox(state: &Arc<ServerState>, generation: u64) {
+    if state.closing.load(Ordering::SeqCst) {
+        return;
+    }
     prune_inbox(state);
     let prewarm = warm_mode_enabled(state, crate::config::PopupWindowMode::Merged)
         && !state.draining.load(Ordering::SeqCst);
