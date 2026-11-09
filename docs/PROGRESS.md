@@ -3,16 +3,15 @@
 记录需要跨会话保留的未完成 / 延期事项和明确下一步。任务 / 需求完成后删除其 section
 （历史留在 git）。
 
-## 待随下次内测包分发：iOS 新建任务记住 Mac
+## 待真机验收：iOS 新建任务记住 Mac
 
 2026-11-08 已在主工作树实现：手动选择 Mac 时立即保存手机本地偏好，取消创建或重启 App 仍保留；
 已记忆 Mac 不可用时临时回退，不覆盖偏好，入口明确指定的 Mac 优先。约定见 [iOS 规格 §6.8](specs/ios-channel.md#68-新建任务)。
 `AgentStoreTests` 33 项通过，含 6 项新增回归；`./scripts/install.sh` 已通过并安装日常版（不更新 iOS App）。
-用户决定本轮不单独打包，随下一次 iOS 内测包发布。
-下一步：打包时包含 `AppStore+Agents.swift` 的修复，真机确认取消与重启后仍选上次手动选择的 Mac；
-已记录项目待办 `b9be6812-78b1-4381-8bec-8589aa1a9da3`。分发与真机确认完成后删除本节。
+已随 TestFlight `0.1.0 (14)` 分发。下一步在真机确认取消与重启后仍选上次手动选择的 Mac。
+已有项目待办 `b9be6812-78b1-4381-8bec-8589aa1a9da3`，真机确认后删除本节。
 
-## 待随下次内测包分发 Agent 观察最新思考
+## 待真机验收：Agent 观察最新思考
 
 2026-11-08 已按用户确认在主工作树实现 Mac Agent 控制台与 iPhone 实时观察的最新正文 / 公开思考展示。
 采用整段定稿更新、固定 10 秒节流窗口，以及展开 / 选字 / 上滑阅读锁。约定与验证见
@@ -20,8 +19,8 @@
 Mac 日常版已安装，并通过新安装 AskHuman 交互及真实 Cursor 只读观察帧验证。
 Rust 全量 2845 passed / 8 ignored，最终 Cursor 专项 12 项、定稿候选 4 项、控制台 36 项、Swift 状态 4 项通过，
 前端类型检查与 iOS arm64 模拟器编译通过。用户已看过真实会话内容的原生回放并确认密度，连续末尾预览已修正。
-用户明确要求本轮先提交，TestFlight 分发延后，项目待办 #11 `e8ddc583-a8c9-4e75-b84c-cb994f256d62` 已记录。
-下一步随内部 TestFlight 分发后，在手机确认思考及时更新、展开阅读保持稳定及「有新内容」切换；完成后删除本节。
+已随 TestFlight `0.1.0 (14)` 分发。下一步在手机确认思考及时更新、展开阅读保持稳定及「有新内容」切换。
+已有项目待办 #11 `e8ddc583-a8c9-4e75-b84c-cb994f256d62`，真机确认后删除本节。
 
 ## 待真机确认：Build 11 回答框焦点卡死
 
@@ -30,9 +29,9 @@ AttributeGraph 更新与 `UITextView.becomeFirstResponder`；用户确认主要�
 已将 `CaretTextView.updateUIView` 的焦点获取 / 释放统一延后并合并，执行时读取最新绑定，避免在更新中重入及过期请求抢焦点。
 实现与有限验证见 [iOS 实施记录](plans/ios-channel.md#2026-11-07build-11-回答框焦点卡死的本地修复)。
 模拟器编译与 Mock 下点输入框、按键输入、发送一题通过；两条新增 UI 回归没有取得完整通过结果。
-用户要求简单验证，且明确暂停新 TestFlight 上传；本地修复尚未发到手机，不能据模拟器结果宣称 iOS 27.3 真机已修好。
+2026-11-07 修复已随内部 TestFlight `0.1.0 (13)` 分发，用户确认已更新、原有 Mac 连接正常，见 [Build 13 交付记录](plans/ios-channel.md#2026-11-07testflight-内部构建-13)。
 
-下一步：用户恢复出包后，在其 iOS 27.3 Beta 手机上观察点输入框、切题、后台返回与发送；
+下一步：在 iOS 27.3 Beta 手机上观察点输入框、切题、后台返回与发送；
 有可用资源时补跑 `AskHumanFocusUITests` 的两条回归。完成真机确认后删除本节。
 
 ## 待界面验收：桌面新建任务设置与 iOS 对齐
@@ -51,16 +50,15 @@ AttributeGraph 更新与 `UITextView.becomeFirstResponder`；用户确认主要�
 后续验收已登记项目待办 #9（`90e4972e-cf41-4c59-9a0b-a216989915fb`）。
 完成界面确认后删除本节；用户已授权将本次变更单独提交并推送 main，主树另有并行待办同步改动。
 
-## 待邀请与首位朋友验收：iOS 外部 TestFlight
+## 待首位朋友真机验收：iOS 外部 TestFlight
 
 用户已批准 [开发计划](plans/ios-external-testflight.md)：首批 1–5 位朋友，各自 Mac 与 EMQX，开发者提供现有推送中继；外部邮件邀请，无公开加入链接，先不提供演示模式、直接尝试 Beta 审核。
 工作树 `HumanInLoop-ios-external-testflight`（`codex/ios-external-testflight`），不挂渠道预设。工具、公开材料与 App 内链接已完成；24 项工具回归、iOS 页面回归、最终安装及 Dev 转送通过。Pages 与 Mac 预览包已公开、Apple 审核资料与中英文测试说明已读回。
 用户已批准启用 GitHub Pages、发布独立 Mac 预览包并继续上传/送审；审核联系人选定 Spatialify，个人信息只存私有输入并提交 Apple。
 完成标准与分阶段验证见计划；未经批准不加演示模式、不迁移中继、不自动创建定时任务。
 2026-11-05 23:45（北京时间）已提交 **0.1.0 (10)**：Apple build `81b235eb-4db3-46ee-8372-e74ca5bcbe0a`，VALID、APP_STORE_ELIGIBLE、`WAITING_FOR_BETA_REVIEW`（审核提交 `WAITING_FOR_REVIEW`）。源码与本地标签 `ios-testflight-10` 固定 `d3bb833`；后续 main 的已结束问题页面改动不在此包。首次上传最终确认 401 已通过同归档受控重试解决，不再重传。
-2026-11-07 只读核对：build 10 的 externalBuildState 已为 `IN_BETA_TESTING`，获准外测。`AskHuman Friends` 已包含 build 10，公开链接关闭、手动指定构建、自动通知关闭，尚无测试员；朋友邮箱尚未提供。build 11 为 INTERNAL_ONLY，仍只供内部测试。
-下一步：接收并仅邀请用户明确提供的 1–5 个邮箱；首位朋友按[中文接入指南](https://naituw.github.io/AskHuman/beta-zh/)安装[AskHuman 0.17.0](https://github.com/Naituw/AskHuman/releases/tag/v0.17.0)，完成配对、前台回答、锁屏推送、切网与首答验证。若审核要求演示资源，先带实际反馈向用户确认。
-用户在送审报告后选择“后续记为待办，拿到审核结果和邮箱后继续”；已记录项目待办，本次交付止于送审，不建立定时监控。
+2026-11-06 Build 10 获批后已向用户指定的一位朋友发出邀请。2026-11-09 Build 14 已在 `AskHuman Friends` 进入 `IN_BETA_TESTING`，沿用原邀请，本次 2026-11-09 只读查询已显示 `INSTALLED: 1`；独立配对与推送验收尚未确认。见 [Build 14 交付记录](plans/ios-channel.md#2026-11-09testflight-内部与外部构建-14)。
+下一步：首位朋友按[中文接入指南](https://naituw.github.io/AskHuman/beta-zh/)安装[AskHuman 0.17.0](https://github.com/Naituw/AskHuman/releases/tag/v0.17.0)，完成配对、前台回答、锁屏推送、切网与首答验证。已有项目待办 `73650ea1-449e-42bd-91e4-61a18478d84d`。
 
 ## 待平台验收：Daemon 更新接班的 Windows / Linux 原生路径
 
@@ -330,7 +328,7 @@ iPhone 与折叠屏外屏不变。只在 iPad mini 与折叠屏（Duo）模拟�
 - [ ] 外屏横屏、内屏竖屏／横屏没有用最终包逐屏复查（早先的探针已经定下规则：内屏竖屏没有侧栏，内屏横屏的 sheet 按钮留在卡片顶栏）；`AskHumanLargeScreenUITests` 也没跑。真机上顺手看一眼。
 - [ ] 未定的小事（用户还没表态）：任务进度页的「关闭」在 iOS 26 起是蓝色 ✕（`.confirmationAction` 位置上的 `.close` 角色），延续了原先蓝色「Close」药丸的样子；觉得抢眼可以换成顶栏右侧的灰色 ✕。
 
-## 待真机验收：Duo 折叠后的导航按钮（本地修复完成，尚未发 TestFlight）
+## 待真机验收：Duo 折叠后的导航按钮
 
 2026-11-08 用户补齐复现：内屏横屏从列表打开提问，再切外屏，返回、前后切题与 More 消失。
 本地 iOS 27.1 Duo + SDK 27.2 已复现并修复；用户真机为 TestFlight / iOS 27.3 Beta，尚未用新代码复验。
@@ -341,11 +339,11 @@ iPhone 与折叠屏外屏不变。只在 iPad mini 与折叠屏（Duo）模拟�
 本地验证已完成：六条真实开合全部通过（请求每次另查四个按钮、草稿、切题、前后台与实际返回）；
 Duo 适用的大屏 / 窄内屏用例、AX 返回、配对 / 解除配对 / 未配对、到达动效均通过；外屏原始五秒横幅实际点击通过。
 宽屏横幅的瞬时自动化受换页和计时窗口影响，另以同 SHA-256 产品动态库的完整 RootView、独立 SwiftUI App Mock 持续横幅夹具，验证实际点击打开 Agent 并关闭横幅；没有修改产品代码或默认计时。
-`install.sh` 再次成功，Mac 二进制内容无变化。临时诊断开关已移除；尚未上传 TestFlight。
+`install.sh` 再次成功，Mac 二进制内容无变化。临时诊断开关已移除，修复已随 TestFlight `0.1.0 (14)` 分发。
 本次只操作 Duo `9E037F77-7859-4EF0-BB14-553A45928E69`，未操作其他会话的设备 / 进程。已有 AskHuman 待办 #10（`636dd45b-d512-4946-aa35-6db52918adc6`）。
 
 下一步：
-- [ ] 用户决定出包后，发内部 TestFlight，在真机 iOS 27.3 Beta 重走内屏横屏点开提问 → 外屏，复验四个按钮、草稿、实际返回、连续开合与前后台。
+- [ ] 安装 Build 14 后，在真机 iOS 27.3 Beta 重走内屏横屏点开提问 → 外屏，复验四个按钮、草稿、实际返回、连续开合与前后台。
 - [ ] 真机确认后删除本节；保留已有诊断功能。
 
 ## 待验收：iOS「做完 / 出错」通知收窄（Mac 端与 App 端都已实现，真机一轮未做）
@@ -370,11 +368,11 @@ App 里用只读小铃铛标出「会通知你」。需求 [`docs/specs/ios-foll
 需求 [`docs/specs/message-annotations.md`](specs/message-annotations.md)，计划与各期实施记录 [`docs/plans/message-annotations.md`](plans/message-annotations.md) §14（含 2026-11-08 的验证记录）。
 Mac（守护进程、CLI 输出、MCP、iOS 网关）、弹窗（在真实弹窗里点过）、iOS（协议、草稿、网页引擎、选字菜单、编辑面板、清单、底栏圆钮、历史、直接提问）都已入库；
 iOS 在 iPhone 17（402 pt）/ 26.2 与 iPhone SE（375 pt）/ 18.5 的模拟器上过了自动化。375 pt 底栏按需求 D21 实测：浮动栏达标（辅助字号下一行比边距宽 12 pt，用户接受）；
-经典栏原先计数被挤没，已按用户的选择改成「放不下就把计数挪到按钮行上方」。用户 2026-11-08 决定**先不出 TestFlight**，等他开口。
+经典栏原先计数被挤没，已按用户的选择改成「放不下就把计数挪到按钮行上方」。2026-11-09 经用户确认，随 TestFlight `0.1.0 (14)` 分发。
 
 下一步：
 
-1. 用户要上真机时，出一版内部 TestFlight（技能 `ios-testflight`）。真机上看：375 pt 机型或辅助字号下的底栏、多词与跨块的拖选、系统选字菜单里的「添加附注」入口与句柄、
+1. 安装 Build 14 后在真机看 375 pt 机型或辅助字号下的底栏、多词与跨块的拖选、系统选字菜单里的「添加附注」入口与句柄、
    链接文字的菜单、整套手感。
 2. 模拟器上还欠的（机器不抖时再补，一次只开一台）：改完经典栏之后，浮动栏在 iPhone SE / 26.2 上复测 `AskHumanBarUITests`（`TEST_RUNNER_AH_UI_CONTINUE=1`，
    `TEST_RUNNER_AH_UI_SHOTS` 收 `frames.txt`，对照需求 §4.3 的实测列）与附注用例；iOS 27.0 的对照（SE / 27.0 的测试运行器在内存吃紧时反复崩，一次没成功）；`AskHumanBarUITests` 的 zh-Hans。

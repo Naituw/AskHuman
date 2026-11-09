@@ -140,3 +140,24 @@ P0–P4 已完成：实现、验证、发布、上传与审核提交均已读回
 ### 2026-11-07：外测已获批
 
 准备桌面 0.17.0 时通过既有签名 helper 只读查询：0.1.0 (10) 为 VALID / APP_STORE_ELIGIBLE，externalBuildState 为 IN_BETA_TESTING；AskHuman Friends 仅关联 build 10，公开链接关闭。尚无明确朋友邮箱，未发送邀请。0.1.0 (11) 仅内部测试。朋友接入改用正式桌面 0.17.0 和更新后的中文指南；首位朋友验收仍未完成。
+
+### 2026-11-09：Build 14 续发至现有外测组
+
+- Apple 读回确认，Build 10 发出的首位朋友邀请已存在，状态为 `INVITED`。邀请过程及保留的测试员名单见外测工作树 `5a9c1240` 的实施记录。
+- 按用户授权复用原私有组和既有 Keychain 签名。临时签名 helper 基于 `ef5fa3e1` 增加独立的 `updateGroup` 操作，只允许向既有私有组追加通过检查的构建，要求已受邀成员与上次批准的名单逐一匹配，并在追加前读回自动通知已关闭。通过名单不符、未受邀、重复执行等伪 Apple 测试。项目发布脚本与日常安装的 helper 保持原版本。
+- Build 14 的审核立即读回 `APPROVED`。沿用 Build 10 的 `start` 操作，核对原有 2 位内部测试员、1 位外部测试员及仅有这两个分组后开启测试。Apple 读回两组均为 `IN_BETA_TESTING`，外测公开链接关闭，原邀请仍为 `INVITED`。首位朋友的接受、安装、配对与推送验收仍待完成。
+
+### 2026-11-09：日常发布默认覆盖内部与外部
+
+用户明确要求本次与以后默认内部、外部均可用。技能、AGENTS、概览和规格已同步：
+上传默认 external eligibility，同一构建服务 Internal 与 Friends；仅明确要求时使用 internal-only。
+常规发布请求同时授权既有组追加构建、Beta 审核与开启测试，不重复询问受众范围。
+
+正式 helper 增加 `update` 与 `start`：只复用现有私密组和已邀请成员；追加新构建前关闭并读回
+自动通知，开启测试前验证只有 Internal / Friends 两组且没有组外个别测试者；成员不变。
+`BETA_APPROVED` 只发送一次构建通知，已可测试时再次执行不发送；不新增成员、不重发邀请。
+上传 Python / Swift 默认一致，并保留 `--audience internal`。持久签名导出模板仍为 internal-only，
+每次外测只改临时副本。25 项离线工具回归通过，稳定 Developer ID 签名 helper 已安装，
+Apple 状态与 Build 14 测试说明只读检查通过；公开中英文隐私与接入页面均为 HTTP 200。
+
+本次只读查询 Friends 已有一位测试者为 `INSTALLED`。实际配对、首答与生产推送继续单独验收。

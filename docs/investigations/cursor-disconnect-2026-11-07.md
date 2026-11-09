@@ -116,11 +116,61 @@ HouseMini 的默认网关是联通中兴 ZXHN G7615V2。19:39:37.314 到 19:41:0
 
 00:46 的第三条在续采内建立，Mac 和 DMIT 用 TLS 握手哈希精确配对。DMIT 出口在关前仍收到数据，发送队列为零。DMIT 网卡先收 RST，约 100 微秒后 Snell 关闭出口 FD 20，再关闭外层 FD 258，随后发出的外层 FIN 在 HouseMini 上有同一个 TCP 指纹。外层通过约 0.9998 的双向字节走势关联。Surge 对应的 Record 8577234 映射到 `SNConnectorV4-229148`，首先记录外层 socket 的 EOF，随后关闭 Mac 流。此例捕获了从出口 RST 到代理传回的完整关闭顺序。证据在 `events/1794069979/`。
 
-00:57:14–16 另有两个 Agent 回合报告 `ConnectError / Unavailable`，底层原因为 `ETIMEDOUT`。以 SYN 序号与 SYN-ACK 确认号配对，00:57:07–21 的 Mac 侧 27 个独立新握手中有 6 个未收到回复，同窗 DMIT 出口的 27 个握手都成功，HouseMini 的既有 `DIRECT` 日志在事件前后 30 秒无建连失败。该组按 Mac 到 Surge 入口的建连异常单独统计，现有记录尚不能区分网关虚拟网络、Surge 接受连接的路径与本机。证据在 `events/1794070634/` 和 `events/1794070636/`。
+00:57:14–16 两个 Agent 回合 `360913cf` 和 `8e9c6c0e` 报告 `ConnectError / Unavailable`。回查原始 Agent Host 日志，00:57:12.455、13.122 和 15.450 明确记录 `bidiAppend` 向 `198.18.16.74:443` 新建 TCP 连接时 `connect ETIMEDOUT`。该地址属于 [Surge 的 fake-IP 地址池](https://manual.nssurge.com/dns/advanced.html)，这几条日志定位的是进行中的回合无法建立用于提交追加消息的新连接。以 SYN 序号与 SYN-ACK 确认号配对，00:57:07–21 的 Mac 侧 27 个独立新握手中有 6 个未收到回复，同窗 DMIT 出口 27 个握手均成功。Mac 在前后对照窗分别为 25/25 和 29/29 成功，HouseMini 的 `DIRECT` 日志在故障前后 30 秒无建连失败。
+
+同一台 Mac 的 `airportd` 在 00:57:10.452 收到 Wi‑Fi 连通性异常信号，00:57:13.689 记下 3 次系统探测均超时，00:57:14.534 状态解除。在前后各 30 分钟的同口径日志中只见这一次探测失败。探测目标在统一日志中被隐去，未见 Wi‑Fi 重新关联记录。证据将异常缩到 Mac 经 Wi‑Fi 到 Surge 虚拟入口这一段，尚不能区分 AP 转发、HouseMini 收包与 Surge VM 处理。凌晨 HouseMini 只录了 Snell 外层，不能回查这批 SYN 是否到达入口。后续同类可用早间新增的 HouseMini LAN 采集，按源端口和 SYN 序号核对；同步保留 `airportd` 的系统探测事件。续采事件编号为 `1794070634`、`1794070636`。
+
+回查 11 月 7 日 12:52–17:08 的 Agent Host 日志，还找到同一虚拟地址的 62 次 `bidiAppend` 建连超时（按时间、请求 ID 和序号去重，含同一请求内的重试）。其中 16:14–17:08 有 16 条带 `ETIMEDOUT` 的 Agent 失败诊断，分属 6 个原始回合；6 条可在同一尝试 ID 的前 15 秒内精确对到上述建连失败。这段早于切换 DMIT 单跳和三端采集，没有同期入口握手证据，同口径 `airportd` 查询也未见 00:57 的探测事件。已确认相同的入口建连症状曾重复出现，具体原因和影响次数须分开计算。
+
+11 月 8 日早间 LAN 补采抓到一组同类握手延迟。将 08:03:40–08:44:45 的 Mac `en0` 记录与 HouseMini `en9` 的 `outer-lan.jsonl` 按源端口及 SYN/ACK 序号配对：3,234 次新握手中，24 次超过 300 毫秒才收到 SYN-ACK，另有一次未收到。25 次全部集中于 08:25–08:29（该时段共 318 次）；其余成功握手的中位数为 3.88 毫秒。这一时段未见新的 Agent 失败诊断。
+
+24 条慢连接的 Mac 首次 SYN 到收到 SYN-ACK 耗时 0.338–5.939 秒，每条在 Mac 网卡记录中出现 8–13 枚相同初始序号的 SYN。HouseMini 对每条只见一枚 SYN，收到后 0.172–0.346 毫秒即发回 SYN-ACK；Mac 从最后一枚 SYN 到收到回复只用 2.80–7.84 毫秒。例如端口 `61345` 的 Mac 首次/末次 SYN 为 08:25:44.158024、50.092559，回复为 50.096792；HouseMini 同机的 SYN 和 SYN-ACK 为 49.898179、49.898414。未收到回复的 `:61705`（期望 ACK `4155072463`）在 Mac 共见 12 枚 SYN，始于 08:27:37.368100、止于 41.400880，HouseMini `en9` 两向均无副本，同期仍有其它握手可在两端配对。全窗另有 10 条正常握手只在 Mac 有完整记录，因此单条在 `en9` 缺失不能独立定位故障。
+
+Mac 的 `airportd` 在 08:26:28–34 也记录了连通性异常，其中 08:26:31.527 的系统探测丢了三包中的一包，其他探测有成功回包。合并两端同机时序，早间这批延迟主要发生在 SYN 首次出现在 Mac 抓包点之后、到达 HouseMini 的采集接口之前；一旦报文可见，Surge 很快回应。证据支持优先查 Mac 的 Wi‑Fi 发送、AP 和局域网转发。具体环节需要 AP 侧记录，或在相同 Surge 和 Snell 路线下做 Wi‑Fi 与有线对照。证据源为早间 run 的 Mac `packets-04.jsonl.gz` 至 `packets-12.jsonl.gz`、HouseMini `outer-lan.jsonl` 和 Mac 统一日志。
+
+08:25–08:30 的包头与脱敏 `airportd` 记录已单独保全。复查 `:61345` 的 13 枚 Mac SYN 在 HouseMini `en9` 只匹配到最后一枚及其回复，`:61705` 的 12 枚 Mac SYN 在该接口均无副本。09:03 起当前 run 增加 HouseMini `en8` 的 Mac-to-fake-IP 控制包，以及 Mac 的 `airportd` 筛选日志。10 秒内有三个端口握手延迟或多次重传仍无回应就自动保全，即使应用没有报错。用该窗口的真实包头回放，触发器能检出这批异常。[保全窗口](/Users/wutian/Library/Logs/CursorDisconnect/run-20261108.0EWLD8/manual/wifi-ingress-0825-0830)
+
+### 接力（Handoff）与 AWDL
+
+8 月 8 日的本机终端历史保留了两轮对同一台 HouseMini 的对照：09:50、09:52 执行 `ifconfig awdl0 down` 后 ping，09:51、09:53 恢复接口后再 ping。找到了操作记录，未找到 ping 输出或当时的结论。这项旧实验切换的是 AWDL 接口。苹果的基础 Handoff 通过蓝牙低功耗广播，部分接力功能用点对点 Wi‑Fi 传较多数据；AWDL 还服务于其它功能，可能与 AP 连接共享无线电并切换信道。[苹果 Handoff 安全文档](https://support.apple.com/en-gb/guide/security/secf78dbe639/web) · [AWDL 协议实测](https://doi.org/10.1145/3241539.3241566)
+
+11 月 8 日 08:25 第一条慢握手始于 08:25:14.629。最近一组 `sharingd` 的接力活动记录为 08:25:23.860–30.871，同样的活动在 08:23、08:24、08:32 等未见慢握手的分钟也出现。内核在 08:21–08:34 的 132 次 AWDL 调度快照均标为 5 GHz 信道 149、基础网络优先 90%；08:27:05 的调度数组有一次变化，优先级未变。异常窗内 458 条 AWDL 数据采样的收发计数均为零，240 条状态采样均未报告活跃的 AirDrop 或 AWDL socket。八次 `InfraTrafficStateChange` 最早在 08:25:48.892，晚于首个慢握手，仍选择基础网络优先。未见同期实际 AP 漫游的记录。
+
+00:57 的 `AWDLRealTimeMode` 只出现在 00:57:10.709 和 14.925 的一批系统配置键刷新中，没有记录新值。未收到回复的首个 SYN 在 00:57:07.353 已出现。这些记录不足以证明 AWDL 在故障前改变了状态。两组样本均缺实际无线电离开信道的逐包证据，保留 AWDL 后台调度作为可能因素；当前证据不支持把两组都归因于一次具体的 Handoff 传输。若复测，沿用相同 AP 和 HouseMini，单独切换 Handoff 并观察 AWDL 是否改变；若接口仍活跃，应将 AWDL 接口的短时开关作为另一个对照。对照以局域网 ping 和 SYN 握手为主。
 
 01:32 的续采尾声样本也有完整 TLS 握手配对。DMIT 收到出口 RST 后约 159 微秒关闭出口 FD 275，约 201 微秒关闭 Snell 外层 FD 265，外层的双向字节走势相关约 0.9978。HouseMini 也记录了随后相同的外层 RST 报文，Surge Record 8605746 对应 `SNConnectorV4-229408` 并记为 `Closed by remote`。Mac 先发 FIN 的单端记录在这里容易误判方向，以 DMIT 同一网卡的事件顺序为准。故障后因计划截止保存约 54 秒，事件切片在 `events/1794072725/`。
 
 续采从 00:03 到 01:33 约 90 分钟。三端包头均结束于计划时刻，均报告零内核采集丢包，Mac 的 14,767 个 TLS 指纹有 14,758 个可在 DMIT 对应。Cursor 记录去重后有六条失败，四条已建立连接均为 Cursor 方向先关，另两条属于 00:57 的同一组入口握手超时。356 次 Surge 活跃快照无漏轮，观察到 15 条连接在年龄超过 60 分钟后仍有新字节，其中 13 条超过 90 分钟仍有新字节。超过阈值的这些连接均早于续采开始，这组年龄统计包含 Cursor 后台连接。四条能定位的异常里有一次确实在约一小时半出现，另三次在约 13、36、41 分钟出现；同一回合的相邻失败间隔也分散。结果支持连接会在不同年龄异常关闭，未观察到固定的一小时级定时关闭。续采的汇总保存在 `snell/coverage.json` 和 `snell/age-coverage.json`，DMIT tracefs 与临时 SSH 会话已收尾。
+
+### 11 月 8 日早间补充的关闭日志
+
+复核凌晨四条 DMIT 出口记录，首个入站 FIN/RST 的序号都比关闭前最近一秒分桶的入站序号末尾和出站 ACK 多 24 字节。01:32 的 Mac 记录也显示收到最后 24 字节。使用 16 字节认证标签的 TLS 1.3 在无填充时可用 24 字节承载两字节告警。现有记录只有序号和载荷长度，不能确认记录类型，更不能把这个差值直接记为 `close_notify`。[TLS 记录格式](https://www.rfc-editor.org/rfc/rfc8446.html#section-5.2)
+
+07:38 起，Mac 只针对 `api2.cursor.sh` 当时的 Surge fake IP 保存关闭包的方向、序号、TTL、TCP 时间戳及前四个双向有数据或有控制位的包。若一个包的 TCP 载荷长度恰与开头的 TLS 记录头吻合，另存候选类型和长度。日志不落盘包载荷。该捕获点的对端是 Surge。这个阶段还没有 DMIT 出口记录。
+
+07:41 起在三个已运行的 Cursor Agent Host 中临时记录入站 WebSocket Close 帧及状态码、本地调用关闭、缺少对端 Close 帧的异常结束，以及 Node HTTP/2 的入站 GOAWAY。挂载时找到了七条已有 WebSocket，以本机端口和时间与包头对齐。日志仅保留协议事件和必要的连接元数据，接入后已关闭临时调试监听。文件在 `~/Library/Logs/CursorDisconnect/run-20261108.0EWLD8/`。Cursor 随附的 Node 运行时在回环测试中接受 `enableTrace()`，但未输出 TLS 告警。后续若看到入站 WebSocket Close 在本地关闭动作之前出现，可把该样本追到加密连接的协议对端。没有 Close 帧的 RST 仍需与网关和 DMIT 出口证据结合判断。
+
+### 11 月 8 日早间三端续采
+
+下次复发用本机的独立工具 [CursorDisconnectDiagnostics](/Users/wutian/Developer/CursorDisconnectDiagnostics/README.md)。进入该目录后运行 `./cursor-diag doctor` 检查接入，再用 `./cursor-diag start --minutes 90` 启动同一套三端记录。运行目录、启动参数、手工保全、关联及 Usage CSV 逐笔对照方法见工具 README。采集数据和导出的账单留在 HumanInLoop 之外。
+
+统一 run ID 为 `cursor-fullchain-20261108`，共同截止北京时间 09:23:09。各点有效起点见 Mac 私有记录目录下的 `run-manifest.json`。当前线路为 Mac → HouseMini/Surge → DMIT/Snell → `api2.cursor.sh`。续采期间未改路由、重启进程或触发计费测试。
+
+| 采集点 | 起点与记录 |
+| --- | --- |
+| Mac Agent Host 和物理网卡 | 07:38 起记录 TCP，07:41 起记录 WebSocket Close、无对端关闭帧的结束及 HTTP/2 GOAWAY。07:57 起从真实请求关联请求 ID、传输类型和本机端口，HTTP/1 记录响应是否完整。 |
+| HouseMini | 07:49:50 起记录 Snell 外层 TCP、Surge 连接编号和字节数、逻辑 EOF 与复用事件。08:03 起同一网卡也记录 Mac 到 fake IP 的 TCP 握手、序号和关闭方向。 |
+| DMIT | 07:53:39 起记录 Snell 入口和 Cursor 出口 TCP、入站短 TLS 记录形状、出口 socket 的 FD、队列、重传、RTT 及 Snell 的关闭系统调用。08:01 起记录短 TLS 密文摘要，可用来关联早于采集建立且未捕获握手的连接。 |
+
+正常流量的对照中，Mac 和 DMIT 配对了 57/58 个 Mac TLS ClientHello 及 73 条短 TLS 记录摘要，HouseMini 和 DMIT 配对了 2,504 个 Snell 外层报文摘要。HouseMini 的入口补采在另一个窗口与 Mac 配对了 58/58 个双向 SYN 或 SYN-ACK，29 个端口可关联 Surge 记录。实际重试 `ff38fec3` 也已在 Agent Host 日志精确关联本机端口 56600。
+
+在 Mac 的 `~/Library/Logs/CursorDisconnect/run-20261108.0EWLD8/`，`cursor-events.jsonl` 中的失败或停滞触发自动保存前 180 秒和后 60 秒。切片分 `mac.jsonl`、`house.jsonl`、`dmit.jsonl`，按行保存来源与摘要，`window.jsonl` 记录窗口与覆盖起点。原始摘要保存在 HouseMini 的 `/tmp/cursor-fullchain-20261108/` 和 DMIT 的 `/tmp/cursor-fullchain-20261108/dmit/`。两台的时钟偏差每 30 秒记录一次。另每 40 秒核对当前 Agent Host 覆盖和 fake IP，宿主换进程时尝试重新接入，并记录该时段的覆盖缺口。07:54、08:00 和 08:05 的实际失败已完成三端切片，07:51 的切片只覆盖 Mac 与 HouseMini。具体断线和账单由主调查分支归因。
+
+08:35 起补记 DMIT Snell 端口的内核 RST 接收和 TCP 状态变化，保存 socket cookie 与内核单调时钟。08:37 起 HouseMini 的 en8、en9 与 DMIT 的 eth0 并行补记 Snell 控制包，增加网卡收发方向、IPv4 ID、TTL 和 TCP 选项。原采集继续运行，新文件也纳入自动保全。验证窗口中，HouseMini en9 的 28 个控制包均在 DMIT 匹配，en8 当时未见控制包，DMIT 写入 50 条自然 TCP 状态变化。独立回环 RST 验证了内核接收、cookie 和 `TCP_CLOSE` 的记录。两个 HouseMini 网口都在光猫 NAT 前。普通账号尚未验证 WAN 抓包或镜像；增加这两处证据可以核对哪张网卡看到了 RST 以及 DMIT 是否接受，仍需要光猫 WAN 或运营商侧观测才能继续缩小生成位置。[独立工具的 WAN 观测说明](/Users/wutian/Developer/CursorDisconnectDiagnostics/README.md)
+
+08:40 和 08:44 的三个样本验证了短 TLS 记录摘要可用来追踪真正的末尾数据。HTTP `fc0e91d0` 的 24 字节记录摘要为 `008913307e612b22242867b3`，WebSocket `ff38fec3` 为 `e0deb2624bf768ffdc138c60`，WebSocket `637daf48` 为 `8f6d8ba3964b4d4112a75d09`。三条均为 DMIT 先收到 Cursor 方向的记录，1–3 微秒后收到首个 FIN，Mac 在收到 FIN 前收到同一条密文。HTTP 客户端记为 200、响应不完整，两个 WebSocket 都记为 1006 且未调用本机 close。该顺序能确定这三条流的 TCP 关闭先出现在 Cursor 方向，也能确认 Snell 转发了末尾密文。24 字节的外层长度仍无法确认 TLS 告警的类型。
+
+同一个 HTTP 请求 ID 可用于业务下行长流及多个附属请求。回看 `fc0e91d0` 的 744 个本机候选端口，只有 `:58191` 在故障点附近记录了不完整的 HTTP 响应。08:50 起 Agent Host 补记 RPC 名、每个 HTTP 请求的本地序号、响应头到达时间和有限的媒体类型字段，只记录诊断字段。独立工具的 `trace` 用此区分长流和短请求，缺少握手时也可用唯一匹配的短 TLS 密文摘要确认出口。两份日志中相差 6 毫秒的 `fc0e91d0` 重复诊断现在按同一请求、尝试和错误类型归并，既有原始记录保留。
 
 ## Stall Detector
 
@@ -285,3 +335,7 @@ Mac 的临时采集目录在 07:32 复核时已不存在。上文的对账数字
 `AskHuman cursor` 的新增保护在恢复时优先尝试同模型的非 Max 变体，否则保留当前非 Max 模型并提示。启动前按已安装包中的实际接口启用。历史样本 `2026.07.23-e383d2b`、`2026.10.01-e373342`、`2026.10.14-0f9edde`、`2026.11.05-86047df` 横跨 105 天，四版的原生模型选择函数均通过非 Max 回退、仅限 Max 回退、同模型恢复和手动开启 Max 的隔离夹具。三份可运行的厂商 Node 另通过实际加载检查，10 月 14 日暂存包的 Node 无法运行，保留该版的源级和模型选择函数验证。行为边界见 [Cursor Max 模式控制](../specs/cursor-max-control.md#手动恢复-cli-会话)。
 
 11 月 8 日 08:12，主工作树 `./scripts/install.sh` 安装完成。用实际已创建的 `cursor2`、伪终端、临时 HOME 和改名的发行文件夹具验证新版接入。兼容接口下加载 Max 保护，保留字面参数和替身退出码。删去恢复接口后在运行 CLI 入口前以状态码 1 退出。快捷脚本字节未变，测试期间发出 0 次模型请求。
+
+## 11 月 8 日早间逐笔用量
+
+逐笔断链、自动续跑、账单对账和对应证据已移至[CursorDisconnectDiagnostics 的 11 月 8 日记录](/Users/wutian/Developer/CursorDisconnectDiagnostics/cursor-disconnect-2026-11-08-usage.md)。

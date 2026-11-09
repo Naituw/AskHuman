@@ -872,3 +872,55 @@ Release 归档及 external 预检通过；首次上传最终确认 401 后先查
 出包前验证（都在模拟器上，没有真机）：Swift 包 `DiagnosticsTests` 9 条加 `DeveloperToolsTests` 15 条全过；`AskHumanDeveloperUITests` 在 iPhone 18 Pro Max（iOS 27.0）上用最终的包跑过简体中文整班，19 条里 18 条通过，没过的是 PROGRESS 里早就记着的 `testTheButtonIsAboveASheetAndItsKeyboardAndRidesAboveTheKeyboard`；iPad mini（A17 Pro，iOS 18.5）上新增的「复制诊断信息」UI 测试通过；Duo 副屏（iOS 27.1）上读过复制出来的报告。逐条数字与没跑的见 `docs/plans/ios-developer-mode.md`「实现记录（复制诊断信息）」。
 
 **没做**：任何真机；iPhone 16e（iOS 18.5）与 iPad 的 iOS 27.0 上的冒烟；最终包的英文整班（机器负载在 400 以上，只补跑的两条中第一条超时）；用最终包复查 Release 配置下的生产推送。
+
+## 2026-11-07：TestFlight 内部构建 13
+
+用户要求先装带回答框卡死修复的内部包，选择从当前提交的干净临时 worktree 归档。版本 **0.1.0 (13)**，基线 `ios-testflight-12` → `7ce2bafb`，源码 `97a0fd0b34fe94327d2da2618993852d827fcd7c`。自基线以来 `ios/` 只有一条提交：
+
+- `4ea80098 fix(ios): defer answer field focus changes outside view updates`。将回答框获取和释放焦点移到 SwiftUI 视图更新之后，附两条焦点 UI 回归用例。
+
+机器健康检查为 tight（退出码 1）。Release 归档使用独立 DerivedData 和两个构建任务，约两分半通过。内部预检通过，20:20:10 得到 `EXPORT SUCCEEDED` 和 `Upload succeeded`。Apple build `2316ba7e-bebf-402c-956e-89975aba0c4a` 状态为 `VALID`，已在 `AskHuman Internal`。本地附注标签 `ios-testflight-13` 指向出包源码。归档的 App 与 dSYM UUID 一致，已保留归档并清理本次 DerivedData 与临时 worktree。
+
+中英文测试说明已写入并读回一致。简体中文如下：
+
+```text
+构建 13 · 源码 97a0fd0
+
+• 修复点开提问的回答框时，AskHuman 可能卡死并被系统关闭的问题。
+
+请重点看
+• 在 iOS 27.3 Beta 上打开一条提问，点回答框并输入，确认键盘弹出且 App 响应正常。
+• 在多题提问中切换题目，再把 App 切到后台并返回，确认可以继续编辑和发送。
+```
+
+用户确认已更新到 Build 13，原有 Mac 连接正常。验证沿用焦点修复时的模拟器编译和 Mock 点按、输入、发送冒烟结果。本次未重跑两条焦点 UI 回归，iOS 27.3 Beta 真机上的回答框表现待确认。
+
+## 2026-11-09：TestFlight 内部与外部构建 14
+
+版本 **0.1.0 (14)**。基线 `ios-testflight-13` → `97a0fd0`。按用户选择，从 `3f28bd458f1ae696a39da342e05bdea001f5b2c6` 的干净临时工作树归档，包含上次暂缓分发的消息附注。自基线以来 12 条 iOS 提交：
+
+- 消息附注、单题布局、中文文案和底栏回归：`47160332`、`f135c889`、`02ca4215`、`dd848e0d`、`3448b530`、`c783aeae`、`8a786624`、`41007bcf`。
+- 更新 Codex 和 Antigravity 徽标：`cfeed5a4`。
+- 记住新建任务所选 Mac：`41167a5a`。实时观察中的最新定稿正文和公开思考：`83ccd355`。Duo 折叠导航修复：`5ab79070`。
+
+机器健康检查为 thrashing，Release 归档用 `-jobs 2` 通过。外测预检和本地签名导出通过，导出摘要确认 APNs 为 `production`，App 与 dSYM UUID 一致。发布工具回归 24/24 通过，本次未重跑产品的模拟器或真机测试。四个中英文隐私与接入页面无需登录，均返回 HTTP 200。
+
+北京时间 01:53:16 上传成功。Apple build `c830e524-f36a-48c0-843a-3b6dfed16c97` 为 `VALID`、`APP_STORE_ELIGIBLE`，本地附注标签 `ios-testflight-14` 指向归档源码。`AskHuman Internal` 自动接收。`AskHuman Friends` 追加同一构建，01:56:29 审核读回 `APPROVED`，01:57:17 确认两组均为 `IN_BETA_TESTING`。外测沿用原有 1 位受邀测试员，Apple 仍显示 `INVITED`，待接受及安装。外测操作详见[朋友外测记录](ios-external-testflight.md#2026-11-09build-14-续发至现有外测组)。
+
+中英文测试说明均已写入并逐字读回。简体中文如下：
+
+```text
+构建 14 · 源码 3f28bd4
+
+• 在提问正文中选中文字，使用「添加附注」写下针对这段文字的说明，并随回答发送。底栏显示附注数量。
+• 只有一道题且没有附加正文或附件时，题目显示在选项上方的正文区。
+• 新建任务会记住上次手动选择的 Mac，取消创建或重新打开 App 后仍会保留选择。
+• 实时观察 Agent 时，展开观察卡可阅读最新定稿的正文和公开思考，阅读期间有新内容时会提示。
+• 更新 Agent 徽标中的 Codex 和 Antigravity 图标。
+• 修复 Duo 从内屏横屏切到外屏后，提问页的返回、前后切题和更多按钮可能消失的问题。
+
+请重点看
+• 在手机上选取跨行文字并添加附注，确认窄屏底栏的计数可见，随回答发出后 Mac 能收到附注。
+• 手动换一台 Mac 后取消新建任务，重新打开 App 检查选择；展开 Agent 观察卡阅读，确认内容更新时原阅读位置保持稳定。
+• 在 Duo 内屏横屏打开提问并输入草稿，折到外屏后检查导航按钮、草稿和实际返回。
+```
