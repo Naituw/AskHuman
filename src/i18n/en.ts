@@ -1750,6 +1750,10 @@ export default {
     busyRetarget: "A fork is already launching; the source was not changed.",
   },
   cursorDesktop: {
+    awayReport: {
+      title: "End after reporting while away",
+      hint: "Off by default. When Cursor escalates with a reason while you are away, save an unread report and immediately tell it to end the turn. Mark it Read in the current list when you return. Automatic todos run first. Both completion and blocker reports are retained.",
+    },
     title: "Cursor session protection (experimental)",
     hint: "Protects all local Cursor Desktop chats. Send a message to continue after a background completion. Await still works. In the Agents window, a running chat keeps its messages in memory to reduce the risk of mistaken archiving. In compatible windows, Cursor waits 5 minutes for inbound messages and allows consecutive stall retries within a 10-minute window. Requires AskHuman to remain running. Terminal CLI is not covered.",
     experimental: "Requires a compatible Cursor version. Protection starts after checks pass and reconnects after startup or window reload.",

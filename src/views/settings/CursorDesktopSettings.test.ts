@@ -11,7 +11,7 @@ vi.mock("../../lib/platform", () => ({ get isMac() { return api.mac; } }));
 vi.mock("@tauri-apps/api/event", () => ({ listen: vi.fn(async () => () => {}) }));
 
 let wrapper: VueWrapper | undefined;
-const config = ref({ cursorDesktop: { suppressBackgroundCompletionFollowUp: false, launchPreference: "terminal" } });
+const config = ref({ cursorDesktop: { suppressBackgroundCompletionFollowUp: false, launchPreference: "terminal", endEscalationsWhileAway: undefined as boolean | undefined } });
 const launch = (preference = "terminal", target: string | null = preference) => ({
   preference, target, desktopAvailable: target === "desktop", terminalAvailable: true, integrated: true,
   desktopReason: preference === "desktop" && target !== "desktop" ? "appNotRunning" : null, terminalReason: null,
@@ -27,6 +27,7 @@ beforeEach(() => {
   api.persist.mockReset().mockResolvedValue(undefined);
   config.value.cursorDesktop.suppressBackgroundCompletionFollowUp = false;
   config.value.cursorDesktop.launchPreference = "terminal";
+  config.value.cursorDesktop.endEscalationsWhileAway = undefined;
   api.context.mockReturnValue({ config, persist: api.persist, modes: ref({ cursor: { mode: "mcp" } }), modeBusy: ref({ cursor: false }) });
   i18n.global.locale.value = "en";
 });
@@ -165,7 +166,7 @@ it("stays fully active, and without a warning, when both guards work or one does
 
 it("keeps the single switch for all three protections", async () => {
   const row = await mountRow();
-  expect(row.findAll('input[type="checkbox"]')).toHaveLength(1);
+  expect(row.findAll('input[type="checkbox"]')).toHaveLength(2);
   expect(row.text()).toContain("Cursor session protection (experimental)");
   expect(row.text()).toContain("running chat keeps its messages in memory");
   expect(row.text()).toContain("5 minutes for inbound messages");
@@ -178,6 +179,29 @@ it("keeps the single switch for all three protections", async () => {
 });
 
 // --- where new Cursor tasks run (docs/specs/cursor-desktop-task-creation.md §3) ---
+
+it("defaults away reporting off and saves it independently on every platform", async () => {
+  api.mac = false;
+  const row = await mountRow();
+  const toggle = row.get('input[aria-label="End after reporting while away"]');
+  expect((toggle.element as HTMLInputElement).checked).toBe(false);
+  expect(toggle.attributes("disabled")).toBeUndefined();
+  await toggle.setValue(true);
+  await flushPromises();
+  expect(config.value.cursorDesktop.endEscalationsWhileAway).toBe(true);
+  expect(config.value.cursorDesktop.suppressBackgroundCompletionFollowUp).toBe(false);
+  expect(api.persist).toHaveBeenCalledTimes(1);
+  expect(row.text()).toContain("Automatic todos run first");
+});
+
+it("restores the previous away-report preference if saving fails", async () => {
+  const row = await mountRow();
+  api.persist.mockRejectedValueOnce(new Error("report save failed"));
+  await row.get('input[aria-label="End after reporting while away"]').setValue(true);
+  await flushPromises();
+  expect(config.value.cursorDesktop.endEscalationsWhileAway).toBe(false);
+  expect(row.get('[role="alert"]').text()).toContain("report save failed");
+});
 
 const launchButtons = (row: VueWrapper) => row.findAll(".segmented button");
 const launchStatusText = (row: VueWrapper) => row.findAll('[role="status"]')[1].text();

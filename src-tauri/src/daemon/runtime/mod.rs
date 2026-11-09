@@ -38,6 +38,7 @@ use transport::Stream;
 
 mod agent_control;
 mod away_ops;
+mod cursor_reports;
 mod detect;
 mod failure_confirmation;
 mod fork;
@@ -1121,6 +1122,9 @@ async fn serve(
                     log(&format!("cannot maintain recovery callers: {error}"));
                 }
                 recovery.repair_surfaces(&state).await;
+                if let Err(error) = cursor_reports::maintain(&state).await {
+                    log(&format!("cannot retain Cursor away reports: {error}"));
+                }
                 tokio::time::sleep(Duration::from_secs(2)).await;
             }
         }));
@@ -2782,7 +2786,9 @@ async fn handle_submit_confirm_recoverable(
 /// just failed, and reading it as the Agent working again would take that session out of idle, which
 /// is the moment the card withdraws itself.
 fn marks_session_working(auto: bool, from_mcp: bool, native_request_id: Option<&str>) -> bool {
-    auto && !from_mcp && !crate::agents::failure::is_card_id(native_request_id)
+    auto && !from_mcp
+        && !crate::agents::failure::is_card_id(native_request_id)
+        && !cursor_reports::is_report(native_request_id)
 }
 
 /// CLI 提交一次任务：建请求、spawn GUI Helper、流式回结果；CLI 断开则取消。
@@ -2867,7 +2873,11 @@ async fn handle_submit_recoverable(
     let caller_pid = task.caller_pid;
     let cwd = Some(task.project.clone()).filter(|s| !s.trim().is_empty());
     let changed = match (kind_env, sid_env.clone(), task.agent_pid) {
-        _ if crate::agents::failure::is_card_id(task.native_request_id.as_deref()) => false,
+        _ if crate::agents::failure::is_card_id(task.native_request_id.as_deref())
+            || cursor_reports::is_report(task.native_request_id.as_deref()) =>
+        {
+            false
+        }
         // 有 session_id（shell 工具子进程能从 env 拿到）：按 session 刷新。
         (Some(kind), Some(sid), pid) => {
             // MCP 工具调用不单独创建 lifecycle session；可信的每调用绑定仅用于
@@ -2914,6 +2924,16 @@ async fn handle_submit_recoverable(
         },
         None => None,
     };
+    if original.is_none() {
+        match cursor_reports::saved_receipt(&task, recovery.as_deref()) {
+            Ok(Some(reply)) => {
+                finish_auto_reply(state, &task, reply, &mut w).await;
+                return;
+            }
+            Ok(None) => {}
+            Err(error) => log(&format!("cannot restore Cursor away receipt: {error}")),
+        }
+    }
     let escalated = match original.as_ref() {
         Some(show) => show.interaction.ask().and_then(|request| request.escalated),
         None => match state.away.judge_task(&task, now_ms()) {
@@ -2925,6 +2945,18 @@ async fn handle_submit_recoverable(
             }
         },
     };
+    if original.is_none() {
+        match cursor_reports::intercept(state, &task, escalated, recovery.as_deref()).await {
+            Ok(Some(reply)) => {
+                finish_auto_reply(state, &task, reply, &mut w).await;
+                return;
+            }
+            Ok(None) => {}
+            Err(error) => {
+                log(&format!("cannot save Cursor away report: {error}"));
+            }
+        }
+    }
     if original.is_none() {
         crate::daemon::away::decorate_escalation(&mut task, escalated);
     }

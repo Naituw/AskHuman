@@ -13,6 +13,9 @@ const status = ref<CursorDesktopStatus | null>(null);
 const saving = ref(false);
 const error = ref("");
 const enabled = computed(() => config.value?.cursorDesktop?.suppressBackgroundCompletionFollowUp ?? false);
+const endAwayReports = computed(() => config.value?.cursorDesktop?.endEscalationsWhileAway ?? false);
+const reportSaving = ref(false);
+const reportError = ref("");
 const phase = computed(() => !isMac ? "unsupported" : status.value?.phase ?? (enabled.value ? "attaching" : "disabled"));
 const detail = computed(() => error.value || status.value?.error
   || status.value?.windows.find(w => w.error)?.error
@@ -93,6 +96,20 @@ async function choose(value: boolean) {
   }
   saving.value = false;
   await refresh();
+}
+
+async function chooseEndAwayReports(value: boolean) {
+  if (!config.value || reportSaving.value) return;
+  const previous = endAwayReports.value;
+  config.value.cursorDesktop ??= { suppressBackgroundCompletionFollowUp: false };
+  config.value.cursorDesktop.endEscalationsWhileAway = value;
+  reportSaving.value = true;
+  reportError.value = "";
+  try { await persist(); }
+  catch (e) {
+    config.value.cursorDesktop.endEscalationsWhileAway = previous;
+    reportError.value = String(e);
+  } finally { reportSaving.value = false; }
 }
 
 async function refreshLaunch() {
@@ -179,6 +196,19 @@ onBeforeUnmount(() => {
   <p class="card-desc agent-hint">{{ t("cursorDesktop.experimental") }}</p>
   <p class="card-desc agent-hint" role="status">{{ statusText }}</p>
   <p v-if="detail" class="result err" role="alert">{{ detail }}</p>
+  <hr class="divider" />
+  <div class="row agent-row">
+    <span class="label">{{ t("cursorDesktop.awayReport.title") }}</span>
+    <span class="spacer" />
+    <label class="switch">
+      <input type="checkbox" :checked="endAwayReports" :aria-label="t('cursorDesktop.awayReport.title')"
+        :disabled="reportSaving || modeBusy.cursor"
+        @change="chooseEndAwayReports(($event.target as HTMLInputElement).checked)" />
+      <span class="track"></span>
+    </label>
+  </div>
+  <p class="card-desc agent-hint">{{ t("cursorDesktop.awayReport.hint") }}</p>
+  <p v-if="reportError" class="result err" role="alert">{{ reportError }}</p>
   <hr class="divider" />
   <div class="row agent-row">
     <span class="label">{{ t("cursorDesktop.launch.preference") }}</span>

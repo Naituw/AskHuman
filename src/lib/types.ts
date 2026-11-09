@@ -1260,7 +1260,7 @@ export interface AgentTaskReadiness {
 
 export interface AppConfig {
   codexDesktop?: {appPath: string; codexHome: string; launchPreference: "terminal" | "desktop"};
-  cursorDesktop?: {suppressBackgroundCompletionFollowUp: boolean; launchPreference?: "terminal" | "desktop"};
+  cursorDesktop?: {suppressBackgroundCompletionFollowUp: boolean; endEscalationsWhileAway?: boolean; launchPreference?: "terminal" | "desktop"};
   general: GeneralConfig;
   channels: ChannelsConfig;
   agentTasks: AgentTasksConfig;

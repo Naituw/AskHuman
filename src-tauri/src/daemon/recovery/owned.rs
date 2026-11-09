@@ -173,6 +173,25 @@ impl Store {
         Ok(())
     }
 
+    /// Renew a failed delivery without clearing the durable source or retrying a human decision.
+    pub fn retry_owned(&self, key: &str) -> Result<()> {
+        let mut connection = self.connection.lock().unwrap();
+        let transaction = connection.transaction()?;
+        let mut saved = read(&transaction, key)?.context("owned request is missing")?;
+        let call = lookup(&transaction, &saved.call, None)?.context("owned call is missing")?;
+        if saved.effect != OwnedEffect::Waiting || call.decided || call.outcome.is_none() {
+            return Ok(());
+        }
+        let previous = saved.call.id.clone();
+        saved.call = Call::new();
+        saved.call.daemon_owned = true;
+        saved.touched_ms = chrono::Utc::now().timestamp_millis();
+        write(&transaction, key, &saved)?;
+        transaction.execute("UPDATE calls SET delivered=1 WHERE id=?1", [previous])?;
+        transaction.commit()?;
+        Ok(())
+    }
+
     pub fn pending_daemon_results(&self) -> Result<bool> {
         self.connection.lock().unwrap().query_row(
             "SELECT EXISTS(SELECT 1 FROM calls c JOIN requests r ON r.id=c.request_id JOIN metadata m ON m.key='consumer/'||c.id

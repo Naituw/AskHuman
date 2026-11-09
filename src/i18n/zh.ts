@@ -1718,6 +1718,10 @@ export default {
     busyRetarget: "已有 Fork 正在启动，未切换源会话。",
   },
   cursorDesktop: {
+    awayReport: {
+      title: "离开时汇报后结束",
+      hint: "默认关闭。离开期间，Cursor 带理由升级时，将内容保留为待阅汇报，并立即通知它结束本轮。回来后在当前列表点「已阅」。⚡ 自动待办优先执行，完成或阻塞汇报都会保留。",
+    },
     title: "Cursor 会话防护（实验）",
     hint: "保护本地 Cursor Desktop 会话。后台任务完成后，主动发消息才会继续（Await 照常）。Agents 窗口里运行中的会话不再被释放内存中的消息，降低误归档风险。兼容的窗口会把无入站消息的等待延长到 5 分钟，连续停滞重试窗口延长到 10 分钟。需要 AskHuman 持续运行，不覆盖终端 CLI。",
     experimental: "需要兼容的 Cursor 版本，检查通过后才生效。启动或窗口重载后需重新接入。",

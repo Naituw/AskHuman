@@ -6,7 +6,7 @@
 ## 1. 已确认的目标与边界
 
 - 修正过早停下：围绕用户原目标继续推进，调研、方案、局部实现不能自动算整个任务完成。
-- 真正完成、确实无法继续时仍可通知；完成报告不改成静默留存。
+- 真正完成、确实无法继续时仍可通知。默认走现有升级投递；Cursor 用户可选的待阅回执见 §9。
 - 保留明确范围限制。仅要求分析或设计时，以相应交付为完成目标；明确要求先审核、暂不实施时，不因离开而自行实施。
 - 需要真人验收时，先做完其他不依赖该验收的工作，再升级说明；不能把未验收写成已验证。
 - 升级参数应携带理由。要求 Agent 仔细检查当前情况，确认没有其他可自主推进的工作、确实需要联系用户后再填写。
@@ -242,6 +242,52 @@ The agent repeatedly asked without an escalation reason. The system delivered th
 - 已运行 `./scripts/install.sh`，正式 Daemon 在现有提问自然结束后完成接班；核对运行指纹 **65ee2826**。`agents update` 刷新已开启集成的托管产物，Cursor 仍为 CLI、Codex 仍为 MCP；Cursor 磁盘规则含新条款，Codex SessionStart 协议保持已信任状态。
 - 已安装程序的问答用于交付确认。运行中的旧 MCP 进程 / 宿主工具缓存需要正常重连才能获得字符串 schema；没有强制重启其他会话、取消其提问或主动发送消息。真实模型是否能持续正确判断原目标尚未实测，后续自然使用时观察；本次没有 iOS 出包或真机视觉验收（理由复用已有正文显示）。
 
+## 9. Cursor 离开升级转待阅
+
+2026-11-09 用户确认在 Cursor 集成里增加「离开时汇报后结束」，默认关闭，配置为
+`cursorDesktop.endEscalationsWhileAway`。判定复用离开引擎，仅有效离开状态、可信 Cursor
+来源、带非空有效理由且判定为 Agent 主动升级时生效。普通 ask 与 whats_next 都可触发。
+静音、要求提问的一次放行、重复防呆与旧布尔升级继续走各自既有判定。
+
+有 ⚡ 自动待办时优先完成队列。whats_next 沿用提交前原子领取入口；普通 ask 升级时，
+工具指导 Cursor 调用 whats_next 领取，队列用尽后再带理由汇报。普通 ask 的判定先复用
+whats_next 的有界同步刷新，保持 iCloud 待办读取时机一致。
+
+队列为空时，Daemon 先把独立请求持久写入现有 owned-call metadata，再向原调用返回自动
+status 回执 `[cursor_away_report_saved]` 与明确结束指令。该回执承载用户对此情形的预先授权，
+CLI/MCP 协议允许 Cursor 立即结束并附结束标记，包含从普通 ask 结束。
+用户次日点已阅时，原调用已取回回执，无需继续等待或自动重试。
+
+独立卡片在当前请求列表显示「待阅汇报」，保留正文、升级理由、原问题、原选项和附件路径引用。
+原问题与原选项成为只读正文，卡片仅提供「已阅」，严格单选。此选项也涵盖真正阻塞时的升级说明，
+内容由 Agent 负责，系统只识别来源、有效离开判定与参数，不核验其完成声明。
+
+待阅请求使用现有 Ask、原生请求身份及 daemon-owned Call，保留请求和渠道恢复能力。
+原调用退出、会话结束、设置关闭、结束离开及服务换新都不撤走已保存的待阅汇报。
+显式关停取消当前传输，owned 源仍保留，下次正常启动续建；已阅或用户明确取消后标记完成。
+投递失败保留未读源并重试。保存失败时沿用人工升级，不能发出已保存回执。
+相同原恢复调用重试读取同一回执，保存后、回复前崩溃也能续接。
+附件沿用既有路径引用生命周期。schema 与 Task 序列化形态复用现有字段。
+
+验证包含设置默认值与保存回滚、CLI 的普通升级与 whats_next、自动待办、静音与来源隔离，
+以及私有渠道中的调用结束、服务重启、已阅和重试恢复。模型收到回执后的自然结束行为仍需实际使用观察。
+
+### 9.1 实施与验收
+
+已在主树实施并通过安装脚本发布到日常环境。日常 daemon 指纹为 `4598b14a`，四条 IM
+连接正常，开关保持默认关闭。实现由 Cursor 设置布尔值、离开判定后的回执分支、
+`runtime/cursor_reports.rs` 的 owned-call 管理及 `Store.retry_owned` 的原子重投组成。
+
+- Rust 全量 2925 passed / 11 ignored，包含保存与原回执重放、关停续建、失败重投和已阅后保持完成。
+- 前端 127 个文件、1799 项测试通过，含设置默认关闭、保存与失败回滚。Node 209 passed / 21 skipped。
+- 严格 clippy、前端类型检查与安装通过。
+- `scripts/cursor-away-report-smoke.mjs /Users/wutian/.local/bin/AskHuman` 使用已安装程序、
+  私有 System fixture v2 与 loopback Telegram，覆盖 CLI 普通 ask、whats_next、可信 MCP 的两个入口、
+  提前回执、单一已阅选项、正文与附件引用、调用结束、关停续建、关闭开关及结束离开后的保留、
+  ⚡ 待办优先、静音、旧升级与其他 Agent 隔离。全部通过。
+- 私有证据保留在 `/private/tmp/ah-cursor-report-YzGXOX`，验收日志为
+  `/tmp/askhuman-cursor-report-smoke.log`。真实 Cursor 的自然结束仍待日常观察。
+
 ## 附录：修改后的完整 CLI / MCP 协议
 
 以下以本机常用的 `AskHuman` 可执行名和默认 aligned 风格展开；不含外层所有权标记和 Codex hash 标记（由既有机制生成）。除 §5 的一条新增规则外，其余正文按当前 `prompts.rs` 保留。Antigravity 的调用方式适配与 Grok 的工具发现附加段沿用现有生成逻辑，同样承载这条共享规则。
@@ -268,6 +314,7 @@ The agent repeatedly asked without an escalation reason. The system delivered th
 - After fully completing the current task—and never for questions, decisions, or next steps within it—you MUST run `AskHuman --whats-next` for the end-of-task handoff before ending, to ask me for a separate next task.
 - If it returns a task, start working on it immediately and repeat this protocol when done. Do NOT end the turn/conversation or mark the request as complete unless `AskHuman --whats-next` returned that I approved ending the turn and there are no more tasks.
 - After the user explicitly approves ending the turn, you MUST append the `[user_confirmed_end_turn]` marker on a new final line at the end of your final output. Without that approval, you MUST NEVER output this marker.
+- The end-of-turn rules above have one preauthorized exception for Cursor. If AskHuman returns an automatic status receipt beginning with `[cursor_away_report_saved]`, the user has enabled saving Cursor away escalations for later reading and authorizes ending immediately. Treat that receipt from either ask or whats-next as approval, append the end marker, and end without another handoff or waiting for the report to be read.
 </mandatory_interaction_protocol>
 
 - When I ask for a project todo or defer a concrete task or suggestion until later, add it with `AskHuman todo add "<concise task>"`. Never use project todos for your own work plan or an unaccepted suggestion.
@@ -299,6 +346,7 @@ The agent repeatedly asked without an escalation reason. The system delivered th
 - After fully completing the current task—and never for questions, decisions, or next steps within it—you MUST call the AskHuman `whats_next` tool for the end-of-task handoff before ending, to ask me for a separate next task.
 - If it returns a task, start working on it immediately and repeat this protocol when done. Do NOT end the turn/conversation or mark the request as complete unless the `whats_next` result says I approved ending the turn and there are no more tasks.
 - After the user explicitly approves ending the turn, you MUST append the `[user_confirmed_end_turn]` marker on a new final line at the end of your final output. Without that approval, you MUST NEVER output this marker.
+- The end-of-turn rules above have one preauthorized exception for Cursor. If AskHuman returns an automatic status receipt beginning with `[cursor_away_report_saved]`, the user has enabled saving Cursor away escalations for later reading and authorizes ending immediately. Treat that receipt from either ask or whats-next as approval, append the end marker, and end without another handoff or waiting for the report to be read.
 </mandatory_interaction_protocol>
 
 - When I ask for a project todo or defer a concrete task or suggestion until later, call the AskHuman MCP `todo_add` tool with the task text (optional `auto: true` for auto-run). Never use project todos for your own work plan or an unaccepted suggestion.

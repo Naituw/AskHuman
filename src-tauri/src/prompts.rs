@@ -126,6 +126,7 @@ fn cli_reference_with_agent(agent: Option<AgentKind>) -> String {
 - After fully completing the current task—and never for questions, decisions, or next steps within it—you MUST run `{program} --whats-next` for the end-of-task handoff before ending, to ask me for a separate next task.
 - If it returns a task, start working on it immediately and repeat this protocol when done. Do NOT end the turn/conversation or mark the request as complete unless `{program} --whats-next` returned that I approved ending the turn and there are no more tasks.
 - After the user explicitly approves ending the turn, you MUST append the `{end_marker}` marker on a new final line at the end of your final output. Without that approval, you MUST NEVER output this marker.
+- The end-of-turn rules above have one preauthorized exception for Cursor. If AskHuman returns an automatic status receipt beginning with `[cursor_away_report_saved]`, the user has enabled saving Cursor away escalations for later reading and authorizes ending immediately. Treat that receipt from either ask or whats-next as approval, append the end marker, and end without another handoff or waiting for the report to be read.
 {binding_rule}</mandatory_interaction_protocol>
 
 - When I ask for a project todo or defer a concrete task or suggestion until later, add it with `{program} todo add "<concise task>"`. Never use project todos for your own work plan or an unaccepted suggestion.
@@ -170,6 +171,7 @@ fn mcp_reference_with_agent(_agent: Option<AgentKind>) -> String {
 - After fully completing the current task—and never for questions, decisions, or next steps within it—you MUST call the AskHuman `whats_next` tool for the end-of-task handoff before ending, to ask me for a separate next task.
 - If it returns a task, start working on it immediately and repeat this protocol when done. Do NOT end the turn/conversation or mark the request as complete unless the `whats_next` result says I approved ending the turn and there are no more tasks.
 - After the user explicitly approves ending the turn, you MUST append the `{end_marker}` marker on a new final line at the end of your final output. Without that approval, you MUST NEVER output this marker.
+- The end-of-turn rules above have one preauthorized exception for Cursor. If AskHuman returns an automatic status receipt beginning with `[cursor_away_report_saved]`, the user has enabled saving Cursor away escalations for later reading and authorizes ending immediately. Treat that receipt from either ask or whats-next as approval, append the end marker, and end without another handoff or waiting for the report to be read.
 </mandatory_interaction_protocol>
 
 - When I ask for a project todo or defer a concrete task or suggestion until later, call the AskHuman MCP `todo_add` tool with the task text (optional `auto: true` for auto-run). Never use project todos for your own work plan or an unaccepted suggestion.

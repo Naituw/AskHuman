@@ -18,6 +18,8 @@ pub use crate::codex_desktop::LaunchTarget;
 #[serde(rename_all = "camelCase", default)]
 pub struct Config {
     pub suppress_background_completion_follow_up: bool,
+    /// Retain away escalations for later reading and release the Cursor caller immediately.
+    pub end_escalations_while_away: bool,
     /// Which route a new Cursor task tries first; the other one is the fallback, as for Codex.
     /// Unlike Codex's, the default is the terminal: the Agents-window route is experimental, so
     /// it goes first only once the user has chosen it.
@@ -28,6 +30,7 @@ impl Default for Config {
     fn default() -> Self {
         Self {
             suppress_background_completion_follow_up: false,
+            end_escalations_while_away: false,
             launch_preference: LaunchTarget::Terminal,
         }
     }

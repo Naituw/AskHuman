@@ -10,6 +10,10 @@
 
 ## 字段地图
 
+- `cursorDesktop.endEscalationsWhileAway` 默认 `false`。Cursor 集成里的「离开时汇报后结束」
+  开关让有效离开状态下带理由的升级留成待阅汇报，立即返回结束回执，回来后在当前列表点「已阅」。
+  ⚡ 自动待办先执行。普通 ask 和 whats_next 共用此规则，详见
+  [带理由升级 §9](specs/away-completion-guidance.md#9-cursor-离开升级转待阅)。
 - `cursorDesktop.suppressBackgroundCompletionFollowUp`：默认 `false`，字段名沿用；一个开关管 Cursor
   会话防护的两个独立守卫——后台完成续跑拦截，以及 Agents 窗口里运行中会话保护（不卸载生成中会话的消息）。
   macOS Cursor 的 CLI/MCP 自动集成有效时，由 Daemon 管理实验性的 Desktop 全局接入；逐窗口、逐守卫原生行为预检

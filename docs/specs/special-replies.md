@@ -2,6 +2,7 @@
 
 > 状态：**首版已于 2026-11-05 实现、合并并装为日常版**，剩余验收见 `docs/PROGRESS.md`。决策由用户在 AskHuman 十轮问答里逐项定下（选项与原话见 §10）；§3.10 列了用户没有单独确认过的默认做法，不同意可整条否决。
 > 2026-11-06 修订：D4 / D9 / D16 / §4.1 已按[完成标准与带理由升级](away-completion-guidance.md)更新；完整文案、兼容与验证边界以该修订为准。
+> 2026-11-09 增加 Cursor 的默认关闭选项。有效离开状态下，带理由升级可保存为待阅汇报并立即返回结束回执，⚡ 自动待办优先执行。[Cursor 离开升级转待阅](away-completion-guidance.md#9-cursor-离开升级转待阅)
 > 关联计划：`docs/plans/special-replies.md`。
 > 前置资料：`docs/specs/todo-whats-next.md`（D2 whats-next 的固定问题与 10 个名额、D7 弹窗待办区）、`docs/specs/ios-todos.md`（`todo.*` 线协议）、`docs/specs/agent-interject.md`（插话队列）、`docs/specs/duplicate-ask-coalescing.md`（会话键）、`docs/specs/ios-alert-timing.md`（手机推送时机与 Mac 空闲时长）、`docs/specs/agent-stop-confirmation.md`、`docs/specs/popup-request-inbox.md`、`docs/specs/todo-quick-add.md`。
 > 界面稿：`docs/assets/special-replies/`（静态图，只表达布局与信息，不是像素稿）；浏览器原型在 `src/prototype/`（`popup-reply-menu.html`、`mac-away.html`、`mac-away-board.html`、`console-away.html`、`settings-away.html`，见 `docs/development.md`）；iOS 稿是 iOS 27 模拟器里用 App 现有卡片、选项行与底栏代码渲染的截图，不是手绘。

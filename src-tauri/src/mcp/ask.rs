@@ -629,7 +629,9 @@ this only after the current task is fully complete and before ending; use `ask` 
 decision, or next step within the current task. Optionally pass `message` with a completion report \
 and `files` with report documents. The human replies with the next task (start it immediately), or \
 approves ending the turn — only then may you end it. A reply holding only `[user_annotations]` (the \
-human's notes on your report) does not approve ending: answer the notes, then call this again.",
+human's notes on your report) does not approve ending: answer the notes, then call this again. \
+Cursor has one user-enabled exception: an automatic status receipt beginning with \
+`[cursor_away_report_saved]` from ask or whats_next authorizes ending immediately without another handoff.",
         annotations(destructive_hint = false, open_world_hint = false)
     )]
     async fn whats_next(

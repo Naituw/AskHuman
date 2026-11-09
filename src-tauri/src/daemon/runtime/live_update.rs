@@ -319,7 +319,7 @@ impl Runtime {
         Ok(())
     }
 
-    async fn submit(
+    pub(super) async fn submit(
         self: &Arc<Self>,
         call: &Call,
         task: Task,
