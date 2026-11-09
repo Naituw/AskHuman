@@ -6,9 +6,9 @@ lang: zh-Hans
 
 [English](../beta/) · [隐私政策](../privacy-zh/)
 
-在 iPhone 上回答自己 Mac 上 Agent 的提问。按下面五步完成配置。
+在 iPhone 上回答自己 Mac 上 Agent 的提问。TestFlight 方案按下面五步配置；可选自部署方案在文末。
 
-**开始前**：准备一台 Mac、iOS 17 或以上的 iPhone，以及邀请人发来的 **TestFlight 邮件邀请和推送中继地址**。
+**开始前（TestFlight 方案）**：准备一台 Mac、iOS 17 或以上的 iPhone，以及邀请人发来的 **TestFlight 邮件邀请和推送中继地址**。
 
 ## 1. 安装 Mac 端
 
@@ -72,3 +72,14 @@ AskHuman setup
 两次都成功就配置好了。测试后可改回喜欢的推送时机；默认要等 Mac 空闲 15 分钟才推送，手机收件箱不受这个等待限制。
 
 遇到问题，把失败页面截图和两端版本号发给邀请人；遮住密码、连接串和配对码。
+
+## 可选：自己部署推送中继
+
+适合有 **Apple 开发者账号和 Xcode**、希望使用自己服务的人：
+
+1. 用自己的 Team 和 Bundle ID 编译、安装 iOS App，并创建匹配的 APNs 推送密钥。
+2. 将仓库的 `relay/` 部署到自己的腾讯云云函数，配置上述密钥，确认 `/v1/health` 检查通过。
+3. Mac 填入自己的中继地址，测试连接后，与自己签名的 App 重新配对。
+
+具体命令和配置见 **[完整自部署指南](https://github.com/Naituw/AskHuman/blob/main/docs/wiki/ios-setup.md)**。
+这条路线使用自己签名的 iOS App；前面的 TestFlight 方案使用邀请人提供的 App 和中继。

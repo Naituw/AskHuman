@@ -6,9 +6,9 @@ lang: en
 
 [简体中文](../beta-zh/) · [Privacy policy](../privacy/)
 
-Answer questions from agents on your own Mac using your iPhone. Follow these five steps.
+Answer questions from agents on your own Mac using your iPhone. Follow these five steps for TestFlight; the optional self-hosted route is at the end.
 
-**Before you start:** have your Mac, an iPhone running iOS 17 or later, and the **TestFlight email invitation and push relay URL** supplied by the maintainer.
+**Before you start (TestFlight):** have your Mac, an iPhone running iOS 17 or later, and the **TestFlight email invitation and push relay URL** supplied by the maintainer.
 
 ## 1. Install AskHuman on your Mac
 
@@ -72,3 +72,14 @@ Run `AskHuman --settings` to open Settings:
 If both tests pass, setup is complete. Restore your preferred push timing afterward. By default, push waits until the Mac has been idle for 15 minutes; inbox delivery does not wait.
 
 If something fails, send the maintainer a screenshot and both app versions. Hide passwords, connection strings and pairing codes.
+
+## Optional: host your own push relay
+
+Choose this route if you have **an Apple Developer account and Xcode** and want to use your own service:
+
+1. Build and install the iOS app with your own team and bundle IDs, and create a matching APNs key.
+2. Deploy the repository's `relay/` to your Tencent Cloud function, configure that key and check `/v1/health`.
+3. Enter your relay URL on the Mac, test the connection and pair again with your own signed app.
+
+See the **[complete self-hosting guide](https://github.com/Naituw/AskHuman/blob/main/docs/wiki/ios-setup.en.md)** for commands and settings.
+This route uses your own signed iOS app. The TestFlight route above uses the maintainer's app and relay.

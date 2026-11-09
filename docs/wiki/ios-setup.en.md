@@ -35,7 +35,7 @@ Agent ─► AskHuman on the Mac ──MQTT (TLS)──► EMQX ──► AskHum
 ## 2. Prepare the Apple developer resources
 
 1. In Apple Developer → Identifiers register two App IDs: the app `com.naituw.humaninloop.ios` (enable **Push Notifications**) and the notification extension `com.naituw.humaninloop.ios.notification` (no capabilities). With your own team, change the team and the bundle IDs in `ios/project.yml` too, and make the relay's `APNS_TOPIC` equal the app's bundle ID.
-2. Keys → create a key with **Apple Push Notifications service (APNs)** enabled. Click Configure on the APNs row and pick the environment **Sandbox & Production** (development builds use the sandbox, TestFlight and the App Store use production, and one key serves both; the restriction then has to be Team Scoped). Apple **does not let you change these two settings after saving**. After registering, download the `.p8` file (**you can only download it once**) and note the **Key ID** and your **Team ID**.
+2. Keys → create a key with **Apple Push Notifications service (APNs)** enabled. Choose the team or topics and environment matching your app: Sandbox for development builds, Production for TestFlight / distribution. Existing team-scoped keys that support both environments remain valid. Each relay instance configures one key; use a matching relay/key for each environment when needed. Download the `.p8` file (**only once**) and note the **Key ID** and **Team ID**. Follow [Apple's current APNs authentication guide](https://developer.apple.com/documentation/UserNotifications/establishing-a-token-based-connection-to-apns) for the available key settings.
 
 ## 3. Deploy the push relay
 
