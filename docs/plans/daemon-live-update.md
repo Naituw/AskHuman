@@ -306,8 +306,46 @@ iOS 发布和手机安装使用项目 `ios-testflight` skill，并核对新旧�
 
 ## 12. 文档更新边界
 
-本计划记录未来实现步骤，现行行为仍由已有规格描述。
+本计划保留设计与阶段划分；2026-11-09 已完成首轮实现，当前契约见 [即时换新规格](../specs/daemon-live-update.md)。
+实施、验证与发布结果见下方记录。
 P0 收敛时形成对应需求规格并引用本计划，落地时同步修改 graceful-drain、self-update、
 自动接班、Popup 与 iOS 等受影响规格。
 主 overview 在请求恢复与更新生命周期的全局约定实际落地后作相应更新。
 未完成步骤保存在 `docs/PROGRESS.md`，交付完成后删除对应进度条目。
+
+## 13. 2026-11-09 实施与交付记录
+
+功能提交 `f4318959` 与复查修复 `695f04b8` 已进入 main。实现覆盖持久恢复、稳定调用重连、
+Popup 原 Host 表单保留、四种 IM 原卡接管、iOS 原题/答案/附件恢复和后台交接失败回退。
+首次本机故障由早期 schema 改动缺少独立迁移引入，已补齐 schema 5 的事务迁移与冻结夹具；
+原数据库隔离副本由最终程序自动迁移并可接受新稳定调用。
+
+本地全量 Rust 2911 项通过（11 项既有忽略）、Vue 1797 项通过、Swift 核心与协议 216 项通过，
+并完成 iOS App 双架构模拟器编译、真实私有 daemon / loopback Telegram 的 8 个切换场景。
+合并与独立原生窗口实测保持原 Host、草稿和中间光标，独立窗口连续两次交接后正常输出一次。
+复查窗口专项 30 项通过（1 项忽略）；最终发布准备的 Node 回归 204 项通过（21 项平台跳过），
+TestFlight 工具 25 项通过。逐项证据和剩余真机场景保存在 PROGRESS。
+
+最终功能源码为 `a7d15e24cd956f6542298dcff5d88d42d94a88ce`，
+[CI 42556593550](https://github.com/Naituw/AskHuman/actions/runs/42556593550) 七项全部成功，
+包含 Linux / Windows / macOS ARM64 的严格 Clippy 与原生测试、macOS x64 交叉编译、
+iOS Swift、中继与依赖审计。本机 `./scripts/install.sh` 已安装 0.17.1，日常后台同 PID 交接后
+指纹为 `94e6fc97`，四个 IM 连接正常，并通过新安装 AskHuman 收到用户回复。
+
+同一源码已随内外 TestFlight 0.1.0 (15) 交付，两组均 IN_BETA_TESTING；
+用户已更新并确认原有 Mac 连接正常，详见 [Build 15 记录](ios-channel.md#2026-11-09testflight-内部与外部构建-15)。
+真实手机更新中留题/附件续传/推送、四个 IM 原卡和 Windows/Linux 原生界面验收继续保留在
+[PROGRESS](../PROGRESS.md)，不以 CI 或安装连接检查替代。
+
+北京时间 12:06:17，公开补丁 [v0.17.1](https://github.com/Naituw/AskHuman/releases/tag/v0.17.1)
+发布完成，标签与 iOS 15 同指上述源码。
+[Release 42558818391](https://github.com/Naituw/AskHuman/actions/runs/42558818391) 六项成功，
+包含 universal 待办组件的 Apple 公证、四平台正式构建、npm 与 GitHub Release。
+公开 Release 为非草稿、非预发布，四个二进制归档和 SHA256SUMS 均存在；
+`askhuman` 与四个 `@humaninloop/*` 平台包的 0.17.1 均可查询，latest 一致，主包依赖也固定为 0.17.1。
+
+实际下载的 Mac ARM64 归档通过 SHA256SUMS，解出的程序通过严格 Developer ID 签名验证与
+既有 TeamID 检查，`--version` 为 0.17.1；`todo-sync resource-info --require-bundled`
+确认内嵌 production 组件版本 0.17.1、协议 1。隔离目录全新 npm 安装也能运行
+`AskHuman --version`，安装的 native binary 与上述 GitHub 下载包逐字节哈希一致。
+本轮遗留构建、CI 与记录已分组提交；最后交付记录仅改文档，不再重复完整 CI。

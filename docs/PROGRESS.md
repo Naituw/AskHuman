@@ -57,7 +57,7 @@ AttributeGraph 更新与 `UITextView.becomeFirstResponder`；用户确认主要�
 用户已批准启用 GitHub Pages、发布独立 Mac 预览包并继续上传/送审；审核联系人选定 Spatialify，个人信息只存私有输入并提交 Apple。
 完成标准与分阶段验证见计划；未经批准不加演示模式、不迁移中继、不自动创建定时任务。
 2026-11-05 23:45（北京时间）已提交 **0.1.0 (10)**：Apple build `81b235eb-4db3-46ee-8372-e74ca5bcbe0a`，VALID、APP_STORE_ELIGIBLE、`WAITING_FOR_BETA_REVIEW`（审核提交 `WAITING_FOR_REVIEW`）。源码与本地标签 `ios-testflight-10` 固定 `d3bb833`；后续 main 的已结束问题页面改动不在此包。首次上传最终确认 401 已通过同归档受控重试解决，不再重传。
-2026-11-06 Build 10 获批后已向用户指定的一位朋友发出邀请。2026-11-09 Build 14 已在 `AskHuman Friends` 进入 `IN_BETA_TESTING`，沿用原邀请，本次 2026-11-09 只读查询已显示 `INSTALLED: 1`；独立配对与推送验收尚未确认。见 [Build 14 交付记录](plans/ios-channel.md#2026-11-09testflight-内部与外部构建-14)。
+2026-11-06 Build 10 获批后已向用户指定的一位朋友发出邀请。2026-11-09 Build 15 已在 `AskHuman Friends` 进入 `IN_BETA_TESTING`，沿用原邀请，本次 2026-11-09 只读查询已显示 `INSTALLED: 1`；独立配对与推送验收尚未确认。见 [Build 15 交付记录](plans/ios-channel.md#2026-11-09testflight-内部与外部构建-15)。
 下一步：首位朋友按[中文接入指南](https://naituw.github.io/AskHuman/beta-zh/)安装[AskHuman 0.17.0](https://github.com/Naituw/AskHuman/releases/tag/v0.17.0)，完成配对、前台回答、锁屏推送、切网与首答验证。已有项目待办 `73650ea1-449e-42bd-91e4-61a18478d84d`。
 
 ## 待平台验收：Daemon 更新接班的 Windows / Linux 原生路径
@@ -817,8 +817,10 @@ stop 优先、禁用重启、实际 exec 失败恢复与坏替换修复，共 8 
 iOS 更新状态提前解除导致附件不续传、IM 已答内容遇暂时写入失败后不再提交、exec 失败后误读新磁盘指纹。
 前两类分别以四种在线/epoch 恢复组合和真实 SQLite 写失败回归，exec 问题已用真实私有后台复现。
 窗口交接另增加写出屏障、每轮通知身份、恢复状态重置和旧空闲宿主的协议保护，交接前重新保存宿主租约。
-窗口专项 30 项通过（1 项既有忽略）；Windows/Linux CI 的 Clippy 错误已定位修正，最终 CI 结果随交付报告提供。
-iOS 新提示尚未发 TestFlight，真实手机/四个 IM 原卡交接与 Windows/Linux 原生验证仍需完成或由用户明确安排。
+窗口专项 30 项通过（1 项既有忽略）；Windows/Linux CI 的 Clippy 错误已定位修正。最终源码 `a7d15e24` 的七项 CI 全部通过，已公开发布 [补丁 v0.17.1](https://github.com/Naituw/AskHuman/releases/tag/v0.17.1)（npm 主包与四平台包均为 latest）。
+iOS 新提示已随内外 TestFlight `0.1.0 (15)` 发布，用户已更新并确认原有 Mac 连接正常。
+真实手机更新中留题/附件续传/推送、四个 IM 原卡交接与 Windows/Linux 原生界面验证仍需完成；
+源码与分发证据见 [Build 15 记录](plans/ios-channel.md#2026-11-09testflight-内部与外部构建-15)。
 Windows 安装 worker 已按恢复能力选择保留旧服务或旧版安全排空，替换后由现有后台交接，尚未经 Windows 实机。
 此前 Windows 范围询问收到离开模式指导，后续探索得到上述小范围接法并继续原目标，未视为用户同意延期。
 本机已选择后台构建并持续报告，禁止为了加快编译而关闭用户其他任务。

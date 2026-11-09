@@ -161,3 +161,12 @@ P0–P4 已完成：实现、验证、发布、上传与审核提交均已读回
 Apple 状态与 Build 14 测试说明只读检查通过；公开中英文隐私与接入页面均为 HTTP 200。
 
 本次只读查询 Friends 已有一位测试者为 `INSTALLED`。实际配对、首答与生产推送继续单独验收。
+
+### 2026-11-09：Build 15 首次走通默认双组发布
+
+`a7d15e24` 归档的 0.1.0 (15)，Apple build `ed6462b4-f97b-40fe-9a53-4e1989c6f652`。
+正式 helper `update` 验证现有一位已安装朋友、追加构建；`submit` 读回 APPROVED；
+`start` 验证只分配 Internal / Friends、没有组外个别测试者后开启测试。
+两组均已读回 IN_BETA_TESTING；自动通知仍为 false，保留原成员、邀请及私密设置。
+中英文说明与完整验证见 [Build 15 交付记录](ios-channel.md#2026-11-09testflight-内部与外部构建-15)。
+用户已更新至 Build 15，并通过正式 AskHuman 确认原有 Mac 连接正常；更新中留题、附件续传和推送仍待真机场景验收。
