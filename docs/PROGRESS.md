@@ -58,7 +58,7 @@ AttributeGraph 更新与 `UITextView.becomeFirstResponder`；用户确认主要�
 完成标准与分阶段验证见计划；未经批准不加演示模式、不迁移中继、不自动创建定时任务。
 2026-11-05 23:45（北京时间）已提交 **0.1.0 (10)**：Apple build `81b235eb-4db3-46ee-8372-e74ca5bcbe0a`，VALID、APP_STORE_ELIGIBLE、`WAITING_FOR_BETA_REVIEW`（审核提交 `WAITING_FOR_REVIEW`）。源码与本地标签 `ios-testflight-10` 固定 `d3bb833`；后续 main 的已结束问题页面改动不在此包。首次上传最终确认 401 已通过同归档受控重试解决，不再重传。
 2026-11-06 Build 10 获批后已向用户指定的一位朋友发出邀请。2026-11-09 Build 15 已在 `AskHuman Friends` 进入 `IN_BETA_TESTING`，沿用原邀请，本次 2026-11-09 只读查询已显示 `INSTALLED: 1`；独立配对与推送验收尚未确认。见 [Build 15 交付记录](plans/ios-channel.md#2026-11-09testflight-内部与外部构建-15)。
-下一步：首位朋友按[中文接入指南](https://naituw.github.io/AskHuman/beta-zh/)安装[AskHuman 0.17.0](https://github.com/Naituw/AskHuman/releases/tag/v0.17.0)，完成配对、前台回答、锁屏推送、切网与首答验证。已有项目待办 `73650ea1-449e-42bd-91e4-61a18478d84d`。
+下一步：首位朋友按[中文接入指南](https://naituw.github.io/AskHuman/beta-zh/)安装[最新版 AskHuman](https://github.com/Naituw/AskHuman/releases/latest)，完成配对、前台回答、锁屏推送、切网与首答验证。已有项目待办 `73650ea1-449e-42bd-91e4-61a18478d84d`。
 
 ## 待平台验收：Daemon 更新接班的 Windows / Linux 原生路径
 

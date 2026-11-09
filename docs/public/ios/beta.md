@@ -6,49 +6,69 @@ lang: en
 
 [简体中文](../beta-zh/) · [Privacy policy](../privacy/)
 
-Answer questions from AI agents running on your Mac, handle confirmations, inspect sessions, and send instructions from your iPhone.
+Answer questions from agents on your own Mac using your iPhone. Follow these five steps.
 
-This is an invitation-only external TestFlight beta. You use your own Mac, agents and EMQX deployment. The maintainer provides the push relay. The service is experimental and may be interrupted for maintenance.
+**Before you start:** have your Mac, an iPhone running iOS 17 or later, and the **TestFlight email invitation and push relay URL** supplied by the maintainer.
 
-## Requirements
+## 1. Install AskHuman on your Mac
 
-- An iPhone running iOS 17 or later, with Apple TestFlight installed.
-- Your own Mac with the AskHuman version specified in your invitation and a working agent integration.
-- Your own EMQX Serverless deployment. Keep its monthly spending limit at zero; exhausted allowances can stop service.
-- The push relay URL supplied with your invitation. You do not receive an APNs private key.
+If Node.js is not installed, install [Node.js LTS](https://nodejs.org/en/download) first. Then run in Terminal:
 
-You do not need Xcode or a paid Apple Developer account. Use the maintainer's TestFlight app without changing its bundle identifier. Agent operations use your own model account and allowance.
+```bash
+npm install -g askhuman@latest
+AskHuman setup
+```
 
-## Set up your broker
+Connect the agents you use in the wizard; you can skip other messaging tools. Restart any open agent sessions afterward to load the integration.
 
-Create a Serverless deployment and use the TLS/WSS hostnames and ports shown in its console. Create an independent password and a username containing only letters and digits. Allow that user to publish and subscribe to ah/username/#, with a deny-all fallback for #. Verify the allowance and restart rules in your provider's console.
+## 2. Create your own EMQX deployment
 
-The [repository setup guide](https://github.com/Naituw/AskHuman/blob/main/docs/wiki/ios-setup.en.md) has detailed broker instructions. For this beta, skip its Apple developer-resource and self-hosted push-relay sections.
+1. Register and sign in to the [EMQX China console](https://cloud.emqx.com/console/). Create a project named `AskHuman`. These steps use that console.
+2. In the project, create a **Serverless** deployment named `askhuman`. Set the **spending limit to `0`**, leave other options at their defaults, and wait until it is running.
+3. Open the deployment's **Access Control → Authentication**. Add username `ah01`, choose a password and save it.
+4. In **Access Control → Authorization**, add these rules:
+   - **Username** tab: username `ah01`, topic `ah/ah01/#`, action **Publish & Subscribe**, permission **Allow**.
+   - **All Users** tab: topic `#`, action **Publish & Subscribe**, permission **Deny**. Remove any existing rule allowing `#`.
+5. Return to **Overview** and copy the hostname under **Connection Information** for the next step.
 
-## Connect your Mac and phone
+A spending limit of `0` uses only the free allowance and stops the deployment when it is exhausted. See [EMQX billing](https://docs.emqx.com/en/cloud/latest/price/pricing.html).
 
-1. In AskHuman on your Mac, enable experimental features in General settings.
-2. Open Experimental → iOS App channel. Enable it, enter your own broker credentials and the relay URL from your invitation, and test the connection.
-3. Accept the TestFlight email invitation on your iPhone, install AskHuman, and allow notifications.
-4. On the Mac, choose to pair a new phone. On the phone's Macs tab, add a Mac and scan the QR code.
-5. Pairing codes expire in five minutes and work once. Compare the six-digit confirmation codes on both devices and approve on your Mac.
+## 3. Enter the Mac connection settings
 
-You can import a connection string into another Mac you own. It includes your broker password; do not share it with other people or attach it to feedback.
+Run `AskHuman --settings` to open Settings:
 
-## Check the basic workflow
+1. In **General**, enable experimental features.
+2. In **Experimental → iOS App channel**, enable the channel and enter:
 
-Run this on your own Mac; it does not start an AI model request:
+   | Field | Value |
+   |---|---|
+   | Broker host | The EMQX hostname, without a scheme, port or path |
+   | TLS port | `8883` |
+   | WSS port | `8084` |
+   | Username | `ah01` |
+   | Password | The client password you just created |
+   | Push relay URL | The complete URL supplied separately by the maintainer |
 
-    AskHuman -q "Phone beta: please reply received"
+3. Click **Test connection**. Both the **broker round trip and relay health check must pass**.
+4. In **Advanced → Daemon lifecycle**, choose **Keep alive**. Keep your Mac online and awake during use.
 
-Answer with the app in the foreground and check the terminal result. Temporarily set the Mac's push timing to “Immediately”, lock the phone, and send another question. Check notification delivery, opening the request and answering. Restore your preferred timing afterward.
+## 4. Install and pair the iPhone app
 
-The default push delay waits for 15 minutes without Mac keyboard or mouse activity. Inbox delivery does not wait for this delay. No system notification while you are working at the Mac can be expected behavior.
+1. Install [TestFlight](https://apps.apple.com/app/testflight/id899247664) on your iPhone. Open your email invitation, install the latest AskHuman build and allow notifications.
+2. In the Mac's iOS channel settings, choose **Pair new phone**. On the phone, open **Macs → Add Mac** and scan the QR code.
+3. Compare the **six-digit codes** and approve on the Mac. QR codes expire after five minutes; generate a new one if needed.
 
-During normal use, observe Wi-Fi/cellular changes, Mac sleep and wake, and answering the same question on multiple surfaces. Only the first answer should take effect.
+## 5. Test answers and notifications
 
-## Limits and feedback
+1. Keep AskHuman open on your phone and run this in your Mac terminal:
 
-The Mac must be online with the AskHuman daemon running. Use the daemon's keep-alive setting if you need continuous availability; it does not prevent computer sleep. Live observation works only while the app is in the foreground. Creating remote tasks requires the Mac's remote-task setting and a ready agent. Some features require the newer Mac version specified in your invitation.
+   ```bash
+   AskHuman -q "Phone test: please reply received"
+   ```
 
-Report issues through TestFlight or the [project issue tracker](https://github.com/Naituw/AskHuman/issues). Include the iOS build, Mac app and OS versions, phone model, time/time zone, network and proxy state, steps, expected result and actual result. Say whether opening or refreshing the app restores it. Redact screenshots. Never send broker passwords, connection strings, pairing codes, push tokens, private keys or confidential transcripts.
+2. Answer on the phone and check that the terminal receives it. This tests answering without making a model call.
+3. Temporarily set the Mac iOS channel's **Push timing** to **Immediately**. Lock your phone, run the command again, then open the notification and answer.
+
+If both tests pass, setup is complete. Restore your preferred push timing afterward. By default, push waits until the Mac has been idle for 15 minutes; inbox delivery does not wait.
+
+If something fails, send the maintainer a screenshot and both app versions. Hide passwords, connection strings and pairing codes.
