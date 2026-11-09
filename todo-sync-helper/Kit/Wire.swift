@@ -140,9 +140,10 @@ struct HelloReply: Codable, Equatable {
     var accountHash: String?
     /// Set when the helper runs but cannot reach CloudKit at all, e.g. "missingEntitlement".
     var problem: String?
+    var systemFixture: FixtureIdentity? = nil
 
     enum CodingKeys: String, CodingKey {
-        case id, ok, helperVersion, environment, container, accountStatus, accountHash, problem
+        case id, ok, helperVersion, environment, container, accountStatus, accountHash, problem, systemFixture
         case protocolVersion = "protocol"
     }
 }

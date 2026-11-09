@@ -19,6 +19,9 @@ pub enum SpawnPolicy {
 }
 
 pub fn spawn_detached(policy: SpawnPolicy) -> std::io::Result<()> {
+    crate::development::routing::guard_fixture_program(
+        crate::executable::launch_path()?.as_os_str(),
+    )?;
     #[cfg(target_os = "macos")]
     {
         if spawn_via_gui_launchd(policy).is_ok() {
@@ -201,6 +204,9 @@ fn spawn_plain_detached() -> std::io::Result<()> {
     let log_err = log.try_clone()?;
 
     let mut cmd = Command::new(exe);
+    if let Some(home) = crate::development::routing::background_account_home() {
+        cmd.env("HOME", home);
+    }
     crate::development::clear_client_context(&mut cmd);
     cmd.arg("daemon")
         .arg("run")
@@ -227,27 +233,7 @@ const DAEMON_LAUNCHD_LABEL: &str = "com.naituw.humaninloop.daemon";
 /// by a caller that wants a throwaway profile.
 #[cfg(target_os = "macos")]
 fn account_home() -> Option<std::path::PathBuf> {
-    use std::ffi::CStr;
-
-    let mut buffer = vec![0 as libc::c_char; 4096];
-    // SAFETY: `passwd` is plain data; `getpwuid_r` fills it and `buffer` (which outlives every
-    // use of the pointers inside it) with the entry of the calling user.
-    unsafe {
-        let mut entry: libc::passwd = std::mem::zeroed();
-        let mut found: *mut libc::passwd = std::ptr::null_mut();
-        let status = libc::getpwuid_r(
-            libc::getuid(),
-            &mut entry,
-            buffer.as_mut_ptr(),
-            buffer.len(),
-            &mut found,
-        );
-        if status != 0 || found.is_null() || entry.pw_dir.is_null() {
-            return None;
-        }
-        let dir = CStr::from_ptr(entry.pw_dir).to_str().ok()?;
-        (!dir.is_empty()).then(|| std::path::PathBuf::from(dir))
-    }
+    crate::paths::account::home().ok()
 }
 
 /// Whether two directories are the same place, looking through symlinks when both exist.
@@ -320,7 +306,8 @@ fn spawn_via_gui_launchd(policy: SpawnPolicy) -> std::io::Result<()> {
     let domain = format!("gui/{uid}");
     let config_dir = crate::paths::config_dir();
     let isolated = needs_isolated_label(
-        crate::dev_instance::is_dev_instance(),
+        crate::dev_instance::is_dev_instance()
+            || crate::development::routing::shared_writes_blocked(),
         &config_dir,
         account_home().as_deref(),
     );
@@ -338,6 +325,12 @@ fn spawn_via_gui_launchd(policy: SpawnPolicy) -> std::io::Result<()> {
     // 透传隔离/配置相关 env：HOME/TMPDIR/PATH + 全部 ASKHUMAN_*。
     let mut env_xml = String::new();
     for key in ["HOME", "TMPDIR", "PATH"] {
+        if key == "HOME" {
+            if let Some(home) = crate::development::routing::background_account_home() {
+                env_xml.push_str(&plist_env_entry(key, &home.to_string_lossy()));
+                continue;
+            }
+        }
         if let Ok(v) = std::env::var(key) {
             env_xml.push_str(&plist_env_entry(key, &v));
         }

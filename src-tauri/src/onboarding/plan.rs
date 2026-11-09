@@ -164,7 +164,7 @@ mod tests {
             testutil::run_in_child(module_path!(), "preview_matches_what_set_really_writes");
             return;
         }
-        let home = crate::paths::home();
+        let home = crate::paths::integration_home();
         let state = crate::paths::config_dir();
         // Each pair starts from an empty HOME (everything but the AskHuman state directory).
         let reset = || {

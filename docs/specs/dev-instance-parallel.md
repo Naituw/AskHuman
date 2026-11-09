@@ -12,7 +12,7 @@
 2. **共享 Daemon**（`~/.askhuman/daemon.lock` + sock）：全局单实例；二进制换新走 graceful drain，Agent 之间仍需互相等待在途提问结束。
 3. **共享渠道配置 / 生产 bot**：IM 平台限制同一应用同时仅一条长连接，多 Daemon 若复用主配置会互抢。
 
-已有 graceful drain（`docs/specs/daemon-graceful-drain.md`）解决「换新打断在途」，但**不能**解决并行开发下的串行等待与二进制互踩。perf harness 用临时 `HOME` + `ASKHUMAN_NO_KEYCHAIN` 证明了整树隔离可行，但不是产品化开发流程。
+已有 graceful drain（`docs/specs/daemon-graceful-drain.md`）解决「换新打断在途」，但**不能**解决并行开发下的串行等待与二进制互踩。perf harness 使用临时 `HOME`、显式 `ASKHUMAN_HOME` 和 `ASKHUMAN_NO_KEYCHAIN` 验证整树隔离，产品开发沿用本树 Dev 流程。
 
 ## 2. 原有目标与兼容行为
 
@@ -164,7 +164,7 @@ PowerShell 5.1 兼容脚本）。两者共享以下语义：
   （`ASKHUMAN_HOME` 置位或 exe 含 `.askhuman-dev` 路径段 → no-op）；生产进程启动时的
   幂等同步（exe 比对）自然回写自愈。
 - **禁止自动改写用户级全局 Agent hook 配置**（2026-10-17 补；同一问题 10-15 与 10-17 各出现一次）：
-  Cursor / Codex / Claude 的 hook 与 Pi 扩展位于 `paths::home()`（真实 `$HOME`），`ASKHUMAN_HOME`
+  Cursor / Codex / Claude 的 hook 与 Pi 扩展使用 `paths::integration_home()`（System 跟随账户，Isolated 保留 caller HOME），`ASKHUMAN_HOME`
   只隔离配置 / socket / daemon 标签，**不隔离它们**。daemon 启动时的 `agent_stop::migrate_outdated()` 与
   `agent_ask_question::migrate_outdated()` 会把「与自己的 `current_exe()`、自己 home 里的偏好不一致」的
   hook 改写成指向自己——实例 daemon 因此会把**生产** hook 劫持到 worktree / QA 二进制，并因新 home 没有
@@ -174,13 +174,10 @@ PowerShell 5.1 兼容脚本）。两者共享以下语义：
   今后新增任何会改写共享文件的启动迁移，必须放进同一个分支。
   **范围仅限自动行为**：显式的 `AskHuman agents …` 与设置页的 Agent 集成开关是用户动作，不受守卫，
   在实例里运行它们仍会写**真实**用户配置。
-- **验证实例行为时不能只换 `HOME`**（2026-10-17 教训）：launchd label（GUI Host 登录项
-  `com.naituw.humaninloop.guihost`）按用户全局唯一，与 `HOME` 无关。只换 `HOME`、不设非空 `ASKHUMAN_HOME`
-  的 daemon / GUI Host 属于**生产上下文**，会 `bootout` 并替换真实登录项。沙箱验证必须同时设非空
-  `ASKHUMAN_HOME`，收尾时核对真实登录项（launchd pid 与 plist）未变。
-  2026-10-25 起 daemon 自己的 label 多了一道兜底：配置目录不是账户自己的 `~/.askhuman`（账户 home 取自
-  用户数据库而非 `$HOME`）时同样派生独立 label，所以只换 `HOME` 的 daemon 不再 `bootout` 真实 daemon
-  （`daemon/spawn.rs::needs_isolated_label`）。这**不**覆盖 GUI Host 登录项与 Agent hook 文件，规则不变。
+- 隔离验证使用本树 Dev、私有 profile 或单次非空 `ASKHUMAN_HOME`。
+  普通 System 与显式 `--instance system` 从操作系统账户选择正式根，单独更换 `HOME` 仍访问日常实例。
+  测试 System 路由和同步使用 [受保护的 fixture v2 入口](system-instance-home-routing.md#4-fixture-v2-的入口与继承)，
+  该入口携带私有账户和跨程序能力契约。旧临时 HOME daemon 仅通过继承 v1 目标在原根续接，配置及共享凭据只读。
 
 ### 7.2 机器级渠道预设（跨 WorkTree 复用模板 + 独占租约）
 

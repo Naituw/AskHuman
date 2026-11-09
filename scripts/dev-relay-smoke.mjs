@@ -17,6 +17,7 @@ fs.mkdirSync(home); fs.mkdirSync(root);
 const env = { ...process.env, HOME: home, ASKHUMAN_NO_KEYCHAIN: "1", GIT_CONFIG_NOSYSTEM: "1", GIT_CONFIG_GLOBAL: path.join(temp,"gitconfig") };
 fs.writeFileSync(env.GIT_CONFIG_GLOBAL, "");
 for (const key of Object.keys(env)) if (key.startsWith("ASKHUMAN_") && key !== "ASKHUMAN_NO_KEYCHAIN") delete env[key];
+const prefix = ["--development-capabilities", "--internal-system-fixture-v2", home, "--"];
 const formalHome = path.join(home, ".askhuman"), devHome = path.join(root, ".askhuman-dev/home");
 const system = path.join(temp, "formal/AskHuman");
 fs.mkdirSync(path.dirname(system)); fs.copyFileSync(binary, system); fs.chmodSync(system, 0o700);
@@ -51,8 +52,10 @@ const api = http.createServer(async (req,res) => {
 });
 await new Promise(resolve => api.listen(0, "127.0.0.1", resolve));
 function run(args, cwd = temp) {
-  const out = spawnSync(system,args,{cwd,env,encoding:"utf8",timeout:15000});
-  assert.equal(out.status,0,out.stderr); return out.stdout;
+  const out = spawnSync(system,[...prefix,...args],{cwd,env,encoding:"utf8",timeout:15000});
+  assert.equal(out.status,0,out.stderr); const activation = JSON.parse(out.stderr.split('\n').find(line => line.startsWith('ASKHUMAN_SYSTEM_FIXTURE_V2_ACTIVE '))?.slice('ASKHUMAN_SYSTEM_FIXTURE_V2_ACTIVE '.length) ?? 'null');
+  assert.equal(activation?.version, 2); assert.equal(activation.accountHome, home);
+  assert.ok(['system', 'dev', 'isolated'].includes(activation.kind)); assert.ok(path.isAbsolute(activation.home)); return out.stdout;
 }
 function write(file,value) { fs.mkdirSync(path.dirname(file),{recursive:true}); fs.writeFileSync(file,JSON.stringify(value),{mode:0o600}); }
 function frame(home, message, terminal) {
@@ -83,11 +86,11 @@ async function until(fn) {
 }
 function daemon(args) {
   const log=fs.openSync(path.join(temp,"daemon-"+children.length+".log"),"a");
-  const child=spawn(system,args,{env,cwd:temp,stdio:["ignore",log,log]}); fs.closeSync(log); children.push(child);
+  const child=spawn(system,[...prefix,...args],{env,cwd:temp,stdio:["ignore",log,log]}); fs.closeSync(log); children.push(child);
 }
 async function freshProjectAsk() {
   const log=fs.openSync(path.join(temp,"project-mcp.log"),"a");
-  const child=spawn(process.execPath,[path.resolve("scripts/dev.mjs"),"mcp","--worktree",root],{env,cwd:temp,stdio:["pipe","pipe",log]});
+  const child=spawn(process.execPath,[path.resolve("scripts/dev.mjs"),"--internal-system-fixture-v2",home,"mcp","--worktree",root],{env,cwd:temp,stdio:["pipe","pipe",log]});
   fs.closeSync(log);children.push(child);
   const pending=new Map();let nextId=0;
   createInterface({input:child.stdout}).on("line",line=>{

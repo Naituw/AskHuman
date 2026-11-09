@@ -2718,6 +2718,7 @@ pub async fn save_settings(
     mut config: AppConfig,
     secret_actions: SecretActions,
 ) -> Result<(), String> {
+    crate::development::routing::require_config_writes()?;
     // The menu holds a handful of one-line replies: what the settings page sent is cut to that.
     if let Some(list) = config.general.quick_replies.as_deref() {
         config.general.quick_replies = Some(crate::config::sanitize_quick_replies(list));

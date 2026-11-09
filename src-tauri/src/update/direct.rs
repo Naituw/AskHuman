@@ -289,6 +289,7 @@ async fn apply_windows(progress: Option<ProgressCb>) -> Result<()> {
     )?;
     let (worker_stdout, worker_stderr) = super::windows_worker_log_files("direct")?;
     let mut command = Command::new(&worker);
+    crate::development::routing::guard_fixture_program(worker.as_os_str())?;
     command
         .arg("__update-worker")
         .arg(&transaction_path)

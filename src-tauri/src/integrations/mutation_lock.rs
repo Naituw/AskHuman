@@ -38,8 +38,55 @@ pub fn everyday_changes_blocked() -> Result<bool, String> {
 
 impl IntegrationMutationLock {
     pub fn acquire() -> Result<Self> {
+        crate::development::routing::require_config_writes().map_err(anyhow::Error::msg)?;
         if everyday_changes_blocked().map_err(anyhow::Error::msg)? {
             return Err(anyhow::anyhow!("Dev cannot change everyday Agent integration; use an isolated test profile or the explicit system entry"));
+        }
+        if let Some(fixture) = crate::development::routing::fixture().map_err(anyhow::Error::msg)? {
+            let profile = crate::development::session::active().map_err(anyhow::Error::msg)?;
+            let allowed = profile
+                .as_ref()
+                .map_or(fixture.account_home.clone(), |profile| {
+                    profile.directory.clone()
+                });
+            for path in [
+                crate::paths::cursor_hooks_json(),
+                crate::paths::cursor_hook_script(),
+                crate::paths::cursor_rules_dir(),
+                crate::paths::claude_json(),
+                crate::paths::claude_dir(),
+                crate::paths::codex_dir(),
+                crate::paths::grok_dir(),
+                crate::paths::pi_agent_dir(),
+            ] {
+                let mut ancestor = path.as_path();
+                while !ancestor.exists() {
+                    ancestor = ancestor.parent().ok_or_else(|| {
+                        anyhow::anyhow!("cannot validate private integration path")
+                    })?;
+                }
+                let actual = ancestor.canonicalize()?;
+                if !actual.starts_with(&allowed) {
+                    return Err(anyhow::anyhow!(
+                        "fixture integration path escapes its private account or profile: {}",
+                        path.display()
+                    ));
+                }
+            }
+            if profile.is_none() {
+                let path = crate::paths::antigravity_mcp_config_json();
+                let mut ancestor = path.as_path();
+                while !ancestor.exists() {
+                    ancestor = ancestor.parent().ok_or_else(|| {
+                        anyhow::anyhow!("cannot validate private integration path")
+                    })?;
+                }
+                if !ancestor.canonicalize()?.starts_with(&fixture.account_home) {
+                    return Err(anyhow::anyhow!(
+                        "fixture Antigravity path escapes its private account"
+                    ));
+                }
+            }
         }
         let path = crate::paths::integrations_lock_file();
         crate::file_lock::FileLock::exclusive(&path)

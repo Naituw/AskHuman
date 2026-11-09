@@ -4,12 +4,17 @@ use serde::Serialize;
 use std::io::Write;
 use std::path::{Path, PathBuf};
 
-pub fn system_home() -> PathBuf {
-    crate::paths::home().join(".askhuman")
+pub fn system_home() -> Result<PathBuf, String> {
+    if let Some(target) = super::routing::inherited()?
+        .filter(|target| target.kind == super::routing::TargetKind::System)
+    {
+        return Ok(target.home);
+    }
+    Ok(crate::paths::system_account_home()?.join(".askhuman"))
 }
 
-pub fn directory() -> PathBuf {
-    system_home().join("state/development-relay")
+pub fn directory() -> Result<PathBuf, String> {
+    Ok(system_home()?.join("state/development-relay"))
 }
 
 pub fn write_json(path: &Path, value: &impl Serialize) -> Result<(), String> {

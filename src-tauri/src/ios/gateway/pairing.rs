@@ -238,6 +238,9 @@ impl Actor {
 
     /// The user compared the check codes and chose.
     pub(super) async fn pair_decision(&mut self, ticket_id: &str, allow: bool) {
+        if crate::development::routing::require_config_writes().is_err() {
+            return;
+        }
         let Some(pairing) = self.pairing.as_mut() else {
             return;
         };

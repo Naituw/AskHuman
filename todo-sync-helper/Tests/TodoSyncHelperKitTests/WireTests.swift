@@ -61,6 +61,25 @@ final class WireTests: XCTestCase {
         let object = try XCTUnwrap(try JSONSerialization.jsonObject(with: data) as? [String: Any])
         XCTAssertEqual(object["protocol"] as? Int, Wire.protocolVersion)
         XCTAssertNil(object["protocolVersion"])
+        XCTAssertNil(object["systemFixture"])
+    }
+
+    func testHelloAddsFixtureIdentityOnlyForFixtureRuntime() async throws {
+        let identity = FixtureIdentity(version: 2, accountHome: "/private/temporary-fixture")
+        for context in [nil, identity] {
+            let dispatcher = RpcDispatcher(
+                backend: FixtureBackend(response: [:]), helperVersion: "0", systemFixture: context)
+            let reply = await dispatcher.handle(Data(#"{"id":1,"op":"hello"}"#.utf8))
+            let object = try XCTUnwrap(try JSONSerialization.jsonObject(with: reply) as? [String: Any])
+            XCTAssertEqual(object["protocol"] as? Int, 1)
+            if context == nil {
+                XCTAssertNil(object["systemFixture"])
+            } else {
+                let fixture = try XCTUnwrap(object["systemFixture"] as? [String: Any])
+                XCTAssertEqual(fixture["version"] as? Int, 2)
+                XCTAssertEqual(fixture["accountHome"] as? String, identity.accountHome)
+            }
+        }
     }
 
     func testUnknownOpAndBadJsonBecomeBadRequestReplies() async throws {

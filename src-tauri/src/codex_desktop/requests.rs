@@ -381,7 +381,9 @@ async fn forward(
         };
         (decision, Some(handle))
     } else {
-        let stream = ipc::transport::connect().await.map_err(|e| e.to_string())?;
+        let stream = crate::client::connect_stream()
+            .await
+            .map_err(|e| e.to_string())?;
         let (reader, mut writer) = stream.into_split();
         let mut reader = tokio::io::BufReader::new(reader);
         ipc::write_msg(&mut writer, &message)

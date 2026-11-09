@@ -706,11 +706,11 @@ pub fn run_gui_host(config: AppConfig) -> ! {
 /// 流程：连 Daemon → 出示一次性 token → 收 `show` → 本进程主线程跑 Tauri 弹窗；
 /// 用户作答 / 取消经 IPC `answer` 回 Daemon；收到 `cancel` 或连接断开即退出。
 pub fn run_popup_host(token: String) -> ! {
-    use crate::ipc::{self, transport, ServerMsg};
+    use crate::ipc::{self, ServerMsg};
     use tokio::io::BufReader;
     let reconnect_token = token.clone();
     let connected = tauri::async_runtime::block_on(async move {
-        let stream = transport::connect().await?;
+        let stream = crate::client::connect_stream().await?;
         let (reader, mut writer) = stream.into_split();
         let mut reader = BufReader::new(reader);
         let (hello, supported) = popup_recovery::host_hello(&token, Vec::new()).await;
@@ -775,7 +775,7 @@ pub fn run_popup_host(token: String) -> ! {
 }
 
 pub fn run_gui_helper(_endpoint: String, token: String, warm: bool) -> ! {
-    use crate::ipc::{self, transport, ClientMsg, ServerMsg};
+    use crate::ipc::{self, ClientMsg, ServerMsg};
     use tokio::io::BufReader;
 
     crate::perf::mark_env("gui.start");
@@ -783,7 +783,7 @@ pub fn run_gui_helper(_endpoint: String, token: String, warm: bool) -> ! {
     // 方案6 预热模式：连接 + 发 `GuiWarmReady`，立即建窗挂载、隐藏待命；首条 `Show` 在 reader 循环里领用。
     if warm {
         let connected = tauri::async_runtime::block_on(async move {
-            let stream = transport::connect().await?;
+            let stream = crate::client::connect_stream().await?;
             let (r, mut w) = stream.into_split();
             let supported = crate::client::recovery::available().await;
             let hello = if supported {
@@ -851,7 +851,7 @@ pub fn run_gui_helper(_endpoint: String, token: String, warm: bool) -> ! {
     // 连接 + 握手 + 读 show（在 Tauri 全局运行时上完成，确保后续读写任务同一 reactor）。
     let reconnect_token = token.clone();
     let connected = tauri::async_runtime::block_on(async move {
-        let stream = transport::connect().await?;
+        let stream = crate::client::connect_stream().await?;
         let (r, mut w) = stream.into_split();
         let mut reader = BufReader::new(r);
         let (hello, supported) = popup_recovery::independent_hello(&token).await;

@@ -822,6 +822,9 @@ impl Runtime {
     }
 
     async fn prepare(&self, state: &Arc<ServerState>) -> Result<bool> {
+        if !crate::development::routing::replacement_compatible() {
+            return Ok(false);
+        }
         let _transition = self.transition.lock().await;
         if !self.supported_requests(state)? {
             return Ok(false);

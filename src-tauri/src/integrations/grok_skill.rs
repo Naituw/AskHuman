@@ -173,7 +173,7 @@ fn atomic_write(path: &Path, bytes: &[u8]) -> Result<()> {
 }
 
 fn collapse_home(p: &Path) -> String {
-    let home = paths::home();
+    let home = paths::integration_home();
     if let Ok(rest) = p.strip_prefix(&home) {
         format!("~/{}", rest.display())
     } else {

@@ -268,6 +268,9 @@ mod mac {
     }
 
     pub fn register(app: &Path) -> Result<Registration> {
+        if crate::development::routing::shared_writes_blocked() {
+            bail!("private System contexts cannot register the shared sync helper");
+        }
         // Validate before executing a helper that can live in a user-writable Applications folder.
         verify(app, false)?;
         let out = run(Command::new(app.join("Contents/MacOS/AskHumanTodoSync")).arg("--register"))?;
@@ -287,6 +290,9 @@ mod mac {
     }
 
     pub fn needs_approval(app: &Path) -> bool {
+        if crate::development::routing::shared_writes_blocked() {
+            return false;
+        }
         // This is read only. A bad or missing signature simply leaves the repair action available.
         if verify(app, false).is_err() {
             return false;
@@ -344,6 +350,9 @@ mod mac {
     /// Reuse an existing self-use helper when a source build does not carry a release resource.
     /// Public release packages always carry the archive; no download or Apple-account mutation occurs.
     pub fn prepare(state_dir: &Path) -> Result<Registration> {
+        if crate::development::routing::shared_writes_blocked() {
+            bail!("private System contexts require an explicitly started private sync helper");
+        }
         if !super::super::service::supported() {
             bail!("iCloud todo sync requires macOS 14 or later, outside Dev Instances");
         }

@@ -42,8 +42,9 @@ function images(text, directory) {
 }
 
 export function startMcp(root) {
+  if (fs.existsSync(path.join(root, ".askhuman-dev/workspace.json"))) readWorkspace(root);
   const hash = createHash("sha256");
-  for (const name of ["scripts/dev.mjs", "scripts/development/runtime.mjs", "scripts/development/mcp.mjs", "scripts/development/caller.mjs"]) {
+  for (const name of ["scripts/dev.mjs", "scripts/development/runtime.mjs", "scripts/development/mcp.mjs", "scripts/development/caller.mjs", "scripts/development/context.mjs"]) {
     // The source files live with this controller, even in the no-build catalog test.
     hash.update(name); hash.update(fs.readFileSync(new URL(`../../${name}`, import.meta.url)));
   }

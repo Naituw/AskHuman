@@ -3,14 +3,26 @@ import CloudKit
 
 final class AppDelegate: NSObject, NSApplicationDelegate {
     private var runtime: HelperRuntime!
+    private let fixture: SystemFixture?
+
+    init(fixture: SystemFixture? = nil) {
+        self.fixture = fixture
+        super.init()
+    }
 
     func applicationDidFinishLaunching(_ notification: Notification) {
-        let paths = HelperPaths.resolve()
-        let logs = FileManager.default.homeDirectoryForCurrentUser
+        do {
+            try fixture?.validateLayout()
+        } catch {
+            FileHandle.standardError.write(Data("AskHumanTodoSync: \(error)\n".utf8))
+            exit(1)
+        }
+        let paths = fixture?.paths ?? HelperPaths.resolve()
+        let logs = fixture?.logURL ?? FileManager.default.homeDirectoryForCurrentUser
             .appendingPathComponent("Library/Logs/AskHumanTodoSync/helper.log")
         HelperLog.shared.configure(url: logs)
 
-        runtime = HelperRuntime(paths: paths)
+        runtime = HelperRuntime(paths: paths, fixture: fixture)
         guard runtime.start() else {
             // Another helper owns this directory, or the socket cannot be served: nothing useful to do.
             HelperLog.shared.flush()

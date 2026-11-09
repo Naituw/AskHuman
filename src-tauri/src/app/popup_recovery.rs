@@ -133,7 +133,7 @@ pub(super) fn bridge(
                     loop {
                         crate::client::recovery::start_if_missing().await;
                         if crate::client::recovery::available().await {
-                            if let Ok(stream) = transport::connect().await {
+                            if let Ok(stream) = crate::client::connect_stream().await {
                                 let (read, mut write) = stream.into_split();
                                 let hello = match &kind {
                                     Kind::Host { token } => operation(ClientOperation::PopupHost {

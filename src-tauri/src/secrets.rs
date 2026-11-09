@@ -45,7 +45,7 @@ pub struct Unavailable;
 /// Also forced on for Dev Instance mode (`ASKHUMAN_HOME` set): instance configs must never read
 /// or migrate into the user's main keychain (see `docs/specs/dev-instance-parallel.md`).
 fn disabled() -> bool {
-    if crate::dev_instance::is_dev_instance() {
+    if crate::dev_instance::is_dev_instance() || crate::development::routing::is_fixture() {
         return true;
     }
     std::env::var("ASKHUMAN_NO_KEYCHAIN")
@@ -71,7 +71,7 @@ pub fn get(account: &str) -> Result<Option<String>, Unavailable> {
 
 /// Create or overwrite a secret.
 pub fn set(account: &str, value: &str) -> Result<(), Unavailable> {
-    if disabled() {
+    if disabled() || crate::development::routing::legacy_system() {
         return Err(Unavailable);
     }
     entry(account)?.set_password(value).map_err(|_| Unavailable)
@@ -79,7 +79,7 @@ pub fn set(account: &str, value: &str) -> Result<(), Unavailable> {
 
 /// Delete a secret. A missing entry counts as success.
 pub fn delete(account: &str) -> Result<(), Unavailable> {
-    if disabled() {
+    if disabled() || crate::development::routing::legacy_system() {
         return Err(Unavailable);
     }
     match entry(account)?.delete_credential() {

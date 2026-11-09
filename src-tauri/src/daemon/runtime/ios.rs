@@ -489,6 +489,15 @@ pub(super) async fn handle_ios_op(
     state: &Arc<ServerState>,
     op: ipc::IosOp,
 ) -> Result<ipc::IosResult, String> {
+    if matches!(
+        &op,
+        ipc::IosOp::PairStart
+            | ipc::IosOp::PairDecision { .. }
+            | ipc::IosOp::Revoke { .. }
+            | ipc::IosOp::Rename { .. }
+    ) {
+        crate::development::routing::require_config_writes()?;
+    }
     let gateway = ensure_ios_gateway(state).await;
     if let ipc::IosOp::State = op {
         return Ok(ipc::IosResult::State {

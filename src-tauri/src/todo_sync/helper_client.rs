@@ -26,6 +26,7 @@ pub fn socket_path(dir: &Path) -> PathBuf {
 /// The `hello` reply: who the helper is and what it can reach.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct HelloInfo {
+    pub system_fixture: Option<crate::development::routing::Fixture>,
     pub protocol: u64,
     pub helper_version: String,
     /// CloudKit environment of the build: `production` or `development`.
@@ -63,6 +64,13 @@ fn parse_hello(v: &Value) -> Result<HelloInfo, NetError> {
         return Err(malformed("hello has no protocol"));
     };
     Ok(HelloInfo {
+        system_fixture: v
+            .get("systemFixture")
+            .filter(|value| !value.is_null())
+            .cloned()
+            .map(serde_json::from_value)
+            .transpose()
+            .map_err(|_| malformed("invalid System fixture identity"))?,
         protocol,
         helper_version: text("helperVersion").unwrap_or_default(),
         environment: text("environment").unwrap_or_default(),
@@ -300,6 +308,21 @@ mod unix {
             if self.conn.is_some() {
                 return Ok(());
             }
+            if crate::development::routing::is_fixture() {
+                let production = crate::paths::account::home()
+                    .map_err(|_| malformed("cannot resolve production home"))?
+                    .join(".askhuman");
+                let production = production.canonicalize().unwrap_or(production);
+                if self
+                    .socket
+                    .canonicalize()
+                    .is_ok_and(|socket| socket.starts_with(production))
+                {
+                    return Err(malformed(
+                        "fixture helper socket points into production data",
+                    ));
+                }
+            }
             // `UnixStream::connect` does not block for long: the kernel answers at once whether
             // anyone is listening.
             let stream = UnixStream::connect(&self.socket).map_err(|e| match e.kind() {
@@ -333,6 +356,7 @@ mod unix {
             if result.is_err() {
                 // Out of step with the helper (or gone): the next call starts over.
                 self.conn = None;
+                self.handshake = None;
             }
             let reply = result?;
             if reply.get("ok").and_then(Value::as_bool) == Some(true) {
@@ -391,6 +415,25 @@ mod unix {
             }
             let reply = self.call("hello", json!({}), HELLO_LIMIT)?;
             let info = parse_hello(&reply)?;
+            if crate::development::routing::is_fixture() {
+                let fixture = info
+                    .system_fixture
+                    .as_ref()
+                    .filter(|fixture| fixture.version == 2)
+                    .ok_or_else(|| malformed("helper does not support System fixture v2"))?;
+                let home = crate::paths::account::validate_fixture(&fixture.account_home)
+                    .map_err(|_| malformed("helper fixture account is not private"))?;
+                let advertised = home.join(".askhuman/state/todo-sync/helper.sock");
+                let connected = self
+                    .socket
+                    .canonicalize()
+                    .map_err(|_| malformed("cannot resolve the private helper socket"))?;
+                if advertised != connected {
+                    return Err(malformed(
+                        "helper System fixture identity does not match its socket",
+                    ));
+                }
+            }
             if info.protocol != PROTOCOL {
                 return Err(NetError::Unavailable(format!(
                     "the sync helper speaks protocol {} but this app speaks {PROTOCOL}; update \

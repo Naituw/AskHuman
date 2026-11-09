@@ -713,6 +713,7 @@ impl AppConfig {
     /// The config holds channel secrets (DingTalk/Feishu AppSecret, Telegram bot token), so the
     /// file is restricted to owner-only (0600) and its directory to 0700 on Unix.
     pub fn save_to(&self, path: &Path) -> std::io::Result<()> {
+        crate::development::routing::require_config_writes().map_err(std::io::Error::other)?;
         if let Some(dir) = path.parent() {
             std::fs::create_dir_all(dir)?;
             harden_dir(dir);
@@ -812,6 +813,7 @@ impl AppConfig {
     /// 写入默认位置。Secrets are stripped into the keychain and blanked on disk (plaintext
     /// fallback only when the keychain is unavailable).
     pub fn save(&self) -> std::io::Result<()> {
+        crate::development::routing::require_config_writes().map_err(std::io::Error::other)?;
         let disk = self.persist_secrets_to_keychain();
         disk.save_to(&paths::config_file())
     }
@@ -821,6 +823,7 @@ impl AppConfig {
     /// up holding the effective value. When `persist` and at least one plaintext field was
     /// migrated, re-save so the plaintext is blanked on disk.
     fn resolve_secrets_and_migrate(&mut self, persist: bool) {
+        let read_only = crate::development::routing::legacy_system();
         let mut migrated = false;
         for spec in &SECRET_SPECS {
             let field = (spec.field)(self);
@@ -828,7 +831,7 @@ impl AppConfig {
                 if let Ok(Some(v)) = secrets::get(spec.account) {
                     *field = v;
                 }
-            } else {
+            } else if !read_only {
                 let value = field.clone();
                 if secrets::set(spec.account, &value).is_ok() {
                     migrated = true;
@@ -882,6 +885,9 @@ fn harden_dir(_path: &Path) {}
 /// unconditional chmod would feed the daemon's config watcher a reload→harden→reload storm.
 #[cfg(unix)]
 fn harden_to(path: &Path, mode: u32) {
+    if crate::development::routing::legacy_system() {
+        return;
+    }
     use std::os::unix::fs::PermissionsExt;
     if let Ok(meta) = std::fs::metadata(path) {
         if meta.permissions().mode() & 0o777 != mode {

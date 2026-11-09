@@ -246,6 +246,10 @@ fn spawn_tick_detached(reason: &str) {
     let Ok(exe) = std::env::current_exe() else {
         return;
     };
+    if let Err(error) = crate::development::routing::guard_fixture_program(exe.as_os_str()) {
+        eprintln!("AskHuman: private sync tick was not started: {error}");
+        return;
+    }
     let mut cmd = Command::new(exe);
     cmd.args(["todo-sync", "tick", "--reason", reason])
         .stdin(Stdio::null())
@@ -270,6 +274,9 @@ pub fn helper_app_path() -> Option<PathBuf> {
         let path = PathBuf::from(custom);
         return path.exists().then_some(path);
     }
+    if crate::development::routing::shared_writes_blocked() {
+        return None;
+    }
     let home = dirs_home()?;
     [
         home.join("Applications/AskHumanTodoSync.app"),
@@ -288,6 +295,38 @@ fn dirs_home() -> Option<PathBuf> {
 fn launch_helper_app() {
     #[cfg(target_os = "macos")]
     if let Some(app) = helper_app_path() {
+        if let Ok(Some(fixture)) = crate::development::routing::fixture() {
+            let helper = app.join("Contents/MacOS/AskHumanTodoSync");
+            let capabilities = std::process::Command::new(&helper)
+                .arg("--version")
+                .output();
+            let supported = capabilities
+                .ok()
+                .filter(|output| output.status.success())
+                .and_then(|output| serde_json::from_slice::<serde_json::Value>(&output.stdout).ok())
+                .is_some_and(|value| value["systemFixture"] == 2);
+            if !supported {
+                return;
+            }
+            let _ = std::process::Command::new("open")
+                .args(["-g", "-n", "-a"])
+                .arg(app)
+                .args([
+                    "--args",
+                    "--version",
+                    crate::development::routing::FIXTURE_FLAG,
+                ])
+                .arg(fixture.account_home)
+                .arg("run")
+                .stdin(std::process::Stdio::null())
+                .stdout(std::process::Stdio::null())
+                .stderr(std::process::Stdio::null())
+                .status();
+            return;
+        }
+        if crate::development::routing::legacy_system() {
+            return;
+        }
         // `open -g`: start it without bringing anything to the front.
         let _ = std::process::Command::new("open")
             .arg("-g")
@@ -553,7 +592,22 @@ pub fn enable() -> Result<(), ControlError> {
     }
     // Install and register before creating the opt-in marker. A missing or invalid release
     // component must not leave the UI claiming that iCloud storage has been enabled.
-    super::installer::prepare(&env.dir).map_err(|e| ControlError::Helper(e.to_string()))?;
+    if let Some(expected) = crate::development::routing::fixture().map_err(ControlError::Helper)? {
+        let Reach::Running(info) = helper_client::probe(&helper_client::socket_path(&env.dir))
+        else {
+            return Err(ControlError::Helper(
+                "start the explicit private fixture helper before enabling sync".into(),
+            ));
+        };
+        if info.system_fixture.as_ref() != Some(&expected) {
+            return Err(ControlError::Helper(
+                "the private helper System fixture identity does not match".into(),
+            ));
+        }
+    } else {
+        crate::development::routing::require_config_writes().map_err(ControlError::Helper)?;
+        super::installer::prepare(&env.dir).map_err(|e| ControlError::Helper(e.to_string()))?;
+    }
     let _ = std::fs::remove_file(env.dir.join("helper-install-error.json"));
     enable_with(&env, poll_minutes(), &RealEffects)
 }
@@ -567,6 +621,9 @@ pub fn repair_helper() -> anyhow::Result<super::installer::Registration> {
 /// Run once at daemon startup, off the request path. npm upgrades carry a new local archive;
 /// already-enabled users get the matching helper without visiting the settings card again.
 pub fn maintain_helper() {
+    if crate::development::routing::shared_writes_blocked() {
+        return;
+    }
     if !supported() || !is_enabled() {
         return;
     }

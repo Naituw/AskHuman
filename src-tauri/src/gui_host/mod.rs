@@ -129,7 +129,27 @@ mod platform_impl {
 
     /// Connect to the GUI Host's private local endpoint.
     async fn connect() -> std::io::Result<transport::Stream> {
-        transport::connect_role("gui-host").await
+        let stream = transport::connect_role("gui-host").await?;
+        if let Some(expected) = crate::development::routing::fixture().map_err(Error::other)? {
+            let (reader, mut writer) = stream.into_split();
+            ipc::write_msg(&mut writer, &HostMsg::Ping).await?;
+            let mut reader = BufReader::new(reader);
+            let reply = tokio::time::timeout(
+                Duration::from_secs(3),
+                ipc::read_msg::<_, serde_json::Value>(&mut reader),
+            )
+            .await
+            .map_err(|_| Error::new(ErrorKind::TimedOut, "GUI fixture probe timed out"))??;
+            let expected = serde_json::to_value(expected).map_err(Error::other)?;
+            if reply.as_ref().and_then(|reply| reply.get("systemFixture")) != Some(&expected) {
+                return Err(Error::new(
+                    ErrorKind::PermissionDenied,
+                    "GUI Host System fixture identity is missing or does not match",
+                ));
+            }
+            return transport::connect_role("gui-host").await;
+        }
+        Ok(stream)
     }
 
     /// Ask an existing GUI Host to exit without starting one when none is running.
@@ -167,9 +187,13 @@ mod platform_impl {
     /// The running executable can be replaced during self-update. In particular, Linux may then
     /// report `current_exe()` as a deleted inode path, so the old Host passes its launch path here.
     pub fn spawn_detached_from(exe: &std::path::Path) -> std::io::Result<()> {
+        crate::development::routing::guard_fixture_program(exe.as_os_str())?;
         use std::process::{Command, Stdio};
 
         let mut cmd = Command::new(exe);
+        if let Some(home) = crate::development::routing::background_account_home() {
+            cmd.env("HOME", home);
+        }
         crate::development::clear_client_context(&mut cmd);
         crate::executable::set_launch_entry(&mut cmd, exe);
         cmd.arg("--gui-host")
@@ -317,6 +341,25 @@ mod platform_impl {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn fixture_ping_metadata_remains_readable_by_the_old_unit_variant() {
+        #[derive(Deserialize)]
+        #[serde(tag = "type", rename_all = "camelCase")]
+        enum OldHostMsg {
+            Ping,
+        }
+        let json =
+            r#"{"type":"ping","systemFixture":{"version":2,"accountHome":"/tmp/private-user"}}"#;
+        assert!(matches!(
+            serde_json::from_str::<OldHostMsg>(json).unwrap(),
+            OldHostMsg::Ping
+        ));
+        assert!(matches!(
+            serde_json::from_str::<HostMsg>(json).unwrap(),
+            HostMsg::Ping
+        ));
+    }
 
     #[cfg(unix)]
     #[test]

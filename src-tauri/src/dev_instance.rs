@@ -1,4 +1,4 @@
-//! Dev Instance discovery and CLI entry redirection.
+//! Dev Instance layout, legacy discovery, and command classification.
 //!
 //! When the process cwd sits under a worktree that has been `dev enable`d
 //! (marker: `<root>/.askhuman-dev/enabled`), the CLI routes data and (when
@@ -38,10 +38,11 @@ pub fn is_dev_instance() -> bool {
 /// This guards *automatic* writes. Explicit user actions (`AskHuman agents ...`, the settings
 /// page) are not blocked.
 pub fn is_dev_instance_context() -> bool {
-    is_dev_instance_context_for(
-        std::env::var_os(ASKHUMAN_HOME_ENV).as_deref(),
-        std::env::current_exe().ok().as_deref(),
-    )
+    crate::development::routing::shared_writes_blocked()
+        || is_dev_instance_context_for(
+            std::env::var_os(ASKHUMAN_HOME_ENV).as_deref(),
+            std::env::current_exe().ok().as_deref(),
+        )
 }
 
 fn is_dev_instance_context_for(home_env: Option<&OsStr>, exe: Option<&Path>) -> bool {
@@ -124,105 +125,6 @@ pub fn classify_command(argv: &[String]) -> CommandClass {
             CommandClass::Config
         }
         _ => CommandClass::Runtime,
-    }
-}
-
-/// Apply Dev Instance env and optional re-exec. Call at the very start of `cli::dispatch`.
-pub fn maybe_enter_dev_instance() {
-    let argv: Vec<String> = std::env::args().collect();
-    if matches!(classify_command(&argv), CommandClass::Skip) {
-        return;
-    }
-
-    let Ok(cwd) = std::env::current_dir() else {
-        return;
-    };
-    let Some(root) = find_dev_root(&cwd) else {
-        return;
-    };
-
-    let home = instance_home(&root);
-    let bin = instance_bin(&root);
-    let class = classify_command(&argv);
-
-    // Data plane: always pin instance home + no main keychain for this process.
-    // SAFETY: single-threaded at process entry before other threads; std::env::set_var is the
-    // established pattern for CLI bootstrap in this codebase (see spawn env pass-through).
-    std::env::set_var(ASKHUMAN_HOME_ENV, &home);
-    std::env::set_var("ASKHUMAN_NO_KEYCHAIN", "1");
-
-    let bin_exists = bin.is_file();
-    if matches!(class, CommandClass::Runtime) && !bin_exists {
-        eprintln!(
-            "error: Dev Instance enabled at {} but binary is missing:\n  {}\nRun `./scripts/install.sh` in this worktree first.",
-            root.display(),
-            bin.display()
-        );
-        std::process::exit(1);
-    }
-
-    if !bin_exists {
-        // Meta / Config: continue with current exe under instance env.
-        return;
-    }
-
-    if matches!(class, CommandClass::Dev) {
-        return;
-    }
-
-    let Ok(current) = std::env::current_exe() else {
-        return;
-    };
-    if same_executable(&current, &bin) {
-        return;
-    }
-
-    reexec_into(&bin, &home, &argv);
-}
-
-fn same_executable(a: &Path, b: &Path) -> bool {
-    let ca = std::fs::canonicalize(a).unwrap_or_else(|_| a.to_path_buf());
-    let cb = std::fs::canonicalize(b).unwrap_or_else(|_| b.to_path_buf());
-    ca == cb
-}
-
-fn reexec_into(bin: &Path, home: &Path, argv: &[String]) -> ! {
-    let args: Vec<&str> = argv.iter().skip(1).map(|s| s.as_str()).collect();
-    #[cfg(unix)]
-    {
-        use std::os::unix::process::CommandExt;
-        let mut command = std::process::Command::new(bin);
-        crate::executable::clear_launch_context(&mut command);
-        let err = command
-            .args(&args)
-            .env(ASKHUMAN_HOME_ENV, home)
-            .env("ASKHUMAN_NO_KEYCHAIN", "1")
-            .exec();
-        eprintln!(
-            "error: failed to re-exec Dev Instance binary {}: {err}",
-            bin.display()
-        );
-        std::process::exit(1);
-    }
-    #[cfg(not(unix))]
-    {
-        let mut command = std::process::Command::new(bin);
-        crate::executable::clear_launch_context(&mut command);
-        let status = command
-            .args(&args)
-            .env(ASKHUMAN_HOME_ENV, home)
-            .env("ASKHUMAN_NO_KEYCHAIN", "1")
-            .status();
-        match status {
-            Ok(s) => std::process::exit(s.code().unwrap_or(1)),
-            Err(e) => {
-                eprintln!(
-                    "error: failed to re-exec Dev Instance binary {}: {e}",
-                    bin.display()
-                );
-                std::process::exit(1);
-            }
-        }
     }
 }
 

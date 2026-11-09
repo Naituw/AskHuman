@@ -31,11 +31,16 @@ todos.json ◄── 读写 ──► CLI / 弹窗 / 待办窗口 / IM / MCP    
 | `cloudkeys.rs` | 虚拟键 `icloud:<身份>`：本机没有目录的项目在 `todos.json` 里的住处（见下） |
 | `tick.rs` | 一个 tick（`full` / `local_only` / `reconcile` / `restart_from_local` / `resume` / `clear_cloud` / `remove_project` / `peek`）；`state.json` 先于 `todos.json` 落盘，令牌在合并并物化之后才推进，推送确认后才记已推 |
 | `transport.rs` | `Transport` trait（账号、建区、增量拉取、保存、删区）、`NetError`（含 `TimedOut` / `Unavailable` 这类软结果）、`MemTransport`（测试用内存云，可注入故障） |
-| `helper_client.rs` | 生产 `Transport`：helper RPC 的客户端，线格式由 `todo-sync-helper/Fixtures/rpc-v1` 夹具钉住（Rust 与 Swift 共用）；helper 缺失 / 未签名 / 太旧 / 太慢都是软结果，tick 照做本地部分 |
+| `helper_client.rs` | 生产 `Transport` 与 helper RPC 客户端，共用 `todo-sync-helper/Fixtures/rpc-v1` 夹具，fixture 另校验 hello 身份与物理 socket 来源，helper 不可用时 tick 继续本地部分 |
 | `installer.rs` | 随 Mac 可执行文件嵌入的已公证 helper 资源；macOS 14 门控、签名 / Production 权限校验、首次安装与注册、升级、防降级、失败回滚。只有显式启用 / 修复或已开启同步的 daemon 启动维护会进入安装路径 |
 | `service.rs` | 生产接线：文件位置、启用 / 停用 / 清除 / 恢复 / 从本地重来、状态（设置卡与侧栏底部用）、读取钩子、helper 拉起节流、窗口用的项目列表与详情、从 iCloud 移除项目 |
 | `commands.rs` | `todo_sync_*` Tauri 命令：状态 / 启用 / 停用 / 立即同步 / `touch` / 清除 / 本地重来 / 恢复 / 修复 / 打开登录项，以及 iCloud 模式窗口用的 `projects` / `project_details` / `remove_project` / `history_count`；都在阻塞线程上跑，窗口从不等网络 |
 | `sim.rs` | 整体测试：多台模拟 Mac（各有 `todos.json`、旁路与时钟）+ 一个可注入故障与崩溃点的内存云；顺序模型、随机并发、崩溃点全枚举、各暂停原因、虚拟键场景 |
+
+内部 System fixture 通过 guarded helper 入口固定私有账户，日志保存在对应旁路目录，登录项状态为 unmanaged。
+Swift `Kit/SystemFixture.swift` 验证参数和路径，`Kit/TickProcess.swift` 逐次探测核心能力并向自动 tick 注入 System v2 target。
+fixture enable 要求 helper 与调用方同账户。运行中的旧 HOME-only helper 调用新版核心时，由 bootstrap 的原始 HOME 与 sidecar 检查阻止误选日常实例。
+入口、同步脚本迁移及兼容规则见 [账户主目录路由](specs/system-instance-home-routing.md#7-同步-helper-的-fixture-契约)。
 
 `src-tauri/src/cli/todo_sync_cmd.rs`：隐藏（不进 help）的 `AskHuman todo-sync status | tick | enable | disable | resume | restart-from-local | clear-cloud | repair | resource-info | resource-verify`；`tick --reason` 就是 helper 拉起的那条命令。`resource-info --require-bundled` 检查资源哈希与存在性；`resource-verify` 在临时目录校验实际内嵌的组件、版本与公证；两者都不安装、不注册、不执行 helper，也不访问 iCloud。
 

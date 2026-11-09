@@ -260,6 +260,7 @@ fn resolve_phone(state: &GatewayState, query: &str, lang: Lang) -> Result<PhoneV
 }
 
 fn revoke(args: &[String], lang: Lang) -> Result<(), String> {
+    crate::development::routing::require_config_writes()?;
     let query = args.first().ok_or_else(|| {
         cfgio::t(
             lang,
@@ -281,6 +282,7 @@ fn revoke(args: &[String], lang: Lang) -> Result<(), String> {
 }
 
 fn rename(args: &[String], lang: Lang) -> Result<(), String> {
+    crate::development::routing::require_config_writes()?;
     let (Some(query), Some(name)) = (args.first(), args.get(1)) else {
         return Err(cfgio::t(
             lang,
@@ -313,6 +315,7 @@ fn start_pairing(lang: Lang) -> Result<(String, String, i64), String> {
 }
 
 fn pair(lang: Lang) -> Result<(), String> {
+    crate::development::routing::require_config_writes()?;
     let known: HashSet<String> = running_state(lang)?
         .phones
         .iter()
@@ -420,6 +423,7 @@ fn pair(lang: Lang) -> Result<(), String> {
 }
 
 fn decide(allow: bool, lang: Lang) -> Result<(), String> {
+    crate::development::routing::require_config_writes()?;
     let state = running_state(lang)?;
     let Some(pairing) = state.pairing.filter(|p| p.stage == "pending") else {
         return Err(cfgio::t(
@@ -465,6 +469,7 @@ fn export(lang: Lang) -> Result<(), String> {
 }
 
 fn import(args: &[String], lang: Lang) -> Result<(), String> {
+    crate::development::routing::require_config_writes()?;
     let text = match args.first().map(|s| s.as_str()) {
         Some("-") | None => {
             if args.is_empty() && cfgio::stdin_is_tty() {

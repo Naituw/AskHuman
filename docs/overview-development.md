@@ -21,6 +21,13 @@ enable 报告准备结果；enable／status 分别检查安装构建和所选投
 没有账户级路由模式、程序注册表或全局集成迁移。
 `routing.rs` 固定内部子进程的程序、home、工作树和密钥策略；Linux 保留稳定安装入口。
 
+正式根由操作系统账户记录选择，Node 使用 `os.userInfo().homedir`，Rust 使用账户查询。
+`paths::integration_home()` 负责 System 的 Agent 目录，用户输入与 transcript monitor 保留调用方路径。
+内部 System fixture 使用受保护的 Rust 首次入口与带前缀的 Node controller，二者携带旧环境键下的 v2 target。
+fixture manifest 为 v2，日常 manifest 为 v1。controller 清理日常身份后重新注入经验证的本树 Dev target。
+显式 enable 可在锁内备份并修复旧 v1 manifest 的正式根漂移，保留私有数据和有效正式程序绑定。
+能力、升级及旧临时实例的续接规则见 [账户主目录路由](specs/system-instance-home-routing.md)。
+
 ## 开发控制器与构建
 
 `scripts/dev.mjs` 是仓库入口；其 Node SDK MCP 只提供 `dev_ask`。
@@ -51,7 +58,7 @@ Stop 的隐藏待办元数据在正式载荷中清除，选项文本返回后由
 
 正式转送先用无 Hello 的 Status 查询能力、实际 daemon 指纹和远程出口。
 不兼容、未运行、排空或无出口时明确失败，不触发换新，不静默等待本机。
-新增载荷为带默认值的可选字段，IPC 仍为 4；语义能力要求 developmentVerification=2，
+开发转送载荷使用带默认值的可选字段，当前 IPC 为 5，语义能力要求 developmentVerification=2，
 相同协议号不能替代能力检查。
 显式 relay 绕过日常活跃槽但不改槽；iOS 仅该请求立即推送，日常 idle 门槛保持原样。
 断线、取消、到期和发送失败通过原协调器收尾，不产生成功答案。

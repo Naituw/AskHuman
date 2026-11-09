@@ -240,6 +240,7 @@ async fn stage_windows_npm_worker() -> Result<()> {
     )?;
     let (worker_stdout, worker_stderr) = super::windows_worker_log_files("npm")?;
     let mut command = Command::new(&worker);
+    crate::development::routing::guard_fixture_program(worker.as_os_str())?;
     command
         .arg("__npm-update-worker")
         .arg(&transaction_path)

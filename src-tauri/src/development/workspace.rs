@@ -8,13 +8,15 @@ use std::path::{Path, PathBuf};
 pub const MANIFEST: &str = "workspace.json";
 pub const VERSION: u32 = 1;
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Workspace {
     pub version: u32,
     pub worktree: PathBuf,
     pub system_binary: PathBuf,
     pub system_home: PathBuf,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub fixture: Option<super::routing::Fixture>,
 }
 
 pub fn path(root: &Path) -> PathBuf {
@@ -22,6 +24,13 @@ pub fn path(root: &Path) -> PathBuf {
 }
 
 pub fn read(root: &Path) -> Result<Workspace, String> {
+    let workspace = read_structural(root)?;
+    validate(root, &workspace)?;
+    Ok(workspace)
+}
+
+/// Explicit enable may repair the formal binding after structural ownership checks succeed.
+pub fn read_structural(root: &Path) -> Result<Workspace, String> {
     let root = root
         .canonicalize()
         .map_err(|error| format!("invalid development worktree: {error}"))?;
@@ -44,22 +53,36 @@ pub fn read(root: &Path) -> Result<Workspace, String> {
     }
     let workspace: Workspace = serde_json::from_slice(&bytes)
         .map_err(|error| format!("invalid development manifest: {error}"))?;
-    validate(&root, &workspace)?;
+    validate_structure(&root, &workspace)?;
     Ok(workspace)
 }
 
 pub fn validate(root: &Path, workspace: &Workspace) -> Result<(), String> {
+    validate_structure(root, workspace)?;
+    if workspace.fixture != super::routing::fixture()?
+        || !state::same_path(&workspace.system_home, &state::system_home()?)
+    {
+        return Err("development manifest formal binding is inconsistent; run dev enable to repair an old v1 account binding".into());
+    }
+    Ok(())
+}
+
+fn validate_structure(root: &Path, workspace: &Workspace) -> Result<(), String> {
     if root.ancestors().skip(1).any(is_enabled) {
         return Err(
             "nested development workspaces or an ancestor legacy marker require review".into(),
         );
     }
-    if workspace.version != VERSION
+    let version_valid = match (&workspace.fixture, workspace.version) {
+        (None, 1) => true,
+        (Some(fixture), 2) => fixture.version == 2 && fixture.account_home.is_absolute(),
+        _ => false,
+    };
+    if !version_valid
         || !workspace.worktree.is_absolute()
         || !state::same_path(&workspace.worktree, root)
         || !workspace.system_binary.is_absolute()
         || !workspace.system_home.is_absolute()
-        || !state::same_path(&workspace.system_home, &state::system_home())
         || workspace
             .system_binary
             .canonicalize()
@@ -111,7 +134,8 @@ mod tests {
             version: VERSION,
             worktree: root.to_path_buf(),
             system_binary: root.parent().unwrap().join("system/AskHuman"),
-            system_home: state::system_home(),
+            system_home: state::system_home().unwrap(),
+            fixture: None,
         }
     }
 

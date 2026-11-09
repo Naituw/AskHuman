@@ -14,6 +14,12 @@ pub fn dispatch(args: &[String], _lang: Lang) {
         print_usage();
         exit(1);
     }
+    if matches!(args[0].as_str(), "enable" | "disable" | "status" | "preset") {
+        if let Err(error) = crate::paths::system_account_home() {
+            eprintln!("error: {error}");
+            exit(1);
+        }
+    }
     match args[0].as_str() {
         "session" => {
             match crate::development::session::run_cli(&args[1..]) {
@@ -274,13 +280,29 @@ fn cmd_enable(args: &[String]) {
     let (presets, force, agent, system_binary) = parse_enable_args(args);
     let root = require_git_root();
     let agent = agent.or_else(crate::agents::detect::detect_invoking_agent);
+    let saved_binary = if crate::development::workspace::path(&root).exists() {
+        match crate::development::workspace::read_structural(&root) {
+            Ok(workspace) => Some(workspace.system_binary),
+            Err(error) => {
+                eprintln!("error: {error}");
+                exit(1);
+            }
+        }
+    } else {
+        None
+    };
     let system_binary = system_binary
-        .or_else(|| {
-            crate::development::workspace::read(&root)
-                .ok()
-                .map(|workspace| workspace.system_binary)
-        })
+        .or(saved_binary)
         .unwrap_or_else(|| crate::executable::launch_path().unwrap_or_default());
+    if !system_binary.is_absolute()
+        || !system_binary.is_file()
+        || system_binary
+            .components()
+            .any(|part| part.as_os_str() == DEV_DIR)
+    {
+        eprintln!("error: formal program is missing or invalid; provide --system-binary with an existing formal AskHuman entry");
+        exit(1);
+    }
     if let Err(error) = crate::development::project::ensure_legacy_idle(&root) {
         eprintln!("error: {error}");
         exit(1);

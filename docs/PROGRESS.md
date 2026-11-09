@@ -3,6 +3,16 @@
 记录需要跨会话保留的未完成 / 延期事项和明确下一步。任务 / 需求完成后删除其 section
 （历史留在 git）。
 
+## 正式实例账户路由的原生平台验收
+
+2026-11-09 已完成主工作树实现与 Astra xhigh 复审，macOS 核心及 Swift helper 的本机验证见
+[账户主目录路由](specs/system-instance-home-routing.md#11-当前状态)。
+完成的实施记录已移出本文件，保留以下原生验证步骤。
+
+- Linux 上核对临时／空／缺失 HOME 的正式根、冷启动与继承旧临时实例的原地 exec，运行路由和 Dev 转送 smoke。
+- Windows 上核对 Profile Known Folder、reparse 拒绝、后台启动环境、named pipe 身份与 fixture 换新保护。
+
+
 ## 待真机验收：iOS 新建任务记住 Mac
 
 2026-11-08 已在主工作树实现：手动选择 Mac 时立即保存手机本地偏好，取消创建或重启 App 仍保留；

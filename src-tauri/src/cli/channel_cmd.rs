@@ -143,6 +143,7 @@ fn list(args: &[String], lang: Lang) -> Result<(), String> {
 // ——— set ———
 
 fn set(args: &[String], lang: Lang) -> Result<(), String> {
+    crate::development::routing::require_config_writes()?;
     let name = args.first().ok_or_else(|| {
         cfgio::t(
             lang,
@@ -382,6 +383,7 @@ fn apply_flags(name: &str, mut pf: ParsedFlags, lang: Lang) -> Result<(), String
 // ——— enable / disable ———
 
 fn toggle(args: &[String], on: bool, lang: Lang) -> Result<(), String> {
+    crate::development::routing::require_config_writes()?;
     let name = args.first().ok_or_else(|| {
         cfgio::t(
             lang,

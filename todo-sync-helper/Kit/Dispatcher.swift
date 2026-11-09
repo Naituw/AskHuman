@@ -70,6 +70,7 @@ protocol StatusSource: AnyObject {
 final class RpcDispatcher {
     private let backend: CloudBackend
     private let helperVersion: String
+    private let systemFixture: FixtureIdentity?
     private weak var statusSource: StatusSource?
     private let log: (String, [String: Any]) -> Void
 
@@ -77,11 +78,13 @@ final class RpcDispatcher {
         backend: CloudBackend,
         helperVersion: String,
         statusSource: StatusSource? = nil,
+        systemFixture: FixtureIdentity? = nil,
         log: @escaping (String, [String: Any]) -> Void = { _, _ in }
     ) {
         self.backend = backend
         self.helperVersion = helperVersion
         self.statusSource = statusSource
+        self.systemFixture = systemFixture
         self.log = log
     }
 
@@ -107,7 +110,8 @@ final class RpcDispatcher {
                     HelloReply(
                         id: id, protocolVersion: Wire.protocolVersion, helperVersion: helperVersion,
                         environment: info.environment, container: info.container,
-                        accountStatus: info.accountStatus, accountHash: info.accountHash, problem: info.problem))
+                        accountStatus: info.accountStatus, accountHash: info.accountHash, problem: info.problem,
+                        systemFixture: systemFixture))
             case .status:
                 let info = await backend.hello()
                 guard let extras = statusSource?.statusExtras() else {

@@ -288,7 +288,7 @@ pub fn uninstall() -> std::io::Result<()> {
 
 #[cfg(target_os = "macos")]
 fn item_path() -> PathBuf {
-    crate::paths::home()
+    crate::paths::integration_home()
         .join("Library")
         .join("LaunchAgents")
         .join(format!("{LABEL}.plist"))
@@ -375,7 +375,7 @@ pub fn uninstall() -> std::io::Result<()> {
 
 #[cfg(all(unix, not(target_os = "macos")))]
 fn item_path() -> PathBuf {
-    crate::paths::home()
+    crate::paths::integration_home()
         .join(".config")
         .join("autostart")
         .join("askhuman-guihost.desktop")
@@ -434,7 +434,7 @@ const DAEMON_LABEL: &str = "com.naituw.humaninloop.daemon";
 
 #[cfg(target_os = "macos")]
 fn daemon_item_path() -> PathBuf {
-    crate::paths::home()
+    crate::paths::integration_home()
         .join("Library")
         .join("LaunchAgents")
         .join(format!("{DAEMON_LABEL}.plist"))
@@ -471,7 +471,7 @@ fn daemon_contents(exe: &str) -> String {
 
 #[cfg(all(unix, not(target_os = "macos")))]
 fn daemon_item_path() -> PathBuf {
-    crate::paths::home()
+    crate::paths::integration_home()
         .join(".config")
         .join("autostart")
         .join("askhuman-daemon.desktop")
@@ -664,6 +664,39 @@ pub fn needs_update() -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[cfg(unix)]
+    #[test]
+    fn system_login_item_paths_ignore_caller_home() {
+        const PROBE: &str = "ASKHUMAN_LOGIN_PATH_TEST_PROBE";
+        if std::env::var_os(PROBE).is_none() {
+            let temporary = tempfile::tempdir().unwrap();
+            let output = std::process::Command::new(std::env::current_exe().unwrap())
+                .args([
+                    "--exact",
+                    "integrations::login_item::tests::system_login_item_paths_ignore_caller_home",
+                    "--nocapture",
+                ])
+                .env(PROBE, "1")
+                .env("HOME", temporary.path())
+                .env_remove(crate::development::routing::TARGET_ENV)
+                .env_remove(crate::dev_instance::ASKHUMAN_HOME_ENV)
+                .env_remove(crate::development::session::PROFILE_ENV)
+                .output()
+                .unwrap();
+            assert!(
+                output.status.success(),
+                "{}{}",
+                String::from_utf8_lossy(&output.stdout),
+                String::from_utf8_lossy(&output.stderr)
+            );
+            return;
+        }
+        let account = crate::paths::account::home().unwrap();
+        assert_ne!(crate::paths::home(), account);
+        assert!(item_path().starts_with(&account));
+        assert!(daemon_item_path().starts_with(&account));
+    }
 
     #[cfg(target_os = "macos")]
     #[test]

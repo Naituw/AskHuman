@@ -1,8 +1,23 @@
 import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { runAsk, runWorker, worktreeRoot } from "./development/runtime.mjs";
+import { configureFixture, fixtureFlag, targetEnvironment } from "./development/context.mjs";
 
 export async function main(args) {
+  if (args[0] === "--development-capabilities") {
+    if (args.length !== 1) throw new Error("unexpected controller capability arguments");
+    process.stdout.write(JSON.stringify({ systemFixture: 2 }) + "\n");
+    return;
+  }
+  if (args[0] === fixtureFlag) {
+    if (!args[1]) throw new Error("System fixture prefix requires an account directory");
+    configureFixture(args[1]); args.splice(0, 2);
+  } else if (process.env[targetEnvironment]) {
+    const inherited = JSON.parse(process.env[targetEnvironment]);
+    if (inherited.version === 2 || Object.hasOwn(inherited, "fixture")) {
+      throw new Error("an inherited System fixture requires the explicit controller fixture prefix");
+    }
+  }
   const operation = args.shift();
   const rootIndex = args.indexOf("--worktree");
   const rootArgument = rootIndex < 0 ? path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..") : args[rootIndex + 1];

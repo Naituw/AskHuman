@@ -543,7 +543,7 @@ mod window {
             return;
         };
         tauri::async_runtime::spawn(async move {
-            if let Ok(stream) = ipc::transport::connect().await {
+            if let Ok(stream) = crate::client::connect_stream().await {
                 let (_r, mut w) = stream.into_split();
                 let _ = ipc::write_msg(&mut w, &ClientMsg::FocusRequest { request_id }).await;
             }

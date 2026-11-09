@@ -3,6 +3,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { createHash } from "node:crypto";
+import { systemHome } from "./context.mjs";
 
 export function turnMetadata(meta) {
   let value = meta?.["x-codex-turn-metadata"];
@@ -15,7 +16,7 @@ function boundedJson(file) {
   return null;
 }
 
-export function guard(meta, home = path.join(os.homedir(), ".askhuman")) {
+export function guard(meta, home = systemHome()) {
   const turn = turnMetadata(meta);
   if (!turn) return;
   if (["system", "ambient_suggestions"].includes(turn.thread_source)) {

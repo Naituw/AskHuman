@@ -4,8 +4,7 @@
 The companion of todo-sync-e2e.py, which fakes two Macs on one. Here this Mac (A) and a second Mac (B, over ssh)
 each run their own Developer ID signed helper with an independent fake HOME under a scratch root, so CloudKit sees
 two devices and the push path, its latency and the idle-Mac behaviour are the real ones (plan P6, E1 / E2 / E3).
-Nothing touches either Mac's real ~/.askhuman; the only thing written to the real home is the helper's log under
-~/Library/Logs/AskHumanTodoSync, which `teardown` moves into TODO_SYNC_E2E2_OUT and removes.
+Each replica uses an explicit System fixture v2 account and keeps helper logs in its private sidecar directory.
 
 Prerequisites:
   * the CloudKit schema is deployed to Production (CloudKit Dashboard, account owner only)
@@ -110,16 +109,23 @@ class Mac:
         else:
             # `open` hands the caller's environment to the app, and the helper passes it on to every tick it
             # spawns: ASKHUMAN_HOME (a Dev Instance) would turn all of them into silent no-ops.
-            cmd, env = ["bash", "-c", script], {k: v for k, v in os.environ.items() if k != "ASKHUMAN_HOME"}
+            cmd, env = ["bash", "-c", script], {k: v for k, v in os.environ.items() if k not in ("ASKHUMAN_HOME", "ASKHUMAN_RESOLVED_TARGET_V1", "ASKHUMAN_DEV_TEST_PROFILE")}
         p = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout, env=env)
         return p.returncode, p.stdout, p.stderr
 
     def ah(self, *args, cwd=None, timeout=300):
         """AskHuman as this replica: fake HOME, never a Dev Instance, no keychain."""
         q = shlex.quote
-        script = (f"cd {q(cwd or self.root)} && env -u ASKHUMAN_HOME HOME={q(self.home)} ASKHUMAN_NO_KEYCHAIN=1 "
-                  f"{q(self.root + '/bin/AskHuman')} " + " ".join(q(a) for a in args))
+        protected = ["--development-capabilities", "--internal-system-fixture-v2", self.home, "--", *args]
+        script = (f"cd {q(cwd or self.root)} && env -u ASKHUMAN_HOME -u ASKHUMAN_RESOLVED_TARGET_V1 -u ASKHUMAN_DEV_TEST_PROFILE HOME={q(self.home)} ASKHUMAN_NO_KEYCHAIN=1 "
+                  f"{q(self.root + '/bin/AskHuman')} " + " ".join(q(a) for a in protected))
         rc, out, err = self.run(script, timeout)
+        if rc == 0:
+            prefix = "ASKHUMAN_SYSTEM_FIXTURE_V2_ACTIVE "
+            activation = next((json.loads(line[len(prefix):]) for line in err.splitlines() if line.startswith(prefix)), None)
+            expected = {"version": 2, "accountHome": self.home, "kind": "system", "home": self.home + "/.askhuman"}
+            if activation != expected:
+                raise RuntimeError(f"{self.name}: AskHuman did not activate the expected System fixture v2")
         return rc, out.strip(), err.strip()
 
     def status(self):
@@ -155,7 +161,8 @@ class Mac:
         q = shlex.quote
         env = [f"HOME={self.home}", f"ASKHUMAN_TODO_SYNC_DIR={self.side}", "ASKHUMAN_NO_KEYCHAIN=1"]
         script = (f"mkdir -p {q(self.side)} && open -g -n -a {q(self.app)} " + " ".join(f"--env {q(e)}" for e in env)
-                  + f" --stdout {q(self.root + '/helper.out')} --stderr {q(self.root + '/helper.err')}")
+                  + f" --stdout {q(self.root + '/helper.out')} --stderr {q(self.root + '/helper.err')}"
+                  + f" --args --version --internal-system-fixture-v2 {q(self.home)} run")
         rc, out, err = self.run(script)
         if rc != 0:
             log(f"  info  {self.name}: open failed: {err.strip()[:200]}")
@@ -166,10 +173,8 @@ class Mac:
         self.run(f"pid=$(pgrep -f {shlex.quote(self.helper_exe)} | head -n 1); [ -n \"$pid\" ] && kill -{sig} \"$pid\"; true")
 
     def helper_log_path(self):
-        """The helper's log lives in the real home (not the fake one); ssh starts in the remote home."""
-        if self.host is None:
-            return f"{pwd.getpwuid(os.getuid()).pw_dir}/Library/Logs/AskHumanTodoSync/helper.log"
-        return "Library/Logs/AskHumanTodoSync/helper.log"
+        """Each fixture owns its helper log."""
+        return f"{self.side}/helper.log"
 
     def helper_log(self, tail=600):
         rc, out, _ = self.run(f"tail -n {tail} {shlex.quote(self.helper_log_path())} 2>/dev/null")
@@ -245,6 +250,33 @@ def cmd_setup():
         if not os.path.exists(src):
             sys.exit(f"missing {src}: see the prerequisites in the header of this script")
     init_roots()
+    for program, arguments in ((SRC_ASKHUMAN, ["--development-capabilities"]),
+                               (f"{SRC_HELPER}/Contents/MacOS/AskHumanTodoSync", ["--version"])):
+        probe = subprocess.run([program, *arguments], capture_output=True, text=True, timeout=15)
+        if probe.returncode != 0 or json.loads(probe.stdout).get("systemFixture") != 2:
+            sys.exit(f"{program} does not support System fixture v2")
+    # Inspect both running peers before replacing either stable executable.
+    code = '''import fcntl,json,os,socket,sys
+side=sys.argv[1]
+result={"locked":False,"hello":{},"accountHome":os.path.realpath(os.path.dirname(os.path.dirname(os.path.dirname(side))))}
+try:
+ with open(side+"/helper.lock","rb") as lock:
+  try: fcntl.flock(lock,fcntl.LOCK_EX|fcntl.LOCK_NB)
+  except BlockingIOError: result["locked"]=True
+except FileNotFoundError: pass
+try:
+ s=socket.socket(socket.AF_UNIX,socket.SOCK_STREAM);s.settimeout(3);s.connect(side+"/helper.sock")
+ s.sendall(b'{"id":1,"op":"hello"}\\n');result["hello"]=json.loads(s.makefile("rb").readline())
+except (OSError,ValueError): pass
+print(json.dumps(result))'''
+    for m in (A, B):
+        rc, out, err = m.run("python3 -c " + shlex.quote(code) + " " + shlex.quote(m.side))
+        if rc != 0:
+            sys.exit(f"{m.name}: cannot inspect the existing private helper: {err.strip()}")
+        peer = json.loads(out)
+        identity = peer["hello"].get("systemFixture") or {}
+        if (peer["locked"] or peer["hello"].get("ok")) and (identity.get("version") != 2 or identity.get("accountHome") != peer["accountHome"]):
+            sys.exit(f"{m.name}: stop the old or unresponsive private helper before replacing its AskHuman executable")
     pack = tempfile.mkdtemp(prefix="ah-ts2-pack-")
     zip_path = f"{pack}/AskHumanTodoSync.zip"
     subprocess.run(["ditto", "-c", "-k", "--keepParent", SRC_HELPER, zip_path], check=True)
@@ -264,7 +296,7 @@ def cmd_setup():
             if rc != 0:
                 sys.exit(f"{m.name}: install failed: {err.strip()[:300]}")
         rc, out, err = m.run(f"codesign --verify --deep --strict {shlex.quote(m.app)} 2>&1 && echo signature-ok; "
-                             f"{shlex.quote(m.root + '/bin/AskHuman')} --version 2>&1 | head -n 1")
+                             f"{shlex.quote(m.root + '/bin/AskHuman')} --development-capabilities 2>&1 | head -n 1")
         log(f"{m.name}: {out.strip().replace(chr(10), ' | ')}")
         make_repo(m)
     shutil.rmtree(pack, ignore_errors=True)
@@ -302,22 +334,15 @@ def cmd_teardown():
         m.helper_signal("TERM")
     time.sleep(2.0)
     for m in (A, B):
-        # The helper's log lives in the real home, not in the fake one: keep it as evidence, then remove it.
+        # Collect only logs owned by this fixture before removing its scratch root.
         if m.host is None:
-            real = pwd.getpwuid(os.getuid()).pw_dir
-            src = f"{real}/Library/Logs/AskHumanTodoSync/helper.log"
+            src = m.helper_log_path()
             if os.path.exists(src):
                 shutil.move(src, f"{OUT}/helper-{m.name}.log")
-                try:
-                    os.rmdir(os.path.dirname(src))
-                except OSError:
-                    pass
         else:
             scp_env = {**os.environ, "HOME": pwd.getpwuid(os.getuid()).pw_dir}
-            r = subprocess.run(["scp", "-q", *SSH_OPTS, f"{m.host}:Library/Logs/AskHumanTodoSync/helper.log", f"{OUT}/helper-{m.name}.log"],
+            r = subprocess.run(["scp", "-q", *SSH_OPTS, f"{m.host}:{m.helper_log_path()}", f"{OUT}/helper-{m.name}.log"],
                                capture_output=True, text=True, env=scp_env)
-            if r.returncode == 0:
-                m.run("rm -f ~/Library/Logs/AskHumanTodoSync/helper.log; rmdir ~/Library/Logs/AskHumanTodoSync 2>/dev/null; true")
         m.run(f"rm -rf {shlex.quote(m.root)}")
     log(f"removed both scratch roots; logs are in {OUT}")
 

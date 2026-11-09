@@ -29,7 +29,7 @@ function fixture(t) {
 }
 
 async function connection(t, root, env) {
-  const child = spawn(process.execPath, [bridge, "mcp", "--worktree", root], { env, stdio: ["pipe", "pipe", "pipe"] });
+  const child = spawn(process.execPath, [bridge, "--internal-system-fixture-v2", env.HOME, "mcp", "--worktree", root], { env, stdio: ["pipe", "pipe", "pipe"] });
   let stderr = "";
   child.stderr.on("data", (data) => { stderr += data; });
   const awaiting = new Map();
@@ -65,6 +65,45 @@ async function connection(t, root, env) {
 test("development workers never inherit the daily client identity or provider keys", () => {
   const result = workerEnvironment({ HOME: "/home/example", PATH: "/bin", ASKHUMAN_MCP_AGENT_SESSION_ID: "daily", ASKHUMAN_DEV_TEST_PROFILE: "old", CODEX_THREAD_ID: "daily", CLAUDE_CODE_SESSION_ID: "daily", OPENAI_API_KEY: "fixture", XAI_API_KEY: "fixture" });
   assert.deepEqual(result, { HOME: "/home/example", PATH: "/bin", ASKHUMAN_NO_KEYCHAIN: "1" });
+});
+
+test("the formal account home is independent of the caller HOME", (t) => {
+  const { home, env } = fixture(t);
+  const runtime = new URL("./development/runtime.mjs", import.meta.url).href;
+  const code = `import { systemDefaultHome } from ${JSON.stringify(runtime)}; console.log(systemDefaultHome());`;
+  const result = spawnSync(process.execPath, ["--input-type=module", "-e", code], { env, encoding: "utf8" });
+  assert.equal(result.status, 0, result.stderr);
+  assert.equal(result.stdout.trim(), path.join(os.userInfo().homedir, ".askhuman"));
+  assert.ok(!fs.existsSync(path.join(home, ".askhuman")));
+});
+
+test("a verified fixture target survives worker identity cleanup", () => {
+  const target = { version: 2, kind: "dev", home: "/fixture/dev", fixture: { version: 2, accountHome: "/fixture/user" } };
+  const result = workerEnvironment({ HOME: "/caller", ASKHUMAN_RESOLVED_TARGET_V1: "old", OPENAI_API_KEY: "daily" }, target);
+  assert.deepEqual(JSON.parse(result.ASKHUMAN_RESOLVED_TARGET_V1), target);
+  assert.equal(result.ASKHUMAN_HOME, target.home);
+  assert.equal(result.HOME, "/caller");
+  assert.equal(result.OPENAI_API_KEY, undefined);
+});
+
+test("the controller refuses a production account as a System fixture before serving tools", () => {
+  const result = spawnSync(process.execPath, [bridge, "--internal-system-fixture-v2", os.userInfo().homedir, "mcp", "--worktree", process.cwd()], { encoding: "utf8" });
+  assert.notEqual(result.status, 0);
+  assert.match(result.stderr, /conflicts with the real account/);
+  assert.equal(result.stdout, "");
+});
+
+test("an inherited fixture cannot become an ordinary controller without its prefix", (t) => {
+  const { home, env } = fixture(t);
+  const target = { version: 2, fixture: { version: 2, accountHome: home } };
+  env.ASKHUMAN_RESOLVED_TARGET_V1 = JSON.stringify(target);
+  const rejected = spawnSync(process.execPath, [bridge, "mcp", "--worktree", process.cwd()], { env, encoding: "utf8" });
+  assert.notEqual(rejected.status, 0);
+  assert.match(rejected.stderr, /requires the explicit controller fixture prefix/);
+  assert.equal(rejected.stdout, "");
+  const capability = spawnSync(process.execPath, [bridge, "--development-capabilities"], { env, encoding: "utf8" });
+  assert.equal(capability.status, 0, capability.stderr);
+  assert.equal(JSON.parse(capability.stdout).systemFixture, 2);
 });
 
 test("structured verification keeps question and option boundaries without a shell", () => {
@@ -108,18 +147,19 @@ test("the foreground session CLI passes stdin through to its private worker", { 
   const directory = path.join(root, ".askhuman-dev");
   fs.mkdirSync(path.join(directory, "bin"), { recursive: true });
   fs.writeFileSync(path.join(directory, "workspace.json"), JSON.stringify({
-    version: 1, worktree: root, systemBinary: path.join(home, "formal"), systemHome: path.join(home, ".askhuman"),
+    version: 2, worktree: root, systemBinary: path.join(home, "formal"), systemHome: path.join(home, ".askhuman"),
+    fixture: { version: 2, accountHome: home },
   }));
   fs.writeFileSync(path.join(directory, "bin/AskHuman"), `#!/usr/bin/env node
 if (process.argv[2] === "--development-capabilities") {
-  console.log(JSON.stringify({developmentVerification: 2}));
+  console.log(JSON.stringify({developmentVerification: 2, systemFixture: 2}));
 } else {
   let input = "";
   process.stdin.on("data", data => input += data);
   process.stdin.on("end", () => console.log(JSON.stringify({input, args: process.argv.slice(2)})));
 }
 `, { mode: 0o700 });
-  const result = spawnSync(process.execPath, [bridge, "session", "codex", "--stdio", "--worktree", root], {
+  const result = spawnSync(process.execPath, [bridge, "--internal-system-fixture-v2", home, "session", "codex", "--stdio", "--worktree", root], {
     env, input: "foreground input", encoding: "utf8", timeout: 10000,
   });
   assert.equal(result.status, 0, result.stderr);

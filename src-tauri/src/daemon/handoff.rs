@@ -66,6 +66,11 @@ static PREPARED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::
 
 #[cfg(windows)]
 pub(super) fn prepare() -> std::io::Result<()> {
+    if !crate::development::routing::replacement_compatible() {
+        return Err(std::io::Error::other(
+            "replacement does not support the current System fixture",
+        ));
+    }
     use std::process::Stdio;
     let target = crate::executable::launch_path()?;
     let record = Record {
@@ -163,6 +168,9 @@ fn exec_native(target: &std::path::Path) -> std::io::Error {
 /// The caller retains the singleton lock throughout cleanup and until the exec boundary.
 /// Windows' child waits on that same lock; it never kills or replaces a sibling's daemon.
 pub(super) fn replace(_lock: &LockGuard, _background: bool) -> i32 {
+    if !crate::development::routing::replacement_compatible() {
+        return 1;
+    }
     #[cfg(windows)]
     if PREPARED.load(std::sync::atomic::Ordering::SeqCst) {
         return 0;

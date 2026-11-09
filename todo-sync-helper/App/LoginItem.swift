@@ -21,19 +21,24 @@ enum LoginItem {
 }
 
 /// `AskHumanTodoSync --register | --unregister | --login-item-status | --version`: what the installer
-/// script (and later the core) runs. Prints one JSON line and returns the exit status; any other
-/// argument list returns nil and the process starts as the helper.
+/// script (and later the core) runs. Only a validated run invocation starts the application.
 enum CommandLineTool {
-    static func run(_ args: [String]) -> Int32? {
-        guard let command = args.first else { return nil }
-        switch command {
-        case "--version":
-            print(Self.json(["version": Self.version]))
+    static func run(_ invocation: HelperInvocation) -> Int32? {
+        switch invocation {
+        case .version:
+            print(Self.json(["version": Self.version, "systemFixture": 2]))
             return 0
-        case "--login-item-status":
+        case .unmanaged(let command):
+            var result: [String: Any] = ["loginItem": "unmanaged", "systemFixture": 2]
+            if command != "--login-item-status" {
+                result["error"] = "fixture helpers do not register or unregister shared login items"
+            }
+            print(Self.json(result))
+            return command == "--login-item-status" ? 0 : 1
+        case .loginItemStatus:
             print(Self.json(["loginItem": LoginItem.statusName()]))
             return 0
-        case "--register":
+        case .register:
             var failure: String?
             do {
                 // Re-registering an enabled agent throws; that is not a failure for the caller.
@@ -49,7 +54,7 @@ enum CommandLineTool {
             if let failure { out["error"] = failure }
             print(Self.json(out))
             return status == .enabled ? 0 : (status == .requiresApproval ? 3 : 1)
-        case "--unregister":
+        case .unregister:
             var failure: String?
             do {
                 if LoginItem.service.status != .notRegistered && LoginItem.service.status != .notFound {
@@ -62,7 +67,7 @@ enum CommandLineTool {
             if let failure { out["error"] = failure }
             print(Self.json(out))
             return failure == nil ? 0 : 1
-        default:
+        case .run:
             return nil
         }
     }

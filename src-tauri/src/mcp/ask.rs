@@ -991,6 +991,8 @@ required.",
         let executable = self.executable.as_ref().map_err(|error| {
             McpError::internal_error(format!("cannot locate AskHuman executable: {error}"), None)
         })?;
+        crate::development::routing::guard_fixture_program(executable.as_os_str())
+            .map_err(|error| McpError::internal_error(error.to_string(), None))?;
         let mut command = tokio::process::Command::new(executable);
         command.args(argv);
         self.configure_child(&mut command, binding);

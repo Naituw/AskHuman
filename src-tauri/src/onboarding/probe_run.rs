@@ -7,7 +7,7 @@
 
 use crate::config::AppConfig;
 use crate::i18n::Lang;
-use crate::ipc::{self, transport, ClientMsg, ServerMsg};
+use crate::ipc::{self, ClientMsg, ServerMsg};
 use crate::onboarding::probe::{self, Outcome, ProbeTarget};
 use serde::Serialize;
 use std::collections::{HashMap, HashSet};
@@ -215,7 +215,7 @@ async fn run(check: Check, id: &str, lang: Lang, cancel: &Notify) -> (Outcome, O
 async fn watch_agent_ask() -> String {
     let mut first_connection = true;
     loop {
-        if let Ok(stream) = transport::connect().await {
+        if let Ok(stream) = crate::client::connect_stream().await {
             let (reader, mut writer) = stream.into_split();
             let mut reader = BufReader::new(reader);
             if ipc::write_msg(&mut writer, &ClientMsg::TraySubscribe)

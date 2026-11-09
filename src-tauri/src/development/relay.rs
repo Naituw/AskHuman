@@ -25,7 +25,7 @@ fn grant_path(id: &str) -> Result<PathBuf, String> {
     if uuid.to_string() != id {
         return Err("non-canonical verification grant ID".into());
     }
-    Ok(state::directory()
+    Ok(state::directory()?
         .join("relay-grants")
         .join(format!("{id}.json")))
 }
@@ -49,13 +49,14 @@ pub fn system_target_for(root: &Path) -> Result<routing::Target, String> {
         format!("formal remote relay is not ready: {error}; rebuilding Dev does not upgrade the formal installation, and no formal replacement was attempted")
     })?;
     Ok(routing::Target {
-        version: 1,
+        version: if routing::is_fixture() { 2 } else { 1 },
         kind: routing::TargetKind::System,
         binary,
-        home: state::system_home(),
+        home: state::system_home()?,
         worktree: None,
         reason: "explicit development delivery relay".into(),
-        no_keychain: false,
+        no_keychain: routing::is_fixture(),
+        fixture: routing::fixture()?,
     })
 }
 
@@ -123,7 +124,7 @@ pub fn validate(task: &mut crate::ipc::TaskRequest) -> Result<(), String> {
     }
     let target = routing::inherited()?.ok_or("relay daemon has no resolved target")?;
     if target.kind != routing::TargetKind::System
-        || !state::same_path(&target.home, &state::system_home())
+        || !state::same_path(&target.home, &state::system_home()?)
     {
         return Err("development relay must use the everyday system instance".into());
     }
@@ -174,7 +175,7 @@ fn validate_grant(info: &verification::VerificationInfo, request: &[u8]) -> Resu
     }
     let target = routing::inherited()?.ok_or("relay target is missing")?;
     if target.kind != routing::TargetKind::System
-        || !state::same_path(&target.home, &state::system_home())
+        || !state::same_path(&target.home, &state::system_home()?)
     {
         return Err("relay requires the formal instance".into());
     }

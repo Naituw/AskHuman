@@ -2,14 +2,45 @@
 
 use std::path::{Path, PathBuf};
 
-/// 用户主目录（解析失败时回退到当前目录，保证不 panic）。
+pub mod account;
+
+/// Account anchor for formal resources, independent of the caller's HOME.
+pub fn system_account_home() -> Result<PathBuf, String> {
+    match crate::development::routing::fixture()? {
+        Some(fixture) => Ok(fixture.account_home),
+        None => account::home(),
+    }
+}
+
+/// User-level integration artifacts follow System identity or the existing isolated caller.
+pub fn integration_home() -> PathBuf {
+    match crate::development::routing::inherited()
+        .expect("the process target must be validated before accessing integration paths")
+    {
+        Some(target) if target.kind == crate::development::routing::TargetKind::System => target
+            .home
+            .parent()
+            .expect("System home has an account parent")
+            .to_path_buf(),
+        None if !crate::dev_instance::is_dev_instance() => {
+            system_account_home().expect("System account home must be resolved during bootstrap")
+        }
+        _ => home(),
+    }
+}
+
+/// Caller home for user-supplied paths, preserving the invoking process environment.
 pub fn home() -> PathBuf {
     dirs::home_dir().unwrap_or_else(|| PathBuf::from("."))
 }
 
-/// 配置目录：默认 `~/.askhuman`；若设置了非空 `ASKHUMAN_HOME` 则用该路径
-/// （Dev Instance / 测试隔离，见 `dev_instance` 与 `docs/specs/dev-instance-parallel.md`）。
+/// Data directory pinned by routing; standalone helpers use explicit isolation or the account root.
 pub fn config_dir() -> PathBuf {
+    if let Some(target) = crate::development::routing::inherited()
+        .expect("the process target must be validated before accessing configuration")
+    {
+        return target.home;
+    }
     if let Ok(raw) = std::env::var(crate::dev_instance::ASKHUMAN_HOME_ENV) {
         if !raw.is_empty() {
             let p = PathBuf::from(raw);
@@ -21,18 +52,21 @@ pub fn config_dir() -> PathBuf {
                 .join(p);
         }
     }
-    home().join(".askhuman")
+    system_account_home()
+        .expect("System account home must be resolved during bootstrap")
+        .join(".askhuman")
 }
 
-/// 旧版配置目录 `~/.humaninloop`（仅用于向后兼容读取；Dev Instance 模式不回退到此）。
+/// Legacy configuration follows the System account or the existing isolated caller semantics.
 pub fn legacy_config_dir() -> PathBuf {
-    home().join(".humaninloop")
+    integration_home().join(".humaninloop")
 }
 
-/// 机器级 dev 渠道预设目录 `~/.askhuman/dev-presets/`（固定在用户主 ashuman 树下，
-/// **不**随 `ASKHUMAN_HOME` 变；主 daemon 不加载。P1b 使用）。
+/// Machine-level Dev presets follow the formal account independently of the selected Dev data.
 pub fn dev_presets_dir() -> PathBuf {
-    home().join(".askhuman").join("dev-presets")
+    system_account_home()
+        .expect("formal presets require a resolved account home")
+        .join(".askhuman/dev-presets")
 }
 
 /// 配置文件 `~/.askhuman/config.json`。
@@ -234,7 +268,7 @@ pub fn gui_host_lock() -> PathBuf {
 /// Cursor 目录 `~/.cursor`。
 pub fn cursor_dir() -> PathBuf {
     crate::development::session::directory_for(crate::agents::AgentKind::Cursor)
-        .unwrap_or_else(|| home().join(".cursor"))
+        .unwrap_or_else(|| integration_home().join(".cursor"))
 }
 
 /// `~/.cursor/hooks.json`。
@@ -274,7 +308,7 @@ pub fn cursor_mcp_json() -> PathBuf {
 /// Claude Code 配置目录 `~/.claude`。
 pub fn claude_dir() -> PathBuf {
     crate::development::session::directory_for(crate::agents::AgentKind::Claude)
-        .unwrap_or_else(|| home().join(".claude"))
+        .unwrap_or_else(|| integration_home().join(".claude"))
 }
 
 /// Claude Code 全局 memory 文件 `~/.claude/CLAUDE.md`（用户级，跨项目）。
@@ -292,7 +326,7 @@ pub fn claude_settings_json() -> PathBuf {
 pub fn claude_json() -> PathBuf {
     crate::development::session::directory_for(crate::agents::AgentKind::Claude)
         .map(|path| path.join(".claude.json"))
-        .unwrap_or_else(|| home().join(".claude.json"))
+        .unwrap_or_else(|| integration_home().join(".claude.json"))
 }
 
 /// AskHuman-owned Claude Code timeout hook (`.sh` on Unix, `.ps1` on Windows).
@@ -307,7 +341,7 @@ pub fn claude_hook_script() -> PathBuf {
 /// Codex 配置目录 `~/.codex`。
 pub fn codex_dir() -> PathBuf {
     crate::development::session::directory_for(crate::agents::AgentKind::Codex)
-        .unwrap_or_else(|| home().join(".codex"))
+        .unwrap_or_else(|| integration_home().join(".codex"))
 }
 
 /// Codex 全局指令文件 `~/.codex/AGENTS.md`（用户级，跨项目）。
@@ -328,7 +362,7 @@ pub fn codex_hooks_json() -> PathBuf {
 /// Grok 配置目录 `~/.grok`。
 pub fn grok_dir() -> PathBuf {
     crate::development::session::directory_for(crate::agents::AgentKind::Grok)
-        .unwrap_or_else(|| home().join(".grok"))
+        .unwrap_or_else(|| integration_home().join(".grok"))
 }
 
 /// Grok 用户级配置文件 `~/.grok/config.toml`（`[mcp_servers.askhuman]` 写于此）。
@@ -364,7 +398,7 @@ pub fn grok_sessions_dir() -> PathBuf {
 /// Pi coding-agent user directory `~/.pi/agent`.
 pub fn pi_agent_dir() -> PathBuf {
     crate::development::session::directory_for(crate::agents::AgentKind::Pi)
-        .unwrap_or_else(|| home().join(".pi").join("agent"))
+        .unwrap_or_else(|| integration_home().join(".pi").join("agent"))
 }
 
 /// Pi global instructions file `~/.pi/agent/AGENTS.md`.
@@ -389,7 +423,7 @@ pub fn pi_sessions_dir() -> PathBuf {
 
 /// Shared rules for local Antigravity clients; agy availability is a separate host diagnostic.
 pub fn antigravity_rule_file() -> PathBuf {
-    antigravity_rule_file_in(&home())
+    antigravity_rule_file_in(&integration_home())
 }
 
 /// The shared Antigravity rule below an explicit home directory.
@@ -399,7 +433,7 @@ pub fn antigravity_rule_file_in(home_dir: &Path) -> PathBuf {
 
 /// Global MCP configuration for Google Antigravity.
 pub fn antigravity_mcp_config_json() -> PathBuf {
-    home().join(".gemini/config/mcp_config.json")
+    integration_home().join(".gemini/config/mcp_config.json")
 }
 
 #[cfg(test)]
@@ -433,7 +467,10 @@ mod tests {
         );
         assert_eq!(
             dev_presets_dir(),
-            home().join(".askhuman").join("dev-presets")
+            system_account_home()
+                .unwrap()
+                .join(".askhuman")
+                .join("dev-presets")
         );
         assert_ne!(dev_presets_dir(), config_dir().join("dev-presets"));
         match prev {

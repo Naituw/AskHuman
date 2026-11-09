@@ -31,6 +31,7 @@ pub fn clear_client_context(command: &mut std::process::Command) {
 pub fn capabilities() -> serde_json::Value {
     serde_json::json!({
         "developmentVerification": CAPABILITY_VERSION,
+        "systemFixture": 2,
         "version": env!("CARGO_PKG_VERSION"),
     })
 }

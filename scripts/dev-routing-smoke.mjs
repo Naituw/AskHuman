@@ -23,14 +23,17 @@ fs.mkdirSync(path.dirname(system));
 fs.copyFileSync(original, system, fs.constants.COPYFILE_FICLONE);
 fs.chmodSync(system, 0o700);
 const env = { ...process.env, HOME: home, ASKHUMAN_NO_KEYCHAIN: '1' };
+const prefix = ['--development-capabilities', '--internal-system-fixture-v2', home, '--'];
 for (const name of Object.keys(env)) if (name.startsWith('ASKHUMAN_') && name !== 'ASKHUMAN_NO_KEYCHAIN') delete env[name];
 let server;
 const workspaces = [];
 let donorProfile;
 const homes = [path.join(home, ".askhuman")];
 function run(args, cwd = temp, extra = {}, ok = true) {
-  const output = spawnSync(system, args, { cwd, env: { ...env, ...extra }, encoding: 'utf8', timeout: 15000, maxBuffer: 4 * 1024 * 1024 });
-  if (ok) assert.equal(output.status, 0, `${args.join(' ')}: ${output.stderr}`);
+  const output = spawnSync(system, [...prefix, ...args], { cwd, env: { ...env, ...extra }, encoding: 'utf8', timeout: 15000, maxBuffer: 4 * 1024 * 1024 });
+  if (ok) { assert.equal(output.status, 0, `${args.join(' ')}: ${output.stderr}`); const activation = JSON.parse(output.stderr.split('\n').find(line => line.startsWith('ASKHUMAN_SYSTEM_FIXTURE_V2_ACTIVE '))?.slice('ASKHUMAN_SYSTEM_FIXTURE_V2_ACTIVE '.length) ?? 'null');
+  assert.equal(activation?.version, 2); assert.equal(activation.accountHome, home);
+  assert.ok(['system', 'dev', 'isolated'].includes(activation.kind)); assert.ok(path.isAbsolute(activation.home)); }
   else assert.notEqual(output.status, 0, 'expected an explicit failure');
   return output;
 }
@@ -40,7 +43,7 @@ function worktree(name) {
   fs.mkdirSync(root);
   assert.equal(spawnSync('git', ['init', '--quiet', root]).status, 0);
   fs.mkdirSync(path.join(root, 'scripts/development'), { recursive: true });
-  for (const name of ['dev.mjs', 'development/runtime.mjs', 'development/mcp.mjs', 'development/caller.mjs']) fs.copyFileSync(path.resolve('scripts', name), path.join(root, 'scripts', name));
+  for (const name of ['dev.mjs', 'development/runtime.mjs', 'development/mcp.mjs', 'development/caller.mjs', 'development/context.mjs']) fs.copyFileSync(path.resolve('scripts', name), path.join(root, 'scripts', name));
   run(['dev', 'enable', '--agent', 'codex'], root);
   const before = fs.readFileSync(path.join(root, '.codex/config.toml'));
   run(['dev', 'enable', '--agent', 'codex'], root);
@@ -105,7 +108,7 @@ try {
   run(['--instance', 'system', 'todo', 'add', 'formal-sentinel'], a.root);
   run(['--instance', 'dev', '--worktree', a.root, 'todo', 'add', 'dev-sentinel'], a.root);
 
-  server = spawn(system, ['--instance', 'system', 'mcp'], { cwd: a.root, env, stdio: ['pipe', 'pipe', 'pipe'] });
+  server = spawn(system, [...prefix, '--instance', 'system', 'mcp'], { cwd: a.root, env, stdio: ['pipe', 'pipe', 'pipe'] });
   server.stderr.resume();
   const awaiting = new Map();
   function attachReplies(child) {
@@ -137,7 +140,7 @@ try {
   fs.mkdirSync(verificationDirectory, { recursive: true });
   fs.writeFileSync(path.join(verificationDirectory, `${verificationId}.json`), JSON.stringify({ version: 1, info: { id: verificationId, worktree: a.root, build: a.build, delivery: 'local', relay: false }, requestFingerprint: 'fixture', status: 'completed', executorPid: process.pid, stdout: '[user_input]\nverified-fixture-answer', exitCode: 0, createdAtMs: 0, updatedAtMs: 0 }));
   const dailyServer = server;
-  server = spawn(process.execPath, [path.resolve('scripts/dev.mjs'), 'mcp', '--worktree', a.root], { cwd: temp, env, stdio: ['pipe','pipe','pipe'] });
+  server = spawn(process.execPath, [path.resolve('scripts/dev.mjs'), '--internal-system-fixture-v2', home, 'mcp', '--worktree', a.root], { cwd: temp, env, stdio: ['pipe','pipe','pipe'] });
   server.stderr.resume(); attachReplies(server);
   await call('initialize', { protocolVersion: '2025-11-25', capabilities: {}, clientInfo: { name:'project-smoke', version:'1' } });
   server.stdin.write(JSON.stringify({jsonrpc:'2.0',method:'notifications/initialized'})+'\n');
@@ -177,7 +180,7 @@ try {
   // Preparing native profiles must only write private files; no Agent/model session is started.
   const globalBefore = new Map(['.claude.json', '.claude/settings.json', '.codex/config.toml', '.codex/hooks.json', '.grok/config.toml', '.pi/agent/extensions/askhuman/index.ts'].map(file => [file, fs.existsSync(path.join(home, file)) ? fs.readFileSync(path.join(home, file)) : null]));
   for (const kind of ['claude', 'codex', 'grok', 'pi']) {
-    const prepared = spawnSync(system, ['dev', 'session', kind, '--worktree', a.root, '--prepare-only'], {cwd:temp,env,encoding:'utf8',timeout:30000});
+    const prepared = spawnSync(system, [...prefix, 'dev', 'session', kind, '--worktree', a.root, '--prepare-only'], {cwd:temp,env,encoding:'utf8',timeout:30000});
     if (prepared.status !== 0 && /not installed/.test(prepared.stderr)) continue;
     assert.equal(prepared.status, 0, prepared.stderr);
     const profile = JSON.parse(prepared.stdout);
@@ -197,7 +200,7 @@ try {
     }, false);
     assert.doesNotMatch(rejected.stderr, /profile|test-profiles/);
     assert.match(rejected.stderr, /invalid-routing-smoke-option/);
-    server = spawn(system, ['--instance', 'dev', '--worktree', a.root, 'mcp'], {
+    server = spawn(system, [...prefix, '--instance', 'dev', '--worktree', a.root, 'mcp'], {
       cwd: donorProfile.neutralWorkspace, env: { ...env, ASKHUMAN_RESOLVED_TARGET_V1: JSON.stringify(target), ASKHUMAN_HOME: target.home, ASKHUMAN_DEV_TEST_PROFILE: donorProfile.id }, stdio: ['pipe','pipe','pipe'],
     });
     server.stderr.resume(); attachReplies(server);
@@ -241,7 +244,7 @@ try {
 } finally {
   server?.kill();
   for (const instanceHome of homes) {
-    spawnSync(system, ['daemon','stop','--force'], {cwd:temp,env:{...env,ASKHUMAN_HOME:instanceHome},encoding:'utf8',timeout:10000});
+    spawnSync(system, [...prefix, 'daemon','stop','--force'], {cwd:temp,env:{...env,ASKHUMAN_HOME:instanceHome},encoding:'utf8',timeout:10000});
     if (process.platform === 'darwin') {
       const suffix = createHash('sha256').update(instanceHome).digest('hex').slice(0, 16);
       spawnSync('launchctl', ['bootout', `gui/${process.getuid()}/com.naituw.humaninloop.daemon.instance.${suffix}`], {stdio:'ignore',timeout:10000});

@@ -383,7 +383,7 @@ pub fn manual_paste_path(agent: AgentTarget) -> String {
 }
 
 fn collapse_home(p: &Path) -> String {
-    let home = paths::home();
+    let home = paths::integration_home();
     if let Ok(rest) = p.strip_prefix(&home) {
         format!("~/{}", rest.display())
     } else {
@@ -655,7 +655,7 @@ pub(crate) fn antigravity_context_for_variant(
         Variant::Mcp => "mcp",
     };
     super::antigravity_rule::RuleContext {
-        target_path: paths::antigravity_rule_file_in(&physical_root(paths::home())),
+        target_path: paths::antigravity_rule_file_in(&physical_root(paths::integration_home())),
         integration_state_file: paths::integration_state_file_in(&physical_root(
             paths::config_dir(),
         )),

@@ -1,8 +1,8 @@
 import fs from "node:fs";
-import os from "node:os";
 import path from "node:path";
 import { spawn, spawnSync } from "node:child_process";
 import { randomUUID } from "node:crypto";
+import { devTarget, fixtureContext, systemHome, targetEnvironment } from "./context.mjs";
 
 export const manifestName = "workspace.json";
 const maxOutput = 16 * 1024 * 1024;
@@ -33,7 +33,12 @@ export function readWorkspace(root) {
   }
   if (fs.statSync(file).size > 1024 * 1024) throw new Error("development manifest exceeds 1 MiB");
   const workspace = JSON.parse(fs.readFileSync(file, "utf8"));
-  if (workspace.version !== 1 || !path.isAbsolute(workspace.worktree) || physicalPath(workspace.worktree) !== physicalPath(root)) {
+  const fixture = fixtureContext();
+  const fixtureMatches = fixture
+    ? workspace.fixture?.version === 2 && workspace.fixture.accountHome === fixture.accountHome
+    : workspace.fixture == null;
+  if (workspace.version !== (fixture ? 2 : 1) || !fixtureMatches
+      || !path.isAbsolute(workspace.worktree) || physicalPath(workspace.worktree) !== physicalPath(root)) {
     throw new Error("development manifest identity is inconsistent; run dev enable");
   }
   for (const key of ["systemBinary", "systemHome"]) {
@@ -41,19 +46,23 @@ export function readWorkspace(root) {
       throw new Error("development manifest contains an invalid formal target");
     }
   }
-  const expectedHome = path.join(os.homedir(), ".askhuman");
+  const expectedHome = systemHome();
   const physical = (value) => { try { return physicalPath(value); } catch { return pathKey(path.resolve(value)); } };
   if (physical(workspace.systemHome) !== physical(expectedHome)) throw new Error("development manifest formal home is inconsistent");
   return workspace;
 }
 
-export function workerEnvironment(environment = process.env) {
+export function workerEnvironment(environment = process.env, target) {
   const result = { ...environment };
   for (const key of Object.keys(result)) {
     if (/^(ASKHUMAN_|ANTHROPIC_|OPENAI_|XAI_|CLAUDE_|CODEX_|GROK_|CURSOR_|PI_)/i.test(key)
         || ["CLAUDECODE", "TERM_SESSION_ID"].includes(key)) delete result[key];
   }
   result.ASKHUMAN_NO_KEYCHAIN = "1";
+  if (target) {
+    result[targetEnvironment] = JSON.stringify(target);
+    result.ASKHUMAN_HOME = target.home;
+  }
   return result;
 }
 
@@ -125,10 +134,12 @@ export async function runWorker(root, args, options = {}) {
   const probe = await capture(binary, ["--development-capabilities"], { root, timeout: 3000, signal: options.signal });
   let capabilities;
   try { capabilities = JSON.parse(probe.stdout); } catch { capabilities = {}; }
-  if (probe.code !== 0 || capabilities.developmentVerification !== 2) {
+  if (probe.code !== 0 || capabilities.developmentVerification !== 2
+      || (fixtureContext() && capabilities.systemFixture !== 2)) {
     throw new Error("installed worktree program does not support isolated development verification; rebuild it");
   }
-  return capture(binary, args, { root, signal: options.signal, onCancel: options.onCancel, inheritStdio: options.inheritStdio, env: { ...workerEnvironment(), ASKHUMAN_DEV_DRIVER_PID: String(process.pid) } });
+  const target = devTarget(root, binary);
+  return capture(binary, args, { root, signal: options.signal, onCancel: options.onCancel, inheritStdio: options.inheritStdio, env: { ...workerEnvironment(process.env, target), ASKHUMAN_DEV_DRIVER_PID: String(process.pid) } });
 }
 
 export async function runAsk(root, input, signal) {
@@ -152,7 +163,8 @@ export async function runAsk(root, input, signal) {
   }
   const result = await runWorker(root, args, { signal, onCancel: () => {
     // Persist interruption before closing the socket, so a racing late answer cannot win.
-    const result = spawnSync(worker(root), ["__dev-interrupt", root, id], { cwd: root, env: workerEnvironment(), timeout: 3000, stdio: "pipe", windowsHide: true });
+    const binary = worker(root);
+    const result = spawnSync(binary, ["__dev-interrupt", root, id], { cwd: root, env: workerEnvironment(process.env, devTarget(root, binary)), timeout: 3000, stdio: "pipe", windowsHide: true });
     if (result.status !== 0) process.stderr.write("AskHuman: could not retain development cancellation; no answer is returned.\n");
   } });
   return { ...result, id };
@@ -172,5 +184,5 @@ export function record(root, id) {
 }
 
 export function systemDefaultHome() {
-  return path.join(os.homedir(), ".askhuman");
+  return systemHome();
 }

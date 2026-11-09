@@ -164,11 +164,11 @@ AskHuman --instance dev --worktree /absolute/path/to/worktree daemon status
 - **不要**在实例里运行会改 Agent 集成的显式命令（`AskHuman agents …`、设置页的 Agent 集成开关）来「试一试」：
   `ASKHUMAN_HOME` 不隔离 `~/.cursor/hooks.json`、`~/.codex/…`、`~/.claude/settings.json` 等，这些写入会落到**真实**用户配置。
   项目 Dev 和独立测试窗口会拒绝这种全局修改；旧兼容流程仍需遵守此约束。
-- **不要**为了验证只换 `HOME` 起 daemon / GUI Host：沙箱必须同时设**非空 `ASKHUMAN_HOME`**（实例上下文）。
-  launchd label 在 `gui/<uid>` 域内按用户全局生效：daemon 的 label 现在随配置目录区分（配置目录不是账户自己的
-  `~/.askhuman` 就用独立 label），所以只换 `HOME` 不会再 `bootout` 真实 daemon；但登录项、Agent hook 文件等
-  用户级全局状态的自动写入只在实例上下文里才被跳过，只换 `HOME` 仍不隔离它们。
-  需要验证 Agent 集成写入时，用一次性假 `HOME` + 非空 `ASKHUMAN_HOME`，收尾核对真实 hook 文件与登录项未变。
+- daemon / GUI Host 的隔离测试使用本树 Dev、独立 profile 或单次非空 `ASKHUMAN_HOME`。
+  普通 System 从操作系统账户选择正式根，单独更换 `HOME` 仍连接日常实例。
+  测试 System 选路、远程转送或同步时，使用 [受保护的 fixture v2 入口](specs/system-instance-home-routing.md#4-fixture-v2-的入口与继承)，
+  它固定私有账户、使用私有 launchd 身份，并要求跨程序与 endpoint 的 fixture 能力。
+  显式 Isolated 的 Agent 集成测试仍需一次性假 `HOME` 或独立 profile，收尾核对真实 hook 文件与登录项。
 - **不要**在持久 shell 里 `export ASKHUMAN_HOME=…`（Agent 的 Shell 工具可能在多次调用之间保留导出的环境变量，Cursor 的就会）：
   之后每一条普通 `AskHuman`——包括给人类的审批、报告和结束交接——都会被它路由进 Dev 实例，弹在 Dev 窗口里，日常渠道一条都收不到。
   对实例跑一条命令只用一次性前缀（`ASKHUMAN_HOME=… AskHuman …`）或子 shell，验收用 `dev ask`／`dev_ask`；每次向人类发报告或

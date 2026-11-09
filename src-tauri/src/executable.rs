@@ -80,6 +80,7 @@ fn retained_entry_matches(running: &Path, entry: &Path) -> bool {
 
 /// Attach the canonical entry while choosing the running image independently in Command::new.
 pub(crate) fn inherit_launch_entry(command: &mut Command) -> io::Result<()> {
+    crate::development::routing::guard_fixture_program(command.get_program())?;
     #[cfg(target_os = "linux")]
     set_launch_entry(command, &launch_path()?);
     #[cfg(not(target_os = "linux"))]

@@ -19,6 +19,11 @@ pub fn ensure_legacy_idle(root: &Path) -> Result<(), String> {
     {
         return Ok(());
     }
+    ensure_private_calls_idle(root)?;
+    ensure_legacy_mcp_idle(root)
+}
+
+fn ensure_private_calls_idle(root: &Path) -> Result<(), String> {
     if let Some(bytes) = read_file(
         root,
         &crate::dev_instance::instance_home(root).join("agents.json"),
@@ -36,6 +41,35 @@ pub fn ensure_legacy_idle(root: &Path) -> Result<(), String> {
             }
         }
     }
+    let directory = crate::dev_instance::instance_home(root).join("state/verifications");
+    if directory.exists() {
+        for entry in std::fs::read_dir(directory).map_err(|e| e.to_string())? {
+            let path = entry.map_err(|e| e.to_string())?.path();
+            if path.extension().is_none_or(|extension| extension != "json") {
+                continue;
+            }
+            let bytes = read_file(root, &path)?
+                .ok_or("verification record disappeared during inspection")?;
+            let record: Value = serde_json::from_slice(&bytes)
+                .map_err(|_| "cannot inspect existing Dev verification")?;
+            if record["status"] == "pending" {
+                let pid = record["executorPid"]
+                    .as_u64()
+                    .and_then(|pid| u32::try_from(pid).ok());
+                if pid.is_none_or(crate::agents::detect::pid_alive) {
+                    return Err(format!(
+                        "finish Dev verification {} before repairing the account binding (pid {})",
+                        record["info"]["id"],
+                        pid.unwrap_or(0)
+                    ));
+                }
+            }
+        }
+    }
+    Ok(())
+}
+
+fn ensure_legacy_mcp_idle(root: &Path) -> Result<(), String> {
     #[cfg(unix)]
     {
         let output = std::process::Command::new("ps")
@@ -426,11 +460,13 @@ fn edit_toml(text: &str, desired: Option<&Value>) -> Result<(Option<Value>, Stri
     Ok((before, doc.to_string()))
 }
 
-fn node_executable() -> Result<PathBuf, String> {
+fn probe_node(command: &mut std::process::Command) -> Result<std::process::Output, String> {
     use std::process::Stdio;
-    let mut child = std::process::Command::new("node")
-        .args(["-p", "JSON.stringify({path:process.execPath,major:Number(process.versions.node.split('.')[0])})"])
-        .stdin(Stdio::null()).stdout(Stdio::piped()).stderr(Stdio::null()).spawn()
+    let mut child = command
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null())
+        .spawn()
         .map_err(|error| format!("Node.js 20+ is required for project MCP: {error}"))?;
     let deadline = std::time::Instant::now() + std::time::Duration::from_secs(3);
     loop {
@@ -446,9 +482,14 @@ fn node_executable() -> Result<PathBuf, String> {
             }
         }
     }
-    let output = child
-        .wait_with_output()
-        .map_err(|error| error.to_string())?;
+    child.wait_with_output().map_err(|error| error.to_string())
+}
+
+fn node_executable() -> Result<PathBuf, String> {
+    let output = probe_node(std::process::Command::new("node").args([
+        "-p",
+        "JSON.stringify({path:process.execPath,major:Number(process.versions.node.split('.')[0])})",
+    ]))?;
     let value: Value = serde_json::from_slice(&output.stdout)
         .map_err(|_| "Node.js returned an invalid capability response")?;
     let path = PathBuf::from(
@@ -471,6 +512,7 @@ pub fn bridge_fingerprint(root: &Path) -> Result<String, String> {
         "scripts/development/runtime.mjs",
         "scripts/development/mcp.mjs",
         "scripts/development/caller.mjs",
+        "scripts/development/context.mjs",
     ] {
         hash.update(name.as_bytes());
         hash.update(std::fs::read(root.join(name)).map_err(|e| e.to_string())?);
@@ -531,16 +573,43 @@ fn prepare_with_node(
     .map_err(|error| error.to_string())?;
     let manifest_path = workspace::path(&root);
     let mut manifest = if manifest_path.exists() {
-        workspace::read(&root)?
+        workspace::read_structural(&root)?
     } else {
         workspace::Workspace {
-            version: workspace::VERSION,
+            version: if super::routing::is_fixture() {
+                2
+            } else {
+                workspace::VERSION
+            },
             worktree: root.clone(),
             system_binary: system_binary.to_path_buf(),
-            system_home: state::system_home(),
+            system_home: state::system_home()?,
+            fixture: super::routing::fixture()?,
         }
     };
-    let formal_changed = manifest.system_binary != system_binary;
+    let before_manifest = manifest.clone();
+    let expected_home = state::system_home()?;
+    if !state::same_path(&manifest.system_home, &expected_home) {
+        if manifest.version != 1 || manifest.fixture.is_some() || super::routing::is_fixture() {
+            return Err(
+                "fixture and ordinary manifest bindings require matching explicit contexts".into(),
+            );
+        }
+        ensure_private_calls_idle(&root)?;
+        let backup = manifest_path.with_file_name(format!(
+            "workspace.before-account-rebind-{}.json",
+            uuid::Uuid::new_v4()
+        ));
+        let bytes = read_file(&root, &manifest_path)?.ok_or("existing manifest is missing")?;
+        publish(&root, &backup, None, &bytes)?;
+        eprintln!(
+            "AskHuman: repaired formal account binding {} -> {}; backup {}",
+            manifest.system_home.display(),
+            expected_home.display(),
+            backup.display()
+        );
+        manifest.system_home = expected_home;
+    }
     manifest.system_binary = system_binary.to_path_buf();
     workspace::validate(&root, &manifest)?;
     let mut changed = false;
@@ -559,12 +628,27 @@ fn prepare_with_node(
         if !bridge.is_file() {
             return Err("this worktree has no project development bridge".into());
         }
-        let args = vec![
-            bridge.to_string_lossy().to_string(),
+        let mut args = vec![bridge.to_string_lossy().to_string()];
+        if let Some(fixture) = super::routing::fixture()? {
+            let probe = probe_node(
+                std::process::Command::new(node)
+                    .arg(&bridge)
+                    .arg("--development-capabilities"),
+            )?;
+            let capabilities: Value = serde_json::from_slice(&probe.stdout).unwrap_or_default();
+            if !probe.status.success() || capabilities["systemFixture"] != 2 {
+                return Err("project controller does not support System fixture v2".into());
+            }
+            args.extend([
+                super::routing::FIXTURE_FLAG.into(),
+                fixture.account_home.to_string_lossy().to_string(),
+            ]);
+        }
+        args.extend([
             "mcp".into(),
             "--worktree".into(),
             root.to_string_lossy().to_string(),
-        ];
+        ]);
         let desired = expected_entry(node, &args, kind, toml);
         let (current, rendered) = if toml {
             edit_toml(text, Some(&desired))?
@@ -617,7 +701,7 @@ fn prepare_with_node(
     } else {
         None
     };
-    if !manifest_path.exists() || formal_changed {
+    if !manifest_path.exists() || manifest != before_manifest {
         state::write_json(&manifest_path, &manifest)?;
         workspace::read(&root)?;
         changed = true;
@@ -782,5 +866,68 @@ mod tests {
         std::fs::write(&config, &changed).unwrap();
         assert!(remove(&root).is_err());
         assert_eq!(std::fs::read_to_string(&config).unwrap(), changed);
+    }
+
+    #[test]
+    fn enable_rebinds_only_the_old_account_and_keeps_a_backup_and_private_data() {
+        let temp = fixture();
+        let root = temp.path().canonicalize().unwrap();
+        let system = root.parent().unwrap().join("formal/AskHuman");
+        prepare_with_node(&root, &system, None, None).unwrap();
+        let mut old = workspace::read(&root).unwrap();
+        old.system_home = root.join("old-account/.askhuman");
+        state::write_json(&workspace::path(&root), &old).unwrap();
+        let private = crate::dev_instance::instance_home(&root).join("history.jsonl");
+        std::fs::create_dir_all(private.parent().unwrap()).unwrap();
+        std::fs::write(&private, "preserve this history\n").unwrap();
+        assert!(workspace::read(&root).is_err());
+        assert!(
+            prepare_with_node(&root, &system, None, None)
+                .unwrap()
+                .changed
+        );
+        assert_eq!(
+            workspace::read(&root).unwrap().system_home,
+            state::system_home().unwrap()
+        );
+        assert_eq!(
+            std::fs::read_to_string(&private).unwrap(),
+            "preserve this history\n"
+        );
+        assert!(std::fs::read_dir(root.join(crate::dev_instance::DEV_DIR))
+            .unwrap()
+            .any(|entry| {
+                entry
+                    .unwrap()
+                    .file_name()
+                    .to_string_lossy()
+                    .starts_with("workspace.before-account-rebind-")
+            }));
+        assert!(
+            !prepare_with_node(&root, &system, None, None)
+                .unwrap()
+                .changed
+        );
+    }
+
+    #[test]
+    fn account_rebind_preserves_an_active_verification() {
+        let temp = fixture();
+        let root = temp.path().canonicalize().unwrap();
+        let system = root.parent().unwrap().join("formal/AskHuman");
+        prepare_with_node(&root, &system, None, None).unwrap();
+        let mut old = workspace::read(&root).unwrap();
+        old.system_home = root.join("old-account/.askhuman");
+        state::write_json(&workspace::path(&root), &old).unwrap();
+        let id = uuid::Uuid::new_v4().to_string();
+        let record = crate::dev_instance::instance_home(&root)
+            .join(format!("state/verifications/{id}.json"));
+        state::write_json(&record, &serde_json::json!({"status":"pending","executorPid":std::process::id(),"info":{"id":id}})).unwrap();
+        let error = prepare_with_node(&root, &system, None, None)
+            .err()
+            .expect("active verification must block rebind");
+        assert!(error.contains("finish Dev verification"));
+        assert_eq!(workspace::read_structural(&root).unwrap(), old);
+        assert!(record.exists());
     }
 }

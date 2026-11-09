@@ -176,7 +176,7 @@ fn atomic_write(path: &Path, bytes: &[u8]) -> Result<()> {
 }
 
 fn collapse_home(path: &Path) -> String {
-    let home = crate::paths::home();
+    let home = crate::paths::integration_home();
     path.strip_prefix(home)
         .map(|rest| format!("~/{}", rest.display()))
         .unwrap_or_else(|_| path.display().to_string())

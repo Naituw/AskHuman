@@ -1561,7 +1561,7 @@ pub fn on_menu_event(app: &AppHandle, id: &str) {
     if let Some(request_id) = id.strip_prefix("focus_req:") {
         let request_id = request_id.to_string();
         tauri::async_runtime::spawn(async move {
-            if let Ok(stream) = transport::connect().await {
+            if let Ok(stream) = crate::client::connect_stream().await {
                 let (_r, mut w) = stream.into_split();
                 let _ = ipc::write_msg(&mut w, &ClientMsg::FocusRequest { request_id }).await;
             }
@@ -1628,7 +1628,7 @@ pub fn on_menu_event(app: &AppHandle, id: &str) {
         } else {
             // Ask Me Now appends to the queue without opening a composer.
             tauri::async_runtime::spawn(async move {
-                if let Ok(stream) = transport::connect().await {
+                if let Ok(stream) = crate::client::connect_stream().await {
                     let (_r, mut w) = stream.into_split();
                     let _ = ipc::write_msg(
                         &mut w,
@@ -2050,7 +2050,7 @@ fn update_keepalive(app: &AppHandle) {
 /// 续命连接任务：开一条普通连接给 daemon（不发消息，纯占位计入 active），直到被通知停止或 daemon 断开。
 async fn keepalive_task(stop: Arc<Notify>) {
     // 仅给「正在运行的」daemon 续命：用普通 connect（不 ensure_running），连不上即不续命。
-    if let Ok(stream) = transport::connect().await {
+    if let Ok(stream) = crate::client::connect_stream().await {
         let (r, _w) = stream.into_split();
         let mut reader = BufReader::new(r);
         tokio::select! {
@@ -2170,7 +2170,8 @@ async fn handle_host_conn(stream: transport::Stream, app: AppHandle) {
                 });
             }
             HostMsg::Ping => {
-                let _ = ipc::write_msg(&mut w, &HostMsg::Ping).await;
+                let probe = serde_json::json!({"type":"ping", "systemFixture":crate::development::routing::fixture().ok().flatten()});
+                let _ = ipc::write_msg(&mut w, &probe).await;
             }
             HostMsg::Shutdown => {
                 // Confirm that the shutdown frame was consumed before the client starts checking
@@ -2203,7 +2204,7 @@ fn start_status_subscription(app: AppHandle) {
                 }
                 continue;
             }
-            if let Ok(stream) = transport::connect().await {
+            if let Ok(stream) = crate::client::connect_stream().await {
                 let (r, mut w) = stream.into_split();
                 let mut reader = BufReader::new(r);
                 if ipc::write_msg(&mut w, &ClientMsg::TraySubscribe)
@@ -2536,6 +2537,9 @@ fn restart_via_launchd(mode: MenuBarIconMode, has_login_item: bool) -> bool {
 /// 用盘上（新）二进制重启宿主：释放单实例锁；always 且登录项在则交 launchd KeepAlive 重启，
 /// 其它自我 re-exec。
 fn restart_host(app: &AppHandle) {
+    if !crate::development::routing::replacement_compatible() {
+        return;
+    }
     let Some(state) = app.try_state::<HostState>() else {
         return;
     };

@@ -2,15 +2,13 @@
 """Two-replica acceptance run for iCloud todo sync against the CloudKit *Development* environment.
 
 Simulates two Macs on one Mac: replica A and B are two independent fake HOMEs under a scratch root (never the
-real ~/.askhuman). One dev-signed helper serves both: A is started with the helper's own triggers (file
-watcher, poll, push); B is driven by manual `todo-sync tick`s over a symlink to A's helper socket (the helper
-is a stateless transport). CloudKit therefore sees ONE device, so push latency between two Macs still needs
+real ~/.askhuman). Each replica has a private helper: A uses automatic triggers (file watcher, poll, push);
+B keeps automatic scheduling disabled and is driven by manual ticks. Both run on ONE physical device, so push latency between two Macs still needs
 the real two-Mac run (docs/plans/todo-sync.md, E1).
 
 Prerequisites (see the "真实 iCloud" item under "验证" in docs/overview-todo-sync.md):
   * a dev-signed helper:  HELPER_ALLOW_CLOUD_CHANGES=1 todo-sync-helper/scripts/build.sh dev   (contacts Apple)
-  * an AskHuman built from this tree (./scripts/install.sh); the replicas run a copy of it with ASKHUMAN_HOME unset,
-    so they are not Dev Instances (those never enable sync)
+  * AskHuman and helper builds with System fixture v2 support; replicas select explicit private System accounts
   * this Mac signed in to iCloud; the container opened once in the CloudKit Dashboard if `ensure` is rejected
 
 usage:
@@ -88,9 +86,13 @@ def PDIR(r, name):
 
 
 def env_for(r):
-    e = {k: v for k, v in os.environ.items() if k != "ASKHUMAN_HOME"}
+    e = {k: v for k, v in os.environ.items() if k not in ("ASKHUMAN_HOME", "ASKHUMAN_RESOLVED_TARGET_V1", "ASKHUMAN_DEV_TEST_PROFILE")}
     e.update(HOME=H(r), ASKHUMAN_NO_KEYCHAIN="1")
     return e
+
+
+def fixture_args(r, *args):
+    return ["--development-capabilities", "--internal-system-fixture-v2", H(r), "--", *args]
 
 
 def log(msg):
@@ -103,7 +105,13 @@ def log(msg):
 def ah(r, *args, cwd="/tmp", timeout=300):
     """Run AskHuman as replica r. Returns (rc, stdout, stderr, seconds)."""
     t0 = time.time()
-    p = subprocess.run([BIN, *args], cwd=cwd, env=env_for(r), capture_output=True, text=True, timeout=timeout)
+    p = subprocess.run([BIN, *fixture_args(r, *args)], cwd=cwd, env=env_for(r), capture_output=True, text=True, timeout=timeout)
+    if p.returncode == 0:
+        prefix = "ASKHUMAN_SYSTEM_FIXTURE_V2_ACTIVE "
+        activation = next((json.loads(line[len(prefix):]) for line in p.stderr.splitlines() if line.startswith(prefix)), None)
+        expected = {"version": 2, "accountHome": os.path.realpath(H(r)), "kind": "system", "home": os.path.realpath(H(r)) + "/.askhuman"}
+        if activation != expected:
+            raise RuntimeError("AskHuman did not activate the expected System fixture v2")
     return p.returncode, p.stdout.strip(), p.stderr.strip(), time.time() - t0
 
 
@@ -335,34 +343,39 @@ def wait_for(pred, timeout, interval=0.25):
 HELPER_JSON = f"{SIDE('A')}/helper.json"
 
 
-def helper_pid():
-    out = subprocess.run(["pgrep", "-f", f"{ROOT}/bin/AskHumanTodoSync.app/Contents/MacOS/AskHumanTodoSync"], capture_output=True, text=True).stdout.split()
+def helper_pid(replica="A"):
+    pattern = re.escape(HELPER_BIN) + r".*" + re.escape(H(replica)) + r" run([[:space:]]|$)"
+    result = subprocess.run(["pgrep", "-f", pattern], capture_output=True, text=True)
+    if result.returncode not in (0, 1):
+        raise RuntimeError(f"cannot inspect fixture helper process: {result.stderr.strip()}")
+    out = result.stdout.split()
     return int(out[0]) if out else None
 
 
-def helper_auto(enabled):
+def helper_auto(enabled, replica="A"):
     """Switch the helper's own triggers (file watcher, poll, push) on or off; RPC keeps working."""
     try:
-        with open(HELPER_JSON) as f:
+        with open(f"{SIDE(replica)}/helper.json") as f:
             cfg = json.load(f)
     except FileNotFoundError:
         return
     if cfg.get("enabled") == enabled:
         return
     cfg["enabled"] = enabled
-    tmp = HELPER_JSON + ".tmp"
+    target = f"{SIDE(replica)}/helper.json"
+    tmp = target + ".tmp"
     with open(tmp, "w") as f:
         json.dump(cfg, f, indent=2)
-    os.rename(tmp, HELPER_JSON)
+    os.rename(tmp, target)
     time.sleep(2.0)  # let the helper's file watcher apply it
 
 
-def rpc(op, **fields):
+def rpc(op, replica="A", **fields):
     """One call to the helper's socket (A's), JSON in / JSON out."""
     try:
         s = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
         s.settimeout(90)
-        s.connect(f"{SIDE('A')}/helper.sock")
+        s.connect(f"{SIDE(replica)}/helper.sock")
         s.sendall((json.dumps({"id": 1, "op": op, **fields}) + "\n").encode())
         buf = b""
         while not buf.endswith(b"\n"):
@@ -376,17 +389,17 @@ def rpc(op, **fields):
         return {"ok": False, "_error": f"{type(e).__name__}: {e}"}
 
 
-def start_helper():
-    """The dev-signed helper for replica A. HOME is A's, so the ticks it spawns see replica A only."""
-    env = env_for("A")
-    env["ASKHUMAN_TODO_SYNC_DIR"] = SIDE("A")
-    out = open(f"{ROOT}/helper-A.out", "a")
-    subprocess.Popen([HELPER_BIN], env=env, stdout=out, stderr=subprocess.STDOUT, start_new_session=True)
-    return wait_for(lambda: rpc("hello").get("ok") is True, 90, 1.0) is not None
+def start_helper(replica="A"):
+    """Start only the helper belonging to this explicit fixture account."""
+    env = env_for(replica)
+    env["ASKHUMAN_TODO_SYNC_DIR"] = SIDE(replica)
+    out = open(f"{ROOT}/helper-{replica}.out", "a")
+    subprocess.Popen([HELPER_BIN, "--version", "--internal-system-fixture-v2", H(replica), "run"], env=env, stdout=out, stderr=subprocess.STDOUT, start_new_session=True)
+    return wait_for(lambda: (rpc("hello", replica=replica).get("systemFixture") or {}).get("accountHome") == os.path.realpath(H(replica)), 90, 1.0) is not None
 
 
-def restart_helper():
-    return start_helper()
+def restart_helper(replica="A"):
+    return start_helper(replica)
 
 
 # ---- tests --------------------------------------------------------------------------------------
@@ -408,14 +421,15 @@ def setup_replicas():
         ensure_project(r, "proj1")
         os.makedirs(SIDE(r), exist_ok=True)
     sock_b = f"{SIDE('B')}/helper.sock"
-    if not os.path.islink(sock_b):
-        if os.path.exists(sock_b):
-            os.remove(sock_b)
-        os.symlink(f"{SIDE('A')}/helper.sock", sock_b)
+    if os.path.islink(sock_b):
+        os.remove(sock_b)
+    if helper_pid("B") is None:
+        assert start_helper("B"), "private B helper did not start"
     for r in ("A", "B"):
         if not os.path.exists(f"{SIDE(r)}/enabled"):
             rc, out, err, _ = ah(r, "todo-sync", "enable")
             assert rc == 0, f"enable {r}: {out} {err}"
+    helper_auto(False, "B")
     # the "enable" ticks run detached; wait for their report
     for r in ("A", "B"):
         wait_for(lambda r=r: os.path.exists(f"{SIDE(r)}/last-tick.json"), 60)
@@ -427,6 +441,25 @@ def cmd_setup():
     for src in (SRC_ASKHUMAN, SRC_HELPER):
         if not os.path.exists(src):
             sys.exit(f"missing {src}: see the prerequisites in the header of this script")
+    for program, arguments in ((SRC_ASKHUMAN, ["--development-capabilities"]),
+                               (f"{SRC_HELPER}/Contents/MacOS/AskHumanTodoSync", ["--version"])):
+        probe = subprocess.run([program, *arguments], capture_output=True, text=True, timeout=15)
+        if probe.returncode != 0 or json.loads(probe.stdout).get("systemFixture") != 2:
+            sys.exit(f"{program} does not support System fixture v2")
+    for replica in ("A", "B"):
+        hello = rpc("hello", replica=replica)
+        lock_in_use = False
+        try:
+            with open(f"{SIDE(replica)}/helper.lock", "rb") as lock:
+                try:
+                    fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                except BlockingIOError:
+                    lock_in_use = True
+        except FileNotFoundError:
+            pass
+        identity = hello.get("systemFixture") or {}
+        if (hello.get("ok") or lock_in_use) and (identity.get("version") != 2 or identity.get("accountHome") != os.path.realpath(H(replica))):
+            sys.exit(f"stop the previous non-fixture helper in {SIDE(replica)} before replacing its AskHuman executable")
     os.makedirs(f"{ROOT}/bin", exist_ok=True)
     shutil.copy2(SRC_ASKHUMAN, BIN)
     shutil.rmtree(f"{ROOT}/bin/AskHumanTodoSync.app", ignore_errors=True)
@@ -437,7 +470,7 @@ def cmd_setup():
         ensure_project(r, "proj1")
     if rpc("hello").get("ok") is not True:
         if not start_helper():
-            sys.exit(f"the helper did not answer; see {ROOT}/helper-A.out and ~/Library/Logs/AskHumanTodoSync/helper.log")
+            sys.exit(f"the helper did not answer; see {ROOT}/helper-A.out and {SIDE('A')}/helper.log")
     log(f"helper: {json.dumps(rpc('hello'))}")
     log(f"scratch root {ROOT} ready (replicas A and B, helper pid {helper_pid()})")
 
@@ -472,9 +505,10 @@ def cmd_teardown():
         helper_auto(False)
         rc, out, err, _ = ah("A", "todo-sync", "clear-cloud", "--yes")
         log(f"clear-cloud: rc={rc} {out or err}")
-    pid = helper_pid()
-    if pid:
-        os.kill(pid, signal.SIGTERM)
+    for replica in ("A", "B"):
+        pid = helper_pid(replica)
+        if pid:
+            os.kill(pid, signal.SIGTERM)
     time.sleep(1.0)
     shutil.rmtree(ROOT, ignore_errors=True)
     print(f"removed {ROOT}")
@@ -633,7 +667,7 @@ def set_poll_minutes(minutes):
 
 def t_push():
     log("T7 A's helper catches up on B's uploads by itself (push, else the 1-minute poll used here)")
-    log("  info  one helper serves both replicas, i.e. CloudKit sees ONE device: a push for B's save may be suppressed;")
+    log("  info  both private helpers run on ONE physical device: a push for B's save may be suppressed;")
     log("  info  the real push latency needs two Macs (plan E1). Here: does A catch up on its own, and did a push arrive?")
     set_poll_minutes(1)
     try:
@@ -694,19 +728,19 @@ def t_kill():
                 delete_pending("B", "proj1", victim)
                 created.discard(victim)
             # start a tick and kill it at a random moment
-            p = subprocess.Popen([BIN, "todo-sync", "tick", "--reason", "kill"], cwd="/tmp", env=env_for("B"), stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            p = subprocess.Popen([BIN, *fixture_args("B", "todo-sync", "tick", "--reason", "kill")], cwd="/tmp", env=env_for("B"), stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
             time.sleep(rng.uniform(0.05, 1.8))
             if p.poll() is None:
                 p.send_signal(signal.SIGKILL)
             p.wait()
             if i % 7 == 6:
-                pid = helper_pid()
+                pid = helper_pid("B")
                 if pid:
                     os.kill(pid, signal.SIGKILL)
                     log(f"  info  helper killed (pid {pid}); restarting")
                     time.sleep(1.0)
-                    restart_helper()
-                    helper_auto(False)
+                    restart_helper("B")
+                    helper_auto(False, "B")
         ok, v = converge(max_rounds=6)
         check("A and B converge after the abuse", ok, fmt(v))
         names_a = [x[0] for x in view("A")["proj1"]["q"]]
@@ -770,8 +804,10 @@ def t_offline():
     try:
         ok, _ = converge()
         check("start converged", ok)
-        pid = helper_pid()
-        os.kill(pid, signal.SIGKILL)
+        for replica in ("A", "B"):
+            pid = helper_pid(replica)
+            if pid:
+                os.kill(pid, signal.SIGKILL)
         time.sleep(1.0)
         add("A", "proj1", "offline edit on A")
         add("B", "proj1", "offline edit on B")
@@ -780,8 +816,9 @@ def t_offline():
         check("local reads keep working", find(queue("B", "proj1"), "offline edit on B") is not None)
         st = status("B")
         log(f"  info  B status without helper: helper={json.dumps(st.get('helper'))[:200]}")
-        check("restart helper", restart_helper())
+        check("restart helpers", restart_helper() and restart_helper("B"))
         helper_auto(False)
+        helper_auto(False, "B")
         ok, v = converge()
         names = [x[0] for x in view("A")["proj1"]["q"]]
         check("both offline edits arrived on both", ok and "offline edit on A" in names and "offline edit on B" in names, fmt(v))
@@ -872,6 +909,7 @@ def t_rebuild():
                 pass
         rc, out, err, _ = ah("B", "todo-sync", "enable")
         check("enable again accepted", rc == 0, out + err)
+        helper_auto(False, "B")
         wait_for(lambda: os.path.exists(f"{SIDE('B')}/last-tick.json"), 60)
         time.sleep(2)
         ok, v = converge(6)

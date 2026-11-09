@@ -6,6 +6,7 @@ import Foundation
 /// file. One instance for the life of the process.
 final class HelperRuntime: StatusSource {
     let paths: HelperPaths
+    private let fixture: SystemFixture?
     private let startedAt = Date()
     private let log: (String, [String: Any]) -> Void
     private let stateLock = NSLock()
@@ -24,8 +25,9 @@ final class HelperRuntime: StatusSource {
 
     static var helperVersion: String { CommandLineTool.version }
 
-    init(paths: HelperPaths = .resolve()) {
+    init(paths: HelperPaths = .resolve(), fixture: SystemFixture? = nil) {
         self.paths = paths
+        self.fixture = fixture
         let logFn: (String, [String: Any]) -> Void = { HelperLog.shared.write($0, $1) }
         self.log = logFn
 
@@ -51,7 +53,7 @@ final class HelperRuntime: StatusSource {
         activity = ProcessInfo.processInfo.beginActivity(
             options: [.userInitiatedAllowingIdleSystemSleep], reason: "todo sync helper")
 
-        let runner = TickProcessRunner(log: log)
+        let runner = TickProcessRunner(fixture: fixture, log: log)
         coordinator = TickCoordinator(log: log) { [weak self] reason, done in
             guard let self else { return done(nil) }
             runner.run(config: self.currentConfig(), reason: reason, done: done)
@@ -59,7 +61,9 @@ final class HelperRuntime: StatusSource {
         triggers = Triggers(coordinator: coordinator, log: log)
         triggers.startSystemSources()
 
-        let dispatcher = RpcDispatcher(backend: backend, helperVersion: Self.helperVersion, statusSource: self, log: log)
+        let dispatcher = RpcDispatcher(
+            backend: backend, helperVersion: Self.helperVersion, statusSource: self,
+            systemFixture: fixture?.identity, log: log)
         let server = RpcSocketServer(path: paths.socketURL.path, log: log) { await dispatcher.handle($0) }
         do {
             try server.start()
@@ -110,7 +114,15 @@ final class HelperRuntime: StatusSource {
     }
 
     private func reloadConfig() {
-        let loaded = HelperConfig.load(from: paths.configURL)
+        var loaded: HelperConfig?
+        do {
+            try fixture?.validateLayout()
+            loaded = HelperConfig.load(from: paths.configURL)
+            if let loaded { try fixture?.validateConfiguration(loaded) }
+        } catch {
+            log("config_rejected", ["why": "\(error)"])
+            loaded = nil
+        }
         stateLock.lock()
         let changed = loaded != config
         config = loaded

@@ -922,6 +922,9 @@ fn check_pending_update(state: &Arc<ServerState>) {
     if now_fp == state.startup_fp {
         return;
     }
+    if !crate::development::routing::replacement_compatible() {
+        return;
+    }
     let changed = {
         let mut u = state.update.lock().unwrap();
         let was = u.pending;
@@ -1763,6 +1766,9 @@ async fn control_loop(reader: &mut Reader, w: &mut Writer, state: &Arc<ServerSta
                         }
                     }
                 }
+                if stale && !crate::development::routing::replacement_compatible() {
+                    stale = false;
+                }
                 // 过时且有在途请求 → 进入排空（不打断在途）；无在途 → 立即换新（零延迟）。
                 let live_update = stale
                     && auto_restart
@@ -1851,6 +1857,7 @@ async fn control_loop(reader: &mut Reader, w: &mut Writer, state: &Arc<ServerSta
             }
             ClientMsg::Status => {
                 let info = StatusInfo {
+                    system_fixture: crate::development::routing::fixture().ok().flatten(),
                     recovery_version: state
                         .recovery
                         .as_ref()

@@ -76,6 +76,9 @@ pub struct HelloAck {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct StatusInfo {
+    /// Private fixture identity, absent on ordinary and older peers.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub system_fixture: Option<crate::development::routing::Fixture>,
     /// Stable request-recovery bootstrap. Clients inspect Status before sending Recover.
     #[serde(default, skip_serializing_if = "is_zero_u32")]
     pub recovery_version: u32,
@@ -1273,6 +1276,7 @@ mod tests {
     #[test]
     fn status_info_binary_facts_round_trip() {
         let info = StatusInfo {
+            system_fixture: None,
             recovery_version: 0,
             development_verification_version: 1,
             development_remote_outlets: vec![],

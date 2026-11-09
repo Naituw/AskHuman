@@ -35,9 +35,40 @@ fn hello() -> ClientHello {
 
 /// 连接并拆分读写半。
 async fn connect_split() -> std::io::Result<(Reader, OwnedWriteHalf)> {
+    let stream = connect_stream().await?;
+    let (reader, writer) = stream.into_split();
+    Ok((BufReader::new(reader), writer))
+}
+
+/// Fixture-aware outbound connection shared by CLI and graphical clients.
+pub(crate) async fn connect_stream() -> std::io::Result<transport::Stream> {
+    if crate::development::routing::is_fixture() {
+        let (mut reader, mut writer) = connect_split_unchecked().await?;
+        ipc::write_msg(&mut writer, &ClientMsg::Status).await?;
+        let status =
+            tokio::time::timeout(Duration::from_secs(3), read_status_response(&mut reader))
+                .await
+                .map_err(|_| {
+                    Error::new(ErrorKind::TimedOut, "System fixture peer probe timed out")
+                })??;
+        validate_fixture_peer(&status)?;
+    }
+    transport::connect().await
+}
+
+async fn connect_split_unchecked() -> std::io::Result<(Reader, OwnedWriteHalf)> {
     let stream = transport::connect().await?;
     let (r, w) = stream.into_split();
     Ok((BufReader::new(r), w))
+}
+
+fn validate_fixture_peer(status: &StatusInfo) -> std::io::Result<()> {
+    if let Some(expected) = crate::development::routing::fixture().map_err(Error::other)? {
+        if status.system_fixture.as_ref() != Some(&expected) {
+            return Err(Error::new(ErrorKind::PermissionDenied, "daemon System fixture identity is missing or does not match; no business request was sent"));
+        }
+    }
+    Ok(())
 }
 
 /// 连一次并握手，返回握手状态（连不上返回 None）。
@@ -54,6 +85,10 @@ async fn hello_status() -> Option<HelloStatus> {
 
 /// 确保 Daemon 在运行且为当前二进制版本；必要时自启 / 等旧实例换新。
 pub async fn ensure_running() -> std::io::Result<()> {
+    // A mismatched existing fixture peer must not be replaced through the Hello path.
+    if crate::development::routing::is_fixture() {
+        request_status_result().await?;
+    }
     ensure_running_inner().await?;
     if crate::development::routing::inherited()
         .map_err(Error::other)?
@@ -178,13 +213,23 @@ pub async fn request_status() -> Option<StatusInfo> {
 /// Query without starting the daemon. Only an absent/refused endpoint returns `Ok(None)`;
 /// connection permission errors, failed exchanges and invalid responses retain their cause.
 pub async fn request_status_result() -> std::io::Result<Option<StatusInfo>> {
-    let (mut reader, mut writer) = match connect_split().await {
+    let (mut reader, mut writer) = match connect_split_unchecked().await {
         Ok(connection) => connection,
         Err(error) if diagnostics::is_not_running(&error) => return Ok(None),
         Err(error) => return Err(error),
     };
     ipc::write_msg(&mut writer, &ClientMsg::Status).await?;
-    read_status_response(&mut reader).await.map(Some)
+    let info = if crate::development::routing::is_fixture() {
+        tokio::time::timeout(Duration::from_secs(3), read_status_response(&mut reader))
+            .await
+            .map_err(|_| {
+                Error::new(ErrorKind::TimedOut, "System fixture status probe timed out")
+            })??
+    } else {
+        read_status_response(&mut reader).await?
+    };
+    validate_fixture_peer(&info)?;
+    Ok(Some(info))
 }
 
 async fn read_status_response<R>(reader: &mut R) -> std::io::Result<StatusInfo>

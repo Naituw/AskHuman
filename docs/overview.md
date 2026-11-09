@@ -32,6 +32,12 @@
 
 **多份二进制并存**：握手比较的是二进制内容指纹，所以内容不同的两份 AskHuman（npm 全局安装 + `install.sh` 本地构建等）会轮流把对方的 Daemon 顶掉。Daemon 因此记录每次让位的原因与客户端，并在同一对二进制 10 分钟内互顶 ≥2 次后不再为「内容不同但协议号相同」的客户端让位（hold）；`daemon status`、`doctor` 与 `install.sh` 会指出多份安装、PATH 遮蔽和 hold。设计见同一份 spec 的 D10–D12 与 §6。
 
+普通调用与显式 `--instance system` 从操作系统账户记录选择正式根，内部以解析后的 `Target.home` 派生数据与 IPC 路径。
+System 的用户级 Agent 集成及后台 HOME 跟随账户，前台输入 `~` 保留调用方 HOME 语义。
+旧临时 HOME daemon 继承的 v1 System 目标在原根续接，配置与共享凭据只读。
+内部 System 测试通过显式 fixture v2 固定私有账户，跨程序执行与 endpoint 先校验能力和身份。
+兼容、路径及测试入口见 [账户主目录路由](specs/system-instance-home-routing.md)。
+
 **重复提问收敛**（`docs/specs/duplicate-ask-coalescing.md`）：agent 那一轮被中断后常原样重发同一个提问，而被中断的 CLI 进程不会被杀。Daemon 因此在建请求前先按「会话键 + 提问指纹」判重——同一提问仍在等人回答就合流到那张卡（多等待者共享一个终态，全部离场才取消），5 分钟内已答过则直接重放上次答案并在 `status` 说明。历史、待办出队与 `ask-received` 仍只发生一次。
 
 **Dev Instance（并行 / WorkTree 开发）**：AskHuman 自身开发通过项目规则与独立 `askhuman-dev` MCP
@@ -119,7 +125,7 @@ AskHuman/
 
       models.rs              请求、选项、结果与 Confirm 共用模型
       config.rs              AppConfig 读写、默认值与旧路径兼容
-      paths.rs               home/config/temp/history/IPC 等路径
+      paths.rs               home/config/temp/history/IPC 等路径，paths/account.rs 查询账户与验证 fixture
       secrets.rs             系统钥匙串与密钥回退
       project.rs             可信会话工作区 / cwd 回退的统一项目归属
       project_info.rs        Popup 项目卡的只读 Git 与终端目录动作

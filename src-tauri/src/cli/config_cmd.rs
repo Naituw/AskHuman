@@ -76,6 +76,7 @@ fn get(args: &[String], lang: Lang) -> Result<(), String> {
 }
 
 fn set(args: &[String], lang: Lang) -> Result<(), String> {
+    crate::development::routing::require_config_writes()?;
     let key = args
         .first()
         .ok_or_else(|| {
@@ -156,6 +157,7 @@ fn note_background_choice(key: &str) {
 }
 
 fn unset(args: &[String], lang: Lang) -> Result<(), String> {
+    crate::development::routing::require_config_writes()?;
     let key = args
         .first()
         .ok_or_else(|| cfgio::t(lang, "usage: config unset <key>", "用法: config unset <键>"))?;
