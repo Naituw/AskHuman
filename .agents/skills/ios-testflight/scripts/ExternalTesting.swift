@@ -1,9 +1,9 @@
 import Foundation
 import CoreFoundation
 
-/// A closed request vocabulary for this app's first external beta. No arbitrary endpoints or app IDs.
+/// A closed request vocabulary for this app's beta delivery. No arbitrary endpoints or app IDs.
 struct ExternalRequest {
-    enum Mode: String { case metadata, group, submit, invite }
+    enum Mode: String { case metadata, group, update, submit, start, invite }
     let mode: Mode
     let build: String?
     let localizations: [String: [String: String]]
@@ -119,6 +119,7 @@ struct ExternalTesting {
         let detail = ExternalStatus.resource(try await get("builds/\(id)/buildBetaDetail"))
         let state = ExternalStatus.attributes(detail)["externalBuildState"] as? String ?? "UNKNOWN"
         if request.mode == .group { return try await group(buildID: id, detail: detail) }
+        if request.mode == .update { return try await updateGroup(buildID: id, detail: detail) }
         let groups = try await friendsGroups()
         guard groups.count == 1 else { throw ExternalStatusError("Prepare the AskHuman Friends external group first.") }
         let group = groups[0], groupID = try ExternalStatus.id(group)
@@ -141,8 +142,9 @@ struct ExternalTesting {
             return ["action": "submit", "build": request.build!, "submission": submission]
         }
         guard ["BETA_APPROVED", "READY_FOR_BETA_TESTING", "IN_BETA_TESTING"].contains(state) else {
-            throw ExternalStatusError("Invite testers only after Beta App Review approval.")
+            throw ExternalStatusError("Start testing or invite testers only after Beta App Review approval.")
         }
+        if request.mode == .start { return try await start(buildID: id, groupID: groupID, detail: detail) }
         return try await invite(request.emails, groupID: groupID)
     }
 
@@ -242,6 +244,79 @@ struct ExternalTesting {
         let after = try await list("betaGroups/\(id)/builds", ["fields[builds]": "version"])
         guard after.contains(where: { $0["id"] as? String == buildID }) else { throw ExternalStatusError("Build assignment did not read back.") }
         return ["action": "group", "groupId": id, "buildId": buildID, "verified": true]
+    }
+
+    private func invitedMembers(_ groupID: String) async throws -> Set<String> {
+        let members = try await list("betaGroups/\(groupID)/betaTesters", ["fields[betaTesters]": "state"])
+        let ids = try Set(members.map { try ExternalStatus.id($0) })
+        guard ids.count == members.count, members.allSatisfy({
+            ["INVITED", "ACCEPTED", "INSTALLED"].contains(ExternalStatus.attributes($0)["state"] as? String ?? "")
+        }) else { throw ExternalStatusError("Existing testers must have identifiable, already invited memberships.") }
+        return ids
+    }
+
+    private func updateGroup(buildID: String, detail: [String: Any]) async throws -> [String: Any] {
+        let groups = try await friendsGroups()
+        guard groups.count == 1 else { throw ExternalStatusError("Routine updates require the existing Friends group.") }
+        let group = groups[0], id = try ExternalStatus.id(group)
+        try checkGroup(group)
+        let members = try await invitedMembers(id)
+        guard (1...5).contains(members.count) else { throw ExternalStatusError("Routine updates require one to five existing friends.") }
+        let assigned = try await list("betaGroups/\(id)/builds", ["fields[builds]": "version"])
+        if !assigned.contains(where: { $0["id"] as? String == buildID }) {
+            // Keep new builds on the established manual notification policy until approved testing starts.
+            let detailID = try ExternalStatus.id(detail)
+            if ExternalStatus.attributes(detail)["autoNotifyEnabled"] as? Bool != false {
+                _ = try await write("PATCH", "buildBetaDetails/" + detailID, type: "buildBetaDetails", id: detailID,
+                                    attributes: ["autoNotifyEnabled": false])
+            }
+            let ready = ExternalStatus.resource(try await get("builds/\(buildID)/buildBetaDetail"))
+            guard ExternalStatus.attributes(ready)["autoNotifyEnabled"] as? Bool == false,
+                  try await invitedMembers(id) == members else {
+                throw ExternalStatusError("Notification policy or group membership changed before assignment.")
+            }
+            _ = try await send("POST", "betaGroups/\(id)/relationships/builds", [:],
+                               ["data": [["type": "builds", "id": buildID]]])
+        }
+        let after = try await list("betaGroups/\(id)/builds", ["fields[builds]": "version"])
+        guard after.contains(where: { $0["id"] as? String == buildID }),
+              try await invitedMembers(id) == members else {
+            throw ExternalStatusError("Build assignment or unchanged membership did not read back; inspect status.")
+        }
+        return ["action": "update", "groupId": id, "buildId": buildID, "externalTesterCount": members.count, "verified": true]
+    }
+
+    private func start(buildID: String, groupID: String, detail: [String: Any]) async throws -> [String: Any] {
+        let groups = try await list("betaGroups", ["filter[builds]": buildID,
+            "fields[betaGroups]": "name,isInternalGroup,publicLinkEnabled,hasAccessToAllBuilds"])
+        let internalGroups = groups.filter { ExternalStatus.attributes($0)["isInternalGroup"] as? Bool == true }
+        guard groups.count == 2, groups.contains(where: { $0["id"] as? String == groupID }), internalGroups.count == 1,
+              ExternalStatus.attributes(internalGroups[0])["name"] as? String == "AskHuman Internal",
+              ExternalStatus.attributes(detail)["autoNotifyEnabled"] as? Bool == false else {
+            throw ExternalStatusError("Start testing requires only the existing Internal and Friends groups with auto-notify off.")
+        }
+        let internalID = try ExternalStatus.id(internalGroups[0])
+        let internalMembers = try await invitedMembers(internalID), friends = try await invitedMembers(groupID)
+        guard (1...5).contains(friends.count) else { throw ExternalStatusError("Routine delivery requires one to five existing friends.") }
+        let approvedIDs = internalMembers.union(friends)
+        let individuals = try await list("builds/\(buildID)/individualTesters", ["fields[betaTesters]": "state"])
+        guard try individuals.allSatisfy({ approvedIDs.contains(try ExternalStatus.id($0)) }) else {
+            throw ExternalStatusError("The build has an individual tester outside the existing groups.")
+        }
+        let state = ExternalStatus.attributes(detail)["externalBuildState"] as? String ?? "UNKNOWN"
+        if state == "BETA_APPROVED" {
+            _ = try await write("POST", "buildBetaNotifications", type: "buildBetaNotifications",
+                                relationships: ["build": relation("builds", buildID)])
+        }
+        let after = ExternalStatus.resource(try await get("builds/\(buildID)/buildBetaDetail"))
+        let afterState = ExternalStatus.attributes(after)["externalBuildState"] as? String ?? "UNKNOWN"
+        guard ["READY_FOR_BETA_TESTING", "IN_BETA_TESTING"].contains(afterState),
+              try await invitedMembers(internalID) == internalMembers,
+              try await invitedMembers(groupID) == friends else {
+            throw ExternalStatusError("Testing state or unchanged membership did not read back; inspect status before retrying.")
+        }
+        return ["action": "start", "unchanged": state != "BETA_APPROVED", "externalState": afterState,
+                "externalTesterCount": friends.count, "internalTesterCount": internalMembers.count]
     }
 
     private func invite(_ emails: [String], groupID: String) async throws -> [String: Any] {

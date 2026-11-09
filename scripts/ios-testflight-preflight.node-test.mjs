@@ -12,6 +12,32 @@ import { fileURLToPath } from "node:url";
 
 const scriptsDir = fileURLToPath(new URL("../.agents/skills/ios-testflight/scripts/", import.meta.url));
 
+test("upload and signing checks default to eligibility for both groups, with an explicit internal opt-out", () => {
+  const probe = `
+import importlib.util, json, pathlib, sys
+sys.dont_write_bytecode = True
+sys.path.insert(0, sys.argv[1])
+spec = importlib.util.spec_from_file_location('upload', pathlib.Path(sys.argv[1]) / 'upload.py')
+module = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(module)
+calls = []
+module.prepare = lambda archive, config, audience: calls.append(['prepare', audience])
+module.invoke = lambda action, archive, config, audience: calls.append([action, audience]) or 0
+for args in ([], ['--upload'], ['--check-signing']):
+    for audience in ([], ['--audience', 'internal'], ['--audience', 'external']):
+        calls.clear()
+        sys.argv = ['upload.py', '/not-a-real-archive', *args, *audience]
+        module.main()
+        expected = audience[-1] if audience else 'external'
+        assert calls[0] == ['prepare', expected], calls
+        if args:
+            assert calls[1] == ['upload' if args[0] == '--upload' else 'export', expected], calls
+print('Audience defaults and opt-out passed')
+`;
+  const result = spawnSync("python3", ["-c", probe, scriptsDir], { encoding: "utf8" });
+  assert.equal(result.status, 0, result.stderr);
+});
+
 const FOUR = [
   "UIInterfaceOrientationPortrait",
   "UIInterfaceOrientationPortraitUpsideDown",

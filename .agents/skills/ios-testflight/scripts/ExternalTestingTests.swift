@@ -13,6 +13,9 @@ private final class FakeApple {
     var accountTesters = [[String: Any]]()
     var autoNotify = true
     var dropWrites = false
+    var extraGroup = false
+    var individuals = [[String: Any]]()
+    var internalTesters: [[String: Any]] = [["id": "internal-tester", "attributes": ["state": "INSTALLED"]]]
 
     func send(_ method: String, _ path: String, _ query: [String: String], _ body: [String: Any]?) async throws -> [String: Any] {
         calls.append(method + " " + path)
@@ -45,6 +48,13 @@ private final class FakeApple {
             precondition(attrs["autoNotifyEnabled"] as? Bool == false)
             if !dropWrites { autoNotify = false }; return [:]
         case ("GET", "apps/6828712684/betaGroups"): return ["data": group.map { [$0] } ?? []]
+        case ("GET", "betaGroups"):
+            precondition(query["filter[builds]"] == "build")
+            var groups = [group!, ["id": "internal", "attributes": ["isInternalGroup": true, "name": "AskHuman Internal"]]]
+            if extraGroup { groups.append(["id": "other", "attributes": ["isInternalGroup": false]]) }
+            return ["data": groups]
+        case ("GET", "betaGroups/internal/betaTesters"): return ["data": internalTesters]
+        case ("GET", "builds/build/individualTesters"): return ["data": individuals]
         case ("POST", "betaGroups"):
             precondition(attrs["isInternalGroup"] as? Bool == false && attrs["publicLinkEnabled"] as? Bool == false)
             group = ["id": "friends", "attributes": attrs]; return ["data": group!]
@@ -70,9 +80,12 @@ private final class FakeApple {
             if !dropWrites { testers[index]["attributes"] = ExternalStatus.attributes(testers[index]).merging(["state": "INVITED"]) { _, new in new } }
             return [:]
         case ("POST", "betaGroups/friends/relationships/builds"):
-            precondition(!autoNotify && testers.isEmpty)
+            precondition(!autoNotify)
             precondition(body?["data"] as? [[String: String]] == [["type": "builds", "id": "build"]])
-            assigned = true; return [:]
+            if !dropWrites { assigned = true }; return [:]
+        case ("POST", "buildBetaNotifications"):
+            precondition(state == "BETA_APPROVED" && !autoNotify)
+            if !dropWrites { state = "IN_BETA_TESTING" }; return [:]
         case ("POST", "betaAppReviewSubmissions"):
             precondition(((data["relationships"] as! [String: Any])["build"] as! [String: Any])["data"] as? [String: String] == ["type": "builds", "id": "build"])
             state = "WAITING_FOR_BETA_REVIEW"; return [:]
@@ -164,6 +177,43 @@ enum ExternalTestingTests {
         invitationFailure.state = "BETA_APPROVED"; invitationFailure.dropWrites = true
         await refuses { _ = try await failingAPI.run(invite) }
         precondition(invitationFailure.mutations.filter { $0 == "POST betaTesterInvitations" }.count == 1)
+        let update = try ExternalRequest(["mode": "update", "build": "10"])
+        let start = try ExternalRequest(["mode": "start", "build": "10"])
+        let routine = FakeApple(), routineAPI = ExternalTesting(send: routine.send)
+        await refuses { _ = try await routineAPI.run(update) }
+        precondition(routine.mutations.isEmpty)
+        _ = try await routineAPI.run(group)
+        routine.assigned = false; routine.autoNotify = true
+        routine.testers = [["id": "friend", "attributes": ["state": "INSTALLED"]]]
+        let beforeUpdate = routine.mutations.count
+        _ = try await routineAPI.run(update)
+        precondition(routine.assigned && !routine.autoNotify)
+        precondition(routine.mutations.dropFirst(beforeUpdate) == ["PATCH buildBetaDetails/detail", "POST betaGroups/friends/relationships/builds"])
+        let afterUpdate = routine.mutations.count
+        _ = try await routineAPI.run(update)
+        precondition(routine.mutations.count == afterUpdate)
+        await refuses { _ = try await routineAPI.run(start) }
+        precondition(routine.mutations.count == afterUpdate)
+        routine.state = "BETA_APPROVED"; routine.extraGroup = true
+        await refuses { _ = try await routineAPI.run(start) }
+        routine.extraGroup = false; routine.individuals = [["id": "outsider"]]
+        await refuses { _ = try await routineAPI.run(start) }
+        precondition(routine.mutations.count == afterUpdate)
+        routine.individuals = []
+        _ = try await routineAPI.run(start)
+        precondition(routine.state == "IN_BETA_TESTING" && !routine.autoNotify)
+        let afterStart = routine.mutations.count
+        _ = try await routineAPI.run(start)
+        precondition(routine.mutations.count == afterStart)
+        precondition(routine.mutations.filter { $0 == "POST buildBetaNotifications" }.count == 1)
+        precondition(routine.mutations.filter { $0 == "POST betaTesterInvitations" }.isEmpty)
+        routine.assigned = false; routine.testers[0]["attributes"] = ["state": "NOT_INVITED"]
+        await refuses { _ = try await routineAPI.run(update) }
+        precondition(routine.mutations.count == afterStart)
+        routine.testers[0]["attributes"] = ["state": "INVITED"]
+        routine.autoNotify = true; routine.dropWrites = true
+        await refuses { _ = try await routineAPI.run(update) }
+        precondition(!routine.assigned)
         print("External mutation scope, approval gates, read-back and retry checks passed")
     }
 }

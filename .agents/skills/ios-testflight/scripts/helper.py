@@ -127,9 +127,11 @@ def install(root):
           + (" The previous helper is kept as testflight-helper.previous." if kept else ""))
 
 
-def invoke(action, archive, config, request=None, audience="internal"):
+def invoke(action, archive, config, request=None, audience=None):
     import plistlib
 
+    if audience is None:
+        audience = "external" if action in ("upload", "export") else "internal"
     if audience not in ("internal", "external") or (audience != "internal" and action not in ("upload", "export")):
         raise ValueError("Only upload/export accept a TestFlight audience (internal or external).")
     binary = config.parent / "testflight-helper"
@@ -146,8 +148,7 @@ def invoke(action, archive, config, request=None, audience="internal"):
         args = [str(binary), "--config", str(config), "--result", str(result), action]
         if archive is not None:
             args.append(str(archive.resolve()))
-            if audience != "internal":
-                args.append(audience)
+            args.append(audience)
         if request is not None:
             # The request travels in an owner-only file inside this throwaway directory, never in argv or the environment.
             request_file = folder / "request.json"
@@ -216,7 +217,8 @@ def main():
     parser.add_argument("action", choices=["install", "migrate", "status", "external-status", "contact-sources", "external", "export", "upload", "notes"])
     parser.add_argument("archive", nargs="?", type=Path)
     parser.add_argument("--config", type=Path, default=Path.home() / ".config/askhuman-release/app-store-connect.json")
-    parser.add_argument("--audience", choices=("internal", "external"), default="internal")
+    parser.add_argument("--audience", choices=("internal", "external"), default=None,
+                        help="Upload/export default to external for internal and external delivery.")
     parser.add_argument("--request", type=Path, help="Private JSON request for a bounded external testing operation")
     notes = parser.add_argument_group("notes", "read, write or probe a build's TestFlight test information")
     notes.add_argument("--build", help="build number (CFBundleVersion)")
@@ -226,13 +228,13 @@ def main():
     notes.add_argument("--dry-run", action="store_true", help="validate and describe the request without contacting anything")
     args = parser.parse_args()
     config = args.config.expanduser().resolve()
-    if args.audience != "internal" and args.action not in ("upload", "export"):
-        parser.error("--audience external only applies to upload/export.")
+    if args.audience is not None and args.action not in ("upload", "export"):
+        parser.error("--audience only applies to upload/export.")
     if args.action != "notes" and any([args.build, args.mode, args.zh, args.en, args.dry_run]):
         parser.error("--build, --mode, --zh, --en and --dry-run only apply to the notes action.")
     if args.action == "external":
         if args.archive is not None or args.request is None:
-            parser.error("external requires --request and no archive; use metadata, group, submit or invite in its JSON mode.")
+            parser.error("external requires --request and no archive; use metadata, group, update, submit, start or invite in its JSON mode.")
         if args.request.stat().st_size > 65536:
             parser.error("External testing requests may not exceed 64 KiB.")
         request = json.loads(args.request.read_text(encoding="utf-8"))

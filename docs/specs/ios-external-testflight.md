@@ -11,7 +11,7 @@
 
 ## 分发与资料
 
-- 原内部流程保持默认；Python 与 Swift 均只接受 `internal` / `external`。外部模式只改临时导出选项，持久配置仍必须 internal-only。
+- 2026-11-09 用户决定日常发布默认同时覆盖现有 Internal 与 Friends 组；上传默认 external eligibility，同一构建供两组使用。只有明确要求仅内部才用 `--audience internal`；Python 与 Swift 均只接受 `internal` / `external`。外部模式只改临时导出选项，持久配置仍必须 internal-only。
 - 外测构建必须 `VALID`、未过期、`APP_STORE_ELIGIBLE`、出口加密声明已解决。已有 `INTERNAL_ONLY` 构建不能转用。
 - 中英文隐私政策和接入指南来自四份显式公开文档，构建脚本清空专用输出再渲染；仅手动 Pages 发布。
 - Macs 页「关于」按 App 语言打开隐私 / 接入链接。首次外测交付前必须核实实际 HTTPS 页面可达。
@@ -27,6 +27,8 @@
 |---|---|
 | metadata | 仅 en-US / zh-Hans Beta 描述、反馈和页面链接，以及本应用审核联系人 / 无演示账号声明 / 备注；差异更新，完整读回 |
 | group | 私密外部组、手动分配构建；分配前关闭并读回自动通知；已有测试者时拒绝加入新的构建 |
+| update | 日常更新只向既有私密 Friends 组追加构建；1–5 位成员均须已邀请；关闭并读回新构建自动通知，追加前后成员 ID 不变，不重新邀请 |
+| start | 审核通过后开启测试；仅既有 Internal / Friends 两组、已邀请成员，无组外个别测试者；仅 BETA_APPROVED 发一次构建通知，读回可测试状态、成员不变 |
 | submit | 构建已分配、资料齐全、状态允许才提交；已排队 / 已审核不重复提交，结果读回 |
 | invite | 审核已通过；仅指定邮箱，首批总量 ≤5；验证邮箱一致性，复用既有 tester，只改本组；NOT_INVITED 才发指定 tester + app 的邮件，读回邀请状态 |
 
@@ -44,7 +46,6 @@
 
 ## 验证与运维
 
-`scripts/ios-testflight-external.node-test.mjs` 编译真实 Swift 规则并注入伪 Apple transport，覆盖默认内部 /
-显式外部、资料幂等读回、范围限制、分组通知闸门、审核状态、五人上限、复用测试者、邀请去重和失败状态。
+`scripts/ios-testflight-external.node-test.mjs` 编译真实 Swift 规则并注入伪 Apple transport，覆盖默认内外同时交付 / 显式仅内部、现有组更新和开启测试、资料幂等读回、范围限制、分组通知闸门、审核状态、五人上限、复用测试者、邀请去重和失败状态。
 旧 changes / notes / archive preflight 回归一起运行。真实 Apple 核验通过已安装 helper 只读操作完成；
 未获批准的邀请不作为测试。操作命令与修复边界见[外测手册](../../.agents/skills/ios-testflight/references/external-testing.md)。

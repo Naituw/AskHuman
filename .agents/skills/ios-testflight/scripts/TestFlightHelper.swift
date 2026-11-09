@@ -310,7 +310,7 @@ private func isShippedDeviceFamily(_ value: Any?) -> Bool {
     return numbers.map(\.intValue).sorted() == [1, 2]
 }
 
-private func exportArchive(_ archive: URL, root: URL, config: [String: Any], upload: Bool, audience: TestFlightAudience = .internal) throws -> Int32 {
+private func exportArchive(_ archive: URL, root: URL, config: [String: Any], upload: Bool, audience: TestFlightAudience = .external) throws -> Int32 {
     let lockFD = open(root.appendingPathComponent("testflight-upload.lock").path, O_CREAT | O_RDWR, 0o600)
     guard lockFD >= 0 else { throw Failure("Cannot open the upload lock.") }
     defer { close(lockFD) }
@@ -448,7 +448,7 @@ private enum TestFlightHelper {
                 try await notes(config, root: root, request: try NotesRules.loadRequest(path: args[6]))
             case "upload", "export":
                 guard args.count == 7 || args.count == 8,
-                      let audience = TestFlightAudience(rawValue: args.count == 8 ? args[7] : "internal") else {
+                      let audience = TestFlightAudience(rawValue: args.count == 8 ? args[7] : "external") else {
                     throw Failure("An archive and a valid TestFlight audience (internal or external) are required.")
                 }
                 code = try exportArchive(URL(fileURLWithPath: args[6]), root: root, config: config,

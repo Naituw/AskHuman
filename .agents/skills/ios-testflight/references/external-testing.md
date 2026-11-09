@@ -1,6 +1,6 @@
 # External TestFlight for friends
 
-Use only when the task explicitly requests external delivery. The first cohort is one to five developer friends, each with their own Mac, agents and EMQX. The maintainer provides the existing relay. No public joining link, new account platform or demo mode was requested. This is Beta App Review, not an App Store release.
+Read for default internal-and-external delivery, or for an explicit external-testing task. An explicit internal-only request skips this workflow. The first cohort is one to five developer friends, each with their own Mac, agents and EMQX. The maintainer provides the existing relay. No public joining link, new account platform or demo mode was requested. This is Beta App Review, not an App Store release.
 
 ## Inspect before acting
 
@@ -22,7 +22,7 @@ python3 .agents/skills/ios-testflight/scripts/helper.py contact-sources
 
 ## Build and upload
 
-Follow the skill's clean source commit, baseline, machine-health, archive, notes and local-tag rules. Re-query the latest Apple build immediately before choosing the next number. Never reuse an internal-only build: Apple marks it `INTERNAL_ONLY`, and it cannot be converted for external testing.
+Follow the skill's clean source commit, baseline, machine-health, archive, notes and local-tag rules. Re-query the latest Apple build immediately before choosing the next number. Uploads default to `--audience external`; use `--audience internal` only when the owner explicitly requests internal-only delivery. Never reuse an internal-only build: Apple marks it `INTERNAL_ONLY`, and it cannot be converted for external testing.
 
 ```sh
 # Preflight only; credentials are not read:
@@ -46,15 +46,17 @@ python3 .agents/skills/ios-testflight/scripts/helper.py external --request /priv
 The request's `mode` selects one operation. Other fields or app IDs are rejected before credentials are read. The example build `10` is illustrative; use the actual just-uploaded build.
 
 1. `metadata`: exact locales `en-US` and `zh-Hans`, each with `description`, `feedbackEmail`, `privacyPolicyUrl`, `marketingUrl`; `review` with `contactFirstName`, `contactLastName`, `contactPhone`, `contactEmail`, `notes`, `demoAccountRequired: false`. Plain text, at most 4000 UTF-16 units, HTTPS public URLs. Existing fields are compared; only changed fields are patched, missing locales created, and every supplied value read back. No demo password is supplied or overwritten.
-2. `{"mode":"group","build":"10"}` creates or reuses **AskHuman Friends** in app **6828712684**. The group must be external, public links off, manual build access. It disables and reads back auto-notify before assigning the build. Adding a new build to a group that already has testers is refused: later cohort updates need a separately authorized workflow.
-3. Write both build notes using the original `notes` command. Then `{"mode":"submit","build":"10"}` requires the build already in the group and complete Beta metadata. It submits only from `READY_FOR_BETA_SUBMISSION`. Waiting/in-review/approved/testing states are returned without another POST; submission is read back. Network errors stop; inspect the state before another attempt.
-4. **Only after approval and an explicitly provided recipient list**, `{"mode":"invite","build":"10","emails":["friend@example.com"]}` adds exact authorized emails. Existing testers in other apps can be reused but only this group's membership changes. Total cohort size is capped at five. With auto-notify off, the helper sends a tester-specific invitation only from `NOT_INVITED`; `INVITED`, `ACCEPTED`, `INSTALLED` are preserved without re-sending. Unknown/revoked/unconfirmed states stop for inspection. The helper does not send general email or create App Store Connect users.
+2. `{"mode":"group","build":"10"}` creates or reuses **AskHuman Friends** in app **6828712684**. The group must be external, public links off, manual build access. It disables and reads back auto-notify before assigning the build. Adding a new build to a group that already has testers is refused: routine delivery uses `update` below instead.
+3. For an existing audience, `{"mode":"update","build":"10"}` requires the one existing private Friends group with one to five already invited members. It disables and reads back automatic notification for the new build, appends that build only, and verifies unchanged membership. It never creates a group, invites anyone or changes public links. A routine delivery request authorizes this update to the existing audience.
+4. Write both build notes using the original `notes` command. Then `{"mode":"submit","build":"10"}` requires the build already in the group and complete Beta metadata. It submits only from `READY_FOR_BETA_SUBMISSION`. Waiting/in-review/approved/testing states are returned without another POST; submission is read back. Network errors stop; inspect the state before another attempt.
+5. After approval, `{"mode":"start","build":"10"}` starts testing for the existing Internal and Friends groups. It requires auto-notify off, only those two assigned groups, already invited members and no individual tester outside them. It sends at most one build notification from `BETA_APPROVED` and reads back a testable state without changing membership or auto-notify. If already testing it does not send again. Final status must show both groups `IN_BETA_TESTING`.
+6. **Only after approval and an explicitly provided recipient list**, `{"mode":"invite","build":"10","emails":["friend@example.com"]}` adds exact authorized emails. Existing testers in other apps can be reused but only this group's membership changes. Total cohort size is capped at five. With auto-notify off, the helper sends a tester-specific invitation only from `NOT_INVITED`; `INVITED`, `ACCEPTED`, `INSTALLED` are preserved without re-sending. Unknown/revoked/unconfirmed states stop for inspection. The helper does not send general email or create App Store Connect users.
 
 Do not run an example against Apple. Prepare the real private request, inspect it, then execute the authorized operation. Each modifying operation holds the same exclusive lock as upload/notes. Partial results are not rolled back or blindly retried: read current state first.
 
 ## Completion and recovery
 
-Keep these milestones separate: uploaded/VALID; external eligible; submitted; approved; invited; accepted; installed; actual pairing/foreground answer/production push working. Do not mark delivery complete solely because Apple accepted an upload or a tester was added to a group. The first friend verifies their own setup; do not start paid model calls to simulate their acceptance.
+Keep these milestones separate: uploaded/VALID; external eligible; submitted; approved; invited; accepted; installed; actual pairing/foreground answer/production push working. Routine delivery is complete only when both existing groups can test the build; actual installation and pairing remain separate. Do not mark delivery complete solely because Apple accepted an upload or a tester was added to a group. The first friend verifies their own setup; do not start paid model calls to simulate their acceptance.
 
 A 401/403, Apple agreement, identity verification or reviewer request for a different review strategy goes to the owner. Do not broaden privileges, accept legal terms, provide a new demo mode or host a shared broker without agreement. Record waiting state and the exact next step in `docs/PROGRESS.md`; do not create a monitor unless requested.
 

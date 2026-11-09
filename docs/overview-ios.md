@@ -127,9 +127,9 @@ CI（`.github/workflows/build.yml`）只跑上表的「Swift 包」与「中继�
 
 ## TestFlight 分发与朋友内测
 
-日常交付默认内部测试，构建号由本地 `ios-testflight-N` 标签和 Apple 状态共同确定；流程在
-[项目 skill](../.agents/skills/ios-testflight/SKILL.md)。朋友外测必须显式 `--audience external`：
-上传、Beta 审核与邮箱邀请是独立步骤，`VALID` 不代表审核通过。受限 helper 的实现与完成条件见
+日常交付默认同时提供内部与外部测试（2026-11-09 用户决定），构建号由本地 `ios-testflight-N` 标签和 Apple 状态共同确定；流程在
+[项目 skill](../.agents/skills/ios-testflight/SKILL.md)。默认上传可外测的同一构建，内部组自动接收、原有朋友组追加构建并完成审核和开启测试；只有明确要求仅内部时才用 `--audience internal`。
+上传、Beta 审核、开启测试与邮箱邀请是独立步骤，日常更新沿用现有成员及邀请；`VALID` 不代表审核通过。受限 helper 的实现与完成条件见
 [外测规格](specs/ios-external-testflight.md)，执行证据与待处理输入见[计划](plans/ios-external-testflight.md)。
 
 Macs 页「关于」提供隐私政策与内测接入指南，按 App 语言选中英文。
@@ -147,7 +147,7 @@ GitHub Pages 工作流只允许手动触发。页面必须先上线、核实实�
 
 - **开发者模式的窗口规则**（`docs/specs/ios-developer-mode.md` §5.5）：窗口层级相对主窗口——到达动效 +1、浮动按钮 +2、快速添加页 +3。**按钮窗口不得 `makeKeyAndVisible`**（只设 `isHidden = false`，`canBecomeKey = false`）：成为 key 会让正在编辑的输入框失去键盘；它的 `hitTest` 只在按钮上返回视图，其余触摸原样穿透；菜单是按钮的系统 `UIMenu`，由系统呈现在所有窗口之上、不属于任何 App 窗口（所以没有收起层，也不会抢走键盘）。只有快速添加窗口会成为 key（要弹键盘），所以它的收尾 `QuickTodoPresenter.finish` 是**唯一的出口**（取消、添加成功、系统下拉、关开关、场景结束都走它），必须把主窗口恢复为 key、让原来的第一响应者重新编辑。拖动与菜单谁先到由系统决定（按下后立刻移动 = 拖动，按住不动 = 菜单），没有手势常量；`DeveloperMetrics` 放按钮直径、贴边与空闲降透明。`AskHumanDeveloperUITests` 守着这些（盖住 sheet 与它的键盘、盖住图片查看器、与到达动效共存、焦点恢复）。
 - **隔离**：任何隔离运行的 Mac / daemon 必须设置 `ASKHUMAN_HOME`（只改 `HOME` 时 daemon 标签虽已独立，但 GUI Host 登录项与 Agent hook 文件仍会碰到真实环境）；测试台在启动前断言它位于临时目录。
-- **IPC 协议号**：当前为 5（`ClientMsg::Ios` / `ServerMsg::Ios` 是 4 带来的，离开模式的 `ClientMsg::Away` / `ServerMsg::Away` 并入未发布的 5）。给 `IosOp` / `IosResult` 加带 `#[serde(default)]` 的字段不 +1；规则见 `docs/overview.md` 的「IPC 协议号」。手机线协议自己的 `PROTO` 没动：离开模式与快捷回复只加了可选字段与新消息，能力靠 `Caps` 位协商。
+- **IPC 协议号**：当前为 5（`ClientMsg::Ios` / `ServerMsg::Ios` 是 4 带来的，离开模式的 `ClientMsg::Away` / `ServerMsg::Away` 在 0.17.0 发布前并入 5，现已发布）。给 `IosOp` / `IosResult` 加带 `#[serde(default)]` 的字段不 +1；规则见 `docs/overview.md` 的「IPC 协议号」。手机线协议自己的 `PROTO` 没动：离开模式与快捷回复只加了可选字段与新消息，能力靠 `Caps` 位协商。
 - **线协议**：`ios/wire.rs` 与 `AHProtocol` 的限额常量（信封 ≤ 900,000 B、分块 192 KB、附件 ≤ 10 MB、每次回复 ≤ 5 个附件、令牌桶 6/s 突发 10、Follow ≤ 5、任务正文 ≤ 3000 字、插话 ≤ 20,000 字、Watch 间隔 ≥ 2 s 且每手机 ≤ 2 路）两边必须一致；改任何一边先改夹具。
 - **幂等**：状态变更消息（回答、插话、`task.create` 等）按 `msgId` 进幂等日志，重放返回同一结果、同 ID 不同内容被拒绝。
 - **「活着」的手机**：Gateway 只向「在线 + 前台 + 已 hello」的手机实时投递。App 在首次同步之后才发布前台状态，所以 hello 与前台状态之间的变化（新请求、Agent、Follow）不会被实时发出；`Actor::on_presence` 在手机由此变为「活着」时补发四个快照。改动这一段先看 `tests_requests` / `tests_agents` 里 `…between_hello_and_the_foreground_presence…` 两个用例。

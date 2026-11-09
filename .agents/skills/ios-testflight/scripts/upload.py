@@ -74,7 +74,7 @@ def inspect_archive(archive):
     return info["CFBundleShortVersionString"], info["CFBundleVersion"]
 
 
-def prepare(archive, config_path, audience="internal"):
+def prepare(archive, config_path, audience="external"):
     if audience not in ("internal", "external"):
         raise ValueError("Audience must be internal or external.")
     root = config_path.parent
@@ -101,10 +101,10 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("archive", type=Path)
     parser.add_argument("--config", type=Path, default=Path.home() / ".config/askhuman-release/app-store-connect.json")
-    parser.add_argument("--audience", choices=("internal", "external"), default="internal",
-                        help="Default: internal. External permits Beta App Review; it does not submit or invite anyone.")
+    parser.add_argument("--audience", choices=("internal", "external"), default="external",
+                        help="Default: external, for both existing Internal and Friends groups. Internal is an explicit opt-out; upload alone does not submit or invite anyone.")
     mode = parser.add_mutually_exclusive_group()
-    mode.add_argument("--upload", action="store_true", help="Upload for the explicitly selected TestFlight audience")
+    mode.add_argument("--upload", action="store_true", help="Upload for the configured TestFlight audience")
     mode.add_argument("--check-signing", action="store_true", help="Export locally without uploading to Apple")
     args = parser.parse_args()
     archive, config = args.archive.resolve(), args.config.expanduser().resolve()

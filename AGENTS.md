@@ -42,6 +42,8 @@ For remote iPhone installation or a new internal TestFlight build, use the proje
 Keychain-backed signing helper, build/upload commands, and phone-side verification. Reuse that setup
 for routine updates; credentials stay outside the repository.
 
+Routine TestFlight publication defaults to both existing Internal and Friends groups, including Beta review and starting testing. Use internal-only distribution only when explicitly requested. Keep existing testers and invitations; do not add recipients or enable public links for a routine update.
+
 ## Changing IPC messages
 
 Before editing the message types in [`src-tauri/src/ipc/mod.rs`](src-tauri/src/ipc/mod.rs) (`ClientMsg`, `ServerMsg` and their payloads), read the [“IPC 协议号”](docs/overview.md#ipc-协议号protocol_version) section of `docs/overview.md`. It says which changes must bump `PROTOCOL_VERSION` and which must not, and what to update when you bump. In short: an additive field with `#[serde(default)]` never bumps; a new enum variant an older peer can receive, or any change an older peer would misread, always does. A daemon may serve clients of the same protocol number but a different build, so “same number” has to keep meaning “can talk”.

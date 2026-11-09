@@ -1,17 +1,17 @@
 ---
 name: ios-testflight
-description: Build, upload, and deliver AskHuman Mobile updates through internal or explicitly requested external TestFlight. Use for remote iOS updates, friend beta invitations, Beta App Review, or troubleshooting this project's TestFlight delivery.
+description: Build, upload, and deliver AskHuman Mobile updates through both internal and external TestFlight by default. Use for remote iOS updates, friend beta invitations, Beta App Review, or troubleshooting this project's TestFlight delivery.
 ---
 
 # iOS TestFlight
 
-Deliver the requested iOS revision through the existing TestFlight setup. Internal delivery is the default. For external testing, first read [references/external-testing.md](references/external-testing.md); it adds explicit audience selection, review materials, submission and invitation gates to the build steps below. An explicit request to install or deliver a new version authorizes the upload to this existing audience; a code review or build-only request does not. Reuse the configured credentials and signing identity.
+Deliver the requested iOS revision through the existing TestFlight setup. Internal and external delivery to the existing groups is the default (owner decision, 2026-11-09). Only an explicit internal-only request opts out of external delivery. First read [references/external-testing.md](references/external-testing.md); it adds review materials, submission, existing-group updates and invitation gates to the build steps below. An explicit request to install or deliver a new version authorizes upload, review submission and starting testing for these existing audiences; a code review or build-only request does not. Reuse the configured credentials and signing identity.
 
 ## Established setup
 
 - App Store Connect: **AskHuman Mobile**, App ID **6828712684**.
 - Installed display name: **AskHuman**; bundle ID **com.naituw.humaninloop.ios**; team **DMJXDB9H6Q**.
-- Internal group: **AskHuman Internal**, automatically receiving subsequent builds. Uploads default to internal-only; internal delivery needs no external review or App Store submission. External delivery must use `--audience external` and pass Beta App Review.
+- Internal group: **AskHuman Internal**, automatically receiving subsequent builds. The external group is **AskHuman Friends**. Uploads default to external eligibility so the same build can serve both groups; complete Beta App Review and start testing for Friends. `--audience internal` is only for an explicit internal-only request and needs no external review.
 - Baselines: every delivered build N has a local annotated tag `ios-testflight-N` on its source commit (build 2 predates the tags). Tags are not pushed. They are what lets `changes.mjs` list what a new build adds.
 - Local non-secret configuration: `~/.config/askhuman-release/app-store-connect.json` (`keyId`, `issuerId`, `credentialBackend=keychain`) and `testflight-export-options.plist`.
 - Credentials live in the login Keychain under service `com.naituw.askhuman.testflight`. The fixed, Developer ID-signed `testflight-helper` is authorized to use them. The distribution signing key stays in `testflight-signing.keychain-db`; its unlock password also lives in the login Keychain.
@@ -46,7 +46,7 @@ Paths below are relative to the repository root. Set `SKILL_DIR=.agents/skills/i
      CURRENT_PROJECT_VERSION=<next-build-number>
    ```
 
-   Use separate build/archive paths if another task is using these outputs. Require `ARCHIVE SUCCEEDED`. The project controls the marketing version; do not bump it just to upload an internal update. Record `git rev-parse HEAD` of the tree you archive from; step 9 verifies it did not move.
+   Use separate build/archive paths if another task is using these outputs. Require `ARCHIVE SUCCEEDED`. The project controls the marketing version; do not bump it just to upload a TestFlight update. Record `git rev-parse HEAD` of the tree you archive from; step 9 verifies it did not move.
 5. Inspect the actual archive and signing inputs without uploading:
 
    ```sh
@@ -61,7 +61,7 @@ Paths below are relative to the repository root. Set `SKILL_DIR=.agents/skills/i
    ```
 
    The signed helper reads Keychain items in the user's GUI security session, unlocks the dedicated signing keychain in memory, and permits one export at a time. Xcode requires a key-file path: the helper creates a transient `0600` file outside the project and removes it on completion, failure, or interruption. It also restores its signing-keychain search-list addition. Require `EXPORT SUCCEEDED`; preserve the output log when diagnosing failures.
-7. Check `status.mjs` after upload. Allow Apple time to process; check again after 30–60 seconds initially and back off if unchanged. Completion requires the build to be **VALID**, present in the internal group, and the intended tester invited/accepted/installed. Upload progress at 100% alone is insufficient. If Apple reports INVALID/FAILED or the state does not advance, report the concrete state and investigate it before another upload; write no notes and create no tag for such a build.
+7. Check `status.mjs` and `helper.py external-status` after upload. Allow Apple time to process; check again after 30–60 seconds initially and back off if unchanged. Completion requires the build to be **VALID**, present in the internal group, and the intended tester invited/accepted/installed. For default delivery also require external eligibility, append the build to the existing Friends group with `update`, complete Beta App Review with `submit`, and use `start` after approval as described in the external reference. Do these after writing the notes in step 8. Both groups must reach `IN_BETA_TESTING` before reporting internal and external availability. Upload progress at 100% alone is insufficient. If Apple reports INVALID/FAILED or the state does not advance, report the concrete state and investigate it before another upload; write no notes and create no tag for such a build.
 8. Once the build is VALID, write the test notes drafted in step 3 (as the user edited them, if they reviewed them first; private temporary files, deleted afterwards) and let the helper read them back:
 
    ```sh
@@ -89,7 +89,7 @@ TestFlight shows them under the build, in Simplified Chinese (`zh-Hans`) and Eng
 - When the login Keychain is unlocked, the approved helper can work while the screen is locked. A locked login Keychain, missing item, or changed authorization must fail promptly and be resolved through the user. Do not enable access for all applications, use ad-hoc signing, or fall back to plaintext files.
 - Rebuilding the helper with its established identifier and Developer ID preserves Keychain authorization. Use `python3 "$SKILL_DIR/scripts/helper.py" install` when a reviewed helper update is needed; it keeps the replaced binary as `testflight-helper.previous`, and renaming that file back undoes the update. Ordinary uploads reuse the installed binary. After a helper change, check `status.mjs`, `upload.py <archive> --check-signing`, and `helper.py notes --mode read`; if the notes write path changed, exercise it with `notes --mode probe` once against an already delivered VALID build that has no notes (it writes a marker text, reads it back, and deletes it). Never write real text to any build except the one just delivered. For credential repair, read the recovery reference first.
 - A force-killed process cannot run cleanup; the next exclusive export removes stale helper-owned temporary directories. Keep the credential directory `0700` and temporary key files `0600`. The helper never writes temporary credentials into the project.
-- Preserve the existing bundle ID, team, and shared keychain group so an update retains pairing identity. Do not create an external/public group or add other testers without a request covering that audience.
+- Preserve the existing bundle ID, team, and shared keychain group so an update retains pairing identity. Routine delivery reuses the existing Internal and Friends groups and their invited members; it never adds or re-invites testers or enables public links. Creating a group or inviting a new tester still needs a request covering that audience.
 - For missing/expired credentials, certificate/profile failures, or initial setup on another Mac, read [references/signing-and-recovery.md](references/signing-and-recovery.md). Do not revoke unrelated certificates or increase API privileges to get past a failure.
 - Release builds use production APNs. A successful foreground connection is useful evidence, but does not replace the separate real-device push/network matrix tracked in `docs/PROGRESS.md`.
 - After delivery, update only the appropriate implementation record and genuinely completed progress items. Keep secrets and machine-specific configuration outside the repository.
