@@ -28,7 +28,7 @@ const missing = computed(() => {
   if (windows.some(w => w.phase === "error")) names.push("completion");
   if (windows.some(w => w.retention?.state === "unavailable")) names.push("retention");
   if (windows.some(({stall}) => stall?.state === "unavailable" ||
-    (stall?.state === "active" && (stall.timeoutMs !== 300000 || stall.retryWindowMs !== 600000)))) names.push("stall");
+    (stall?.state === "active" && (stall.timeoutMs !== 300000 || (stall.retryWindowMs ?? 0) < 600000)))) names.push("stall");
   return names;
 });
 const statusText = computed(() => {

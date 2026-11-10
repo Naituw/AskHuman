@@ -97,22 +97,12 @@
         if (socket.readyState !== WebSocket.OPEN) return reject(new Error("Agent Host inspector is closed"));
         pending.set(id, { method, resolve, reject });
         socket.send(JSON.stringify({ id, method, params }), error => { if (error) reject(error); });
-      }), 1100, `Agent Host inspector ${method} timed out`).finally(() => pending.delete(id));
+      }), 3000, `Agent Host inspector ${method} timed out`).finally(() => pending.delete(id));
     }
     const evaluate = (expression, returnByValue = true) => send("Runtime.evaluate", {
       expression, returnByValue,
     }).then(reply => returnByValue ? reply.result?.value : reply.result?.objectId);
     const properties = objectId => send("Runtime.getProperties", { objectId, ownProperties: true });
-    async function scope(objectId, name) {
-      const scopes = (await properties(objectId)).internalProperties?.find(item => item.name === "[[Scopes]]");
-      if (!scopes?.value?.objectId) throw new Error("Agent Host module scope is unavailable");
-      for (const slot of (await properties(scopes.value.objectId)).result) {
-        if (!/^\d+$/.test(slot.name) || !slot.value?.objectId) continue;
-        const item = (await properties(slot.value.objectId)).result.find(value => value.name === name);
-        if (item?.value?.objectId) return item.value.objectId;
-      }
-      throw new Error("Agent Host module binding is unavailable");
-    }
     async function frame(cache, moduleId, key, expression) {
       const { result } = await send("Runtime.callFunctionOn", {
         objectId: cache, functionDeclaration: "function(id) { return this[id]?.exports; }",
@@ -148,7 +138,7 @@
         const invoke = send("Runtime.callFunctionOn", {
           objectId: target, functionDeclaration: "function(key) { void this[key]; }", arguments: [{ value: key }],
         });
-        return (await bounded(Promise.all([paused, invoke]), 2000, "Agent Host native getter was not reached"))[0];
+        return (await bounded(Promise.all([paused, invoke]), 5000, "Agent Host native getter was not reached"))[0];
       } finally {
         onPause = undefined;
         if (breakpoint) await send("Debugger.removeBreakpoint", { breakpointId: breakpoint }).catch(() => {});
@@ -156,7 +146,7 @@
         await send("Debugger.disable").catch(() => {});
       }
     }
-    return { evaluate, scope, frame, close: () => socket.terminate() };
+    return { evaluate, discover: eval(config.stallDiscovery)(send).host, frame, close: () => socket.terminate() };
   }
 
   const closeCommand = "setTimeout(() => process.getBuiltinModule('inspector').close(), 30).unref(); true";
@@ -167,7 +157,7 @@
       verified = await peer.evaluate("process.pid") === pid;
       if (!verified) throw new Error("Agent Host inspector PID changed");
       const watchdog = await peer.evaluate(
-        "Number(setTimeout(() => process.getBuiltinModule('inspector').close(), 5000).unref())");
+        "Number(setTimeout(() => process.getBuiltinModule('inspector').close(), 12000).unref())");
       try { return await job(peer); }
       finally {
         await peer.evaluate(`clearTimeout(${Number(watchdog)}); ${closeCommand}`).catch(() => {});
@@ -204,13 +194,19 @@
         const activate = await peer.evaluate(
           `process.getBuiltinModule("module")._cache[${JSON.stringify(hostEntry)}]?.exports?.activate`, false);
         if (!activate) throw new Error("Cursor has not loaded the Agent Host extension");
-        const loader = await peer.scope(activate, "__webpack_require__");
-        const cache = await peer.scope(loader, "__webpack_module_cache__");
         const installer = `(${config.stallHost})(${JSON.stringify(config.owner)},${JSON.stringify(config.revision)})`;
-        if (await peer.frame(cache, 85606, "fZ", `${installer}.attachRunner(() => Bt, v => { Bt = v; }, lt)`) !== true) {
+        const prior = await peer.evaluate(`(() => {
+          const state = globalThis.__ASKHUMAN_CURSOR_STALL_HOST_V1__;
+          return state?.owner === ${JSON.stringify(config.owner)} && state?.revision === ${JSON.stringify(config.revision)}
+            ? state.status?.() : undefined;
+        })()`);
+        if (prior?.pid === pid) return prior;
+        const { cache, runner, classifier, decoder } = await peer.discover(activate);
+        if (await peer.frame(cache, runner.id, runner.key,
+          `${installer}.attachRunner(() => ${runner.name}, v => { ${runner.name} = v; }, ${classifier.name}, ${classifier.cutoff})`) !== true) {
           throw new Error("Cursor Agent Host retry hook did not pass verification");
         }
-        return peer.frame(cache, 36218, "wB", `${installer}.attachDecoder(Ar.stallDetectorConfig.turn)`);
+        return peer.frame(cache, decoder.id, decoder.key, `${installer}.attachDecoder(${decoder.name}.stallDetectorConfig.turn)`);
       });
     } catch (error) { failure = error; }
     if (port && await identity(pid) === before) {

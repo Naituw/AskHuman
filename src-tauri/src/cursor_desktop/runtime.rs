@@ -33,8 +33,8 @@ const STALL_POLICY: &str = include_str!("stall_policy.js");
 const STALL_RENDERER: &str = include_str!("stall_renderer.js");
 const STALL_HOST: &str = include_str!("stall_host.js");
 const STALL_ATTACH: &str = include_str!("stall_attach.js");
+const STALL_DISCOVERY: &str = include_str!("stall_discovery.js");
 const STALL_KEY: &str = "__ASKHUMAN_CURSOR_STALL_V1__";
-const STALL_VERSION: &str = "3.27.22";
 const PORT: u16 = 9229;
 
 pub(super) fn adapter_revision() -> String {
@@ -51,7 +51,7 @@ pub(super) fn adapter_revision() -> String {
             hash.update(STALL_RENDERER);
             hash.update(STALL_HOST);
             hash.update(STALL_ATTACH);
-            hash.update(STALL_VERSION);
+            hash.update(STALL_DISCOVERY);
             format!("{:x}", hash.finalize())[..16].into()
         })
         .clone()
@@ -528,7 +528,7 @@ fn bootstrap_source(manifest: &Manifest, package: &Path, close_inspector: bool) 
     if !manifest.messages_only {
         // The message bridge hosts only its own renderer. Other guards ride with the completion
         // bridge and report their status alongside it.
-        config["stallVersion"] = json!(STALL_VERSION);
+        config["stallDiscovery"] = json!(STALL_DISCOVERY);
         config["stallAttach"] = json!(STALL_ATTACH);
         config["stallHost"] =
             json!(STALL_HOST.replacen("__ASKHUMAN_STALL_POLICY__", STALL_POLICY, 1));
@@ -1116,7 +1116,7 @@ mod tests {
             STALL_RENDERER,
             STALL_HOST,
             STALL_ATTACH,
-            STALL_VERSION,
+            STALL_DISCOVERY,
         ] {
             every.update(part);
         }

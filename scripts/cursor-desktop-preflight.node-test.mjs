@@ -6,7 +6,7 @@ import { test } from "node:test";
 const source = fs.readFileSync(new URL("../src-tauri/src/cursor_desktop/preflight.js", import.meta.url), "utf8");
 const verify = vm.runInNewContext(source);
 
-function fixture(fault = "", paired = true) {
+function fixture(fault = "", paired = true, lifecycle = false) {
   const disposal = { stores: 0, services: 0, listeners: 0 };
   let unblock;
   class Store {
@@ -50,10 +50,22 @@ function fixture(fault = "", paired = true) {
     dispose() { disposal.services++; }
   }
   class Agent {
+    _isBackgroundCompletionDispatchReleased() {
+      return !!this._environmentService.isGlass &&
+        (this._backgroundCompletionDispatchReleased || this._lifecycleService.willShutdown);
+    }
+    _holdBackgroundCompletions(id, reason) {
+      this._metricsService.increment({stat:"completion",tags:{reason}});
+      this._backgroundCompletionHoldReasons.set(id, reason);
+    }
     async _maybeDispatchBackgroundCompletions(id) {
+      if (lifecycle && this._isBackgroundCompletionDispatchReleased()) return;
       if (fault === "stall") return new Promise(resolve => { unblock = resolve; });
       const handle = this._composerDataService.getHandleIfLoaded(id);
-      if (handle.data.chatGenerationUUID) return;
+      if (handle.data.chatGenerationUUID) {
+        if (lifecycle) this._holdBackgroundCompletions(id, "live_turn");
+        return;
+      }
       if (fault === "model") return this._agentService.runAgentLoop();
       const bg = this._backgroundWorkService;
       this._completionDispatchInFlightComposerIds.add(id);
@@ -79,6 +91,7 @@ function fixture(fault = "", paired = true) {
       }
     }
   }
+  if (!lifecycle) delete Agent.prototype._isBackgroundCompletionDispatchReleased;
   if (!paired) delete Agent.prototype._commitPairedCloudChildInboxCursor;
   const live = new Store(), background = new Background(live);
   background.enqueueCompletion({ composerId: "real-chat", taskId: "live-task", status: "error" });
@@ -94,6 +107,15 @@ for (const paired of [false, true]) test(`preflight checks native delivery and l
   assert.equal(f.live.pending.get("live-task").payload.status, "error");
   assert.equal(f.live.wakeups.inFlightById.size, 0);
   assert.deepEqual(f.disposal, { stores: 1, services: 1, listeners: 1 });
+});
+
+for (const surface of ["agents", "ide"]) test(`native lifecycle preflight supports ${surface} windows and shutdown ownership`, async () => {
+  const f = fixture("", true, true);
+  const result = await f.run({surface});
+  assert.equal(result.passed,true);
+  assert.equal(result.checks,11);
+  assert.equal(f.live.pending.size,1);
+  assert.deepEqual(f.disposal,{stores:1,services:1,listeners:1});
 });
 
 for (const [fault, expected] of [

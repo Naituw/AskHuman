@@ -18,15 +18,7 @@
   const surface = glass ? "agents" : "ide";
   const state = { owner, revision, lease };
   let kernel, failure;
-  const binding = glass ? {
-    reader: F1e.prototype, host: eBl.prototype, classifier: hvk,
-    runner: () => Cvk, setRunner: value => { Cvk = value; },
-    encoder: () => XFl, setEncoder: value => { XFl = value; },
-  } : {
-    reader: Sme.prototype, host: fGo.prototype, classifier: E9_,
-    runner: () => B9_, setRunner: value => { B9_ = value; },
-    encoder: () => hGo, setEncoder: value => { hGo = value; },
-  };
+  const binding = __ASKHUMAN_STALL_BINDING__;
   const services = new Map();
   for (let scope = this._instantiationService; scope; scope = scope._parent) {
     for (const [id, value] of scope._services?._entries ?? []) {
@@ -55,15 +47,32 @@
     const encoder = binding.encoder();
     const runner = binding.runner();
     if (reader?.writable !== true || !reader.value.toString().includes(experimentKey) ||
-        warm?.writable !== true || !warm.value.toString().includes(".turnOptions.clone()") ||
-        typeof encoder !== "function" || !encoder.toString().includes("stallFailTimeoutMs:") ||
-        !binding.classifier.toString().includes("stallRetryElapsedMs>=") ||
+        warm?.writable !== true || !/\.turnOptions\.clone\s*\(/.test(warm.value.toString()) ||
+        typeof encoder !== "function" || !/\bstallFailTimeoutMs\s*:/.test(encoder.toString()) ||
+        typeof binding.classifier !== "function" ||
         typeof extensions?._getExtensionHostManagers !== "function" ||
         typeof experiments?.getDynamicConfig !== "function") {
       throw new Error("Unsupported Cursor window stall contract");
     }
+    policy.verifyClassifier(binding.classifier, binding.nativeRetryWindow);
+    const probeConfig = { advisoryTimeoutMs: 30000, failTimeoutMs: 90000 };
+    const readBack = Reflect.apply(reader.value, {
+      environmentService: {}, experimentService: { getDynamicConfig: () => ({ ...probeConfig }) },
+    }, []);
+    const probe = Reflect.apply(encoder, undefined, [{ stallDetectorConfig: probeConfig }, {}]);
+    const probeMarker = policy.marker("0".repeat(32));
+    if (readBack?.failTimeoutMs !== probeConfig.failTimeoutMs ||
+        probe?.stallFailTimeoutMs !== probeConfig.failTimeoutMs ||
+        probe.stallAdvisoryTimeoutMs !== probeConfig.advisoryTimeoutMs || typeof probe.clone !== "function") {
+      throw new Error("Cursor window timeout snapshot preflight failed");
+    }
+    policy.write(probe, probeMarker);
+    const copy = probe.clone();
+    if (!policy.take(copy, probeMarker) || policy.tagged(copy) || !policy.tagged(probe)) {
+      throw new Error("Cursor local turn-options marker preflight failed");
+    }
     const snapshots = new WeakMap();
-    const wrappedRunner = policy.retryRunner(runner, snapshots);
+    const wrappedRunner = policy.retryRunner(runner, snapshots, binding.nativeRetryWindow);
     let target, failed;
     const wrappedReader = function (...args) {
       const native = Reflect.apply(reader.value, this, args);
@@ -117,7 +126,7 @@
       throw error;
     }
     return {
-      owner, revision, intact,
+      owner, revision, intact, retryWindow: Math.max(policy.retryWindow, binding.nativeRetryWindow),
       failure: () => failed,
       disable() { target = undefined; },
       ready(host) { return host && target?.manager === host && target.pid === host.pid; },
@@ -153,11 +162,16 @@
       kernel.disable();
       return { ...base, state: "pending", hostPid: host?.pid };
     }
-    return { ...base, state: "active", timeoutMs: policy.timeout, retryWindowMs: policy.retryWindow };
+    return { ...base, state: "active", timeoutMs: policy.timeout, retryWindowMs: kernel.retryWindow };
   };
-  state.setHost = (pid, token) => {
+  state.setHost = (pid, token, retryWindowMs) => {
     const host = manager();
     if (failure || !kernel?.intact() || host?.pid !== pid) return state.activate();
+    if (retryWindowMs !== kernel.retryWindow) {
+      kernel.disable();
+      failure = "Cursor window and Agent Host stall retry policies differ";
+      return state.activate();
+    }
     kernel.set(host, token);
     return state.activate();
   };

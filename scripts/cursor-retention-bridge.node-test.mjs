@@ -149,12 +149,12 @@ const retentionSourceFor = next => retention
   .replace("__ASKHUMAN_RETENTION_PREFLIGHT__", () => retentionPreflight);
 
 // Interval ticks are driven by hand so every refresh pass is deterministic.
-async function startBridge(windows, { withRetention = true } = {}) {
+async function startBridge(windows, { withRetention = true, withStall = false, cursorVersion = "test" } = {}) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "ah-rb-"));
   fs.chmodSync(dir, 0o700);
   const config = { ...config0(), socket: path.join(dir, "b.sock") };
   const app = new EventEmitter();
-  app.getVersion = () => "test";
+  app.getVersion = () => cursorVersion;
   const electron = { app, webContents: { getAllWebContents: () => windows } };
   const realProcess = process;
   const ticks = [];
@@ -172,8 +172,18 @@ async function startBridge(windows, { withRetention = true } = {}) {
   const sourceFor = next => bridge
     .replace("__ASKHUMAN_RENDERER__", () => JSON.stringify(renderer.replace("__ASKHUMAN_OWNER__", JSON.stringify(next.owner))
       .replace("__ASKHUMAN_REVISION__", JSON.stringify(next.revision))))
-    .replace("__ASKHUMAN_CONFIG__", () => JSON.stringify(withRetention
-      ? { ...next, guards: [{ name: "retention", key: retentionKey, source: retentionSourceFor(next) }] } : next));
+    .replace("__ASKHUMAN_CONFIG__", () => JSON.stringify({ ...next,
+      stallDiscovery: "(() => ({renderer:async()=> 'undefined'}))",
+      guards: [
+        ...(withRetention ? [{ name: "retention", key: retentionKey, source: retentionSourceFor(next) }] : []),
+        ...(withStall ? [{name:"stall",key:"__testStall",source:`(() => {
+          const state = {owner:${JSON.stringify(next.owner)},revision:${JSON.stringify(next.revision)},lease:__ASKHUMAN_LEASE__,
+            activate:() => ({prepared:true,state:"notApplicable",timeoutMs:300000}),
+            restore:() => {delete globalThis.__testStall;return true;}};
+          globalThis.__testStall=state;return state.activate();
+        })()`}] : []),
+      ],
+    }));
   const rebootstrap = (token, revision = config.revision) => vm.runInContext(sourceFor({ ...config, token, revision }), context);
   await rebootstrap(config.token);
   async function request(op, token = config.token) {
@@ -221,6 +231,13 @@ async function eventually(b, check) {
 }
 const settled = windows => async () => windows.every(wc => wc.f.context[completionKey]?.status().enabled === true &&
   wc.f.context[retentionKey]?.status().state !== undefined && wc.f.context[retentionKey].status().state !== "pending");
+
+for (const version of ["3.27.22", "3.29.15", "99.0.0"]) bridgeTest(`stall attachment depends on contracts rather than Cursor ${version}`, async () => {
+  const wc = new FakeWindow(1, "agents");
+  const b = await startBridge([wc], {withStall:true,cursorVersion:version});
+  await until(async () => (await b.status()).windows[0]?.stall?.state === "notApplicable");
+  assert.equal((await b.status()).windows[0].phase,"active");
+});
 
 bridgeTest("both guards attach in an Agents window and report independent status", async () => {
   const wc = new FakeWindow(1, "agents");

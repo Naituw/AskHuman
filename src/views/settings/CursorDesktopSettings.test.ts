@@ -3,6 +3,7 @@ import { ref } from "vue";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import CursorDesktopSettings from "./CursorDesktopSettings.vue";
 import { i18n } from "../../i18n";
+import type { CursorDesktopWindow } from "../../lib/ipc";
 
 const api = vi.hoisted(() => ({ status: vi.fn(), launch: vi.fn(), persist: vi.fn(), context: vi.fn(), mac: true }));
 vi.mock("../../lib/ipc", () => ({ cursorDesktopStatus: api.status, cursorLaunchStatus: api.launch }));
@@ -110,7 +111,7 @@ const guarded = (completion: "active" | "error", guard: ReturnType<typeof retent
   verified: completion === "active", checks: completion === "active" ? 6 : 0,
   error: completion === "error" ? "Unsupported background completion contract" : undefined, retention: guard,
 });
-const partial = (...windows: ReturnType<typeof guarded>[]) => ({ ...state(true, "partial"), processes: 1, windows });
+const partial = (...windows: CursorDesktopWindow[]) => ({ ...state(true, "partial"), processes: 1, windows });
 const unloadError = "Unsupported conversation unload contract: method is missing";
 
 it("names the running-chat protection when only that guard is missing, and still shows why", async () => {
@@ -152,6 +153,14 @@ it("does not claim a missing guard it cannot name", async () => {
   const row = await mountRow();
   expect(row.get('[role="status"]').text()).toBe("Checking and connecting to Cursor Desktop…");
   expect(row.find('[role="alert"]').exists()).toBe(false);
+});
+
+it("accepts a verified native retry window longer than ten minutes", async () => {
+  api.status.mockResolvedValue(partial({ ...guarded("error", retention("active")),
+    stall: {state:"active",timeoutMs:300000,retryWindowMs:900000},
+  }));
+  const row = await mountRow();
+  expect(row.get('[role="status"]').text()).toBe("Partly active: background-completion guard is not active");
 });
 
 it("stays fully active, and without a warning, when both guards work or one does not apply", async () => {

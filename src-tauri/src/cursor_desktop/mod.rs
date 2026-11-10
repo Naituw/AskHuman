@@ -129,7 +129,9 @@ fn retention_state(window: &WindowStatus) -> GuardState {
 fn stall_state(window: &WindowStatus) -> GuardState {
     match window.stall.as_ref() {
         Some(status) if status.state == "active" => {
-            if status.timeout_ms == Some(300_000) && status.retry_window_ms == Some(600_000) {
+            if status.timeout_ms == Some(300_000)
+                && status.retry_window_ms.is_some_and(|value| value >= 600_000)
+            {
                 GuardState::Active
             } else {
                 GuardState::Failed
@@ -261,7 +263,7 @@ pub fn stall_summary(windows: &[WindowStatus]) -> Option<String> {
         format!("; native timeout values in ms {native:?} (0 means disabled)")
     };
     Some(format!(
-        "{} active (300s stall, 600s retry window), {} native, {} unavailable, {} pending{suffix}",
+        "{} active (300s stall, at least 600s retry window), {} native, {} unavailable, {} pending{suffix}",
         count(GuardState::Active),
         count(GuardState::NotApplicable),
         count(GuardState::Failed),
@@ -610,6 +612,8 @@ mod tests {
         });
         assert_eq!(coverage(&window), Coverage::Partial);
         window.stall.as_mut().unwrap().retry_window_ms = Some(600_000);
+        assert_eq!(coverage(&window), Coverage::Full);
+        window.stall.as_mut().unwrap().retry_window_ms = Some(900_000);
         assert_eq!(coverage(&window), Coverage::Full);
     }
 

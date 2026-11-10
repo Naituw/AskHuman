@@ -1,6 +1,6 @@
 (async function verifyNativeCompletion(context) {
   "use strict";
-  const { prototype, background, handler, id, cancelled } = context;
+  const { prototype, background, handler, id, cancelled, surface } = context;
   const deadline = Date.now() + 1000;
   let operations = 0, checks = 0, store, service, subscription;
   let disposed = false;
@@ -64,6 +64,11 @@
       _composerUtilsService: { getHasPendingQuestionnaireAwaitingInput: () => false },
       _completionDispatchInFlightComposerIds: new Set(),
       _pendingAwaitTaskIdsByComposerId: new Map(),
+      _backgroundCompletionHoldReasons: new Map(),
+      _environmentService: { isGlass: surface === "agents" },
+      _lifecycleService: { willShutdown: false },
+      _backgroundCompletionDispatchReleased: false,
+      _metricsService: { increment() { tick(); } },
       _ownsBackgroundCompletion: () => true,
       _aiService: { streamingAbortControllers: new Map([["probe-turn", {}]]), getModelDetails: forbidden },
       _agentService: { runAgentLoop: forbidden },
@@ -127,6 +132,19 @@
       enqueue("paired-gap", "subagent", "success", path(4)); await dispatch();
       check(empty() && settled.has("paired-gap") &&
         handle.data.interactiveChildInboxLastPresentedKey === path(2), "paired inbox gap preservation");
+    }
+    if (typeof prototype._isBackgroundCompletionDispatchReleased === "function") {
+      agent._environmentService.isGlass = true;
+      agent._lifecycleService.willShutdown = true;
+      enqueue("shutdown"); await dispatch();
+      check(queue.hasPendingCompletions(id) && !settled.has("shutdown"), "shutdown retains pending completion");
+      agent._lifecycleService.willShutdown = false;
+      agent._backgroundCompletionDispatchReleased = true;
+      await dispatch();
+      check(queue.hasPendingCompletions(id) && !settled.has("shutdown"), "released window retains pending completion");
+      agent._backgroundCompletionDispatchReleased = false;
+      await dispatch();
+      check(settled.has("shutdown") && empty(), "owned window resumes completion settlement");
     }
     return { passed: true, checks, profile: paired ? "paired-inbox" : "direct-ack" };
   } finally {

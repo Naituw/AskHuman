@@ -64,6 +64,7 @@
           const verification = await Promise.race([
             verify({ prototype, background, handler: makeHandler({ enabled: true, suppressed: 0 }),
               id: "askhuman-preflight-" + lease, cancelled: () => cancelled,
+              surface: state.surface,
               onCleanup: cleanup => { releasePreflight = cleanup; } }),
             new Promise((_, reject) => { timer = setTimeout(() => {
               cancelled = true; reject(new Error("Native completion preflight timed out"));

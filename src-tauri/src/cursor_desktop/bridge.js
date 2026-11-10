@@ -90,8 +90,17 @@
             if (!params.hitBreakpoints?.includes(breakpoint)) throw new Error("Unexpected debugger pause");
             const frame = params.callFrames?.[0];
             if (!frame) throw new Error("Composer provider frame is unavailable");
+            let source = guard.source;
+            if (guard.name === "stall") {
+              const prior = await command("Debugger.evaluateOnCallFrame", {
+                callFrameId: frame.callFrameId,
+                expression: "!!globalThis.__ASKHUMAN_CURSOR_STALL_RENDERER_KERNEL_V1__", returnByValue: true,
+              });
+              const binding = prior.result?.value ? "undefined" : await eval(config.stallDiscovery)(command).renderer(frame);
+              source = source.replace("__ASKHUMAN_STALL_BINDING__", () => binding);
+            }
             const result = await command("Debugger.evaluateOnCallFrame", {
-              callFrameId: frame.callFrameId, expression: guard.source, returnByValue: true,
+              callFrameId: frame.callFrameId, expression: source, returnByValue: true,
             });
             if (result.exceptionDetails) {
               const detail = result.exceptionDetails.exception?.description?.split("\n")[0];
@@ -201,22 +210,18 @@
     const wc = record.wc;
     const generation = record.generation;
     try {
-      if (guard.name === "stall" && electron.app.getVersion() !== config.stallVersion) {
-        slot.status = { state: "unavailable", error: "This Cursor build has no verified stall adapter" };
-        return;
-      }
       let state = await readState(wc, guard.key);
       if (!state) state = await install(wc, guard);
       if (guard.name === "stall" && state.state === "pending") {
         slot.waitSince ??= Date.now();
         if (state.hostPid) {
           attachStallHost ??= eval(config.stallAttach)(require, config, bounded);
-          const { pid, token } = await attachStallHost(state.hostPid);
+          const { pid, token, retryWindowMs } = await attachStallHost(state.hostPid);
           if (!stopped && enabled && generation === record.generation) {
             state = await evaluate(wc, `(() => {
               const s = globalThis[${JSON.stringify(guard.key)}];
               if (s?.lease !== ${JSON.stringify(lease)}) return null;
-              return s.setHost(${pid}, ${JSON.stringify(token)});
+              return s.setHost(${pid}, ${JSON.stringify(token)}, ${JSON.stringify(retryWindowMs)});
             })()`);
           }
         } else if (Date.now() - slot.waitSince >= 10000) {

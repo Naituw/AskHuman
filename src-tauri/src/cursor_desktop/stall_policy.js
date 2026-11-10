@@ -2,15 +2,35 @@
   "use strict";
   const timeout = 300000;
   const retryWindow = 600000;
-  const nativeRetryWindow = 180000;
   const turnOptionsType = "agent.v1.AgentHostTurnOptions";
   // A private unknown field of the local Renderer -> Agent Host turn-options message.
   // The ordinary timeout fields always carry the native fallback on that path.
   const field = 489175341;
   const fail = message => { throw new Error(message); };
 
-  function retryRunner(native, protectedConfig) {
-    if (typeof native !== "function" || !native.toString().includes("stallRetryElapsedMs:")) {
+  function verifyClassifier(classifier, nativeRetryWindow) {
+    if (typeof classifier !== "function" || !Number.isSafeInteger(nativeRetryWindow) || nativeRetryWindow <= 0) {
+      fail("The native stall retry window could not be identified");
+    }
+    const options = { serverCap: 3, transportCap: 10 };
+    const context = { retriesEnabled: true, abortOrigin: "stall_detector", serverErrorRetries: 0,
+      transportErrorRetries: 0, attempt: 0, attemptRequestId: "askhuman-stall-preflight" };
+    const probe = (elapsed, extra = {}) => classifier(new Error("AskHuman isolated stall probe"), options,
+      { ...context, stallRetryElapsedMs: elapsed, ...extra });
+    for (const elapsed of [0, nativeRetryWindow - 1]) {
+      const result = probe(elapsed);
+      if (result?.action !== "retry" || result.stall !== true) fail("Native stall retry preflight did not retry before its deadline");
+    }
+    if (probe(nativeRetryWindow)?.action !== "throw" ||
+        probe(0, { transportErrorRetries: options.transportCap })?.action !== "throw" ||
+        probe(0, { retriesEnabled: false })?.action !== "throw") {
+      fail("Native stall retry preflight did not preserve its deadline or retry limits");
+    }
+  }
+
+  function retryRunner(native, protectedConfig, nativeRetryWindow) {
+    if (typeof native !== "function" || !/stallRetryElapsedMs\s*:/.test(native.toString()) ||
+        !Number.isSafeInteger(nativeRetryWindow) || nativeRetryWindow <= 0) {
       fail("Unsupported native retry runner");
     }
     return function (options, ...rest) {
@@ -23,7 +43,7 @@
             ...hooks,
             classify(error, context, ...args) {
               const elapsed = context?.stallRetryElapsedMs;
-              if (Number.isFinite(elapsed)) {
+              if (Number.isFinite(elapsed) && nativeRetryWindow < retryWindow) {
                 // Only the native stall branch reads this elapsed value.
                 context = {
                   ...context,
@@ -82,5 +102,5 @@
   }
 
   const tagged = message => wire(message)?.listUnknownFields(message).some(item => item.no === field) === true;
-  return { timeout, retryWindow, retryRunner, marker, write, take, tagged };
+  return { timeout, retryWindow, retryRunner, verifyClassifier, marker, write, take, tagged };
 })()
