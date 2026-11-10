@@ -166,6 +166,17 @@ final class AskHumanUITests: XCTestCase {
         XCTAssertTrue(gone("filter-note"), "clearing the filter gives its room back")
     }
 
+    /// A row says what the request is: a confirmation, how many questions, a choice only, how many files.
+    /// That an Agent recommended an option belongs to that option, which the page of the request marks beside
+    /// it. Agents mark one in nearly every question they ask, so on the row it told nothing about the request.
+    func testTheInboxRowSaysWhatTheRequestIsAndNotThatAnOptionIsRecommended() {
+        launch()
+        let row = requireElement("inbox-row-req-migration")
+        XCTAssertTrue(row.label.contains(localized("3 questions", "3 个问题")), "the row says how many questions: \(row.label)")
+        XCTAssertTrue(row.label.contains(localized("3 files", "3 个文件")), "and how many files: \(row.label)")
+        XCTAssertFalse(row.label.contains(localized("Recommended", "推荐")), "but not that an option is recommended: \(row.label)")
+    }
+
     func testTheHeaderOfTheListsIsAnOrdinaryNavigationBar() {
         launch()
         _ = requireElement("inbox-row-req-migration")

@@ -94,9 +94,8 @@ struct InboxRow: View {
             if ask.selectOnly {
                 result.append(Flag(id: "selectOnly", text: "Choose only", symbol: "checklist", tint: .secondary))
             }
-            if ask.questions.contains(where: { $0.options.contains(where: \.recommended) }) {
-                result.append(Flag(id: "recommended", text: "Recommended", symbol: "star.fill", tint: .yellow))
-            }
+            // No flag for a recommended option: that is a property of the option (the page of the request marks
+            // it beside it), and the Agents mark one in nearly every question, so on a row it told nothing.
             if !ask.message.files.isEmpty {
                 result.append(Flag(id: "files", text: "\(ask.message.files.count) files", symbol: "paperclip", tint: .secondary))
             }
