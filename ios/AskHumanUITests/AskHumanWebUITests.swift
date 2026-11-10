@@ -123,9 +123,10 @@ final class AskHumanWebUITests: XCTestCase {
         // The link to a bare address (a link with words around it can wrap, which makes its frame a box).
         let link = app.links.matching(NSPredicate(format: "label == %@", "https://example.com/docs")).firstMatch
         XCTAssertTrue(link.waitForExistence(timeout: 10), "the link is on the page")
+        let frame = link.frame
         link.tap()
         let open = app.buttons.matching(NSPredicate(format: "label CONTAINS %@", "example.com")).firstMatch
-        XCTAssertTrue(open.waitForExistence(timeout: 5), "the person is asked, with the domain, before the link opens")
+        requireOrShow(open, "the person is asked, with the domain, before the link opens (link frame \(frame))", slug: "page-link", timeout: 5)
         shot("32-link-asks")
     }
 
@@ -179,6 +180,16 @@ final class AskHumanWebUITests: XCTestCase {
         XCTAssertEqual(app.state, .runningForeground, "not following it leaves the app where it was")
     }
 
+    /// Waits for `element`; when it does not come, the screen and the tree are kept for whoever reads the failure.
+    private func requireOrShow(
+        _ element: XCUIElement, _ message: String, slug: String, timeout: TimeInterval = 15,
+        file: StaticString = #filePath, line: UInt = #line
+    ) {
+        let came = element.waitForExistence(timeout: timeout)
+        if !came { shot("missing-\(slug)") }
+        XCTAssertTrue(came, "\(message):\n\(app.debugDescription)", file: file, line: line)
+    }
+
     /// A point a little in from the left edge of an element's frame, on the first words of a line of text: the link
     /// of the native renderer's text is the first words, and the middle of its frame can be past the end of the text.
     private func startOf(_ element: XCUIElement) -> XCUICoordinate {
@@ -191,8 +202,10 @@ final class AskHumanWebUITests: XCTestCase {
         openLinks()
         let question = app.staticTexts.matching(NSPredicate(format: "label CONTAINS %@", "地图里的搜索")).firstMatch
         XCTAssertTrue(question.waitForExistence(timeout: 10), "the question is on the page:\n\(app.debugDescription)")
+        shot("50-link-in-question-before")
+        let frame = question.frame
         startOf(question).tap()
-        XCTAssertTrue(app.staticTexts["Open in another app?"].waitForExistence(timeout: 15), "the person is asked here too")
+        requireOrShow(app.staticTexts["Open in another app?"], "the person is asked here too (question frame \(frame))", slug: "question-link")
         XCTAssertTrue(app.staticTexts["maps://?q=AskHuman"].exists, "with the whole address")
         shot("50-link-in-question")
         dismissTheQuestion()
