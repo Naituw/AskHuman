@@ -467,6 +467,9 @@ ZH = {
     # Root
     "Open this link?": "打开这个链接？",
     "Open %@": "打开 %@",
+    "Open in another app?": "用其他 App 打开？",
+    "Open": "打开",
+    "No app can open this link": "没有 App 可以打开这个链接",
     "Pairings from a previous install": "之前安装留下的配对",
     "Keep them": "保留",
     "Remove them": "移除",

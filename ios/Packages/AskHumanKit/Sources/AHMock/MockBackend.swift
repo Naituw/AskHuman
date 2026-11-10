@@ -28,6 +28,9 @@ public actor MockBackend: RemoteBackend {
         case strict
         /// The demo with one request left: the Markdown showcase's tall message over two short questions.
         case tall
+        /// The demo with one request left: a message with a link of every kind (a web address, an app's scheme, a
+        /// scheme no app has claimed, mail, one that is not followed) and a question with a link in it.
+        case links
         /// The demo with one request left: a message with four pictures (wide, tall, square, panoramic)
         /// and a note file.
         case gallery
@@ -178,7 +181,7 @@ public actor MockBackend: RemoteBackend {
         let date = now()
         var initial: EngineState
         switch scenario {
-        case .demo, .agentResults, .quota, .single, .longs, .markdown, .strict, .tall, .gallery, .outdated, .bothSync, .todoPick,
+        case .demo, .agentResults, .quota, .single, .longs, .markdown, .strict, .tall, .links, .gallery, .outdated, .bothSync, .todoPick,
              .away, .awayOn, .annotations, .direct:
             let inbox: [InboxItem]
             switch scenario {
@@ -187,6 +190,7 @@ public actor MockBackend: RemoteBackend {
             case .markdown: inbox = MockData.markdownOnly(now: date)
             case .strict: inbox = MockData.strictOnly(now: date)
             case .tall: inbox = MockData.tallMessageOnly(now: date)
+            case .links: inbox = MockData.linksOnly(now: date)
             case .gallery: inbox = MockData.galleryOnly(now: date)
             case .annotations: inbox = MockData.annotationsInbox(now: date)
             case .direct: inbox = MockData.directInbox(now: date)

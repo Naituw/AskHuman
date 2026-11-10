@@ -129,6 +129,141 @@ final class AskHumanWebUITests: XCTestCase {
         shot("32-link-asks")
     }
 
+    // MARK: links of other kinds (docs/specs/ios-web-markdown.md W7)
+    //
+    // The `links` scenario has a link of every kind, each on a line of its own. A web address is asked about with its
+    // domain; any other scheme is asked about with the whole address and handed to whichever app has claimed it (there
+    // is no list of schemes behind that); a scheme that nobody has claimed is said, not dropped.
+
+    private func openLinks() {
+        launch("links")
+        openShowcase("req-links")
+        XCTAssertTrue(link("官方文档").waitForExistence(timeout: 60), "the page is drawn")
+    }
+
+    /// The link of the page that has exactly these words (a link of one line, whose frame is the line).
+    private func link(_ words: String) -> XCUIElement {
+        app.links.matching(NSPredicate(format: "label == %@", words)).firstMatch
+    }
+
+    /// The distance between two rectangles: nothing when they touch or overlap.
+    private func gap(_ a: CGRect, _ b: CGRect) -> CGFloat {
+        hypot(max(a.minX - b.maxX, b.minX - a.maxX, 0), max(a.minY - b.maxY, b.minY - a.maxY, 0))
+    }
+
+    /// Puts the question away without answering it: its Cancel button where there is one (a popover has none: a tap
+    /// outside it is how it goes away).
+    private func dismissTheQuestion() {
+        if app.buttons["Cancel"].exists {
+            app.buttons["Cancel"].tap()
+        } else {
+            // A spot that is blank under the popover (the sidebar below its list); the popover's dimming view takes the tap.
+            app.windows.firstMatch.coordinate(withNormalizedOffset: CGVector(dx: 0.12, dy: 0.85)).tap()
+        }
+        let gone = NSPredicate(format: "exists == false")
+        for title in ["Open this link?", "Open in another app?"] {
+            let wait = XCTNSPredicateExpectation(predicate: gone, object: app.staticTexts[title])
+            let result = XCTWaiter().wait(for: [wait], timeout: 15)
+            if result != .completed { shot("49-question-not-put-away") }
+            XCTAssertEqual(result, .completed, "the question '\(title)' is put away:\n\(app.debugDescription)")
+        }
+    }
+
+    func testALinkToAnotherAppShowsTheWholeAddressBeforeItLeaves() {
+        openLinks()
+        link("在地图里搜索").tap()
+        XCTAssertTrue(app.staticTexts["Open in another app?"].waitForExistence(timeout: 5), "the person is asked first")
+        XCTAssertTrue(app.staticTexts["maps://?q=AskHuman"].exists, "with the whole address, not a guess at the app")
+        shot("46-link-app-asks")
+        dismissTheQuestion()
+        XCTAssertEqual(app.state, .runningForeground, "not following it leaves the app where it was")
+    }
+
+    /// A point a little in from the left edge of an element's frame, on the first words of a line of text: the link
+    /// of the native renderer's text is the first words, and the middle of its frame can be past the end of the text.
+    private func startOf(_ element: XCUIElement) -> XCUICoordinate {
+        element.coordinate(withNormalizedOffset: CGVector(dx: 0, dy: 0.5)).withOffset(CGVector(dx: 24, dy: 0))
+    }
+
+    /// The native renderer takes the same links (SwiftUI's `openURL`): the question of this request is drawn by it,
+    /// and begins with a link.
+    func testALinkInTheQuestionIsAskedAboutToo() {
+        openLinks()
+        let question = app.staticTexts.matching(NSPredicate(format: "label CONTAINS %@", "地图里的搜索")).firstMatch
+        XCTAssertTrue(question.waitForExistence(timeout: 10), "the question is on the page:\n\(app.debugDescription)")
+        startOf(question).tap()
+        XCTAssertTrue(app.staticTexts["Open in another app?"].waitForExistence(timeout: 15), "the person is asked here too")
+        XCTAssertTrue(app.staticTexts["maps://?q=AskHuman"].exists, "with the whole address")
+        shot("50-link-in-question")
+        dismissTheQuestion()
+    }
+
+    /// A link in a file that is open in a sheet is asked about over that sheet: the question is presented from
+    /// whatever is on top (one hung on the root of the app has nowhere to come up while a sheet covers it).
+    func testALinkInAnAttachmentIsAskedAboutOverItsSheet() {
+        openLinks()
+        let file = app.buttons.matching(NSPredicate(format: "label CONTAINS %@", "links-note.md")).firstMatch
+        XCTAssertTrue(file.waitForExistence(timeout: 10), "the file is listed:\n\(app.debugDescription)")
+        file.tap()
+        let link = labelled("附件里的链接")
+        XCTAssertTrue(link.waitForExistence(timeout: 30), "the file is open in its sheet:\n\(app.debugDescription)")
+        startOf(link).tap()
+        XCTAssertTrue(app.staticTexts["Open this link?"].waitForExistence(timeout: 15), "the question comes up over the sheet")
+        shot("51-link-over-sheet")
+        dismissTheQuestion()
+        XCTAssertTrue(link.exists, "the sheet is still open under it")
+    }
+
+    /// A scheme that no app has claimed is no dead end that goes unnoticed: the person is told, with the address.
+    func testALinkNoAppHasClaimedIsSaidNotDropped() {
+        openLinks()
+        link("未安装的 App").tap()
+        XCTAssertTrue(app.staticTexts["Open in another app?"].waitForExistence(timeout: 5))
+        app.buttons["Open"].tap()
+        XCTAssertTrue(labelled("No app can open this link").waitForExistence(timeout: 10), "the person is told")
+        XCTAssertTrue(labelled("ahdemo-unclaimed://open/panel").exists, "which address it was")
+        XCTAssertEqual(app.state, .runningForeground, "and was not taken anywhere")
+        shot("47-link-unclaimed")
+    }
+
+    /// The question and the notice are in the phone's language.
+    func testTheQuestionAndTheNoticeSpeakThePhonesLanguage() {
+        launch("links", language: "zh-Hans")
+        openShowcase("req-links")
+        XCTAssertTrue(link("未安装的 App").waitForExistence(timeout: 60), "the page is drawn")
+        link("未安装的 App").tap()
+        XCTAssertTrue(app.staticTexts["用其他 App 打开？"].waitForExistence(timeout: 10), "the question is in Chinese")
+        app.buttons["打开"].tap()
+        XCTAssertTrue(labelled("没有 App 可以打开这个链接").waitForExistence(timeout: 10), "so is the notice")
+        shot("52-links-chinese")
+    }
+
+    /// What is not made a link is not offered as one: a script, and a bare address that is not a web one.
+    func testWhatIsNotFollowedIsNotALink() {
+        openLinks()
+        XCTAssertFalse(link("脚本").exists, "a script is no link")
+        XCTAssertTrue(labelled("javascript:alert(1)").exists, "it stays as the words it was written with")
+        XCTAssertFalse(app.links.matching(NSPredicate(format: "label CONTAINS %@", "ahdemo-unclaimed://bare")).firstMatch.exists)
+    }
+
+    /// Where there is room beside the link, the question is a popover that points at the link that was tapped (not at
+    /// the screen's middle, and not at the edge of the window).
+    func testTheQuestionPointsAtTheLinkOnAWideScreen() throws {
+        openLinks()
+        try XCTSkipIf(app.windows.firstMatch.frame.width < 600, "A phone's question comes up from the bottom edge.")
+        for words in ["官方文档", "在地图里搜索"] {
+            let target = link(words)
+            XCTAssertTrue(target.waitForExistence(timeout: 5))
+            let tapped = target.frame
+            target.tap()
+            let popover = app.popovers.firstMatch
+            XCTAssertTrue(popover.waitForExistence(timeout: 5), "the question is a popover:\n\(app.debugDescription)")
+            shot("48-link-popover-\(words == "官方文档" ? "web" : "app")")
+            XCTAssertLessThan(gap(tapped, popover.frame), 60, "its arrow is at the link '\(words)': \(tapped) vs \(popover.frame)")
+            dismissTheQuestion()
+        }
+    }
+
     func testTheTextOfTheMessageCanBeSelected() {
         launch()
         openShowcase()

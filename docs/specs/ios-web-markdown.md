@@ -38,7 +38,7 @@ markdown-it 在语法与渲染规则上有结构性差距——软换行被合�
 | W4 | 高度 | 页面用 `ResizeObserver` 上报内容高度（点）；SwiftUI 按它设 `frame(height:)`，高度变化走动画。原生侧把高度夹在 0…20000，防止页面脚本报出离谱的数。同一段文字上一次的高度缓存起来作为下次的起始高度（回到旧页不跳）。（原型里还有「第一行基线」探针，用来对齐题干前的原生角标；题干保持原生后用不到，已去掉。） |
 | W5 | 图片 | 与现状一致：**不联网取图**。`data:image/*` 内联图片显示；其余（网络、本地路径）显示「图片说明」占位胶囊。理由：Agent 写的 Markdown 不可信，联网取图会泄露 IP / 被追踪；本地图片的 `ahasset://` 懒加载另案（见 `ios-channel.md` §6.5） |
 | W6 | 安全 | 页面除 `ready` / `height` / `rendered` / `copy` / `failed` 五个消息（以及 W18 的附注消息 `selection` / `noteTap` / `notes`）外没有任何原生能力；`index.html` 带 CSP（`default-src 'none'`，只放行本页脚本 / 样式与 `data:` 图片），断网也能用；导航被锁死（只允许最初的文件加载，链接点击一律交给原生）；`copy` 消息限长。Mermaid 用 `securityLevel:'strict'` + `htmlLabels:false` + `suppressErrorRendering` + `maxTextSize 40000` + `maxEdges 400`，最多 10 张图、单图源文最多 40000 字符（与 Mac 同限额）。**与 Mac 的差别**：Mac 的 M10 要求 `sandbox` 并重封装 iframe，因为那个页面带着 Tauri 的特权接口；手机上这个页面是一次性、无特权的，所以用 `strict` + CSP + 锁死导航。如要对齐 `sandbox`，另案 |
-| W7 | 链接 | 沿用现状：http(s) 先弹「打开此链接？」显示域名，再用应用内浏览器打开；`mailto:` / `tel:` 交系统；其它协议（含 `javascript:`、`file:`、`data:`）忽略 |
+| W7 | 链接 | 网页与原生两条渲染路径共用 `LinkPolicy`（`AHMarkdown`）决定，`LinkPresenter` 执行。http(s) 先弹「打开此链接？」显示域名，再用应用内浏览器打开；`mailto:` / `tel:` 交系统；**其它任意协议**（`myapp://…`、`maps://…`、`shortcuts://…` 等）先弹「用其他 App 打开？」，**显示完整地址**，确认后交给系统，由认领该协议的 App 打开——**不做白名单**（`UIApplication.open` 不需要 `LSApplicationQueriesSchemes`，只有 `canOpenURL` 需要，所以不调用它）；没有 App 认领（`open` 回调 `false`）时弹横幅「没有 App 可以打开这个链接」并带上地址，不静默丢弃；`javascript:` / `vbscript:` / `file:` / `data:` 与没有协议的相对链接忽略。裸写的 `x://…` 不会被 markdown-it 的 `linkify` 认成链接（它只认内置协议），要写成 `[文字](x://…)` 或 `<x://…>`。确认框由 `LinkPrompt` 用 `UIAlertController` 弹出：窄屏是底部的 action sheet，宽屏（iPad、展开的 Duo）是 popover，箭头指向**被点的那个位置**——`LastTouch` 在窗口上挂一个只观察、立即失败的手势识别器，记下最近一次触摸的开始位置，点链接时取它；15 秒内没有触摸（键盘或辅助功能触发）时落到屏幕中央。它从最上层的 view controller 弹出，所以盖在附件预览等 sheet 上也成立（`testALinkInAnAttachmentIsAskedAboutOverItsSheet`）。原先是挂在 `RootView` 上的 `confirmationDialog`，宽屏上 popover 的箭头指向整个窗口，与被点的链接无关 |
 | W8 | 选字与复制 | 网页原生选区（长按选词、拖动手柄、复制 / 查询 / 翻译）；代码块右上角保留复制按钮（点击复制整块，轻触感） |
 | W9 | 外观 | 跟随系统深色模式（CSS `prefers-color-scheme`，Mermaid 主题随之，系统切换时重绘）；字号用 `font: -apple-system-body`，App 内 Dynamic Type 变化时重新渲染；样式与 Mac `.markdown-body` 对齐（标题 / 列表 / 引用 / 行内代码底 / 代码块 / 表格 / 链接 / 分隔线），颜色用 iOS 系统色 |
 | W10 | 表格 | 外包一层可横向滚动的盒子；表格宽度 = 内容宽度，上限约 34em，单元格最小 4.5em，长单元格在上限处换行 |
@@ -62,7 +62,7 @@ markdown-it 在语法与渲染规则上有结构性差距——软换行被合�
 ## 5. 验收标准
 
 1. 提问页 / 确认页 / 历史详情的正文与 Mac 弹窗在同一份 Markdown 上排版一致：软换行换行、行内代码有底、表格（含长单元格）可读、引用、嵌套列表、代码块（可复制、横滚）、内联图片、Mermaid 图。
-2. 长按可选字并复制；点链接先出域名确认。
+2. 长按可选字并复制；点链接先确认：网页看域名，其它协议看完整地址并交给认领它的 App（不设白名单，没人认领时有提示）；确认框在宽屏上指向被点的链接。
 3. 深色模式、Dynamic Type（含最大辅助字号）下可读；系统切换深浅色时图表重绘。
 4. 一页只有一个 WebView；离开页面后 WebView 被释放。
 5. 带 Message 的多题表单在 Message 排好版之前不会出现「发送」；排好版后按位置正确判定。
@@ -84,3 +84,5 @@ markdown-it 在语法与渲染规则上有结构性差距——软换行被合�
 ## 7. 反馈意见
 
 （后续 review 中产生的调整意见追加于此，标注日期。）
+
+- 2026-11-11（用户）：消息里的特殊 Scheme 链接要能跳转，且不预置白名单；采用「先确认再打开」。同时指出确认框是个 popover，却不指向被点的链接而弹在别处——一并修好。据此改 W7：`LinkPolicy` 统一决定，其它协议显示完整地址后交系统；确认框改为 `LinkPrompt`（`UIAlertController`），锚点取 `LastTouch` 记下的触摸位置。

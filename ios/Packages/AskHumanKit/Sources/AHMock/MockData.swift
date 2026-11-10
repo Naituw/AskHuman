@@ -218,6 +218,49 @@ public enum MockData {
         items([(homeMacId, "Home MacBook Pro", tallMessageAsk(now: now), true, -30)], now: now)
     }
 
+    // MARK: Links
+
+    /// A request with a link of every kind, each on a line of its own (a link that wraps is one box to the
+    /// accessibility tree, and a tap on its middle may land on the wrong half), a question that begins with a link
+    /// (questions are drawn by the native renderer, the message by the web page; the link is first so that a tap
+    /// near the start of the text is on it), and a Markdown file whose link is drawn by the native renderer in a
+    /// sheet of its own.
+    public static func linksAsk(now: Date = Date()) -> RequestView {
+        let message = #"""
+        ## 链接
+
+        - 网页：[官方文档](https://example.com/guide)
+        - 其它 App：[在地图里搜索](maps://?q=AskHuman)
+        - 没有 App 认领的协议：[未安装的 App](ahdemo-unclaimed://open/panel?id=42&name=中文)
+        - 邮件：[写信](mailto:hi@example.com)
+        - 不会成为链接的写法：[脚本](javascript:alert(1))
+
+        裸写的 ahdemo-unclaimed://bare/text 不会自动变成链接。
+        """#
+        return RequestView(
+            id: "req-links", kind: "ask", createdAt: ms(now.addingTimeInterval(-30)), agent: cursor,
+            project: ProjectRef(key: "proj-humaninloop", name: "HumanInLoop"), sessionTitle: "Try the links of a message",
+            source: "cursor", contentHash: hash("links"),
+            ask: AskView(
+                isMarkdown: true,
+                message: MessageView(text: message, files: [
+                    AssetRef(assetId: "asset-links-note", name: "links-note.md", size: 96, mime: "text/markdown", isImage: false),
+                ]),
+                questions: [
+                    QuestionView(text: "[地图里的搜索](maps://?q=AskHuman)，要先看看吗？", options: [
+                        OptionView(text: "好", recommended: true),
+                        OptionView(text: "不用", recommended: false),
+                    ]),
+                ],
+                selectOnly: false, single: false
+            )
+        )
+    }
+
+    public static func linksOnly(now: Date = Date()) -> [InboxItem] {
+        items([(homeMacId, "Home MacBook Pro", linksAsk(now: now), true, -30)], now: now)
+    }
+
     // MARK: Pictures of every shape
 
     /// The pictures of the gallery request: what a Mac sends of a wide, a tall, a square and a
@@ -504,6 +547,12 @@ public enum MockData {
             +  locale TEXT NOT NULL DEFAULT 'en',
                created_at TIMESTAMPTZ NOT NULL
              );
+            """.utf8)
+        case "links-note.md":
+            return Data("""
+            # 附件
+
+            [附件里的链接](https://example.com/attachment)
             """.utf8)
         default:
             return Data("""

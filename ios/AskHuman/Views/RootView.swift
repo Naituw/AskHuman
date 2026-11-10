@@ -50,17 +50,12 @@ struct RootView: View {
                 showedArrivalFixture = true
                 arrivalFullscreenFixture = true
             }
+            // A link nobody can open is said, not dropped. (Links are asked about and shown by `LinkPrompt`, from
+            // whatever is on top; only the notice lives here, where the banner is.)
+            links.onUnopened = { [store] url in
+                store.show(Banner(kind: .warning, title: String(localized: "No app can open this link"), subtitle: url.absoluteString))
+            }
         }
-        .confirmationDialog(
-            "Open this link?", isPresented: Binding(get: { links.pending != nil }, set: { if !$0 { links.pending = nil } }),
-            titleVisibility: .visible, presenting: links.pending
-        ) { url in
-            Button("Open \(links.pendingDomain)") { links.presented = url }
-            Button("Cancel", role: .cancel) {}
-        } message: { url in
-            Text(url.absoluteString)
-        }
-        .sheet(item: $links.presented) { url in SafariView(url: url).ignoresSafeArea() }
         .alert("Pairings from a previous install", isPresented: $askAboutLeftovers) {
             Button("Keep them") {}
             Button("Remove them", role: .destructive) { Task { await store.forgetAll() } }
@@ -93,6 +88,11 @@ struct RootView: View {
         .frame(width: 0, height: 0)
         .allowsHitTesting(false)
         .accessibilityHidden(true)
+        // Remembers where the screen is touched, for the popover that asks before a link is followed.
+        LastTouchAnchor()
+            .frame(width: 0, height: 0)
+            .allowsHitTesting(false)
+            .accessibilityHidden(true)
         DeveloperOverlayAnchor()
     }
 
