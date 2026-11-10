@@ -438,6 +438,16 @@ iOS 在 iPhone 17（402 pt）/ 26.2 与 iPhone SE（375 pt）/ 18.5 的模拟器
 - [ ] 后置（需求 §4）：Mermaid 对齐 Mac 的 `sandbox`、`ahasset://` 本地图片、Markdown 附件预览改网页渲染、页内查找
 - [ ] 仓库外的原型目录 `/Users/wutian/Developer/HumanInLoop-ios-web-md-proto/`（约 399 MB，正式实现已从中移植）可以删除，删之前请用户确认
 
+## 待真机验收：iOS 消息里的链接（任意协议先确认再跳转、确认框指向被点的链接；已实现并过模拟器自动化，真机未验）
+
+2026-11-11 用户要求：消息里特殊 Scheme 的链接要能跳转，且不预置白名单；并指出确认框是个 popover，却不指向被点的链接、弹在别处。
+设计与取舍记在 [`docs/specs/ios-web-markdown.md`](specs/ios-web-markdown.md) 的 W7 与 §7 反馈意见：`LinkPolicy`（`AHMarkdown`）统一决定，其它协议先显示完整地址、确认后交给系统，没人认领时弹横幅；确认框改由 `LinkPrompt` 弹出，`LastTouch` 记下触摸位置作锚点。
+已通过：`swift test --filter LinkPolicyTests`；`AskHumanWebUITests` 的 9 条链接用例（含既有的 `testALinkOnThePageAsksBeforeItOpens`）在 iPhone 18 Pro Max（iOS 27.0）与 iPhone 16（iOS 18.5）上全过（宽屏那条在手机上按设计跳过），iPad Pro 11 英寸（M5，iOS 27.0）上除「中文界面」与「交给 Maps」两条没跑外都过；选字、附注、「下一题」几条既有用例回归通过。**真机没看过，iOS 26.x 与 17 没有模拟器，没验。**
+
+下一步：
+- [ ] 真机验收：在 iPad（或展开的 Duo）上点网页里的链接、题干里的链接、附件预览里的链接，看 popover 的箭头是否都指着被点的位置；iPhone 上 iOS 27 是指向链接的小气泡、iOS 18 是底部 action sheet；点一个真装了对应 App 的自定义 Scheme（如 `shortcuts://`、`obsidian://…`）看是否跳过去，点一个没装的看是否出「没有 App 可以打开这个链接」横幅。想用 Mock 数据看（不碰真实数据）：`xcrun devicectl device process launch --device <设备> --terminate-existing com.naituw.humaninloop.ios -- -AHMock YES -AHScenario links -AHOpen req-links`
+- [ ] 已知没做（要的话再定）：裸写的 `x://…` 不会被 markdown-it 的 `linkify` 认成链接（它只认内置协议），要写成 `[文字](x://…)` 或 `<x://…>`；`mailto:` / `tel:` 打不开（没有邮件 App 等）仍然静默，不弹「没有 App 可以打开」；没有「记住这个协议、以后不再问」的选项；键盘或旁白触发的链接没有触摸可指，确认框居中显示、不带箭头
+
 ## 待独立账号与稳定系统验收：iCloud 待办同步
 
 2026-11-07 已按用户授权随 **v0.17.0** 公开发布；仍为实验性功能，默认关闭，要求 macOS 14+。

@@ -227,6 +227,20 @@ final class AskHumanWebUITests: XCTestCase {
         XCTAssertTrue(link.exists, "the sheet is still open under it")
     }
 
+    /// Once confirmed, a link of an app's scheme is handed to the system, with no list of schemes in between: the
+    /// app that claims `maps://` (the simulator has Maps) is brought to the front, and this one goes behind it.
+    func testAConfirmedLinkIsHandedToTheAppThatClaimsItsScheme() {
+        let maps = XCUIApplication(bundleIdentifier: "com.apple.Maps")
+        addTeardownBlock { maps.terminate() }
+        openLinks()
+        link("在地图里搜索").tap()
+        XCTAssertTrue(app.staticTexts["Open in another app?"].waitForExistence(timeout: 10), "the person is asked first")
+        app.buttons["Open"].tap()
+        XCTAssertTrue(app.wait(for: .runningBackground, timeout: 90), "this app went behind the one that took the link")
+        XCTAssertTrue(maps.wait(for: .runningForeground, timeout: 30), "and that one is in front")
+        app.activate()
+    }
+
     /// A scheme that no app has claimed is no dead end that goes unnoticed: the person is told, with the address.
     func testALinkNoAppHasClaimedIsSaidNotDropped() {
         openLinks()
