@@ -87,7 +87,7 @@ AttributeGraph 更新与 `UITextView.becomeFirstResponder`；用户确认主要�
 用户已批准启用 GitHub Pages、发布独立 Mac 预览包并继续上传/送审；审核联系人选定 Spatialify，个人信息只存私有输入并提交 Apple。
 完成标准与分阶段验证见计划；未经批准不加演示模式、不迁移中继、不自动创建定时任务。
 2026-11-05 23:45（北京时间）已提交 **0.1.0 (10)**：Apple build `81b235eb-4db3-46ee-8372-e74ca5bcbe0a`，VALID、APP_STORE_ELIGIBLE、`WAITING_FOR_BETA_REVIEW`（审核提交 `WAITING_FOR_REVIEW`）。源码与本地标签 `ios-testflight-10` 固定 `d3bb833`；后续 main 的已结束问题页面改动不在此包。首次上传最终确认 401 已通过同归档受控重试解决，不再重传。
-2026-11-06 Build 10 获批后已向用户指定的一位朋友发出邀请。2026-11-09 Build 15 已在 `AskHuman Friends` 进入 `IN_BETA_TESTING`，沿用原邀请，本次 2026-11-09 只读查询已显示 `INSTALLED: 1`；独立配对与推送验收尚未确认。见 [Build 15 交付记录](plans/ios-channel.md#2026-11-09testflight-内部与外部构建-15)。2026-11-10 Build 16 同样进入两组 `IN_BETA_TESTING`，成员未变，见 [Build 16 交付记录](plans/ios-channel.md#2026-11-10testflight-内部与外部构建-16)。
+2026-11-06 Build 10 获批后已向用户指定的一位朋友发出邀请。2026-11-09 Build 15 已在 `AskHuman Friends` 进入 `IN_BETA_TESTING`，沿用原邀请，本次 2026-11-09 只读查询已显示 `INSTALLED: 1`；独立配对与推送验收尚未确认。见 [Build 15 交付记录](plans/ios-channel.md#2026-11-09testflight-内部与外部构建-15)。2026-11-10 Build 16 同样进入两组 `IN_BETA_TESTING`，成员未变，见 [Build 16 交付记录](plans/ios-channel.md#2026-11-10testflight-内部与外部构建-16)。2026-11-11 Build 17 已在两组 `IN_BETA_TESTING`，继续沿用现有成员，见 [Build 17 记录](plans/ios-channel.md#2026-11-11testflight-内部与外部构建-17)。
 下一步：首位朋友按[中文接入指南](https://naituw.github.io/AskHuman/beta-zh/)安装[最新版 AskHuman](https://github.com/Naituw/AskHuman/releases/latest)，完成配对、前台回答、锁屏推送、切网与首答验证。已有项目待办 `73650ea1-449e-42bd-91e4-61a18478d84d`。
 
 ## 待平台验收：Daemon 更新接班的 Windows / Linux 原生路径
@@ -442,6 +442,8 @@ iOS 在 iPhone 17（402 pt）/ 26.2 与 iPhone SE（375 pt）/ 18.5 的模拟器
 
 2026-11-11 用户要求：消息里特殊 Scheme 的链接要能跳转，且不预置白名单；并指出确认框是个 popover，却不指向被点的链接、弹在别处。
 设计与取舍记在 [`docs/specs/ios-web-markdown.md`](specs/ios-web-markdown.md) 的 W7 与 §7 反馈意见：`LinkPolicy`（`AHMarkdown`）统一决定，其它协议先显示完整地址、确认后交给系统，没人认领时弹横幅；确认框改由 `LinkPrompt` 弹出，`LastTouch` 记下触摸位置作锚点。
+已随内外 TestFlight **0.1.0 (17)** 分发，源码与分发状态见 [Build 17 记录](plans/ios-channel.md#2026-11-11testflight-内部与外部构建-17)。
+
 已通过：`swift test --filter LinkPolicyTests`；`AskHumanWebUITests` 的 9 条链接用例（含既有的 `testALinkOnThePageAsksBeforeItOpens`）在 iPhone 18 Pro Max（iOS 27.0）与 iPhone 16（iOS 18.5）上全过（宽屏那条在手机上按设计跳过），iPad Pro 11 英寸（M5，iOS 27.0）上除「中文界面」与「交给 Maps」两条没跑外都过；选字、附注、「下一题」几条既有用例回归通过。**真机没看过，iOS 26.x 与 17 没有模拟器，没验。**
 
 下一步：
@@ -538,7 +540,7 @@ SSH 到 Mac B 的旧授权已用完，需要再次操作时当次确认。上述
 相关回归（iOS 27.0）：请求导航 / 连接、待办挑选三组，加主类里 22 条提问页与确认页的用例，共 39 条，38 条过；唯一失败的是 `AskHumanRequestNavigationUITests.testManualReturnRestoresTheReadingPositionOfALongForm`（`:101`），就是上面「特殊回复」一节记下的 main 上已有的不稳定用例，换成不带状态条的构建它也是时过时不过，带状态条的构建用 `test-without-building` 复跑时也至少过了三次。没跑的：离开模式用例的后 11 条、`AskHumanRequestTodoUITests`、`AskHumanInputVisibilityUITests`、主类里与请求页无关的用例、iPad 两栏（`AskHumanLargeScreenUITests`）；也没跑 `./scripts/install.sh`（这次只动了 iOS App 与文档，Mac 端二进制没有变化）。
 
 2026-11-09 追加「下一条 / 关闭」按钮与 5 秒倒计时（用户：「当一个消息在其他端完成或被取消，ios 端顶部的横幅加一个按钮，可以继续跳转下一条或关闭消息」，随后要求「5 秒倒计时，自动按这个按钮的操作」，再加一个「停留」按钮）。
-需求 [`ios-answer-flow.md`](specs/ios-answer-flow.md) §3.8（E9–E15）、验收第 18–19 条；`ios-request-switching.md` §2 与 `overview-ios.md` 随之改（推翻了「请求结束后不自动跳走」）。已提交到本地 main（`aeb59922`、`78d19d49`），**未推送**；2026-11-10 已随内外 TestFlight `0.1.0 (16)` 出去（源码 `78d19d49`，Internal 与 Friends 均 `IN_BETA_TESTING`，见 [Build 16 交付记录](plans/ios-channel.md#2026-11-10testflight-内部与外部构建-16)）；没跑 `./scripts/install.sh`（只动了 iOS App 与文档，Mac 端二进制没有变化）。
+需求 [`ios-answer-flow.md`](specs/ios-answer-flow.md) §3.8（E9–E15）、验收第 18–19 条；`ios-request-switching.md` §2 与 `overview-ios.md` 随之改（推翻了「请求结束后不自动跳走」）。已提交并推送 main（`aeb59922`、`78d19d49`）；2026-11-10 已随内外 TestFlight `0.1.0 (16)` 出去（源码 `78d19d49`，Internal 与 Friends 均 `IN_BETA_TESTING`，见 [Build 16 交付记录](plans/ios-channel.md#2026-11-10testflight-内部与外部构建-16)）；没跑 `./scripts/install.sh`（只动了 iOS App 与文档，Mac 端二进制没有变化）。
 做了什么：条的右边一枚按钮，还有别的待答请求写「下一条消息」、没有写「关闭」（去向同提交后自动前进，`nextPending(after:)`）；设置里的「自动打开下一个请求」开着时（文案已改成覆盖两种情形，加了一行说明），条出现后数 5 秒自动按它，旁边有「停留」；弹层或键盘开着不倒计时（写回答时请求结束也算：键盘随表单变只读而收起，所以在收到「已结束」的同一轮里查）；按钮与句子并排放不下（窄屏、大字号）就排到句子下面（`EndedStripLayout`）。
 自测（模拟器）：iOS 27.0 / iPhone 18 Pro Max 上 `AskHumanEndedUITests` 14 条，英文、中文各全跑一次全过；Swift 包 504 条全过（`EndedCountdownTests` 23 条）；请求导航类 8 条全过（`testArrivalHintLeavesTheRightHandControlsUsableDuringFlight` 在机器换页最凶时因等动效阶段超时失败过一次，单独重跑通过）；主类里发送与自动前进的 6 条（回执后滑入下一条、从头开始且未读、关自动前进回列表、多题发送、菜单取消、确认页选择）全过。窄屏与经典栏：iPhone SE（3 代，375 pt，iOS 18.5，临时建的模拟器，已删）上字号、倒计时、停留、滚动、关闭五条全过；暗色与三档大字号只看了截图。
 没跑的：主类 `AskHumanUITests` 其余用例、离开模式用例、iPad（`AskHumanLargeScreenUITests`）、iOS 26.2；中文只在 440 pt 宽的机型上看过。
@@ -897,3 +899,18 @@ WebKit 可刷新页面缩放，但 Popup / 历史窗口的几何仍沿用旧值�
 下一步：按 WebView 观测有效页面比例（保留初始化估算），处理 GTK DPI / 原生 scale 变化和过期回调；
 复用现有几何队列完成合并窗口、独立弹窗与历史预览的瞬态重排，避免把比例切换存成用户尺寸。
 覆盖折叠 / 展开、预览开关、约束 / 最大化、在途几何事务和多屏；自动测试与 Linux 原生运行都通过后删除本节。
+
+
+## 待修复：主分支 CI 的既有失败
+
+2026-11-11 发布 Build 17 时核对 [82dd1452 的 CI](https://github.com/Naituw/AskHuman/actions/runs/42878218594)，
+iOS Swift 包与 relay 已通过，Linux、Windows 和依赖审计失败；这些检查在此前
+[f25e2764 的 CI](https://github.com/Naituw/AskHuman/actions/runs/42866079514) 也已失败。
+前一轮日志已定位到：
+
+- Linux 的独立安装器测试引入 `executable.rs` 后缺少 `crate::development::routing`，编译报 E0433。
+- Windows Clippy 在 `src-tauri/src/paths/account.rs` 测试里报告 `temp` 未使用。
+- `cargo audit` 报告 libsqlite3-sys（RUSTSEC-2026-0459）与 rmcp（RUSTSEC-2026-0462、RUSTSEC-2026-0457）的漏洞。
+
+下一步：对照当前失败日志修复跨平台测试／编译问题，核对依赖公告与实际调用范围后升级依赖并回归。
+本次仅完成 TestFlight 分发、Mac 本机安装和代码推送，没有把这些失败作为已修复或忽略处理。
