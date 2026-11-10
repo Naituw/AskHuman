@@ -128,6 +128,96 @@ final class AskHumanLargeScreenUITests: XCTestCase {
         shot("narrow-3-second-pick")
     }
 
+    /// The button of the list's own bar that puts the list away, for a list beside the request: the one
+    /// at the right end of that bar (the bar's own filter button is at the left end).
+    private func listToggleBesideTheRequest() -> XCUIElement {
+        let listEdge = element("inbox-row-req-migration").frame.maxX
+        let buttons = app.navigationBars.buttons.allElementsBoundByIndex.filter { $0.isHittable && $0.frame.midX < listEdge }
+        return buttons.max { $0.frame.maxX < $1.frame.maxX } ?? app.navigationBars.buttons.firstMatch
+    }
+
+    /// Like `shot`, from the app's window: `XCUIScreen.main` is the cover screen of a foldable, which is
+    /// black while the app is on the inner one.
+    private func windowShot(_ name: String) {
+        let screenshot = app.windows.firstMatch.screenshot()
+        let attachment = XCTAttachment(screenshot: screenshot)
+        attachment.name = name
+        attachment.lifetime = .keepAlways
+        add(attachment)
+        if let folder = ProcessInfo.processInfo.environment["AH_UI_SHOTS"] {
+            try? FileManager.default.createDirectory(atPath: folder, withIntermediateDirectories: true)
+            try? screenshot.pngRepresentation.write(to: URL(fileURLWithPath: folder).appendingPathComponent("\(name).png"))
+        }
+    }
+
+    /// The share of a row's pixels that are tinted: the blue of the row that is open, where every other row
+    /// is a neutral grey (or white) card. Told by the pixels, because what the row says (`isSelected`) is
+    /// what the tint used to disagree with.
+    private func tintedShare(of row: XCUIElement) -> Double {
+        let window = app.windows.firstMatch
+        let screenshot = window.screenshot().image
+        guard let image = screenshot.cgImage else { return 0 }
+        let scale = screenshot.scale, frame = row.frame.offsetBy(dx: -window.frame.minX, dy: -window.frame.minY)
+        let area = CGRect(x: frame.minX * scale, y: frame.minY * scale, width: frame.width * scale, height: frame.height * scale)
+            .integral.intersection(CGRect(x: 0, y: 0, width: image.width, height: image.height))
+        guard !area.isEmpty, let crop = image.cropping(to: area) else { return 0 }
+        let width = crop.width, height = crop.height
+        var pixels = [UInt8](repeating: 0, count: width * height * 4)
+        guard let context = CGContext(
+            data: &pixels, width: width, height: height, bitsPerComponent: 8, bytesPerRow: width * 4,
+            space: CGColorSpaceCreateDeviceRGB(), bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
+        ) else { return 0 }
+        context.draw(crop, in: CGRect(x: 0, y: 0, width: width, height: height))
+        var tinted = 0
+        for index in stride(from: 0, to: pixels.count, by: 4) {
+            let red = Int(pixels[index]), green = Int(pixels[index + 1]), blue = Int(pixels[index + 2])
+            if blue >= red + 25, blue >= green + 8 { tinted += 1 }
+        }
+        return Double(tinted) / Double(width * height)
+    }
+
+    /// The pick that moved while the list was out of sight. The arrows of the request that is open move
+    /// it, and so do a notification and a banner, with the list put away (over the request, or with the
+    /// button of its bar). Whatever the page that is open is, the row of it has the tint when the list is
+    /// back, and the row that was open has the card the others have again: the row that was tinted used
+    /// to come back with neither, so that no row looked picked and, with two rows, the other looked it.
+    func testThePickThatMovedWhileTheListWasOutOfSightIsTintedWhenTheListIsBack() throws {
+        addTeardownBlock { XCUIDevice.shared.appearance = .light }
+        for (style, appearance) in [("Light", XCUIDevice.Appearance.light), ("Dark", .dark)] {
+            XCUIDevice.shared.appearance = appearance
+            try launch()
+            let first = element("inbox-row-req-migration"), second = element("inbox-row-req-next")
+            first.tap()
+            title("Plan the users table migration")
+            if isTiled {
+                listToggleBesideTheRequest().tap()
+            }
+            becomes(first, "isHittable == false", timeout: 20)
+
+            require("next-request").tap()
+            title("收尾 iOS 通知与分组的细节")
+            // Beside the request the next pick brings the list back by itself; over it, the button does.
+            if isTiled {
+                becomes(second, "isHittable == true", timeout: 20)
+            } else {
+                sidebarToggle().tap()
+                becomes(second, "isHittable == true", timeout: 20)
+            }
+            // (The list may still be sliding in: the tint is looked for until it is there or time is up.)
+            var tinted = false
+            let deadline = Date().addingTimeInterval(10)
+            while !tinted, Date() < deadline {
+                tinted = tintedShare(of: second) > 0.3
+                if !tinted { RunLoop.current.run(until: Date().addingTimeInterval(0.4)) }
+            }
+            windowShot("picked-while-away-\(style.lowercased())")
+            XCTAssertTrue(tinted, "the row of the request that is open is tinted (\(style))")
+            XCTAssertLessThan(tintedShare(of: first), 0.05, "the row that was open is a card like the others (\(style))")
+            XCTAssertLessThan(tintedShare(of: element("inbox-row-req-select")), 0.05, "so is a row that never was (\(style))")
+            app.terminate()
+        }
+    }
+
     func testReselectingInboxRevealsTheFloatingListAndKeepsTheDraft() throws {
         try launch(request: "req-select")
         try XCTSkipIf(isTiled, "The sidebar only floats in a narrower split view.")

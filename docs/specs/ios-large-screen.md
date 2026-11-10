@@ -29,7 +29,7 @@
 | 到达动效 | 保留；落在系统实际放置的收件箱标签图标上，找不到则落在导航标题。分栏里新请求的那一行就在屏幕上时，改为飞进**那一行的未读蓝点**（与 Mac 飞进侧边栏新行的蓝点一致，2026-11-07 用户指出原先没做），详见 `ios-arrival-motion.md` | agent 设计；2026-11-07 用户反馈后补 |
 | 标签栏 | 宽窗口不再整体隐藏；窄窗口沿用手机行为（打开详情时隐藏） | agent 设计 |
 | 还没配对 Mac | 宽窗口仍用分栏：引导页放进详情栏，列表栏不出现。配对第一台 Mac 前后容器不换，否则 iPad 顶部的标签栏会停在原处，压在新出现的列表导航栏上 | agent 设计 |
-| 选中行样式 | 自绘：被选中的行盖一层淡强调色；其余行保持系统在侧栏里给的卡片底色（不是手机上的白色），与同一列表里的提示行、设置分组一致。不用 `List` 的系统选中态（会整行填强调色、画焦点环、让文字发灰）；行上同时补 `isSelected` 无障碍特征，并把没选中的行显式去掉它（被移走的那一行的格子会被下一行沿用） | agent 设计 |
+| 选中行样式 | 自绘：被选中的行盖一层淡强调色；其余行是系统在侧栏里给的卡片底色（不是手机上的白色），与同一列表里的提示行、设置分组一致。**两种底色都由行自己画**（`RowCard`），不把没选中的行留给系统（不设背景）：列表看不见时选中项换了（浮层收起时点右栏箭头、点通知；并排时先收起列表再点箭头），那一格的背景要从系统的换成自己的，系统的卡片与淡色会一起丢，列表回来后没有一行像选中的，只有两行时反而没换的那行像选中的；背景一直是自己的、只改内容，就不会丢。不用 `List` 的系统选中态（会整行填强调色、画焦点环、让文字发灰）；行上同时补 `isSelected` 无障碍特征，并把没选中的行显式去掉它（被移走的那一行的格子会被下一行沿用） | agent 设计；2026-11-10 用户反馈后改 |
 | 空详情 | 各 Tab 在没有选中时右栏显示占位（图标 ＋ 一句话），不自动选第一项 | agent 设计 |
 | 并排还是浮层 | 量窗口宽度（减去系统留在两侧的安全区，如 Duo 横屏的竖条）：≥ 700pt 并排，否则浮层。不能只看某一栏的宽度——浮层时详情栏独占整个窗口 | agent 设计 |
 | 内容宽度 | 详情内容最宽约 720pt 居中（背景铺满），空状态与引导页同样限宽，应用内横幅约 520pt | agent 设计 |
@@ -69,6 +69,7 @@
 7. 新请求到达动效在宽屏下：收件箱列表可见、新请求的行在屏幕上时飞进该行的未读蓝点（蓝点在气泡落下前不显示，落下后原位出现并柔光一次）；否则落到可见的收件箱标签或标题。不飞出屏幕、不遮挡箭头与更多菜单。
 8. 浅色／深色、大字号、中英文下无截断与重叠。
 9. 辅助功能字号（AX1 及以上）：宽窗口回落成单栏堆栈，列表占满窗口，点开压栈，返回回到列表；字号改回后恢复分栏，打开的那一项保留。
+10. 列表看不见时选中项换了（浮层收起时点右栏箭头；并排时先收起列表再点箭头；通知、横幅同理），列表回来后新选中的那一行是淡强调色，原来选中的和其余的行是卡片底色；浅色与深色都一样。`AskHumanLargeScreenUITests.testThePickThatMovedWhileTheListWasOutOfSightIsTintedWhenTheListIsBack` 按像素验这一条。
 
 其余四个 Tab 沿用同一容器与上述规则（上面各条里「请求」读作该 Tab 打开的那一项），各自「选中项来自哪里、关闭后回到哪里」如下：
 
@@ -85,7 +86,8 @@ Macs 的列表栏仍是整页设置（已配对的 Mac、通知、通用、开�
 ## 5. 实施落点
 
 - `ios/project.yml`：两个 target 的设备族改为 `1,2`，并为 iPad 单独声明四向方向。
-- `Views/Common/ListDetail.swift`：`ListDetailColumns`（容器、窄浮层的可见性状态机、窗口宽度测量）、`ColumnsOrStack`（分栏还是手机的栈：`Columns.applies` 看水平尺寸类与字号）、`Columns` 宽度常量、`readableWidth()`、`DetailPlaceholder`、`hidesTabBarWhenCompact()`（与容器同一个判断），以及列表栏里的行：`pickable` / `pickButton` / `pickedBackground` / `pickedRow`（按钮 ＋ 淡强调色 ＋ `isSelected` 特征）。
+- `Views/Common/ListDetail.swift`：`ListDetailColumns`（容器、窄浮层的可见性状态机、窗口宽度测量）、`ColumnsOrStack`（分栏还是手机的栈：`Columns.applies` 看水平尺寸类与字号）、`Columns` 宽度常量、`readableWidth()`、`DetailPlaceholder`、`hidesTabBarWhenCompact()`（与容器同一个判断），以及列表栏里的行：`pickable` / `pickButton` / `pickedBackground` / `pickedRow`（按钮 ＋ 淡强调色 ＋ `isSelected` 特征）与 `RowCard`（没选中的行自己画的卡片底色）。
+- 卡片底色（`RowCard`）照系统在侧栏里给的量出来：iOS 26 起列表栏是一块玻璃，卡片是盖在上面的一层标签色薄纱（浅色约黑 6%，深色约白 6.5%），与系统的差不超过 2 级，挨着系统自己画的行（如设置里的「添加 Mac」）看不出接缝；iOS 17–25 就是 `secondarySystemGroupedBackground`；`.plain` 的列表（历史）没有卡片，用透明（`RowCard.plain`）。量过的有 iOS 18.5 的 iPad mini、iOS 26.2 的 iPad、iOS 27.1 的 Duo（浮层与并排；浅色与深色）；其余系统版本没量，系统以后改了卡片颜色会出现细微色差，到时对一下 `RowCard` 里的数。
 - `AppStore.openFromList(_:)`：从仍在屏幕上的列表里选一条，等同手机端「回列表再选」。
 - 收件箱：`InboxScreen` 经 `ColumnsOrStack` 走 `InboxColumns`（选中与 `inboxPath` 最后一项双向对应）或原栈。
 - Agents：`AgentsScreen` 同样经 `ColumnsOrStack`；`AgentsColumns` 的选中与 `agentPath.last` 双向对应；标题与按钮抽成 `AgentsBar`，两种容器共用；新建任务的表单与进度页仍是 sheet，挂在 `ColumnsOrStack` 外面。

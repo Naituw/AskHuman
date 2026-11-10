@@ -270,6 +270,41 @@ private struct HidesTabBarWhenCompact: ViewModifier {
 
 // MARK: the list of a window in columns
 
+/// The card a list that is a column gives its rows, which a row that can be picked has to paint for
+/// itself (see `pickedBackground`).
+enum RowCard {
+    /// A row of an inset grouped list: a part of a rounded card.
+    case grouped
+    /// A row of a plain list: no card, the list shows through.
+    case plain
+
+    /// What the system paints behind a row of this kind in a list that is the left column of two.
+    fileprivate var color: Color {
+        switch self {
+        case .plain: .clear
+        case .grouped: Self.groupedColor
+        }
+    }
+
+    /// Measured on iPad and Duo simulators, over the column's own background, as the system's card:
+    ///
+    /// - From iOS 26 the column is a pane of glass and the card is a veil of the label colour on it,
+    ///   neither the white of the phone nor the `secondarySystemGroupedBackground` it is called after. It
+    ///   darkens the pane by about 6% in the light appearance and lightens it by about 15 levels in the
+    ///   dark one; a veil of 6.5% white is within two levels of that on the panes seen (from #0F0F0F in
+    ///   a tiled sidebar to #393C3F in the floating one).
+    /// - Before iOS 26 the column has the grouped background and the card is the secondary one, as
+    ///   everywhere.
+    private static let groupedColor: Color = {
+        if #available(iOS 26, *) {
+            return Color(uiColor: UIColor { traits in
+                traits.userInterfaceStyle == .dark ? UIColor(white: 1, alpha: 0.065) : UIColor(white: 0, alpha: 0.06)
+            })
+        }
+        return Color(uiColor: .secondarySystemGroupedBackground)
+    }()
+}
+
 extension View {
     /// A row of the list in a window with columns: a button that picks it, tinted for as long as what
     /// it opened is the one on the right.
@@ -277,8 +312,8 @@ extension View {
     /// Not the selection of the list: the system fills a picked row with the accent colour and fades the
     /// row's own text with it, and rings it for the keyboard. A button with a tint on its card says the
     /// same and keeps the text what it is.
-    func pickable(picked: Bool, action: @escaping () -> Void) -> some View {
-        pickButton(picked: picked, action: action).pickedBackground(picked)
+    func pickable(picked: Bool, card: RowCard = .grouped, action: @escaping () -> Void) -> some View {
+        pickButton(picked: picked, action: action).pickedBackground(picked, card: card)
     }
 
     /// The button of a row that picks. Apart from `pickedBackground` for a row that holds more than the
@@ -292,19 +327,26 @@ extension View {
             .accessibilityRemoveTraits(picked ? [] : .isSelected)
     }
 
-    /// The card of a row, tinted while its page is the one that is open. A row that is not picked keeps
-    /// the card the system gives it, which is the one the rows around it have (a notice, the settings
-    /// of the Macs tab) in a list on a sidebar, where it is not the white of the phone.
-    func pickedBackground(_ picked: Bool) -> some View {
-        listRowBackground(picked ? Color.accentColor.opacity(0.2) : nil)
+    /// The card of a row, tinted while its page is the one that is open. A row that is not picked looks
+    /// like the rows around it (a notice, the settings of the Macs tab): the card the system gives a
+    /// list on a sidebar, which is not the white of the phone.
+    ///
+    /// The row paints that card itself instead of leaving it to the system (a nil background). A cell
+    /// whose background goes from the system's to a view of its own while the list is out of sight (the
+    /// pick moved by the arrows of the open request, a notification) is left with neither: the system's
+    /// card is gone and the tint is not drawn, so that no row looks picked and, where there are two
+    /// rows, the one that kept its card looks like it. A background that is a view of ours all along
+    /// only changes what it draws, and that is not lost.
+    func pickedBackground(_ picked: Bool, card: RowCard = .grouped) -> some View {
+        listRowBackground(picked ? Color.accentColor.opacity(0.2) : card.color)
     }
 
     /// For a button that is the whole row already: what a picked row looks and says. Nil where the list
     /// is not a column (the phone's stack), which leaves the row as it was.
     @ViewBuilder
-    func pickedRow(_ picked: Bool?) -> some View {
+    func pickedRow(_ picked: Bool?, card: RowCard = .grouped) -> some View {
         if let picked {
-            pickedBackground(picked)
+            pickedBackground(picked, card: card)
                 .accessibilityAddTraits(picked ? .isSelected : [])
                 .accessibilityRemoveTraits(picked ? [] : .isSelected)
         } else {

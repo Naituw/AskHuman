@@ -109,7 +109,7 @@ private struct HistoryList: View {
     private func row(_ entry: HistoryEntry) -> some View {
         if let selection {
             HistoryRow(entry: entry)
-                .pickable(picked: selection.wrappedValue == entry.id) { selection.wrappedValue = entry.id }
+                .pickable(picked: selection.wrappedValue == entry.id, card: .plain) { selection.wrappedValue = entry.id }
         } else {
             NavigationLink(value: entry.id) { HistoryRow(entry: entry) }
         }
