@@ -201,7 +201,7 @@ public final class AppStore {
     /// The countdown on the strip of the open page whose request ended elsewhere, while it runs (docs/specs/ios-answer-flow.md §3.8).
     public internal(set) var endedCountdown: EndedCountdown?
     /// How long that countdown is; tests shorten or stretch it.
-    @ObservationIgnored public var endedCountdownLength = Duration.seconds(5)
+    @ObservationIgnored public var endedCountdownLength = Duration.seconds(3)
     @ObservationIgnored var endedCountdownTask: Task<Void, Never>?
     @ObservationIgnored var pendingEndedCountdownId: String?
     /// Runs the change of page that the strip makes (its button, or its countdown running out) the way the app layer

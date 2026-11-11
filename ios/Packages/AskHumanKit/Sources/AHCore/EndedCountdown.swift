@@ -75,7 +75,7 @@ extension AppStore {
         stopEndedCountdown()
     }
 
-    /// Arms an ended page without spending any of its five seconds before its strip is visible.
+    /// Arms an ended page without spending any of its three seconds before its strip is visible.
     func prepareEndedCountdown(for id: String) {
         stopEndedCountdown()
         guard autoAdvance, tab == .inbox, inboxPath.last == id, endedNotice(for: id) != nil else { return }

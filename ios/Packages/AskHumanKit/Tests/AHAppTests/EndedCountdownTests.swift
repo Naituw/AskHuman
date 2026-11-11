@@ -130,10 +130,10 @@ final class EndedCountdownTests: XCTestCase {
         }
     }
 
-    func testTheCountdownIsFiveSecondsUnlessToldOtherwise() async throws {
+    func testTheCountdownIsThreeSecondsUnlessToldOtherwise() async throws {
         await make()
         let fresh = AppStore(backend: backend, drafts: MemoryDraftStore(), defaults: defaults)
-        XCTAssertEqual(fresh.endedCountdownLength, .seconds(5))
+        XCTAssertEqual(fresh.endedCountdownLength, .seconds(3))
     }
 
     func testAnUnseenStripDoesNotSpendTheCountdown() async throws {

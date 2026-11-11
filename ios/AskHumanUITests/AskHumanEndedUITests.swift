@@ -21,7 +21,7 @@ final class AskHumanEndedUITests: XCTestCase {
 
     /// Opens `request` and has the mock Macs end it `after` seconds later, the way a Mac reports `how` (and `by`, the
     /// name of what answered it). Moving on by itself is off unless `autoAdvance` is on, and then the strip counts down
-    /// `countdown` seconds (the app's own 5 is short for a test that has to look and press).
+    /// `countdown` seconds (the app's own 3 is short for a test that has to look and press).
     @discardableResult
     private func launch(
         _ request: String, how: String = "answeredElsewhere", by: String? = "Popup", after: Double = 6, latency: Double = 0.05,
