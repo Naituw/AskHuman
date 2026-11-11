@@ -448,7 +448,8 @@ final class AskHumanSessionHistoryUITests: XCTestCase {
         XCTAssertTrue(app.keyboards.firstMatch.waitForExistence(timeout: 5))
         var loaded = false
         for _ in 0..<10 {
-            pull(from: 0.15, to: 0.5, inWindow: true)
+            // Far enough for the control to take it (it wants about 170 pt of the page pulled past its top), still above the keyboard.
+            pull(from: 0.14, to: 0.56, inWindow: true)
             if cards().count >= 8 { loaded = true; break }
             Thread.sleep(forTimeInterval: 0.5)
             if cards().count >= 8 { loaded = true; break }
