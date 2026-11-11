@@ -8,11 +8,14 @@ import AHStore
 // Every call is a request with exactly one answer; the answers are routed by key to whoever waits.
 // Nothing here is kept: the todos live on the Macs, the phone only shows them.
 
-/// The answer a todo request waits for.
+/// The answer a request to a Mac waits for. The mailboxes (`todoBoxes`) began as the todo screen's and now hold
+/// every request-and-one-answer read of a Mac (a session's history too): one place that fails them all when the
+/// link drops, the Mac goes away or the pairing is removed.
 enum TodoReply: Sendable {
     case projects(TodoProjects)
     case list(ProjectTodos)
     case ack(TodoAck)
+    case history(SessionHistory)
 }
 
 extension PhoneEngine {
@@ -38,7 +41,7 @@ extension PhoneEngine {
     }
 
     /// An answer nobody waits for any more (the request timed out) is dropped.
-    private func deliverTodo(_ reply: TodoReply, key: String, from macId: String) {
+    func deliverTodo(_ reply: TodoReply, key: String, from macId: String) {
         guard todoBoxes[key]?.owner == macId else { return }
         todoBoxes[key]?.deliver(reply)
     }
@@ -91,9 +94,13 @@ extension PhoneEngine {
         await send(TodoWatch(on: true), to: macId)
     }
 
-    private func todoRequest<M: WireMessage>(_ message: M, macId: String, key: String, timeout: TimeInterval) async throws -> TodoReply {
+    /// Sends `message` and waits for the one answer routed to `key`. `supported` says whether the Mac announced
+    /// what the request needs (the todos by default).
+    func todoRequest<M: WireMessage>(
+        _ message: M, macId: String, key: String, timeout: TimeInterval, supported: (Caps) -> Bool = { $0.todos }
+    ) async throws -> TodoReply {
         guard macs[macId]?.sync == .synced else { throw BackendError.macOffline }
-        guard macs[macId]?.caps?.todos == true else { throw BackendError.rejected("unsupported") }
+        guard let caps = macs[macId]?.caps, supported(caps) else { throw BackendError.rejected("unsupported") }
         guard todoBoxes[key] == nil else { throw BackendError.unavailable("busy") }
         todoBoxes[key] = ReplyMailbox(owner: macId)
         defer {

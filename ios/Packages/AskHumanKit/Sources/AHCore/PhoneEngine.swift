@@ -114,6 +114,9 @@ public actor PhoneEngine: RemoteBackend {
     /// changes the screen wants to hear about.
     var todoBoxes: [String: ReplyMailbox<TodoReply>] = [:]
     var wantedTodoWatches: Set<String> = []
+    /// Numbers the session-history reads (`PhoneEngine+SessionHistory.swift`); a `reqId` only has to differ from
+    /// the ones still waiting for an answer.
+    var sessionHistorySeq = 0
     var taskOptions: [String: TaskOptionsState] = [:]
     var taskTodos: [String: [TodoOption]] = [:]
     var tasks: [TaskProgress] = []
@@ -614,6 +617,7 @@ public actor PhoneEngine: RemoteBackend {
             case ProjectTodos.type: onTodoList(macId, try plain.body(as: ProjectTodos.self))
             case TodoAck.type: onTodoAck(macId, try plain.body(as: TodoAck.self))
             case TodoChanged.type: onTodoChanged(macId, try plain.body(as: TodoChanged.self))
+            case SessionHistory.type: onSessionHistory(macId, try plain.body(as: SessionHistory.self))
             case AssetChunk.type: await onAssetChunk(macId, try plain.body(as: AssetChunk.self))
             case AssetError.type: onAssetError(macId, try plain.body(as: AssetError.self))
             case UploadAck.type: onUploadAck(macId, try plain.body(as: UploadAck.self))

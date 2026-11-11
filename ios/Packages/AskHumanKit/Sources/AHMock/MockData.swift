@@ -22,14 +22,14 @@ public enum MockData {
     /// message (`caps.annotations`), as only the newest Macs do.
     public static func macs(
         now: Date = Date(), link: MacLink = .online, knowTodos: Bool = true, pickTodos: Bool = false, awayMode: Bool = false,
-        annotations: Bool = false
+        annotations: Bool = false, sessionHistoryMacs: Set<String> = []
     ) -> [MacState] {
         [
             MacState(
                 id: homeMacId, name: "Home MacBook Pro", macName: "Home MacBook Pro", alias: nil, link: link,
                 caps: Caps(
                     newTask: true, interject: true, watch: true, todos: knowTodos, answerTodos: knowTodos && pickTodos,
-                    away: awayMode, annotations: annotations
+                    away: awayMode, annotations: annotations, sessionHistory: sessionHistoryMacs.contains(homeMacId)
                 ),
                 slot: SlotInfo(active: false, autoActivation: true),
                 pairedAt: now.addingTimeInterval(-86_400 * 12), lastSeenAt: now, pendingCount: 0, pushStatus: "ok"
@@ -38,7 +38,7 @@ public enum MockData {
                 id: officeMacId, name: "Office iMac", macName: "wutian's iMac", alias: "Office iMac", link: link,
                 caps: Caps(
                     newTask: true, interject: true, watch: true, todos: knowTodos, answerTodos: knowTodos && pickTodos,
-                    away: awayMode, annotations: annotations
+                    away: awayMode, annotations: annotations, sessionHistory: sessionHistoryMacs.contains(officeMacId)
                 ),
                 slot: SlotInfo(active: true, autoActivation: false),
                 pairedAt: now.addingTimeInterval(-86_400 * 3), lastSeenAt: now.addingTimeInterval(link == .online ? 0 : -3_600),

@@ -84,6 +84,15 @@ final class TestMac: @unchecked Sendable {
     /// The `todo.watch` messages received, in order (`true` = on).
     var todoWatches: [Bool] = []
 
+    // Session history: see `TestMac+SessionHistory.swift`.
+    /// What the Mac holds of each session, newest first; it pages it with the cursor the real Mac uses.
+    var sessionHistories: [String: [SessionExchange]] = [:]
+    /// The `history.session.get` messages received, in order.
+    var sessionHistoryGets: [SessionHistoryGet] = []
+    var ignoreSessionHistory = false
+    /// Replaces the page the Mac would send; returning `nil` sends no answer.
+    var sessionHistoryAnswer: ((SessionHistoryGet) -> SessionHistory?)?
+
     init(broker: LoopbackBroker, user: String, clock: ManualClock, macId: String = Bytes.newId(), macName: String = "Home Mac") {
         self.user = user
         self.macId = macId
@@ -362,6 +371,8 @@ final class TestMac: @unchecked Sendable {
             if let chunk = try? plain.body(as: UploadChunk.self) { await takeUploadChunk(chunk, from: phoneId) }
         case AwaySet.type, AwaySessionSet.type:
             await handleAway(plain, from: phoneId)
+        case SessionHistoryGet.type:
+            await handleSessionHistory(plain, from: phoneId)
         default:
             await handleAgents(plain, from: phoneId)
         }

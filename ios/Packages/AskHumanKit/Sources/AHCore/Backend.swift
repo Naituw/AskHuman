@@ -113,6 +113,13 @@ public protocol RemoteBackend: AnyObject, Sendable {
     /// Subscribes to (or leaves) the Mac's `todo.changed` nudges; the wish survives reconnects.
     func todoWatch(macId: String, on: Bool) async
 
+    // session history
+    /// One page of the earlier exchanges of an Agent session, newest first, older than the cursor
+    /// `(beforeMs, beforeId)` (docs/specs/ios-session-history.md). Throws `.macOffline` when the Mac cannot be
+    /// reached, `.rejected("unsupported")` when it predates the feature and `.timedOut` when it does not answer.
+    /// An unknown session is not an error: the page is empty and `more` is false.
+    func sessionHistory(macId: String, agentKey: String, beforeMs: Int64, beforeId: String?, limit: Int) async throws -> SessionHistory
+
     // history
     func history() async -> [HistoryEntry]
     func deleteHistory(id: String) async
