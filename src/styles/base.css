@@ -9,6 +9,13 @@ body,
   padding: 0;
   height: 100%;
 }
+/* Only panes scroll in an answer window; continuous wheel gestures must not move the document. */
+html.popup-window,
+html.popup-window body,
+html.popup-window #app {
+  overflow: hidden;
+  overscroll-behavior: none;
+}
 body {
   font-family: var(--font-sans);
   font-size: 14px;

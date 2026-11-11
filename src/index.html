@@ -33,11 +33,16 @@
       }
     </style>
     <script>
-      // Set the macOS layout and material classes before the first frame.
+      // Set popup scroll boundaries, macOS layout and material classes before the first frame.
       try {
+        var root = document.documentElement;
+        var params = new URLSearchParams(location.search);
+        var view = params.get("view") || "popup";
+        if (view === "popup" || view === "popup-inbox") {
+          root.classList.add("popup-window");
+        }
         if (/Mac/.test(navigator.userAgent)) {
-          var root = document.documentElement;
-          var effect = new URLSearchParams(location.search).get("effect");
+          var effect = params.get("effect");
           root.classList.add("macos");
           root.classList.add(
             effect === "solid" ? "material-solid" : "material-translucent",

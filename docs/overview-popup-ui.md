@@ -4,6 +4,8 @@
 
 ## 窗口与附件交互
 
+- 作答窗口只允许内部区域滚动：`src/index.html` 在首帧前给 `popup`／`popup-inbox` 的根节点加 `popup-window`，`styles/base.css` 对该窗口的 html／body／app 禁止外层滚动与越界回弹。正文、Sidebar 与附件预览仍使用各自的滚动区，避免连续滚轮事件将整张页面带离窗口；其它窗口不套用这条规则。
+
 Popup 提问附件和回复图片采用同窗右侧预览，具体决策见 `docs/specs/popup-attachment-preview-panel.md`。
 默认窗口紧凑，点击附件才扩展；切换不重建主区，作答、选项和当前题目状态独立保留。
 
