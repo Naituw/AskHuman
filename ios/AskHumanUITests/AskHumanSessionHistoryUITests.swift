@@ -34,7 +34,11 @@ final class AskHumanSessionHistoryUITests: XCTestCase {
             "-AHAutoAdvance", autoAdvance ? "YES" : "NO", "-AppleLanguages", "(\(language))", "-AppleLocale", locale,
         ] + extra
         if let contentSize { arguments += ["-UIPreferredContentSizeCategoryName", "UICTContentSizeCategory" + contentSize] }
-        if dark { arguments += ["-AppleInterfaceStyle", "Dark"] }
+        if dark {
+            // The launch argument `-AppleInterfaceStyle Dark` leaves the app light; the device's appearance is what it follows.
+            XCUIDevice.shared.appearance = .dark
+            addTeardownBlock { XCUIDevice.shared.appearance = .light }
+        }
         app.launchArguments = arguments
         app.launch()
         self.app = app
