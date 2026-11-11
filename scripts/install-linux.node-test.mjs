@@ -45,6 +45,18 @@ before(async () => {
   for (const version of ['old', 'new', 'newer']) {
     const source = join(root, `${version}.rs`);
     await writeFile(source, `#[path=${JSON.stringify(resolve('src-tauri/src/executable.rs'))}] mod executable;
+// These standalone ELF fixtures exercise launch-entry inheritance, not System routing.
+// Keep their guard fail-closed: inherited launches may only use this fixture's own image.
+mod development {
+ pub mod routing {
+  pub fn guard_fixture_program(program: &std::ffi::OsStr) -> std::io::Result<()> {
+   if std::path::Path::new(program) != std::env::current_exe()? {
+    return Err(std::io::Error::new(std::io::ErrorKind::PermissionDenied, "fixture may only relaunch itself"));
+   }
+   Ok(())
+  }
+ }
+}
 use std::io::{self, BufRead, Write};
 fn main() {
  executable::capture_launch_path();

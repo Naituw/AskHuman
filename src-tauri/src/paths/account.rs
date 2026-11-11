@@ -138,15 +138,16 @@ mod tests {
 
     #[test]
     fn a_fixture_cannot_alias_production_through_its_data_directory() {
-        let temp = tempfile::tempdir().unwrap();
         #[cfg(unix)]
-        std::os::unix::fs::symlink(
-            home().unwrap().join(".askhuman"),
-            temp.path().join(".askhuman"),
-        )
-        .unwrap();
-        #[cfg(unix)]
-        assert!(validate_fixture(temp.path()).is_err());
+        {
+            let temp = tempfile::tempdir().unwrap();
+            std::os::unix::fs::symlink(
+                home().unwrap().join(".askhuman"),
+                temp.path().join(".askhuman"),
+            )
+            .unwrap();
+            assert!(validate_fixture(temp.path()).is_err());
+        }
         assert!(validate_fixture(&home().unwrap()).is_err());
     }
 }

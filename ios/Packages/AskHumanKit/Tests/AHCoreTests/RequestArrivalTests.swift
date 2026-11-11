@@ -24,6 +24,12 @@ final class RequestArrivalTests: XCTestCase {
         _ h: Harness, _ store: AppStore, silent: RequestView,
         file: StaticString = #filePath, line: UInt = #line
     ) async {
+        // The snapshot lists summaries before the separate request.full response arrives.
+        await eventually("the backlog body", file: file, line: line) {
+            store.state.inbox.first { $0.requestId == silent.id }?.view != nil
+        }
+        XCTAssertTrue(store.requestArrivals.isEmpty, file: file, line: line)
+        XCTAssertEqual(store.arrivalTick, 0, "backlog hydration must stay silent", file: file, line: line)
         let live = sampleAsk()
         await h.mac.deliver(live)
         await eventually("the next live arrival") { store.requestArrivals.contains { $0.requestId == live.id } }
