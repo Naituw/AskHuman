@@ -164,7 +164,9 @@ P1 的原型不单独提交，结论写进本计划，代码并入第 4 条。
 | P6 | `f9eb132c` | 修正：等页面回弹停稳再前插（见偏差 6），UI 测试认得 iPad 的分栏 |
 | P6 | `81736e5c` | 记下回归与 iPad 的结果 |
 | P6 | `ca61fa04` | UI 测试：键盘弹起时的下拉拖得更远些（见「验证」里的 iOS 26.2） |
-| P6 | 本文所在的 `docs(ios)` 提交 | 记下 iOS 26.2 的结果 |
+| P6 | `c5109174` | 记下 iOS 26.2 与 27.2 的结果 |
+| P6 | `35a722f8` | UI 测试：深色那一条改用设备外观（见「验证」里的深色） |
+| P6 | 本文所在的 `docs(ios)` 提交 | 记下深色的更正与最大字号下的一处观感 |
 
 **与计划的偏差**（都是实现细节，没动规格的决定 S1–S17）：
 
@@ -187,5 +189,7 @@ P1 的原型不单独提交，结论写进本计划，代码并入第 4 条。
 - 修正之后在 iPhone 16 / iOS 18.5 上把会话历史类再跑一遍：英文 25 过 1 跳过（iPad 专用），简体中文 25 过 1 跳过。
 - **iOS 26.2**（临时建的 iPhone 17 模拟器，跑完已删）：会话历史类第一遍 24 过 1 跳过 1 败，败的是 `testPullingWithTheKeyboardUpDoesNotJump`。逐帧记下偏移量才看清：下拉控件要把页面拉过顶部约 173 pt 才触发（18.5 上约 171 pt），而键盘弹起时那一次拖动最多拉到约 172.7 pt，差零点几个点，是测试的拖动距离卡在边上；没有键盘的普通下拉在 26.2 上照常触发（拉到 173 pt 处），页面没问题。拖动从屏幕高度的 0.15–0.5 改成 0.14–0.56（终点仍在键盘上方）后，26.2 与 18.5 上会话历史类各整类跑一遍：都是 26 条 25 过 1 跳过（iPad 专用）、0 败。
 - **iOS 27.2**（iOS 27 的运行时只带 iPhone Duo 一种设备，没有普通 iPhone；临时建了一台 Duo，只用折起来的外屏，466 × 678 pt，跑完已删）：会话历史类 26 条，21 过 1 跳过 4 败。**所有下拉的用例都过**（含短页、长页、读到线程顶再下拉、键盘弹起时的下拉）；败的 4 条是测试对外屏版式的假设，不是页面的问题：外屏上顶栏的按钮被系统挪到右侧的竖条里，`app.navigationBars` 找不到返回键（`testLeavingWhileReadingTheThread…`、`testTheMenuIsNotPulledBackByAReadingPositionWaitingToBeRestored` 两条的 `backToInboxAndReopen`；既有的 `RequestNavigation` 等类也是这个写法，没有在外屏上跑过）；外屏没有顶栏，顶部内边距只有约 24 pt，菜单入口把最新一条放在内边距之下 8 pt（`scrollToNewest`，截图里卡片就在那里，没有被遮），而 `testTheMenuLoadsTheHistoryAndScrollsToItsNewestExchange`、`testTheMenuOnALoadedThreadOnlyScrolls` 的断言写的是 iPhone 顶栏之下（`minY > 40`，实测 32）。这两处测试没有为一台外屏专门改写。
+- **深色（更正）**：`testDarkMode` 原先靠启动参数 `-AppleInterfaceStyle Dark`，这并不会让 App 变深，那条测试一直在看浅色的页面，先前记的「深色一条通过」并没有测到深色；拿截图时才发现。改成设备外观（`XCUIDevice.shared.appearance`，与 `AskHumanWebUITests` 的做法相同，结束后复原）后在 iPhone 16 / iOS 18.5 上复跑通过，截图里深色下卡片、分隔线与文字都清楚。
+- **最大字号**（`AccessibilityXXXL`，同一次截图里看的）：卡片铺满宽度、文字清楚，断言通过；但「回到当前提问」胶囊也跟着放大，折成三行，盖住卡片的一块。没有给它限定字号，要不要限定是个小的设计选择，留给用户看过截图再定。
 
 **没做 / 留给真机**：iOS 27 上普通 iPhone 的手感（只在 Duo 外屏的模拟器上验过）、真机一轮、真实 Mac 加手机界面的一轮（需要真实服务与签名，只有引擎一层有真实 daemon 的端到端）、TestFlight 出包（用户没要）。页面过渡的快照（`RequestPageCapture`）会带上已加载的线程，只是过渡动画里的内存快照，没有专门的视觉断言。
