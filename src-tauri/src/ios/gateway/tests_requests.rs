@@ -1452,6 +1452,15 @@ fn deliver_ask_with_todos(fx: &Fixture, id: &str, picks: Vec<TodoPick>) -> Arc<F
 /// The same request as a What's next one: one single-choice question with a suggestion and the
 /// built-in end option, no todo options (the phone shows the queue itself).
 fn deliver_whats_next(fx: &Fixture, id: &str, picks: Vec<TodoPick>) -> Arc<FakeAsk> {
+    deliver_whats_next_with_single(fx, id, picks, true)
+}
+
+fn deliver_whats_next_with_single(
+    fx: &Fixture,
+    id: &str,
+    picks: Vec<TodoPick>,
+    single: bool,
+) -> Arc<FakeAsk> {
     fx.host
         .todo_pick_store
         .lock()
@@ -1461,7 +1470,7 @@ fn deliver_whats_next(fx: &Fixture, id: &str, picks: Vec<TodoPick>) -> Arc<FakeA
     {
         let ask = Arc::make_mut(&mut ask);
         ask.whats_next = true;
-        ask.single = true;
+        ask.single = single;
         ask.questions.truncate(1);
         ask.questions[0].predefined_options = vec![
             crate::models::OptionItem::new("Tidy the docs", false),
@@ -1471,7 +1480,7 @@ fn deliver_whats_next(fx: &Fixture, id: &str, picks: Vec<TodoPick>) -> Arc<FakeA
     {
         let view = view.ask.as_mut().unwrap();
         view.whats_next = true;
-        view.single = true;
+        view.single = single;
         view.questions.truncate(1);
         view.questions[0].options.truncate(2);
     }
@@ -1689,7 +1698,7 @@ async fn a_todo_picked_for_whats_next_is_the_next_task() {
 }
 
 #[tokio::test(start_paused = true)]
-async fn whats_next_takes_one_next_task_only() {
+async fn legacy_single_choice_whats_next_takes_one_next_task_only() {
     let fx = Fixture::new().await;
     let mut phone = fx.live_phone().await;
     let sink = deliver_whats_next(
@@ -1721,6 +1730,41 @@ async fn whats_next_takes_one_next_task_only() {
         .await;
     let ack: wire::AnswerAck = phone.recv_body(t::ANSWER_ACK).await;
     assert_eq!(ack.status, "accepted");
+}
+
+#[tokio::test(start_paused = true)]
+async fn multi_choice_whats_next_keeps_suggestions_and_every_picked_todo() {
+    let fx = Fixture::new().await;
+    let mut phone = fx.live_phone().await;
+    let sink = deliver_whats_next_with_single(
+        &fx,
+        "next-multi",
+        vec![
+            pick("t1", "Fix the flaky test"),
+            pick("t2", "Document escalate"),
+        ],
+        false,
+    );
+    phone.recv(t::REQUEST_NEW).await;
+    phone
+        .send(&answer_with_todos(
+            "c-multi",
+            "next-multi",
+            vec![item(0, &[0], Some("Check CI"))],
+            &["t1", "t2"],
+        ))
+        .await;
+    let ack: wire::AnswerAck = phone.recv_body(t::ANSWER_ACK).await;
+    assert_eq!(ack.status, "accepted", "{ack:?}");
+    let results = sink.results.lock().unwrap();
+    let answer = &results[0].answers[0];
+    assert_eq!(answer.selected_options, ["Tidy the docs"]);
+    assert_eq!(
+        answer.user_input.as_deref(),
+        Some("Fix the flaky test\n\nDocument escalate\n\nCheck CI")
+    );
+    assert_eq!(answer.todo_ids, ["t1", "t2"]);
+    assert_eq!(answer.todo_selections.len(), 2);
 }
 
 #[tokio::test(start_paused = true)]

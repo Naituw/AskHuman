@@ -162,6 +162,22 @@ final class RequestTodoPickerTests: XCTestCase {
         XCTAssertEqual(composer.todoIds, [], "and an option takes the todo's place")
     }
 
+    func testMultiChoiceWhatsNextPicksSeveralTodosInQueueOrder() async throws {
+        await make()
+        var ask = try composer(of: "req-next").ask
+        ask.single = false
+        let form = AnswerComposer(key: "multi-next", ask: ask, drafts: MemoryDraftStore())
+        let picker = RequestTodoPicker(backend: backend, composer: form, macId: home, projectKey: projectKey,
+                                      mac: app.state.macs.first { $0.id == home })
+        await picker.load()
+        XCTAssertFalse(picker.singleSelection)
+        picker.toggle("todo-pick-4")
+        picker.toggle("todo-pick-2")
+        XCTAssertEqual(form.todoIds, ["todo-pick-2", "todo-pick-4"])
+        picker.toggle("todo-pick-4")
+        XCTAssertEqual(form.todoIds, ["todo-pick-2"])
+    }
+
     func testWhatsNextListsTheFirstFiveAndShowAllOpensTheRest() async throws {
         await make()
         let picker = try await loaded("req-next")

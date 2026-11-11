@@ -98,7 +98,7 @@ import {
 } from "./composerDock";
 import {
   refreshWhatsNextTodos,
-  selectedWhatsNextTodo,
+  selectedWhatsNextTodos,
 } from "./whatsNextTodos";
 import {
   inputMayShrinkTextarea,
@@ -1222,6 +1222,16 @@ export function usePopupCore(scope?: PopupScope) {
     }
     endOtherComposer(qIndex);
     const i = arr.indexOf(option);
+    if (whatsNext.value && i < 0) {
+      const options = questions.value[qIndex]?.predefinedOptions;
+      const end = options?.[options.length - 1]?.text;
+      if (option === end) {
+        arr.splice(0, arr.length, option);
+        return;
+      }
+      const endAt = end === undefined ? -1 : arr.indexOf(end);
+      if (endAt >= 0) arr.splice(endAt, 1);
+    }
     // 单选：选中即替换为唯一项；再次点击当前选中项则清空（保留"可不选"，除非严格模式）。
     if (single.value) {
       if (i >= 0) arr.splice(0, arr.length);
@@ -1760,26 +1770,25 @@ export function usePopupCore(scope?: PopupScope) {
       };
       // Local whats-next TODO options refresh after the daemon snapshots its request. Submit a
       // refreshed TODO as raw task text + stable id so output and dequeue semantics stay exact.
-      const whatsNextTodo =
+      const whatsNextTodos =
         i === 0 && whatsNext.value
-          ? selectedWhatsNextTodo(
+          ? selectedWhatsNextTodos(
               q.predefinedOptions,
               chosenByQ.value[i] ?? [],
               todos.value,
               t("popup.todos.optionPrefix"),
             )
-          : null;
-      if (whatsNextTodo) {
+          : [];
+      if (whatsNextTodos.length) {
+        const todoOptions = new Set(whatsNextTodos.map((todo) => todo.optionText));
         answer.selectedOptions = answer.selectedOptions.filter(
-          (text) => text !== whatsNextTodo.optionText,
+          (text) => !todoOptions.has(text),
         );
-        answer.userInput = [whatsNextTodo.text, answer.userInput.trim()]
+        answer.userInput = [...whatsNextTodos.map((todo) => todo.text), answer.userInput.trim()]
           .filter((text) => text.trim())
           .join("\n\n");
-        answer.todoIds = [whatsNextTodo.id];
-        answer.todoSelections = [
-          { id: whatsNextTodo.id, attachments: whatsNextTodo.attachments },
-        ];
+        answer.todoIds = whatsNextTodos.map((todo) => todo.id);
+        answer.todoSelections = whatsNextTodos.map((todo) => ({ id: todo.id, attachments: todo.attachments }));
       }
       // 待办下拉区选中的条目（恒归**最后一题**，spec D7 第 11 轮改版）：每条加「另外看一下
       // 这个待办任务：」前缀并入 userInput（手输文本在前、待办在后，空行分隔），id 送后端出队。

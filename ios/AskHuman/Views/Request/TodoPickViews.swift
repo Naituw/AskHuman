@@ -65,14 +65,14 @@ struct TodoPickCard: View {
 }
 
 /// What's next: the project's queue among the options, the first few of it and then "Show all". A todo is the
-/// next task like any option is, so one of them is chosen, with the others.
+/// next task like any option is, and several tasks may be picked together.
 struct TodoQueueRows: View {
     let picker: RequestTodoPicker
 
     var body: some View {
         VStack(spacing: 8) {
             ForEach(Array(picker.listed.enumerated()), id: \.element.id) { index, todo in
-                OptionRow(todo: todo, single: true, selected: picker.isPicked(todo.id)) {
+                OptionRow(todo: todo, single: picker.singleSelection, selected: picker.isPicked(todo.id)) {
                     picker.toggle(todo.id)
                 }
                 .accessibilityIdentifier("todo-row-\(index)")

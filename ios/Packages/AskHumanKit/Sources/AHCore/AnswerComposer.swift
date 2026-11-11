@@ -59,8 +59,8 @@ public final class AnswerComposer {
         self.debounce = debounce
         let draft = drafts.draft(key: key)
         let stored = draft?.answers ?? []
-        // A select-only request takes no todos, and a What's next answer is a todo or an option, not both.
-        todoIds = ask.selectOnly ? [] : Array((draft?.todoIds ?? []).prefix(ask.whatsNext ? 1 : Wire.maxPickedTodos))
+        // Older Macs still send single-choice What's next requests.
+        todoIds = ask.selectOnly ? [] : Array((draft?.todoIds ?? []).prefix(ask.whatsNext && ask.single ? 1 : Wire.maxPickedTodos))
         // Notes belong to a request that offered them: the Mac would drop them from any other.
         let restored = ask.annotatable ? Self.restoredAnnotations(draft?.annotations ?? []) : []
         annotations = restored
@@ -78,13 +78,23 @@ public final class AnswerComposer {
             }
             return answer
         }
-        if ask.whatsNext, !todoIds.isEmpty, !answers.isEmpty { answers[0].selected = [] }
+        if ask.whatsNext, !answers.isEmpty {
+            if ask.single, !todoIds.isEmpty { answers[0].selected = [] }
+            else if let end = whatsNextEndOption, !todoIds.isEmpty || answers[0].selected.count > 1 {
+                answers[0].selected.removeAll { $0 == end }
+            }
+        }
     }
 
     // MARK: rules
 
     public var selectOnly: Bool { ask.selectOnly }
     public var single: Bool { ask.single }
+    private var whatsNextEndOption: Int? {
+        guard ask.whatsNext, let options = ask.questions.first?.options,
+              let last = options.indices.last, !options[last].todo else { return nil }
+        return last
+    }
     public var questionCount: Int { ask.questions.count }
 
     /// A question counts as answered when something was selected, written or attached. The picked todos go
@@ -174,14 +184,19 @@ public final class AnswerComposer {
         var selected = answers[question].selected
         if let at = selected.firstIndex(of: option) {
             selected.remove(at: at)
+        } else if question == 0, option == whatsNextEndOption {
+            selected = [option]
+            todoIds = []
         } else if single {
             selected = [option]
         } else {
             selected.append(option)
             selected.sort()
         }
-        // What's next: the next task is one choice, a todo of the queue or an option.
-        if ask.whatsNext, !selected.isEmpty { todoIds = [] }
+        if ask.whatsNext, !selected.isEmpty {
+            if single { todoIds = [] }
+            else if let end = whatsNextEndOption, option != end { selected.removeAll { $0 == end } }
+        }
         answers[question].selected = selected
         changed()
     }
@@ -190,14 +205,16 @@ public final class AnswerComposer {
 
     public func isTodoPicked(_ id: String) -> Bool { todoIds.contains(id) }
 
-    /// Replaces the picked todos; the picker hands them over in the order of its list. In What's next a todo
-    /// is the next task, so picking one lets go of the option that was chosen.
+    /// Replaces picked todos in queue order. Picking a task clears What's next's end choice.
     public func setTodoIds(_ ids: [String]) {
         guard !selectOnly else { return }
-        let ids = Array(ids.prefix(ask.whatsNext ? 1 : Wire.maxPickedTodos))
+        let ids = Array(ids.prefix(ask.whatsNext && single ? 1 : Wire.maxPickedTodos))
         guard ids != todoIds else { return }
         todoIds = ids
-        if ask.whatsNext, !ids.isEmpty, !answers.isEmpty { answers[0].selected = [] }
+        if ask.whatsNext, !ids.isEmpty, !answers.isEmpty {
+            if single { answers[0].selected = [] }
+            else if let end = whatsNextEndOption { answers[0].selected.removeAll { $0 == end } }
+        }
         changed()
     }
 

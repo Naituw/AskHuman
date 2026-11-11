@@ -87,31 +87,31 @@ export interface SelectedWhatsNextTodo {
 }
 
 /** Resolve a locally refreshed TODO selection without relying on the daemon's request snapshot. */
-export function selectedWhatsNextTodo(
+export function selectedWhatsNextTodos(
   options: OptionItem[],
   selectedOptions: string[],
   latestTodos: TodoEntry[],
   todoPrefix: string,
-): SelectedWhatsNextTodo | null {
-  const option = options.find(
-    (candidate) => candidate.todoId && selectedOptions.includes(candidate.text),
-  );
-  if (!option?.todoId) return null;
-  const latest = latestTodos.find((todo) => todo.id === option.todoId);
-  const fallbackText = option.text.startsWith(todoPrefix)
-    ? option.text.slice(todoPrefix.length)
-    : option.text;
-  return {
-    id: option.todoId,
-    text: option.todoText ?? latest?.text ?? fallbackText,
-    optionText: option.text,
-    attachments:
-      option.todoAttachments ?? latest?.attachments?.map((attachment) => ({
-        id: attachment.id,
-        name: attachment.name,
-        path: attachment.path,
-        sourcePath: attachment.sourcePath,
-        storage: attachment.storage,
-      })) ?? [],
-  };
+): SelectedWhatsNextTodo[] {
+  return options
+    .filter((candidate) => candidate.todoId && selectedOptions.includes(candidate.text))
+    .map((option) => {
+      const latest = latestTodos.find((todo) => todo.id === option.todoId);
+      const fallbackText = option.text.startsWith(todoPrefix)
+        ? option.text.slice(todoPrefix.length)
+        : option.text;
+      return {
+        id: option.todoId!,
+        text: option.todoText ?? latest?.text ?? fallbackText,
+        optionText: option.text,
+        attachments:
+          option.todoAttachments ?? latest?.attachments?.map((attachment) => ({
+            id: attachment.id,
+            name: attachment.name,
+            path: attachment.path,
+            sourcePath: attachment.sourcePath,
+            storage: attachment.storage,
+          })) ?? [],
+      };
+    });
 }

@@ -220,11 +220,11 @@ pub fn send_output(
 pub enum WhatsNextReply {
     /// 派活：任务文本（选中待办原文 ± 空行拼补充，或纯自由文本）→ `[user_input]`。
     Task(String),
-    /// A caller-suggested next task selected by the human. Keep ordinary Ask semantics:
-    /// the option stays under `[selected_options]` and an optional supplement stays under
+    /// Caller-suggested next tasks selected by the human. Keep ordinary Ask semantics:
+    /// the options stay under `[selected_options]` and an optional supplement stays under
     /// `[user_input]`.
     Suggested {
-        option: String,
+        options: Vec<String>,
         user_input: Option<String>,
     },
     /// 准许结束：携带「结束本轮」选项原文 → `[selected_options]`（第 19 轮定案：复用
@@ -240,9 +240,8 @@ pub enum WhatsNextReply {
 
 /// whats-next 提交映射（纯函数，spec todo-whats-next D2/D3）。
 ///
-/// Single-choice question: a todo chip becomes its raw task text; a caller suggestion preserves
-/// ordinary Ask option/input blocks; free text alone becomes a task; the final end option without
-/// text approves ending, while end plus text continues with that text.
+/// Todo choices become their raw task texts; caller suggestions preserve ordinary Ask option/input
+/// blocks. The final end option approves ending only when no task or free text was submitted.
 /// 出队不在此处：赢家回答的待办 id 由 `todos::ids_to_dequeue` 统一收集、Coordinator 出队。
 ///
 /// Notes on the message change one thing: an end approval (or an empty submission) that carries
@@ -268,67 +267,47 @@ fn whats_next_task_or_end(request: &AskRequest, result: &ChannelResult) -> Whats
         .and_then(|a| a.user_input.as_deref())
         .map(str::trim)
         .filter(|s| !s.is_empty());
-    // 选中的选项按原文回查（channel 只回传文本）：优先待办 chip，其余（无 todo_id）即「结束本轮」。
     let options = request
         .questions
         .first()
         .map(|q| q.predefined_options.as_slice())
         .unwrap_or(&[]);
-    let selected_todo = answer
-        .map(|a| a.selected_options.as_slice())
-        .unwrap_or(&[])
+    let selected = answer.map(|a| a.selected_options.as_slice()).unwrap_or(&[]);
+    // Preserve the displayed order, including every selected todo and its frozen text.
+    let task_text = options
         .iter()
-        .find_map(|sel| {
-            options
-                .iter()
-                .find(|o| &o.text == sel && o.todo_id.is_some())
-        });
-    if let Some(todo) = selected_todo {
-        // 选项文本带展示前缀（「执行待办：」），发给 agent 的任务文本还原为待办原文。
-        let raw = todo
-            .todo_text
-            .as_deref()
-            .unwrap_or_else(|| strip_todo_prefix(&todo.text));
-        let text = match input {
-            Some(extra) => format!("{}\n\n{}", raw, extra),
-            None => raw.to_string(),
-        };
-        return WhatsNextReply::Task(text);
-    }
-    // Suggestions precede todos and the final end option. Keep their output identical to Ask
-    // instead of rewriting the selected label into synthetic free text.
+        .filter(|option| option.todo_id.is_some() && selected.contains(&option.text))
+        .map(|todo| {
+            todo.todo_text
+                .as_deref()
+                .unwrap_or_else(|| strip_todo_prefix(&todo.text))
+        })
+        .chain(input)
+        .collect::<Vec<_>>()
+        .join("\n\n");
     let end_index = options.len().saturating_sub(1);
-    let selected_suggestion = answer
-        .map(|a| a.selected_options.as_slice())
-        .unwrap_or(&[])
+    let suggestions: Vec<String> = options
         .iter()
-        .find_map(|sel| {
-            options
-                .iter()
-                .enumerate()
-                .find(|(index, option)| {
-                    *index < end_index && option.todo_id.is_none() && &option.text == sel
-                })
-                .map(|(_, option)| option.text.clone())
-        });
-    if let Some(option) = selected_suggestion {
+        .take(end_index)
+        .filter(|option| option.todo_id.is_none() && selected.contains(&option.text))
+        .map(|option| option.text.clone())
+        .collect();
+    if !suggestions.is_empty() {
         return WhatsNextReply::Suggested {
-            option,
-            user_input: input.map(str::to_string),
+            options: suggestions,
+            user_input: Some(task_text).filter(|text| !text.is_empty()),
         };
     }
-    let selected_end = answer
-        .map(|a| a.selected_options.as_slice())
-        .unwrap_or(&[])
-        .iter()
-        .find_map(|sel| options.last().filter(|option| &option.text == sel))
+    if !task_text.is_empty() {
+        return WhatsNextReply::Task(task_text);
+    }
+    let selected_end = options
+        .last()
+        .filter(|option| selected.contains(&option.text))
         .map(|option| option.text.clone());
-    match (selected_end, input) {
-        // 「结束＋文字」＝继续：文字是新指令（有话说＝还没完）。
-        (_, Some(text)) => WhatsNextReply::Task(text.to_string()),
-        (Some(end_text), None) => WhatsNextReply::End(end_text),
-        // 空提交（无选择无文本）：视同未作答，继续询问。
-        (None, None) => WhatsNextReply::Cancelled,
+    match selected_end {
+        Some(end_text) => WhatsNextReply::End(end_text),
+        None => WhatsNextReply::Cancelled,
     }
 }
 
@@ -345,13 +324,10 @@ pub fn whats_next_output(
 ) -> String {
     let base = match reply {
         WhatsNextReply::Task(text) => format!("{}\n{}", MARKER_USER_INPUT, text),
-        WhatsNextReply::Suggested { option, user_input } => send_output(
-            lang,
-            std::slice::from_ref(option),
-            user_input.as_deref(),
-            &[],
-            &[],
-        ),
+        WhatsNextReply::Suggested {
+            options,
+            user_input,
+        } => send_output(lang, options, user_input.as_deref(), &[], &[]),
         WhatsNextReply::End(text) => format!("{}\n{}", MARKER_SELECTED_OPTIONS, text),
         WhatsNextReply::NotesOnly => String::new(),
         WhatsNextReply::Cancelled => return cancel_output(lang),
@@ -771,7 +747,7 @@ mod tests {
             )],
             true,
         );
-        r.single = true;
+        r.single = false;
         r.whats_next = true;
         r
     }
@@ -819,13 +795,66 @@ mod tests {
         assert_eq!(
             reply,
             WhatsNextReply::Suggested {
-                option: "Add tests".into(),
+                options: vec!["Add tests".into()],
                 user_input: Some("Cover the edge case".into()),
             }
         );
         assert_eq!(
             whats_next_output(&reply, &s(&["/tmp/report.md"]), &[], Lang::En),
             "[selected_options]\nAdd tests\n\n[user_input]\nCover the edge case\n\n[files]\n/tmp/report.md"
+        );
+    }
+
+    #[test]
+    fn whats_next_keeps_all_suggestions_todos_and_supplement() {
+        let reply = whats_next_reply(
+            &wn_request(),
+            &wn_result(
+                &[
+                    "Add tests",
+                    "Run todo: 写发布说明",
+                    "Write docs",
+                    "执行待办：修复登录 bug",
+                    "End this turn",
+                ],
+                Some(" Also check CI "),
+            ),
+        );
+        assert_eq!(
+            reply,
+            WhatsNextReply::Suggested {
+                options: vec!["Write docs".into(), "Add tests".into()],
+                user_input: Some("修复登录 bug\n\n写发布说明\n\nAlso check CI".into()),
+            }
+        );
+        assert_eq!(whats_next_output(&reply, &[], &[], Lang::En),
+            "[selected_options]\nWrite docs, Add tests\n\n[user_input]\n修复登录 bug\n\n写发布说明\n\nAlso check CI");
+    }
+
+    #[test]
+    fn whats_next_keeps_every_selected_todo() {
+        let reply = whats_next_reply(
+            &wn_request(),
+            &wn_result(&["Run todo: 写发布说明", "执行待办：修复登录 bug"], None),
+        );
+        assert_eq!(
+            reply,
+            WhatsNextReply::Task("修复登录 bug\n\n写发布说明".into())
+        );
+    }
+
+    #[test]
+    fn whats_next_a_task_selection_prevents_an_end_approval() {
+        let reply = whats_next_reply(
+            &wn_request(),
+            &wn_result(&["End this turn", "Add tests"], None),
+        );
+        assert_eq!(
+            reply,
+            WhatsNextReply::Suggested {
+                options: vec!["Add tests".into()],
+                user_input: None
+            }
         );
     }
 

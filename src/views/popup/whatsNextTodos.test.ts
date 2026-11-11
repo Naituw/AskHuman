@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import type { OptionItem, TodoEntry } from "../../lib/types";
 import {
   refreshWhatsNextTodos,
-  selectedWhatsNextTodo,
+  selectedWhatsNextTodos,
 } from "./whatsNextTodos";
 
 const suggestion: OptionItem = {
@@ -123,7 +123,7 @@ describe("refreshWhatsNextTodos", () => {
   });
 });
 
-describe("selectedWhatsNextTodo", () => {
+describe("selectedWhatsNextTodos", () => {
   it("returns the frozen raw text, attachments, and stable id for submission", () => {
     const option: OptionItem = {
       text: "Run todo: old text 【1 attachment】",
@@ -141,17 +141,17 @@ describe("selectedWhatsNextTodo", () => {
       ],
     };
     expect(
-      selectedWhatsNextTodo(
+      selectedWhatsNextTodos(
         [option, end],
         [option.text],
         [todo("todo-1", "new text")],
         "Run todo: ",
       ),
-    ).toEqual({
+    ).toEqual([{
       id: "todo-1",
       text: "old text",
       optionText: option.text,
       attachments: option.todoAttachments,
-    });
+    }]);
   });
 });

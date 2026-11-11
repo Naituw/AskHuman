@@ -359,6 +359,39 @@ final class AnswerComposerTests: XCTestCase {
         XCTAssertEqual(form.answers[0].selected, [2])
     }
 
+    func testMultiChoiceWhatsNextKeepsOptionsAndSeveralTodosUntilEndIsChosen() {
+        var view = whatsNext()
+        view.single = false
+        let form = composer(view)
+        form.toggle(question: 0, option: 0)
+        form.toggle(question: 0, option: 1)
+        form.setTodoIds(["t1", "t2"])
+        XCTAssertEqual(form.answers[0].selected, [0, 1])
+        XCTAssertEqual(form.todoIds, ["t1", "t2"])
+        form.toggle(question: 0, option: 2)
+        XCTAssertEqual(form.answers[0].selected, [2])
+        XCTAssertTrue(form.todoIds.isEmpty)
+        form.toggle(question: 0, option: 0)
+        XCTAssertEqual(form.answers[0].selected, [0], "a task replaces the end choice")
+        form.toggle(question: 0, option: 2)
+        form.setTodoIds(["t2", "t3"])
+        XCTAssertTrue(form.answers[0].selected.isEmpty, "picked todos replace the end choice")
+        XCTAssertEqual(form.todoIds, ["t2", "t3"])
+    }
+
+    func testMultiChoiceWhatsNextRestoresEveryPickedTaskFromItsDraft() {
+        var view = whatsNext()
+        view.single = false
+        let first = composer(view, debounce: .seconds(60))
+        first.toggle(question: 0, option: 0)
+        first.toggle(question: 0, option: 1)
+        first.setTodoIds(["t1", "t2"])
+        first.flush()
+        let restored = composer(view)
+        XCTAssertEqual(restored.answers[0].selected, [0, 1])
+        XCTAssertEqual(restored.todoIds, ["t1", "t2"])
+    }
+
     func testOtherAsksTakeAsManyTodosAsTheQueueHolds() {
         let form = composer(ask([question("1", "a")]))
         let ids = (0..<Wire.maxPickedTodos + 5).map { "t\($0)" }

@@ -443,7 +443,7 @@ fn answer_hash(submit: &AnswerSubmit) -> String {
 /// ids and attachment snapshots the Coordinator dequeues and delivers from.
 ///
 /// A question: the todos go into the last one, after what the person wrote, each on a line of its
-/// own. What's next: the todo is the next task itself, so its text leads and what the person wrote
+/// own. What's next: the todos are the next tasks themselves, so their text leads and what the person wrote
 /// follows (the popup's handling of a todo of the refreshed queue).
 fn merge_todo_picks(
     ask: &AskRequest,
@@ -451,7 +451,9 @@ fn merge_todo_picks(
     picks: Vec<TodoPick>,
     merge_line: impl Fn(&str) -> String,
 ) {
-    let Some(first) = picks.first() else { return };
+    if picks.is_empty() {
+        return;
+    }
     let Some(last) = answers.len().checked_sub(1) else {
         return;
     };
@@ -459,7 +461,11 @@ fn merge_todo_picks(
     let answer = &mut answers[index];
     let typed = answer.user_input.take();
     let parts: Vec<String> = if ask.whats_next {
-        std::iter::once(first.text.clone()).chain(typed).collect()
+        picks
+            .iter()
+            .map(|pick| pick.text.clone())
+            .chain(typed)
+            .collect()
     } else {
         typed
             .into_iter()
@@ -1220,8 +1226,8 @@ impl Actor {
         if !ids.iter().all(|id| seen.insert(id.as_str())) {
             return Err("duplicate todo".into());
         }
-        if ask.whats_next {
-            // The next task is one thing: a todo or one of the options, never both.
+        if ask.whats_next && ask.single {
+            // Older single-choice requests still accept only one task.
             let chosen = answers.first().map_or(0, |a| a.selected_options.len());
             if ids.len() > 1 || chosen > 0 {
                 return Err("choose one next task".into());

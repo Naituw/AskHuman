@@ -78,6 +78,7 @@ public final class RequestTodoPicker {
     public var count: Int { todos.count }
 
     public var pickedCount: Int { composer.todoIds.count }
+    public var singleSelection: Bool { composer.ask.whatsNext && composer.single }
 
     public func isPicked(_ id: String) -> Bool { composer.isTodoPicked(id) }
 
@@ -91,14 +92,13 @@ public final class RequestTodoPicker {
     /// The queue is longer than What's next shows at first, so there is a "Show all".
     public var canFold: Bool { todos.count > Self.collapsedCount }
 
-    /// Picks or lets go of a todo. In What's next a todo is the next task, one choice among the options, so
-    /// picking another one replaces it.
+    /// Picks or lets go of a todo, retaining older Macs' single-choice behavior.
     public func toggle(_ id: String) {
         guard listsQueue, todos.contains(where: { $0.id == id }) else { return }
         var picked = Set(composer.todoIds)
         if picked.contains(id) {
             picked.remove(id)
-        } else if composer.ask.whatsNext {
+        } else if singleSelection {
             picked = [id]
         } else {
             picked.insert(id)

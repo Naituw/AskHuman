@@ -216,7 +216,7 @@ pub fn parse_ask(
             message_files,
             questions: Vec::new(),
             select_only: false,
-            single: true,
+            single: false,
             output_format: crate::models::OutputFormat::Text,
             whats_next: true,
             whats_next_options: lead_options,
@@ -655,7 +655,7 @@ mod tests {
         assert!(p.whats_next);
         assert_eq!(p.message_text, "");
         assert!(p.questions.is_empty());
-        assert!(p.single); // 单选逐条派发
+        assert!(!p.single);
         assert!(!p.select_only);
         assert!(p.whats_next_options.is_empty());
     }

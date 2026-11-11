@@ -319,6 +319,44 @@ describe("the navbar todo popover", () => {
   describe("on a whats-next question", () => {
     beforeEach(() => { interaction = whatsNext; });
 
+    function multiNext(id: string): PopupInit {
+      const init = whatsNext(id);
+      if (init.interaction?.type === "ask") init.interaction.request.single = false;
+      return init;
+    }
+
+    it("submits several todos together with a suggested task", async () => {
+      interaction = multiNext;
+      store = [todo("first", "first task"), todo("second", "second task")];
+      const { wrapper } = await mountRequest();
+      const options = wrapper.findAll(".option");
+      await options[0].trigger("click");
+      await options[2].trigger("click");
+      await options[1].trigger("click");
+      await footerButton(wrapper, "Send").trigger("click");
+      await flushPromises();
+      expect(calls("submit_popup")).toEqual([expect.objectContaining({
+        submission: expect.objectContaining({ answers: [expect.objectContaining({ selectedOptions: ["Add tests"],
+          userInput: "first task\n\nsecond task", todoIds: ["first", "second"],
+          todoSelections: [{ id: "first", attachments: [] }, { id: "second", attachments: [] }],
+        })] }),
+      })]);
+    });
+
+    it("keeps end exclusive while allowing tasks to be picked together", async () => {
+      interaction = multiNext;
+      store = [todo("first", "first task"), todo("second", "second task")];
+      const { wrapper } = await mountRequest();
+      const options = wrapper.findAll(".option");
+      await options[0].trigger("click");
+      await options[1].trigger("click");
+      expect(wrapper.findAll(".option.selected")).toHaveLength(2);
+      await options[3].trigger("click");
+      expect(wrapper.findAll(".option.selected").map(row => row.find(".label").text())).toEqual(["End this turn"]);
+      await options[2].trigger("click");
+      expect(wrapper.findAll(".option.selected").map(row => row.find(".label").text().replace(/^TODO/, ""))).toEqual(["second task"]);
+    });
+
     it("shows what the popover adds and deletes among the options", async () => {
       const { wrapper } = await mountRequest();
       // A todo option carries a "TODO" badge in front of its text.

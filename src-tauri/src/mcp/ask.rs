@@ -377,7 +377,8 @@ pub struct WhatsNextParams {
     pub message: Option<String>,
     /// Optional concrete next-task suggestions. NEVER include an end, stop, or no-more-work option;
     /// AskHuman adds the ending choice. Omit this field when you have no task to suggest. Options
-    /// appear before project todos, and `recommended` renders the same emphasis as in `ask`.
+    /// appear before project todos; the human can select multiple tasks. `recommended` renders
+    /// the same emphasis as in `ask`.
     #[serde(default)]
     pub options: Option<Vec<AskOption>>,
     /// Optional file paths (e.g. a report or summary document) to attach to what the human sees.
