@@ -43,6 +43,8 @@ struct LaunchOptions {
     /// (the ended request page). `-AHEndHow` says how (`answeredElsewhere`, `cancelled`, `expired`, `ended`) and
     /// `-AHEndBy` who answered it (a channel's name, as a Mac reports it: "Popup", "Slack").
     var endAfter: Double?
+    /// Resolves the mock after entering the background, with a bounded background execution lease.
+    var endInBackground = false
     var endHow: HistoryOutcome = .answeredElsewhere
     var endBy: String?
     var arrivalMotionDiagnostics = false
@@ -116,6 +118,7 @@ struct LaunchOptions {
         arrivalCount = min(20, max(1, defaults.integer(forKey: "AHArrivalCount")))
         if defaults.object(forKey: "AHArrivalDelay") != nil { arrivalDelay = max(0, defaults.double(forKey: "AHArrivalDelay")) }
         if defaults.object(forKey: "AHEndAfter") != nil { endAfter = max(0, defaults.double(forKey: "AHEndAfter")) }
+        endInBackground = defaults.bool(forKey: "AHEndInBackground")
         if let how = defaults.string(forKey: "AHEndHow").flatMap(HistoryOutcome.init(rawValue:)) { endHow = how }
         endBy = defaults.string(forKey: "AHEndBy")
         arrivalMotionDiagnostics = defaults.bool(forKey: "AHArrivalMotionDiagnostics")
@@ -224,10 +227,12 @@ final class AppEnvironment {
             leftoverPairings = defaults.bool(forKey: "ah.hasLaunched") ? 0 : vault.pairings().count
         }
         defaults.set(true, forKey: "ah.hasLaunched")
-        // The strip of an ended request moves the page on (or closes it) without the page's own arrows being touched:
-        // it gets the arrows' light transition (docs/specs/ios-request-switching.md).
-        store.animatePageMove = { change in withAnimation(.easeOut(duration: 0.18), change) }
+        // Both the ended strip's button and its countdown use the same slide as advancing after a send.
+        store.animatePageMove = { [weak store = store] change in
+            if let store { RequestPageTransition.shared.move(in: store, change: change) } else { change() }
+        }
         store.pageIsCovered = { PageEditing.isCovered }
+        store.pageIsVisible = { PageEditing.isVisible }
         push = PushCoordinator(store: store, simulated: launch.mock)
         if let tab = launch.tab { store.tab = tab }
         Self.current = self
@@ -266,7 +271,14 @@ final class AppEnvironment {
                 // The page is up: the request ends while it is being looked at.
                 if let seconds = launch.endAfter, let backend = mock {
                     let (macId, requestId, outcome, by) = (item.macId, item.requestId, launch.endHow, launch.endBy)
+                    let lease = launch.endInBackground ? MockResolutionLease() : nil
                     Task {
+                        defer { lease?.finish() }
+                        if lease != nil {
+                            while UIApplication.shared.applicationState != .background {
+                                try? await Task.sleep(for: .milliseconds(50))
+                            }
+                        }
                         try? await Task.sleep(for: .seconds(seconds))
                         await backend.simulateFinished(requestId: requestId, macId: macId, outcome: outcome, by: by)
                     }
@@ -310,6 +322,25 @@ final class AppEnvironment {
         for index in 0..<count {
             composer.addAnnotation(start: index * 12, end: index * 12 + 5, quote: "users", note: "Note \(index + 1)")
         }
+    }
+}
+
+/// Only the mock resolution fixture requests background time; real sessions keep their existing lifecycle.
+@MainActor
+private final class MockResolutionLease {
+    private var token = UIBackgroundTaskIdentifier.invalid
+
+    init() {
+        token = UIApplication.shared.beginBackgroundTask(withName: "Mock request resolution") { [weak self] in
+            Task { @MainActor in self?.finish() }
+        }
+    }
+
+    func finish() {
+        guard token != .invalid else { return }
+        let ending = token
+        token = .invalid
+        UIApplication.shared.endBackgroundTask(ending)
     }
 }
 

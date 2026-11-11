@@ -33,13 +33,14 @@ final class EndedCountdownTests: XCTestCase {
 
     /// Opens a request and has its Mac report that it ended somewhere else.
     @discardableResult
-    private func openAndEnd(_ requestId: String, how: HistoryOutcome = .answeredElsewhere) async throws -> InboxItem {
+    private func openAndEnd(_ requestId: String, how: HistoryOutcome = .answeredElsewhere, showNotice: Bool = true) async throws -> InboxItem {
         let item = try item(requestId)
         store.open(macId: item.macId, requestId: item.requestId)
         await backend.simulateFinished(
             requestId: item.requestId, macId: item.macId, outcome: how, by: how == .answeredElsewhere ? "Popup" : nil
         )
         await eventually("ended") { self.store.endedNotice(for: item.id) != nil }
+        if showNotice { store.endedNoticeDisplayed(item.id) }
         return item
     }
 
@@ -102,7 +103,7 @@ final class EndedCountdownTests: XCTestCase {
         XCTAssertEqual(store.inboxPath, [select.id], "no strip, no way on: the request is still asking")
     }
 
-    func testTheStripsMoveGoesThroughTheLightTransition() async throws {
+    func testTheStripsMoveGoesThroughTheAppTransition() async throws {
         await make()
         var moves = 0
         store.animatePageMove = { change in
@@ -117,7 +118,7 @@ final class EndedCountdownTests: XCTestCase {
 
     // MARK: the countdown
 
-    func testTheCountdownStartsWhenTheRequestEndsElsewhere() async throws {
+    func testTheCountdownStartsWhenTheEndedStripIsDisplayed() async throws {
         for how: HistoryOutcome in [.answeredElsewhere, .cancelled, .expired, .ended] {
             await make()
             XCTAssertNil(store.endedCountdown, "nothing counts down while the request is open")
@@ -133,6 +134,77 @@ final class EndedCountdownTests: XCTestCase {
         await make()
         let fresh = AppStore(backend: backend, drafts: MemoryDraftStore(), defaults: defaults)
         XCTAssertEqual(fresh.endedCountdownLength, .seconds(5))
+    }
+
+    func testAnUnseenStripDoesNotSpendTheCountdown() async throws {
+        await make(length: .milliseconds(150))
+        let select = try await openAndEnd("req-select", how: .cancelled, showNotice: false)
+        try await Task.sleep(for: .milliseconds(350))
+        XCTAssertNil(store.endedCountdown)
+        XCTAssertEqual(store.inboxPath, [select.id])
+        XCTAssertTrue(store.monitorsEndedNotice(select.id))
+
+        store.endedNoticeDisplayed(select.id)
+        XCTAssertEqual(store.endedCountdown?.id, select.id)
+        await eventually("moves after the visible countdown") { self.store.inboxPath.last != select.id }
+    }
+
+    func testAnEndInTheBackgroundWaitsForTheStripToBeVisible() async throws {
+        await make(length: .milliseconds(150))
+        var visible = false
+        var covered = true
+        store.pageIsVisible = { visible }
+        store.pageIsCovered = { covered }
+        let select = try await openAndEnd("req-select", how: .cancelled)
+        try await Task.sleep(for: .milliseconds(300))
+        XCTAssertNil(store.endedCountdown, "background presentation and editing state cannot consume or suppress the timer")
+        XCTAssertEqual(store.inboxPath, [select.id])
+
+        visible = true
+        store.endedNoticeDisplayed(select.id)
+        XCTAssertNil(store.endedCountdown, "the strip is still behind a cover")
+        covered = false
+        store.endedNoticeDisplayed(select.id)
+        XCTAssertEqual(store.endedCountdown?.id, select.id)
+        await eventually("moves after it was seen") { self.store.inboxPath.last != select.id }
+    }
+
+    func testReturningToTheForegroundDoesNotResetAnActiveCountdown() async throws {
+        await make(length: .milliseconds(300))
+        var visible = true
+        store.pageIsVisible = { visible }
+        let select = try await openAndEnd("req-select")
+        let first = try XCTUnwrap(store.endedCountdown)
+        visible = false
+        await store.setForeground(false)
+        try await Task.sleep(for: .milliseconds(100))
+        visible = true
+        store.endedNoticeDisplayed(select.id)
+        store.endedNoticeDisplayed(select.id)
+        XCTAssertEqual(store.endedCountdown, first, "returning and repeated layout callbacks preserve the original deadline")
+        await eventually("the original deadline wins") { self.store.inboxPath.last != select.id }
+    }
+
+    func testGoingToTheBackgroundDoesNotInterruptACountdownAlreadySeen() async throws {
+        await make(length: .milliseconds(200))
+        var visible = true
+        store.pageIsVisible = { visible }
+        let select = try await openAndEnd("req-select")
+        visible = false
+        await store.setForeground(false)
+        await eventually("moves while the app is not visible") { self.store.inboxPath.last != select.id }
+    }
+
+    func testLeavingAnUnseenEndedPageDisarmsItsCountdown() async throws {
+        await make(length: .milliseconds(100))
+        let select = try await openAndEnd("req-select", showNotice: false)
+        let other = try item("req-migration")
+        store.open(macId: other.macId, requestId: other.requestId)
+        store.endedNoticeDisplayed(select.id)
+        try await Task.sleep(for: .milliseconds(250))
+        XCTAssertNil(store.endedCountdown)
+        XCTAssertFalse(store.monitorsEndedNotice(select.id))
+        XCTAssertEqual(store.inboxPath, [other.id])
     }
 
     func testWhenTheCountdownRunsOutThePageMovesOn() async throws {
@@ -170,6 +242,7 @@ final class EndedCountdownTests: XCTestCase {
         XCTAssertNotNil(store.endedCountdown)
 
         store.stayOnEnded(select.id)
+        store.endedNoticeDisplayed(select.id)
         XCTAssertNil(store.endedCountdown)
         try await Task.sleep(for: .milliseconds(500))
         XCTAssertEqual(store.inboxPath, [select.id], "the page stays for as long as the reader wants")
@@ -226,12 +299,14 @@ final class EndedCountdownTests: XCTestCase {
         await backend.simulateFinished(requestId: select.requestId, macId: select.macId, outcome: .cancelled)
         await eventually("ended") { self.store.endedNotice(for: select.id) != nil }
         XCTAssertEqual(looks, 1)
+        store.endedNoticeDisplayed(select.id)
+        XCTAssertEqual(looks, 2, "the visible strip also checks that no new cover is hiding it")
         XCTAssertNotNil(store.endedCountdown, "nothing was over the page")
 
         // Whatever comes over the page afterwards is the strip's to notice: the store looks once.
         covered = true
         XCTAssertNotNil(store.endedCountdown)
-        XCTAssertEqual(looks, 1)
+        XCTAssertEqual(looks, 2)
     }
 
     func testTurningAutoAdvanceOffStopsTheCountdown() async throws {

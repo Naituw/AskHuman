@@ -7,6 +7,10 @@ enum PageEditing {
         UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }.flatMap(\.windows).first(where: \.isKeyWindow)
     }
 
+    static var isVisible: Bool {
+        UIApplication.shared.applicationState == .active && window?.windowScene?.activationState == .foregroundActive
+    }
+
     /// Whether something is over the page or the reader is typing on it: a sheet, an alert, a full-screen cover, the
     /// keyboard. The page must not be moved from under that: what is being written would go with it
     /// (docs/specs/ios-answer-flow.md §3.8).

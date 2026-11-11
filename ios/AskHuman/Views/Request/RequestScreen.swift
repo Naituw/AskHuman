@@ -36,8 +36,9 @@ struct RequestScreen: View {
         // The receipt of the request this page takes over from, if it does: the store says so when it
         // moves on. (A page opened any other way has no business with a receipt.)
         let handedOver = store.receipt.flatMap { $0.next == id ? $0 : nil }
-        Arrival(from: handedOver) {
+        Arrival(from: handedOver, page: RequestPageTransition.shared.snapshot(for: id)) {
             RequestPage(id: id)
+                .background { RequestPageCapture(id: id) }
         }
         // A page of its own for every request: nothing of the last one (its scroll position, what was
         // read of it) is left on this one.
@@ -187,29 +188,32 @@ private struct Arrival<Content: View>: View {
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     /// The receipt still on screen, until the new page has come to rest.
     @State private var leaving: SentReceipt?
+    @State private var leavingPage: RequestPageTransition.Snapshot?
     @State private var arrived: Bool
     private let content: Content
 
     /// The page keeps the receipt it started with: it is a page of its own for every request (`.id`).
-    init(from: SentReceipt?, @ViewBuilder content: () -> Content) {
+    init(from: SentReceipt?, page: RequestPageTransition.Snapshot? = nil, @ViewBuilder content: () -> Content) {
         _leaving = State(initialValue: from)
-        _arrived = State(initialValue: from == nil)
+        _leavingPage = State(initialValue: page)
+        _arrived = State(initialValue: from == nil && page == nil)
         self.content = content()
     }
 
     var body: some View {
         ZStack {
-            if let leaving {
-                SentReceiptPage(receipt: leaving, settled: true)
-                    .visualEffect { view, proxy in view.offset(x: !reduceMotion && arrived ? -proxy.size.width * 0.3 : 0) }
-                    .opacity(reduceMotion && arrived ? 0 : 1)
+            ZStack {
+                if let leaving { SentReceiptPage(receipt: leaving, settled: true) }
+                if let leavingPage { RequestPageSnapshot(snapshot: leavingPage) }
             }
+            .visualEffect { view, proxy in view.offset(x: !reduceMotion && arrived ? -proxy.size.width * 0.3 : 0) }
+            .opacity(reduceMotion && arrived ? 0 : 1)
             content
                 .visualEffect { view, proxy in view.offset(x: !reduceMotion && !arrived ? proxy.size.width : 0) }
                 .opacity(reduceMotion && !arrived ? 0 : 1)
         }
         .task {
-            guard leaving != nil, !arrived else { return }
+            guard leaving != nil || leavingPage != nil, !arrived else { return }
             // The page lays itself out for the first time right after it was added, and for a long form
             // that takes a good part of the slide: an animation that started before it would be seen
             // from the middle, or not at all. Whatever else is waiting for the main thread is done by
@@ -221,12 +225,19 @@ private struct Arrival<Content: View>: View {
             withAnimation(curve) {
                 arrived = true
             } completion: {
-                leaving = nil
+                clearDeparture()
             }
             // The receipt must not outlive the slide if the completion does not come.
             do { try await Task.sleep(for: .seconds(2)) } catch { return }
-            leaving = nil
+            clearDeparture()
         }
+        .onDisappear { clearDeparture() }
+    }
+
+    private func clearDeparture() {
+        if let leavingPage { RequestPageTransition.shared.complete(leavingPage.id) }
+        leaving = nil
+        leavingPage = nil
     }
 }
 

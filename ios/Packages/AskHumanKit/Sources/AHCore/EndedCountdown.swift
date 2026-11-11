@@ -63,8 +63,7 @@ extension AppStore {
         }
     }
 
-    /// A page change that comes from the strip, not from a tap on the page's own navigation, gets the light transition
-    /// the arrows use (docs/specs/ios-request-switching.md): the app layer says what that is.
+    /// The app layer draws the transition for both a tap and the countdown reaching its deadline.
     private func moveAnimated(_ change: () -> Void) {
         if let animatePageMove { animatePageMove(change) } else { change() }
     }
@@ -76,17 +75,31 @@ extension AppStore {
         stopEndedCountdown()
     }
 
-    /// Starts the countdown on a page whose request has just ended elsewhere. There is none unless the page is the one
-    /// in view and the reader wants to be moved on (the setting that moves on after a send), and nothing is over it.
-    func beginEndedCountdown(for id: String) {
+    /// Arms an ended page without spending any of its five seconds before its strip is visible.
+    func prepareEndedCountdown(for id: String) {
         stopEndedCountdown()
         guard autoAdvance, tab == .inbox, inboxPath.last == id, endedNotice(for: id) != nil else { return }
         // Asked here, in the turn the news came in: the page's form stops taking input a moment later, and the keyboard
         // of what was being written goes with it, so that a look from the strip would find nothing to protect.
-        if pageIsCovered?() == true {
+        if pageIsVisible?() != false, pageIsCovered?() == true {
             Diagnostics.note("store", "ended page is covered: no countdown")
             return
         }
+        pendingEndedCountdownId = id
+        Diagnostics.note("store", "ended page waits for its strip to be visible")
+    }
+
+    /// Whether the strip still needs to wait for presentation or protect an active countdown from editing.
+    public func monitorsEndedNotice(_ id: String) -> Bool {
+        pendingEndedCountdownId == id || endedCountdown?.id == id
+    }
+
+    /// Called by the mounted strip only when the app is active and no sheet or keyboard covers it.
+    /// Repeated appearances and returning from the background never restart a countdown already begun.
+    public func endedNoticeDisplayed(_ id: String) {
+        guard pendingEndedCountdownId == id, autoAdvance, tab == .inbox, inboxPath.last == id,
+              endedNotice(for: id) != nil, pageIsVisible?() != false, pageIsCovered?() != true else { return }
+        pendingEndedCountdownId = nil
         let length = endedCountdownLength
         let countdown = EndedCountdown(id: id, began: Date(), seconds: length.timeInterval)
         endedCountdown = countdown
@@ -99,6 +112,7 @@ extension AppStore {
     }
 
     func stopEndedCountdown() {
+        pendingEndedCountdownId = nil
         endedCountdownTask?.cancel()
         endedCountdownTask = nil
         if endedCountdown != nil { endedCountdown = nil }

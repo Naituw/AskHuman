@@ -25,7 +25,8 @@ final class AskHumanEndedUITests: XCTestCase {
     @discardableResult
     private func launch(
         _ request: String, how: String = "answeredElsewhere", by: String? = "Popup", after: Double = 6, latency: Double = 0.05,
-        scenario: String = "demo", autoAdvance: Bool = false, countdown: Double? = nil, contentSize: String? = nil
+        scenario: String = "demo", autoAdvance: Bool = false, countdown: Double? = nil, contentSize: String? = nil,
+        endInBackground: Bool = false, receiptHold: Double? = nil
     ) -> XCUIApplication {
         app?.terminate()
         let app = XCUIApplication()
@@ -38,6 +39,8 @@ final class AskHumanEndedUITests: XCTestCase {
         ]
         if let by { arguments += ["-AHEndBy", by] }
         if let countdown { arguments += ["-AHEndedCountdown", "\(countdown)"] }
+        if endInBackground { arguments += ["-AHEndInBackground", "YES"] }
+        if let receiptHold { arguments += ["-AHAdvanceHold", "\(receiptHold)"] }
         if let contentSize { arguments += ["-UIPreferredContentSizeCategoryName", "UICTContentSizeCategory" + contentSize] }
         app.launchArguments = arguments
         app.launch()
@@ -52,7 +55,9 @@ final class AskHumanEndedUITests: XCTestCase {
     @discardableResult
     private func requireElement(_ id: String, timeout: TimeInterval = 20, file: StaticString = #filePath, line: UInt = #line) -> XCUIElement {
         let found = element(id)
-        XCTAssertTrue(found.waitForExistence(timeout: timeout), "\(id) did not appear", file: file, line: line)
+        let exists = found.waitForExistence(timeout: timeout)
+        if !exists { add(XCTAttachment(string: app.debugDescription)) }
+        XCTAssertTrue(exists, "\(id) did not appear", file: file, line: line)
         return found
     }
 
@@ -160,6 +165,17 @@ final class AskHumanEndedUITests: XCTestCase {
         return (option.exists && option.isEnabled) || (choice.exists && choice.isEnabled)
     }
 
+    /// The Duo runtime can ignore XCTest's hardware Home key. Activating another app changes the real app state.
+    private func backgroundApp() {
+        let other = XCUIApplication(bundleIdentifier: "com.apple.Preferences")
+        other.activate()
+        let backgrounded = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in
+            self.app.state == .runningBackground || self.app.state == .runningBackgroundSuspended
+        }, object: app)
+        XCTAssertEqual(XCTWaiter().wait(for: [backgrounded], timeout: 10), .completed,
+                       "AskHuman state \(app.state.rawValue), foreground app state \(other.state.rawValue)")
+    }
+
     func testTheStripCountsDownAndMovesOnToTheNextRequestByItself() {
         launch("req-select", after: 3, autoAdvance: true, countdown: 6)
         requireElement("finished-notice", timeout: 40)
@@ -170,6 +186,38 @@ final class AskHumanEndedUITests: XCTestCase {
         shot("ended-countdown")
         XCTAssertTrue(gone("finished-notice", timeout: 30), "when the countdown is over the page moves on by itself")
         XCTAssertTrue(aLiveRequestIsUp(), "to a request that still asks")
+    }
+
+    func testACancelledConfirmationCountsDownWhenItsStripIsSeen() {
+        launch("req-permission", how: "cancelled", by: nil, after: 5, autoAdvance: true, countdown: 6)
+        requireElement("finished-stay", timeout: 30)
+        XCTAssertTrue(stripLabel().contains(localized("The Agent cancelled it.", "Agent 已取消它。")))
+        XCTAssertTrue(gone("finished-notice", timeout: 20))
+        XCTAssertTrue(aLiveRequestIsUp())
+    }
+
+    func testACancellationInTheBackgroundWaitsUntilItsStripIsSeen() {
+        launch("req-select", how: "cancelled", by: nil, after: 3, autoAdvance: true, countdown: 10, endInBackground: true)
+        requireElement("option-0-0")
+        backgroundApp()
+        // Longer than the old event-based countdown: it would already advance when the app returns.
+        Thread.sleep(forTimeInterval: 18)
+        app.activate()
+        requireElement("finished-notice", timeout: 10)
+        requireElement("finished-stay", timeout: 5)
+        XCTAssertTrue(stripLabel().contains(localized("The Agent cancelled it.", "Agent 已取消它。")))
+        XCTAssertTrue(gone("finished-notice", timeout: 25), "the visible countdown now advances normally")
+        XCTAssertTrue(aLiveRequestIsUp())
+    }
+
+    func testBackgroundingAfterSeeingTheCountdownDoesNotRestartIt() {
+        launch("req-select", how: "cancelled", by: nil, after: 5, autoAdvance: true, countdown: 20)
+        requireElement("finished-stay", timeout: 30)
+        backgroundApp()
+        Thread.sleep(forTimeInterval: 25)
+        app.activate()
+        XCTAssertTrue(gone("finished-notice", timeout: 6), "the original deadline elapsed while the app was away")
+        XCTAssertTrue(aLiveRequestIsUp(), "returning must not start another twenty seconds")
     }
 
     func testTheButtonMovesOnAtOnce() {
@@ -311,7 +359,7 @@ final class AskHumanEndedUITests: XCTestCase {
 
     func testAnAnswerSentFromThisPhoneIsNotAnEnding() {
         // A long wait for the Mac's acknowledgement, so that the form is still there, "sending", when it comes.
-        launch("req-select", after: 600, latency: 1.0)
+        launch("req-select", after: 600, latency: 1.0, receiptHold: 5)
         requireElement("option-0-0").tap()
         requireElement("send-button").tap()
         requireElement("sent-receipt", timeout: 20)

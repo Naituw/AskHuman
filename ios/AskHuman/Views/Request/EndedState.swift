@@ -92,8 +92,8 @@ struct EndedStrip: View {
         // sizes (that is what the largest accessibility size does to it); VoiceOver speaks the text whatever its size.
         .dynamicTypeSize(...DynamicTypeSize.accessibility1)
         .modifier(EndedStripBackground(tint: finished.outcome.color))
-        // A sheet or an alert that comes over the page stops the countdown: what is being written there must not go with it.
-        .task(id: countdown?.id) { await stopCountdownWhenCovered() }
+        // Mounting the visible strip, rather than receiving a network event, starts its five seconds.
+        .task(id: id) { await monitorPresentation() }
     }
 
     private var controls: some View {
@@ -153,12 +153,15 @@ struct EndedStrip: View {
 
     /// What comes over the page while the countdown runs (a sheet, an alert). What was there when the request ended, the
     /// keyboard of what was being written included, is looked at by the store before the countdown starts.
-    private func stopCountdownWhenCovered() async {
-        guard countdown != nil else { return }
-        while !Task.isCancelled {
-            if PageEditing.isCovered {
-                store.stayOnEnded(id)
-                return
+    private func monitorPresentation() async {
+        await Task.yield()
+        while !Task.isCancelled, store.monitorsEndedNotice(id) {
+            if PageEditing.isVisible {
+                if PageEditing.isCovered {
+                    store.stayOnEnded(id)
+                } else {
+                    store.endedNoticeDisplayed(id)
+                }
             }
             try? await Task.sleep(for: .milliseconds(150))
         }

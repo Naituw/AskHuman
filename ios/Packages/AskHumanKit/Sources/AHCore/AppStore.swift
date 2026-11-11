@@ -156,7 +156,7 @@ public final class AppStore {
             if oldValue != inboxPath { Diagnostics.note("nav", "inbox stack \(oldValue.count) → \(inboxPath.count)") }
             if oldValue.last != inboxPath.last { requestNavigationEpoch &+= 1 }
             // Another page, or none: the countdown was for the page that left.
-            if endedCountdown?.id != inboxPath.last { stopEndedCountdown() }
+            if (endedCountdown?.id ?? pendingEndedCountdownId) != inboxPath.last { stopEndedCountdown() }
             for id in Set(oldValue).subtracting(inboxPath) { closed(id: id) }
             if let open = inboxPath.last {
                 if requestNavigation == nil { beginRequestNavigation(filter: filter, current: open) }
@@ -203,12 +203,15 @@ public final class AppStore {
     /// How long that countdown is; tests shorten or stretch it.
     @ObservationIgnored public var endedCountdownLength = Duration.seconds(5)
     @ObservationIgnored var endedCountdownTask: Task<Void, Never>?
+    @ObservationIgnored var pendingEndedCountdownId: String?
     /// Runs the change of page that the strip makes (its button, or its countdown running out) the way the app layer
-    /// wants it drawn (a light transition). Without it the change is made as it is.
+    /// wants it drawn. Without it the change is made as it is.
     @ObservationIgnored public var animatePageMove: (@MainActor (_ change: () -> Void) -> Void)?
     /// Whether something is over the request page, or the reader is typing on it (a sheet, an alert, the keyboard).
     /// Set by the app layer, which can ask UIKit. Nothing counts down over it, and the page is not moved from under it.
     @ObservationIgnored public var pageIsCovered: (@MainActor () -> Bool)?
+    /// Whether the app can show the current request page to the reader right now.
+    @ObservationIgnored public var pageIsVisible: (@MainActor () -> Bool)?
 
     /// The Todos tab: the todos of the Macs, shown and edited from here.
     public let todos: TodosStore
@@ -451,8 +454,8 @@ public final class AppStore {
                    let sent = retained[key]?.item, case .sending = sent.state {
                     advance(from: key, outcome: outcome)
                 } else {
-                    // It ended somewhere else while the page is open: the strip offers the way on, and counts down to it.
-                    beginEndedCountdown(for: key)
+                    // The strip starts counting only after the reader can see it.
+                    prepareEndedCountdown(for: key)
                 }
             }
             if case .request(let bannerMac, let bannerId)? = banner?.kind, bannerMac == macId, bannerId == requestId {
