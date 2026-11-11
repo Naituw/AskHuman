@@ -18,14 +18,18 @@ extension MockData {
     private static let sessionChannels = ["popup", "dingding", "away", "ios", "mute", "slack", "feishu", "telegram"]
 
     /// A question of a session. `key` is what the Mac's request carries; `nil` is a request that names no session.
-    public static func sessionHistoryAsk(id: String, key: String?, title: String, now: Date = Date()) -> RequestView {
+    /// The default message is short: the page is shorter than a screen, as most pages are.
+    public static func sessionHistoryAsk(
+        id: String, key: String?, title: String, message: String = "The tests pass. Shall I open the pull request now?",
+        now: Date = Date()
+    ) -> RequestView {
         RequestView(
             id: id, kind: "ask", createdAt: ms(now.addingTimeInterval(-30)), agent: AgentRef(kind: "claude", label: "Claude Code"),
             project: ProjectRef(key: "proj-humaninloop", name: "HumanInLoop"), sessionTitle: title, agentKey: key,
             source: "claude", contentHash: "h-" + id,
             ask: AskView(
                 isMarkdown: true,
-                message: MessageView(text: "The tests pass. Shall I open the pull request now?", files: []),
+                message: MessageView(text: message, files: []),
                 questions: [
                     QuestionView(text: "How should I continue?", options: [
                         OptionView(text: "Open the PR", recommended: true),
@@ -48,11 +52,14 @@ extension MockData {
         return view
     }
 
-    /// The scenario's requests: two of the long session (a question and a permission), one of the short session, one of a
-    /// session without records, one that names no session, and one of the Office iMac, whose AskHuman cannot read history.
+    /// The scenario's requests: three of the long session (a question, one with a page taller than a screen, and a
+    /// permission), one of the short session, one of a session without records, one that names no session, and one of the
+    /// Office iMac, whose AskHuman cannot read history.
     public static func sessionHistoryInbox(now: Date = Date()) -> [InboxItem] {
         items([
             (homeMacId, "Home MacBook Pro", sessionHistoryAsk(id: "req-history-long", key: longSessionKey, title: "Plan the cache migration", now: now), true, -30),
+            // A page taller than a screen (a long plan to read): the request can stay where it is when the thread comes in.
+            (homeMacId, "Home MacBook Pro", sessionHistoryAsk(id: "req-history-tall", key: longSessionKey, title: "Plan the cache migration", message: longSessionMessage, now: now), true, -35),
             (homeMacId, "Home MacBook Pro", sessionHistoryConfirm(id: "req-history-confirm", key: longSessionKey, now: now), true, -40),
             (homeMacId, "Home MacBook Pro", sessionHistoryAsk(id: "req-history-short", key: shortSessionKey, title: "Tidy the README", now: now), true, -50),
             (homeMacId, "Home MacBook Pro", sessionHistoryAsk(id: "req-history-empty", key: emptySessionKey, title: "A brand new session", now: now), true, -60),

@@ -68,9 +68,11 @@ extension AppStore {
         if let animatePageMove { animatePageMove(change) } else { change() }
     }
 
-    /// The reader stays: the countdown is dropped and only the button is left. For this request only.
+    /// The reader stays: the countdown is dropped and only the button is left. For this request only. A countdown
+    /// that is still waiting for its strip to be shown is dropped too: whoever stays before it began (the reader asked
+    /// for the session's history, say) is not moved on once the strip is there.
     public func stayOnEnded(_ id: String) {
-        guard endedCountdown?.id == id else { return }
+        guard endedCountdown?.id == id || pendingEndedCountdownId == id else { return }
         Diagnostics.note("store", "ended-page countdown stopped")
         stopEndedCountdown()
     }

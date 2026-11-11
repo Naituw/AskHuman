@@ -5,6 +5,8 @@ import AHProtocol
 /// A confirmation (permission prompt, stop hook): title, context, detail and the buttons the Mac offers.
 struct ConfirmScreen: View {
     let item: InboxItem
+    /// The earlier exchanges of this session above the form, when the page offers them.
+    var history: RequestHistory?
     @Environment(AppStore.self) private var store
     @State private var detailReady = false
 
@@ -17,38 +19,44 @@ struct ConfirmScreen: View {
             let finished = store.endedNotice(for: item.id)
             let ended = finished != nil
             ScrollView {
-                VStack(alignment: .leading, spacing: 16) {
-                    if case .failed = item.state { FailedSubmissionNotice(item: item) }
-                    RequestHeader(item: item)
-                    DetailCard(confirm: confirm, onSettled: { detailReady = true })
-                        .background(RequestReadingAnchor(name: "confirmation-detail"))
-                        .endedDimming(ended)
-                    VStack(spacing: 10) {
-                        ForEach(confirm.choices, id: \.wireIndex) { choice in
-                            ChoiceRow(choice: choice, selected: composer.selectedWireIndex == choice.wireIndex) {
-                                composer.select(wireIndex: choice.wireIndex)
-                            }
-                            .accessibilityIdentifier("choice-\(choice.wireIndex)")
-                        }
-                    }
-                    .background(RequestReadingAnchor(name: "confirmation-choices"))
-                    // Disabled plain buttons are paler by themselves: no `endedDimming` on top.
-                    .disabled(composer.isSending || sending || ended)
-                    if let field = composer.visibleInput {
-                        InputCard(field: field, composer: composer)
-                            .background(RequestReadingAnchor(name: "confirmation-input"))
-                            .disabled(composer.isSending || sending || ended)
+                VStack(spacing: 0) {
+                    if let history { SessionThreadView(history: history) }
+                    VStack(alignment: .leading, spacing: 16) {
+                        if case .failed = item.state { FailedSubmissionNotice(item: item) }
+                        RequestHeader(item: item)
+                        DetailCard(confirm: confirm, onSettled: { detailReady = true })
+                            .background(RequestReadingAnchor(name: "confirmation-detail"))
                             .endedDimming(ended)
+                        VStack(spacing: 10) {
+                            ForEach(confirm.choices, id: \.wireIndex) { choice in
+                                ChoiceRow(choice: choice, selected: composer.selectedWireIndex == choice.wireIndex) {
+                                    composer.select(wireIndex: choice.wireIndex)
+                                }
+                                .accessibilityIdentifier("choice-\(choice.wireIndex)")
+                            }
+                        }
+                        .background(RequestReadingAnchor(name: "confirmation-choices"))
+                        // Disabled plain buttons are paler by themselves: no `endedDimming` on top.
+                        .disabled(composer.isSending || sending || ended)
+                        if let field = composer.visibleInput {
+                            InputCard(field: field, composer: composer)
+                                .background(RequestReadingAnchor(name: "confirmation-input"))
+                                .disabled(composer.isSending || sending || ended)
+                                .endedDimming(ended)
+                        }
+                        // Its countdown means nothing once the request has ended.
+                        if !ended { ExpiryLabel(date: composer.expiresAt) }
                     }
-                    // Its countdown means nothing once the request has ended.
-                    if !ended { ExpiryLabel(date: composer.expiresAt) }
+                    .readableWidth()
+                    .padding()
+                    .background(RequestReadingAnchor(name: "request-top"))
+                    .background(RequestScrollPosition(id: item.id, store: store, ready: detailReady || confirm.detail.bodyMd.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty, intent: history?.thread.intent ?? 0))
+                    .requestRoom(history)
                 }
-                .readableWidth()
-                .padding()
-                .background(RequestReadingAnchor(name: "request-top"))
-                .background(RequestScrollPosition(id: item.id, store: store, ready: detailReady || confirm.detail.bodyMd.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty))
+                .background { if let history { ThreadScrollHook(history: history) } }
             }
             .background(Color(.systemGroupedBackground))
+            .overlay(alignment: .bottom) { if let history { SessionReturnCapsule(history: history) } }
             .scrollDismissesKeyboard(.interactively)
             .actionBar {
                 bar(composer: composer, confirm: confirm)

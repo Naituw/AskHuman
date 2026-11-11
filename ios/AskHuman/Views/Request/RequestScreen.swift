@@ -22,14 +22,20 @@ struct RequestScreen: View {
     @State private var addingTodo = false
     /// The todo that was just added, while its note floats over the top of the page.
     @State private var addedNote: TodoAddedNote?
+    /// Keeps the history of the earlier exchanges of this request's session, when it has one (docs/specs/ios-session-history.md).
+    @State private var historyHolder = RequestHistoryHolder()
 
     private var hasNeighbors: Bool {
         store.adjacentRequest(to: id, direction: -1) != nil || store.adjacentRequest(to: id, direction: 1) != nil
     }
 
+    /// The earlier exchanges of this session, once the request qualifies for them: the Mac reads them back and the
+    /// request names its session. Made while the page is worked out, so that the first frame has the thread's place.
+    private var history: RequestHistory? { historyHolder.history(for: store.displayItem(id: id), store: store) }
+
     private var hasMore: Bool {
         guard let item = store.displayItem(id: id) else { return false }
-        return item.hasProject || item.view?.ask != nil || item.view?.confirm?.dismissIndex != nil
+        return item.hasProject || item.view?.ask != nil || item.view?.confirm?.dismissIndex != nil || history != nil
     }
 
     var body: some View {
@@ -37,7 +43,7 @@ struct RequestScreen: View {
         // moves on. (A page opened any other way has no business with a receipt.)
         let handedOver = store.receipt.flatMap { $0.next == id ? $0 : nil }
         Arrival(from: handedOver, page: RequestPageTransition.shared.snapshot(for: id)) {
-            RequestPage(id: id)
+            RequestPage(id: id, history: history)
                 .background { RequestPageCapture(id: id) }
         }
         // A page of its own for every request: nothing of the last one (its scroll position, what was
@@ -78,6 +84,7 @@ struct RequestScreen: View {
             Text(store.requestErrors[id] ?? "")
         }
         .sheet(isPresented: $addingTodo) { todoSheet }
+        .overlay(alignment: .top) { if let history { SessionLoadingPill(history: history) } }
         .overlay(alignment: .top) {
             if let note = addedNote {
                 TodoAddedPill(project: note.project)
@@ -120,6 +127,10 @@ struct RequestScreen: View {
     private var moreMenu: some ToolbarContent {
         ToolbarItem(placement: .topBarTrailing) {
             Menu {
+                if let history {
+                    Button("Session history", systemImage: "clock.arrow.circlepath") { Task { await history.reveal() } }
+                        .accessibilityIdentifier("request-menu-session-history")
+                }
                 if let item = store.displayItem(id: id) {
                     // Always offered for a request with a project: when the Mac cannot be reached, the sheet says so.
                     if item.hasProject {
@@ -245,6 +256,7 @@ private struct Arrival<Content: View>: View {
 /// over it the receipt of the request that was just sent.
 private struct RequestPage: View {
     let id: String
+    let history: RequestHistory?
     @Environment(AppStore.self) private var store
 
     /// The receipt of this page, while it shows one.
@@ -256,9 +268,9 @@ private struct RequestPage: View {
         Group {
             if let item = store.displayItem(id: id) {
                 if item.view?.ask != nil {
-                    AnswerScreen(item: item)
+                    AnswerScreen(item: item, history: history)
                 } else if item.view?.confirm != nil {
-                    ConfirmScreen(item: item)
+                    ConfirmScreen(item: item, history: history)
                 } else {
                     LoadingRequest(item: item)
                 }

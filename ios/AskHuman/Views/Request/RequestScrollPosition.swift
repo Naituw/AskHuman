@@ -19,14 +19,18 @@ struct RequestScrollPosition: UIViewRepresentable {
     let id: String
     let store: AppStore
     var ready = true
+    /// Changes whenever the person asks for something that moves the page by itself (the session history from
+    /// the menu): a position still waiting to be restored is then given up, like it is on a drag.
+    var intent = 0
 
-    func makeCoordinator() -> Coordinator { Coordinator(id: id, store: store) }
+    func makeCoordinator() -> Coordinator { Coordinator(id: id, store: store, intent: intent) }
     func makeUIView(context: Context) -> RequestScrollAttachment {
         let view = RequestScrollAttachment(frame: .zero)
         view.changed = { [weak coordinator = context.coordinator] view in coordinator?.attach(view) }
         return view
     }
     func updateUIView(_ view: RequestScrollAttachment, context: Context) {
+        context.coordinator.setIntent(intent)
         context.coordinator.setReady(ready)
         context.coordinator.attach(view)
     }
@@ -47,11 +51,19 @@ struct RequestScrollPosition: UIViewRepresentable {
         private var expectedOffset: CGFloat?
         private var restoredSize = CGSize.zero
         private var queued = false
+        private var intent: Int
 
-        init(id: String, store: AppStore) {
+        init(id: String, store: AppStore, intent: Int) {
             self.id = id
             self.store = store
+            self.intent = intent
             restoring = store.requestReadPosition(for: id)
+        }
+
+        func setIntent(_ value: Int) {
+            guard intent != value else { return }
+            intent = value
+            restoring = nil
         }
 
         func setReady(_ value: Bool) {
@@ -131,8 +143,15 @@ struct RequestScrollPosition: UIViewRepresentable {
                 }
             }
             let top = scroll.contentOffset.y + topInset
-            let anchor = marks.filter { $0.1 <= top + 1 }.max { $0.1 < $1.1 } ?? ("request-top", 0)
-            store.saveRequestReadPosition(.init(anchor: anchor.0, distance: Double(top - anchor.1), fallback: Double(top)), for: id)
+            if let anchor = marks.filter({ $0.1 <= top + 1 }).max(by: { $0.1 < $1.1 }) {
+                store.saveRequestReadPosition(.init(anchor: anchor.0, distance: Double(top - anchor.1), fallback: Double(top)), for: id)
+            } else if marks.contains(where: { $0.0 == "request-top" }) {
+                // Above the request: the earlier exchanges of the session are in view. They are not kept, so the way
+                // back to this page is to the top of the request, not to an offset that points into whatever is there.
+                store.saveRequestReadPosition(.init(anchor: "request-top", distance: 0, fallback: 0), for: id)
+            } else {
+                store.saveRequestReadPosition(.init(anchor: "request-top", distance: Double(top), fallback: Double(top)), for: id)
+            }
         }
     }
 }

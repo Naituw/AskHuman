@@ -23,6 +23,10 @@ PLURAL_EN = {
     "%llu steps": ("%llu step", "%llu steps"),
     "%lld automatic replies": ("%lld automatic reply", "%lld automatic replies"),
     "%lld Macs": ("%lld Mac", "%lld Macs"),
+    "%lld more questions": ("%lld more question", "%lld more questions"),
+    "%lld images": ("%lld image", "%lld images"),
+    "%lld attachments": ("%lld attachment", "%lld attachments"),
+    "%lld annotations": ("%lld annotation", "%lld annotations"),
     "This phone still holds %lld pairing(s) from before AskHuman was reinstalled. Keep using them, or start fresh?": (
         "This phone still holds %lld pairing from before AskHuman was reinstalled. Keep using it, or start fresh?",
         "This phone still holds %lld pairings from before AskHuman was reinstalled. Keep using them, or start fresh?",
@@ -679,6 +683,22 @@ ZH = {
     "Thinking": "思考",
     "Update pending": "等待自动更新",
     "Your Mac is updating. Your input is kept and sending resumes automatically.": "Mac 正在更新，输入已保留，提交会自动继续。",
+    # The history of the session a request belongs to (docs/specs/ios-session-history.md)
+    "Session history": "此会话的历史",
+    "No earlier records": "没有更早的记录了",
+    "Current request": "当前提问",
+    "Can't reach the Mac": "连不上 Mac",
+    "Automatic reply": "自动回复",
+    "%lld more questions": "还有 %lld 题",
+    "%lld images": "图片 %lld 张",
+    "%lld attachments": "附件 %lld 个",
+    "%lld annotations": "附注 %lld 条",
+    "Mac popup": "Mac 弹窗",
+    "DingTalk": "钉钉",
+    "Feishu": "飞书",
+    "Mute mode": "静音模式",
+    "Back to current request": "回到当前提问",
+    "Loading history…": "正在加载历史…",
 }
 
 # Shown by iOS itself when a push cannot be decrypted by the notification extension.

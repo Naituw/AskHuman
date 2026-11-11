@@ -253,6 +253,20 @@ final class EndedCountdownTests: XCTestCase {
         XCTAssertNotEqual(store.inboxPath, [select.id])
     }
 
+    func testStayingBeforeTheCountdownBeganKeepsItFromBeginning() async throws {
+        await make(length: .milliseconds(250))
+        let select = try await openAndEnd("req-select", showNotice: false)
+        XCTAssertTrue(store.monitorsEndedNotice(select.id), "the countdown waits for its strip")
+        XCTAssertNil(store.endedCountdown)
+
+        store.stayOnEnded(select.id)
+        XCTAssertFalse(store.monitorsEndedNotice(select.id))
+        store.endedNoticeDisplayed(select.id)
+        XCTAssertNil(store.endedCountdown, "the strip's showing does not start what the reader already turned down")
+        try await Task.sleep(for: .milliseconds(500))
+        XCTAssertEqual(store.inboxPath, [select.id])
+    }
+
     func testStayingIsForTheRequestItWasPressedOn() async throws {
         await make()
         let select = try await openAndEnd("req-select")

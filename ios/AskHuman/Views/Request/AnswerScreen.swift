@@ -13,6 +13,8 @@ import AHStore
 /// where the keyboard is, though: "Next" continues from that question (spec `ios-answer-flow.md` F4, F12, F13).
 struct AnswerScreen: View {
     let item: InboxItem
+    /// The earlier exchanges of this session above the form, when the page offers them.
+    var history: RequestHistory?
     @Environment(AppStore.self) private var store
     @State private var tracker = ReadingTracker()
     /// The question "Next" last led to, which flashes once it has arrived.
@@ -37,46 +39,52 @@ struct AnswerScreen: View {
             let ended = finished != nil
             ScrollViewReader { proxy in
                 ScrollView {
-                    VStack(alignment: .leading, spacing: 16) {
-                        if case .failed = item.state { FailedSubmissionNotice(item: item) }
-                        if store.isEscalated(item), !ended { EscalationNotice(item: item) }
-                        RequestHeader(item: item)
-                        MessageCard(
-                            ask: ask, macId: item.macId, notes: MessageNotes(composer: composer, host: annotations),
-                            onSettled: { tracker.messageSettled(); messageReady = true }
-                        )
-                        .endedDimming(ended)
-                        VStack(spacing: 0) {
-                            ForEach(Array(ask.questions.enumerated()), id: \.offset) { index, question in
-                                QuestionCard(
-                                    index: index, count: ask.questions.count, ask: ask, question: question, composer: composer,
-                                    landing: landing, focus: $focused, inputReveal: inputs.target(index), picker: picker
-                                )
-                                    .background(FrameReader(.card(index)))
-                                    .background(RequestReadingAnchor(name: Self.cardID(index)))
-                                    .disabled(composer.isSending || sending || ended)
-                                    // The gap belongs to what "Next" scrolls to, so that a card does not end flush with the bar.
-                                    .padding(.bottom, 16)
-                                    .id(Self.cardID(index))
+                    VStack(spacing: 0) {
+                        if let history { SessionThreadView(history: history) }
+                        VStack(alignment: .leading, spacing: 16) {
+                            if case .failed = item.state { FailedSubmissionNotice(item: item) }
+                            if store.isEscalated(item), !ended { EscalationNotice(item: item) }
+                            RequestHeader(item: item)
+                            MessageCard(
+                                ask: ask, macId: item.macId, notes: MessageNotes(composer: composer, host: annotations),
+                                onSettled: { tracker.messageSettled(); messageReady = true }
+                            )
+                            .endedDimming(ended)
+                            VStack(spacing: 0) {
+                                ForEach(Array(ask.questions.enumerated()), id: \.offset) { index, question in
+                                    QuestionCard(
+                                        index: index, count: ask.questions.count, ask: ask, question: question, composer: composer,
+                                        landing: landing, focus: $focused, inputReveal: inputs.target(index), picker: picker
+                                    )
+                                        .background(FrameReader(.card(index)))
+                                        .background(RequestReadingAnchor(name: Self.cardID(index)))
+                                        .disabled(composer.isSending || sending || ended)
+                                        // The gap belongs to what "Next" scrolls to, so that a card does not end flush with the bar.
+                                        .padding(.bottom, 16)
+                                        .id(Self.cardID(index))
+                                }
+                                // What's next lists the queue among its options; every other ask gets a card for it.
+                                if !ask.whatsNext, let picker, picker.isVisible {
+                                    TodoPickCard(picker: picker)
+                                        .disabled(composer.isSending || sending || ended)
+                                        .padding(.bottom, 16)
+                                }
                             }
-                            // What's next lists the queue among its options; every other ask gets a card for it.
-                            if !ask.whatsNext, let picker, picker.isVisible {
-                                TodoPickCard(picker: picker)
-                                    .disabled(composer.isSending || sending || ended)
-                                    .padding(.bottom, 16)
-                            }
+                            .endedDimming(ended)
                         }
-                        .endedDimming(ended)
+                        .readableWidth()
+                        .padding([.horizontal, .top])
+                        .padding(.bottom, 8)
+                        .background(RequestReadingAnchor(name: "request-top"))
+                        .background(RequestScrollPosition(id: item.id, store: store, ready: messageReady || !MessageCard.drawnByWebPage(ask, launch: launch), intent: history?.thread.intent ?? 0))
+                        .requestRoom(history)
                     }
-                    .readableWidth()
-                    .padding([.horizontal, .top])
-                    .padding(.bottom, 8)
-                    .background(RequestReadingAnchor(name: "request-top"))
-                    .background(RequestScrollPosition(id: item.id, store: store, ready: messageReady || !MessageCard.drawnByWebPage(ask, launch: launch)))
+                    .background { if let history { ThreadScrollHook(history: history) } }
                 }
                 .background(Color(.systemGroupedBackground))
                 // A background stays between the bars, so its frame is the part of the screen the form is seen in.
                 .background(FrameReader(.visible))
+                .overlay(alignment: .bottom) { if let history { SessionReturnCapsule(history: history) } }
                 .scrollDismissesKeyboard(.interactively)
                 .actionBar {
                     SendBar(

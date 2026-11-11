@@ -125,6 +125,62 @@
         }
       }
     },
+    "%lld annotations" : {
+      "localizations" : {
+        "en" : {
+          "variations" : {
+            "plural" : {
+              "one" : {
+                "stringUnit" : {
+                  "state" : "translated",
+                  "value" : "%lld annotation"
+                }
+              },
+              "other" : {
+                "stringUnit" : {
+                  "state" : "translated",
+                  "value" : "%lld annotations"
+                }
+              }
+            }
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "附注 %lld 条"
+          }
+        }
+      }
+    },
+    "%lld attachments" : {
+      "localizations" : {
+        "en" : {
+          "variations" : {
+            "plural" : {
+              "one" : {
+                "stringUnit" : {
+                  "state" : "translated",
+                  "value" : "%lld attachment"
+                }
+              },
+              "other" : {
+                "stringUnit" : {
+                  "state" : "translated",
+                  "value" : "%lld attachments"
+                }
+              }
+            }
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "附件 %lld 个"
+          }
+        }
+      }
+    },
     "%lld automatic replies" : {
       "localizations" : {
         "en" : {
@@ -237,6 +293,34 @@
         }
       }
     },
+    "%lld images" : {
+      "localizations" : {
+        "en" : {
+          "variations" : {
+            "plural" : {
+              "one" : {
+                "stringUnit" : {
+                  "state" : "translated",
+                  "value" : "%lld image"
+                }
+              },
+              "other" : {
+                "stringUnit" : {
+                  "state" : "translated",
+                  "value" : "%lld images"
+                }
+              }
+            }
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "图片 %lld 张"
+          }
+        }
+      }
+    },
     "%lld images attached" : {
       "localizations" : {
         "en" : {
@@ -261,6 +345,34 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "已附 %lld 张图片"
+          }
+        }
+      }
+    },
+    "%lld more questions" : {
+      "localizations" : {
+        "en" : {
+          "variations" : {
+            "plural" : {
+              "one" : {
+                "stringUnit" : {
+                  "state" : "translated",
+                  "value" : "%lld more question"
+                }
+              },
+              "other" : {
+                "stringUnit" : {
+                  "state" : "translated",
+                  "value" : "%lld more questions"
+                }
+              }
+            }
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "还有 %lld 题"
           }
         }
       }
@@ -910,6 +1022,16 @@
         }
       }
     },
+    "Automatic reply" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "自动回复"
+          }
+        }
+      }
+    },
     "Away" : {
       "localizations" : {
         "zh-Hans" : {
@@ -936,6 +1058,16 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "离开模式开启中"
+          }
+        }
+      }
+    },
+    "Back to current request" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "回到当前提问"
           }
         }
       }
@@ -976,6 +1108,16 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "按这部手机的统计，免费额度可能已用完，Broker 可能会拒绝连接。请到 EMQX 控制台确认用量。"
+          }
+        }
+      }
+    },
+    "Can't reach the Mac" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "连不上 Mac"
           }
         }
       }
@@ -1490,6 +1632,16 @@
         }
       }
     },
+    "Current request" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "当前提问"
+          }
+        }
+      }
+    },
     "Default" : {
       "localizations" : {
         "zh-Hans" : {
@@ -1636,6 +1788,16 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "这里无法绘制图表，已显示源码"
+          }
+        }
+      }
+    },
+    "DingTalk" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "钉钉"
           }
         }
       }
@@ -2026,6 +2188,16 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "模型已不可用或不支持 Fast，已关闭 Fast 模式。"
+          }
+        }
+      }
+    },
+    "Feishu" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "飞书"
           }
         }
       }
@@ -2440,6 +2612,16 @@
         }
       }
     },
+    "Loading history…" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "正在加载历史…"
+          }
+        }
+      }
+    },
     "Loading the full request…" : {
       "localizations" : {
         "zh-Hans" : {
@@ -2506,6 +2688,16 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Mac 离线"
+          }
+        }
+      }
+    },
+    "Mac popup" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Mac 弹窗"
           }
         }
       }
@@ -2636,6 +2828,16 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "更多"
+          }
+        }
+      }
+    },
+    "Mute mode" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "静音模式"
           }
         }
       }
@@ -2846,6 +3048,16 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "没有 App 可以打开这个链接"
+          }
+        }
+      }
+    },
+    "No earlier records" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "没有更早的记录了"
           }
         }
       }
@@ -4375,6 +4587,16 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "会话已结束"
+          }
+        }
+      }
+    },
+    "Session history" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "此会话的历史"
           }
         }
       }

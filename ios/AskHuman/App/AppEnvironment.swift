@@ -94,6 +94,8 @@ struct LaunchOptions {
     /// `-AHNotes 3`: the request `-AHOpen` names starts with this many notes written on its message (the number on the bar's
     /// "Annotations" button). It has to take notes: with `-AHScenario annotations`, or `-AHAnnotate YES`.
     var notes = 0
+    /// `-AHHistoryFail 1`: the next reads of a session's history get no answer from the (mock) Mac, that many times.
+    var historyFail = 0
 
     init(defaults: UserDefaults = .standard) {
         mock = defaults.bool(forKey: "AHMock")
@@ -141,6 +143,7 @@ struct LaunchOptions {
         if defaults.object(forKey: "AHWebTimeout") != nil { webTimeout = defaults.double(forKey: "AHWebTimeout") }
         annotate = defaults.bool(forKey: "AHAnnotate")
         notes = min(Wire.maxAnnotations, max(0, defaults.integer(forKey: "AHNotes")))
+        historyFail = max(0, defaults.integer(forKey: "AHHistoryFail"))
     }
 }
 
@@ -167,6 +170,7 @@ final class AppEnvironment {
             )
             mock = backend
             if launch.holdInterjects { Task { await backend.setInterjectConsumeDelay(nil) } }
+            if launch.historyFail > 0 { Task { await backend.setFailNextSessionHistory(launch.historyFail) } }
             if let kind = launch.followEvent {
                 Task {
                     try? await Task.sleep(for: .seconds(2))

@@ -17,7 +17,7 @@ final class SessionHistoryStoreTests: XCTestCase {
         app = AppStore(backend: backend, drafts: MemoryDraftStore(), defaults: defaults)
         await app.start()
         await eventually("the Macs and the inbox") {
-            self.app.state.foreground && self.app.state.macs.count == 2 && self.app.state.inbox.count == 6
+            self.app.state.foreground && self.app.state.macs.count == 2 && self.app.state.inbox.count == 7
         }
     }
 
