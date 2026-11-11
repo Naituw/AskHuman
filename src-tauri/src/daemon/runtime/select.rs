@@ -75,7 +75,7 @@ pub(super) async fn send_msg_compose_card(
     let Some(rec) = find_agent_by_session(&snapshot, session_id) else {
         return false;
     };
-    if !is_working_non_grok(&snapshot, session_id) {
+    if !can_message_session(state, &snapshot, session_id) {
         return false;
     }
     let view = crate::msg_card::build_view(
@@ -1158,7 +1158,7 @@ async fn handle_fs_msg_compose_submit(
         remove_picker(state, channel_id, &submit.message_id);
         return;
     };
-    if !is_working_non_grok(&snapshot, &payload.session_id) {
+    if !can_message_session(state, &snapshot, &payload.session_id) {
         let card = crate::feishu::card::build_select_final_card(
             &picker.title,
             crate::i18n::tr(lang, "select.msgTargetGone"),
@@ -1201,8 +1201,7 @@ fn msg_compose_expired_label(channel_id: &str, lang: Lang) -> String {
         .replace("{p}", crate::autochannel::cmd_prefix(channel_id))
 }
 
-/// 单选卡点选「发送」（飞书就地定格）：校验目标工作中·非 grok → 投递 + 定格「已发送给 [编号]」；
-/// 目标已漂移（不在工作中 / 已结束 / 消失）→ 定格「已不在工作中，未发送」。定格文案随卡回（ack）。
+/// Validate the current delivery channel and finalize the Feishu picker through its callback.
 #[allow(clippy::too_many_arguments)]
 pub(super) async fn select_pick_msg(
     state: &Arc<ServerState>,
@@ -1274,7 +1273,7 @@ async fn fs_select_pick_msg_compose(
         remove_picker(state, channel_id, mid);
         return;
     };
-    if !is_working_non_grok(&snapshot, session_id) {
+    if !can_message_session(state, &snapshot, session_id) {
         let card = crate::feishu::card::build_select_final_card(
             &crate::select::title_msg(lang),
             crate::i18n::tr(lang, "select.msgTargetGone"),
@@ -1295,8 +1294,7 @@ async fn fs_select_pick_msg_compose(
     morph_picker_to_msg_compose(state, channel_id, mid, session_id, view.title);
 }
 
-/// 单选卡「发送」的共享收尾：目标仍工作中·非 grok → 投递并返回「已发送给 [编号] · 回执」定格文案；
-/// 否则返回「已不在工作中，未发送」。渲染层各渠道自行把该文案落进定格卡。
+/// Validate and submit a picker message, keeping submission and delivery receipts distinct.
 pub(super) fn msg_pick_deliver(
     state: &Arc<ServerState>,
     channel_id: &str,
@@ -1305,21 +1303,21 @@ pub(super) fn msg_pick_deliver(
     content: &str,
     lang: Lang,
 ) -> String {
-    let ok = rec
-        .map(|r| {
-            (r.get("state").and_then(|v| v.as_str()) == Some("working")
-                || r["desktop"]["connected"] == true)
-                && r.get("kind").and_then(|v| v.as_str()) != Some("grok")
-        })
-        .unwrap_or(false);
-    if !ok {
+    if !can_message_session(state, &state.agents.snapshot(), session_id) {
         return crate::i18n::tr(lang, "select.msgTargetGone").to_string();
     }
     let seq = rec
         .and_then(|r| r.get("seq").and_then(|v| v.as_u64()))
         .unwrap_or(0);
-    let delivered = deliver_msg(state, channel_id, session_id, content, lang);
-    let note = if rec.is_some_and(|r| r.get("desktop").is_some())
+    let delivered = match deliver_msg(state, channel_id, session_id, content, lang) {
+        Ok(delivered) => delivered,
+        Err(message) => return message,
+    };
+    if delivered == crate::i18n::tr(lang, "autoChannel.msgSubmitting") {
+        return crate::i18n::tr(lang, "select.msgSubmittingCard").replace("{id}", &seq.to_string());
+    }
+    let note = if rec
+        .is_some_and(|r| crate::codex_desktop::is_desktop_session(r) || r["state"] != "working")
         || delivered == crate::i18n::tr(lang, "autoChannel.msgDeliveredNow")
     {
         delivered
@@ -1798,7 +1796,7 @@ async fn handle_msg_compose_dd_submit(state: &Arc<ServerState>, data: &serde_jso
         remove_picker(state, "dingding", &submit.out_track_id);
         return true;
     };
-    if !is_working_non_grok(&snapshot, &payload.session_id) {
+    if !can_message_session(state, &snapshot, &payload.session_id) {
         let _ = client
             .update_card_private(
                 &submit.out_track_id,
@@ -2156,7 +2154,7 @@ async fn handle_msg_compose_tg_text(
         return;
     }
     let snapshot = state.agents.snapshot();
-    if !is_working_non_grok(&snapshot, &payload.session_id) {
+    if !can_message_session(state, &snapshot, &payload.session_id) {
         finalize_msg_compose_telegram(
             &client,
             mid,
@@ -2282,7 +2280,7 @@ async fn handle_msg_compose_slack_submit(
         remove_picker(state, "slack", &submit.message_ts);
         return;
     };
-    if !is_working_non_grok(&snapshot, &payload.session_id) {
+    if !can_message_session(state, &snapshot, &payload.session_id) {
         let label = crate::i18n::tr(lang, "select.msgTargetGone");
         let (blocks, fallback) =
             crate::slack::select::build_select_final_blocks(&picker.title, label);
@@ -2539,7 +2537,7 @@ async fn slack_select_pick_msg_compose(
         remove_picker(state, "slack", mid);
         return;
     };
-    if !is_working_non_grok(&snapshot, session_id) {
+    if !can_message_session(state, &snapshot, session_id) {
         finalize_select_card_edit(
             "slack",
             config,
@@ -2589,8 +2587,8 @@ async fn select_pick_msg_compose_sequential(
     let seq = rec
         .and_then(|item| item.get("seq").and_then(|value| value.as_u64()))
         .unwrap_or(0);
-    let working = is_working_non_grok(&snapshot, session_id);
-    let label = if working {
+    let messageable = can_message_session(state, &snapshot, session_id);
+    let label = if messageable {
         crate::i18n::tr(lang, "select.pickedCard").replace("{id}", &seq.to_string())
     } else {
         crate::i18n::tr(lang, "select.msgTargetGone").to_string()
@@ -2611,7 +2609,7 @@ async fn select_pick_msg_compose_sequential(
         return;
     }
     remove_picker(state, channel_id, mid);
-    if !working {
+    if !messageable {
         return;
     }
     // 钉钉 / Telegram 必须先让选择卡终态化，再投放输入卡，保证任一时刻只有一个活动载体。
@@ -2619,7 +2617,7 @@ async fn select_pick_msg_compose_sequential(
         return;
     }
     let snapshot = state.agents.snapshot();
-    let failed = if is_working_non_grok(&snapshot, session_id) {
+    let failed = if can_message_session(state, &snapshot, session_id) {
         crate::i18n::tr(lang, "msgCard.openFailed")
             .replace("{p}", crate::autochannel::cmd_prefix(channel_id))
             .replace("{id}", &seq.to_string())

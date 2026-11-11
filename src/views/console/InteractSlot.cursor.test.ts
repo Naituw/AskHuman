@@ -66,20 +66,20 @@ beforeEach(() => {
 });
 
 describe("messaging a Cursor chat that is not working", () => {
-  it("sends straight to the chat instead of queueing for a hook that will not run", async () => {
-    const wrapper = slot(chat());
-    expect(wrapper.get("textarea").attributes("placeholder")).toContain("Cursor chat");
+  it.each(["cursor", "pi", "codex"] as const)("sends to an ended %s session through its native channel", async (kind) => {
+    const wrapper = slot(chat({ kind, ...(kind === "codex" ? { desktop: { connected: true } } : {}) }));
+    expect(wrapper.get("textarea").attributes("placeholder")).toBe(i18n.global.t(kind === "codex" ? "desktop.message" : "console.messagePlaceholder"));
     await wrapper.get("textarea").setValue("  carry on  ");
     api.message.mockResolvedValueOnce({ status: "accepted" });
     await sendButton(wrapper).trigger("click");
     await flushPromises();
     expect(api.message).toHaveBeenCalledTimes(1);
-    const [id, kind, sessionId, text, files] = api.message.mock.calls[0];
+    const [id, sentKind, sessionId, text, files] = api.message.mock.calls[0];
     expect(id).toMatch(/^[0-9a-f-]{36}$/);
-    expect([kind, sessionId, text, files]).toEqual(["cursor", "chat-1", "carry on", []]);
+    expect([sentKind, sessionId, text, files]).toEqual([kind, "chat-1", "carry on", []]);
     expect(wrapper.emitted("send")).toBeUndefined();
     expect(textarea(wrapper).value).toBe("");
-    expect(wrapper.text()).toContain("Sent. Cursor has started working on it.");
+    expect(wrapper.text()).toContain("Sent. The Agent has started working on it.");
   });
 
   it("works for an idle chat too", async () => {
@@ -94,10 +94,10 @@ describe("messaging a Cursor chat that is not working", () => {
   it("offers no composer unless the daemon says the chat can be messaged", () => {
     const ended = slot(chat({ canMessage: undefined }));
     expect(ended.find("textarea").exists()).toBe(false);
-    expect(ended.text()).toContain("Session has ended");
+    expect(ended.text()).toContain(i18n.global.t("console.endedHint"));
     const idle = slot(chat({ state: "idle", canMessage: undefined }));
     expect(idle.find("textarea").exists()).toBe(false);
-    expect(idle.text()).toContain("Session is idle");
+    expect(idle.text()).toContain(i18n.global.t("console.idleHint"));
   });
 
   it("still queues a message for a Cursor chat that is working", async () => {

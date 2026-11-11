@@ -40,8 +40,7 @@ pub struct ControlReply {
     pub operation: Option<ControlCommand>,
 }
 
-/// A message typed in the Mac's own Agents console for a chat that is not working: the one kind
-/// the console sends itself instead of queueing it for a hook that would never run.
+/// A native continuation typed in the Mac console for an idle or ended session.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ConsoleMessage {

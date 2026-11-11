@@ -270,21 +270,11 @@ pub(super) fn can_send_with(
     };
     let chat = std::cell::OnceCell::new();
     let cursor_chat = || *chat.get_or_init(|| kind == AgentKind::Cursor && has_chat(sid));
-    // A Cursor Desktop chat has no process whose exit would end it. "Ended" is the registry's
-    // verdict after an hour without activity, so while the chat itself is still there it can be
-    // continued like an idle one. Every other kind has an end that means it.
-    if rec["state"] == "ended" && !cursor_chat() && !retained_result(rec) {
-        return refuse("ended");
-    }
     if state.agent_controls.pending(kind, sid) {
         return refuse("controlStarting");
     }
     if crate::codex_desktop::is_desktop_session(rec) {
-        let mut current = rec.clone();
-        if current["state"] == "ended" && retained_result(rec) {
-            current["state"] = "idle".into();
-        }
-        return ios_agents::can_interject(&current);
+        return ios_agents::can_interject(rec);
     }
     if rec["state"] == "working" {
         return ios_agents::can_interject(rec);
@@ -356,15 +346,8 @@ pub(super) async fn send_with(
     }) else {
         return InterjectResult::rejected("notFound");
     };
-    // An "ended" Cursor Desktop chat is one the registry gave up on after an hour of silence;
-    // `can_send_with` below decides whether the chat itself is still there to be continued.
-    let sendable = rec["state"] == "idle"
-        || (rec["state"] == "ended"
-            && (message.kind == AgentKind::Cursor
-                || message
-                    .expected_result_id
-                    .as_deref()
-                    .is_some_and(|id| valid_result(rec, id) && retained_result(rec))));
+    // Registry lifecycle states do not determine whether a native message channel still exists.
+    let sendable = matches!(rec["state"].as_str(), Some("idle" | "ended"));
     if !sendable
         || state.registry.waiting_for_session(message.sid)
         || rec["waitingRequestId"]
@@ -526,8 +509,7 @@ pub(super) fn mark_messageable(
         return;
     };
     for rec in records.iter_mut() {
-        let eligible = rec["kind"] == AgentKind::Cursor.as_str()
-            && matches!(rec["state"].as_str(), Some("idle" | "ended"))
+        let eligible = matches!(rec["state"].as_str(), Some("idle" | "ended"))
             && rec["waitingRequestId"]
                 .as_str()
                 .is_none_or(|id| id.is_empty());
@@ -537,20 +519,18 @@ pub(super) fn mark_messageable(
     }
 }
 
-/// Words a refusal for the console. All of them mean nothing was sent.
-fn console_refusal(reason: &str, lang: crate::i18n::Lang) -> String {
+/// Explain a rejected native message to the console or its source IM channel.
+pub(super) fn message_refusal(reason: &str, lang: crate::i18n::Lang) -> String {
     use crate::i18n::Lang::{En, Zh};
     match (reason, lang) {
         (CHAT_NOT_LOADED, Zh) => "Cursor 里没有打开这个聊天，没有发送。请先在 Cursor 里打开它，再试一次。".into(),
         (CHAT_NOT_LOADED, En) => "Cursor has not opened this chat in any window, so nothing was sent. Open it in Cursor and try again.".into(),
-        ("nativeUnavailable" | "idleUnsupported", Zh) => "没能把消息交给 Cursor，没有发送。请确认只开了一个 Cursor、它正在运行，并且这个聊天只在一个窗口里打开。".into(),
-        ("nativeUnavailable" | "idleUnsupported", En) => "Could not hand the message to Cursor, so nothing was sent. Make sure a single Cursor is running and this chat is open in only one window.".into(),
+        ("nativeUnavailable" | "idleUnsupported" | "desktopDisconnected", Zh) => "原会话的消息通道暂不可用，没有发送。请在 Agent 中打开原会话后重试。".into(),
+        ("nativeUnavailable" | "idleUnsupported" | "desktopDisconnected", En) => "The original session’s message channel is unavailable. Open the session in the Agent and try again.".into(),
         ("stateChanged" | "resultChanged", Zh) => "这个聊天此刻不空闲（正在运行、等你确认，或有排队的消息），没有发送。".into(),
         ("stateChanged" | "resultChanged", En) => "This chat is not idle right now (it is running, waiting for you, or has a queued message), so nothing was sent.".into(),
-        ("controlStarting", Zh) => "上一条消息还在等 Cursor 开始运行，请稍候再发。".into(),
-        ("controlStarting", En) => "The previous message is still waiting for Cursor to start. Try again in a moment.".into(),
-        ("ended", Zh) => "这个会话已经结束，没有发送。".into(),
-        ("ended", En) => "This session has ended, so nothing was sent.".into(),
+        ("controlStarting", Zh) => "上一条消息还在等 Agent 开始运行，请稍候再发。".into(),
+        ("controlStarting", En) => "The previous message is still waiting for the Agent to start. Try again in a moment.".into(),
         ("notFound", Zh) => "找不到这个会话，没有发送。".into(),
         ("notFound", En) => "This session cannot be found, so nothing was sent.".into(),
         ("empty", Zh) => "没有可发送的内容。".into(),
@@ -563,10 +543,10 @@ fn console_refusal(reason: &str, lang: crate::i18n::Lang) -> String {
 }
 
 /// The words for an answer that may or may not have reached the chat.
-fn console_unknown(lang: crate::i18n::Lang) -> String {
+pub(super) fn message_unknown(lang: crate::i18n::Lang) -> String {
     match lang {
-        crate::i18n::Lang::Zh => "消息可能已经发出。请先检查 Cursor 里的原聊天，再决定要不要再发一条。".into(),
-        crate::i18n::Lang::En => "The message may have been sent. Check the original chat in Cursor before sending another.".into(),
+        crate::i18n::Lang::Zh => "消息可能已经发出。请先检查 Agent 里的原会话，再决定要不要再发一条。".into(),
+        crate::i18n::Lang::En => "The message may have been sent. Check the original session in the Agent before sending another.".into(),
     }
 }
 
@@ -589,7 +569,7 @@ pub(super) async fn send_from_console_with(
 ) -> Result<Value, String> {
     let rejected = |reason: &str| {
         Ok(
-            json!({"status": "rejected", "reason": reason, "message": console_refusal(reason, lang)}),
+            json!({"status": "rejected", "reason": reason, "message": message_refusal(reason, lang)}),
         )
     };
     if message.id.is_empty() || message.id.len() > 128 {
@@ -619,17 +599,10 @@ pub(super) async fn send_from_console_with(
     match (sent.status, sent.reason.as_deref()) {
         ("delivered", _) => Ok(json!({"status": "accepted"})),
         (_, Some("controlUnknown" | "conflict" | "interrupted" | "desktopUnknown")) => {
-            Ok(json!({"status": "unknown", "message": console_unknown(lang)}))
+            Ok(json!({"status": "unknown", "message": message_unknown(lang)}))
         }
         (_, reason) => rejected(reason.unwrap_or("stateChanged")),
     }
-}
-
-fn retained_result(rec: &Value) -> bool {
-    rec["failureRetention"]["expiresMs"]
-        .as_u64()
-        .is_some_and(|expires| expires > now_ms())
-        && rec["failureRetention"]["resultId"] == rec["lastTurnResult"]["id"]
 }
 
 pub(super) fn valid_result(rec: &Value, id: &str) -> bool {
@@ -829,8 +802,7 @@ mod tests {
         super::super::test_state(directory)
     }
 
-    /// A session the registry has already given up on, the way a Cursor Desktop chat ends after
-    /// an hour of silence.
+    /// A session retained in the registry after its lifecycle ended.
     fn ended(state: &Arc<ServerState>, kind: AgentKind, sid: &str) {
         for event in [LifecycleEvent::SessionStart, LifecycleEvent::SessionEnd] {
             state
@@ -884,11 +856,11 @@ mod tests {
         assert!(can_send_with(&state, &rec, &|_| true).ok);
         let gone = can_send_with(&state, &rec, &|_| false);
         assert!(!gone.ok);
-        assert_eq!(gone.reason.as_deref(), Some("ended"));
+        assert_eq!(gone.reason.as_deref(), Some("idleUnsupported"));
     }
 
     #[test]
-    fn only_cursor_chats_outlive_the_registrys_verdict() {
+    fn ended_sessions_require_an_available_native_channel() {
         let directory = tempfile::tempdir().unwrap();
         let state = state(directory.path());
         for kind in [AgentKind::Claude, AgentKind::Codex, AgentKind::Pi] {
@@ -898,7 +870,126 @@ mod tests {
             // The lookup must not even be asked: it reads Cursor's database.
             let refused = can_send_with(&state, &rec, &|_| panic!("asked Cursor about {kind:?}"));
             assert!(!refused.ok);
-            assert_eq!(refused.reason.as_deref(), Some("ended"), "{kind:?}");
+            assert_eq!(
+                refused.reason.as_deref(),
+                Some("idleUnsupported"),
+                "{kind:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn desktop_sending_depends_on_the_channel_in_every_lifecycle_state() {
+        let directory = tempfile::tempdir().unwrap();
+        let state = state(directory.path());
+        for lifecycle in ["working", "idle", "ended"] {
+            let mut rec = json!({"kind":"codex", "sessionId":"desktop", "state":lifecycle,
+                "desktop":{"connected":true}});
+            assert!(can_send_with(&state, &rec, &|_| panic!("Cursor lookup")).ok);
+            rec["desktop"]["connected"] = false.into();
+            assert_eq!(
+                can_send_with(&state, &rec, &|_| panic!("Cursor lookup"))
+                    .reason
+                    .as_deref(),
+                Some("desktopDisconnected")
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn phone_console_and_im_can_continue_an_ended_pi_session() {
+        use crate::agents::control::ControlSignal;
+        for source in ["phone", "console", "im"] {
+            let directory = tempfile::tempdir().unwrap();
+            let state = state(directory.path());
+            ended(&state, AgentKind::Pi, "pi");
+            let signal = ControlSignal {
+                generation: uuid::Uuid::new_v4().to_string(),
+                pid: std::process::id(),
+                idle: true,
+                operation_id: None,
+                status: None,
+                turn_id: None,
+            };
+            state.agent_controls.poll("pi", &signal).unwrap();
+            let mut snapshot = state.agents.snapshot();
+            mark_messageable(&state, &mut snapshot, &|_| panic!("Cursor lookup"));
+            assert_eq!(snapshot[0]["canMessage"], true);
+            assert!(super::super::can_message_session(&state, &snapshot, "pi"));
+            let options =
+                crate::select::msg_options(&snapshot, &Default::default(), 0, Lang::En, |record| {
+                    can_send(&state, record).ok
+                });
+            assert_eq!(options[0].id, "pi");
+            let submit = async {
+                match source {
+                    "phone" => {
+                        let sent = ios_agents::interject(
+                            &state,
+                            "phone",
+                            "m1",
+                            "pi:pi",
+                            "continue",
+                            vec![],
+                        )
+                        .await;
+                        assert_eq!(sent.status, "delivered");
+                    }
+                    "console" => {
+                        let mut input = console("m1", "pi", "continue");
+                        input.kind = AgentKind::Pi;
+                        let sent = send_from_console_with(
+                            &state,
+                            input,
+                            &Chat::new(false, None),
+                            Lang::En,
+                        )
+                        .await
+                        .unwrap();
+                        assert_eq!(sent["status"], "accepted");
+                    }
+                    _ => {
+                        let text =
+                            super::super::deliver_msg(&state, "test", "pi", "continue", Lang::En)
+                                .unwrap();
+                        assert_eq!(text, crate::i18n::tr(Lang::En, "autoChannel.msgSubmitting"));
+                    }
+                }
+            };
+            let consume = async {
+                let command = tokio::time::timeout(Duration::from_secs(2), async {
+                    loop {
+                        if let Some(command) =
+                            state.agent_controls.poll("pi", &signal).unwrap().operation
+                        {
+                            break command;
+                        }
+                        tokio::time::sleep(Duration::from_millis(1)).await;
+                    }
+                })
+                .await
+                .unwrap();
+                assert_eq!(command.text, "continue");
+                state
+                    .agent_controls
+                    .finish(&command.id, "accepted", Some("turn".into()))
+                    .unwrap();
+                apply(
+                    &state,
+                    AgentKind::Pi,
+                    "pi",
+                    LifecycleEvent::TurnStart,
+                    Observation {
+                        turn_id: Some("turn".into()),
+                        control_operation_id: Some(command.id),
+                        ..Observation::default()
+                    },
+                    None,
+                );
+            };
+            tokio::join!(submit, consume);
+            assert_eq!(record(&state, "pi")["state"], "working");
+            assert_eq!(state.interject.pending_count("pi"), 0);
         }
     }
 
@@ -949,6 +1040,7 @@ mod tests {
             {"kind":"cursor","sessionId":"asking","state":"idle","waitingRequestId":"r1"},
             {"kind":"claude","sessionId":"claude","state":"idle"},
             {"kind":"codex","sessionId":"codex","state":"ended"},
+            {"kind":"codex","sessionId":"desktop","state":"ended","desktop":{"connected":true}},
         ]);
         mark_messageable(&state, &mut snapshot, &|sid| sid != "gone");
         let flagged: Vec<&str> = snapshot
@@ -958,7 +1050,7 @@ mod tests {
             .filter(|rec| rec["canMessage"] == true)
             .filter_map(|rec| rec["sessionId"].as_str())
             .collect();
-        assert_eq!(flagged, ["idle", "ended"]);
+        assert_eq!(flagged, ["idle", "ended", "desktop"]);
     }
 
     #[tokio::test]
@@ -1161,8 +1253,8 @@ mod tests {
             "tooLong",
             "something-new",
         ] {
-            let zh = console_refusal(reason, Lang::Zh);
-            let en = console_refusal(reason, Lang::En);
+            let zh = message_refusal(reason, Lang::Zh);
+            let en = message_refusal(reason, Lang::En);
             assert!(!zh.is_empty() && !en.is_empty(), "{reason}");
             assert_ne!(zh, en, "{reason}");
         }

@@ -271,15 +271,13 @@ pub(super) fn find_agent_by_session<'a>(
         .find(|r| r.get("sessionId").and_then(|v| v.as_str()) == Some(session_id))
 }
 
-/// `/msg` 系命令的寻址公共段（spec agent-interject D9）：编号（复用 `/status` 稳定 seq）→
-/// 注册表快照记录 → 校验可插话（grok 无传话通道、ended 无处送达）。失败时已回提示、返回 None。
-/// `require_working`：为真时（发送场景）目标必须「工作中」，否则回提示（用户定案：只能给工作中的
-/// agent 发送插话）；回显 / 撤回场景传 false（对空闲也可操作）。
+/// Resolve a stable session number and check the delivery channel when sending.
+/// Queue inspection and withdrawal can also address sessions without an active channel.
 pub(super) async fn resolve_msg_target(
     state: &Arc<ServerState>,
     channel_id: &str,
     sel: Option<u64>,
-    require_working: bool,
+    require_sendable: bool,
     config: &AppConfig,
     lang: Lang,
 ) -> Option<String> {
@@ -306,26 +304,16 @@ pub(super) async fn resolve_msg_target(
         .await;
         return None;
     }
-    if rec.get("state").and_then(|v| v.as_str()) == Some("ended") {
-        let _ = reply_channel_text(
-            channel_id,
-            config,
-            crate::i18n::tr(lang, "autoChannel.msgEnded"),
-        )
-        .await;
-        return None;
-    }
-    if require_working
-        && rec.get("state").and_then(|v| v.as_str()) != Some("working")
-        && rec["desktop"]["connected"] != true
-    {
-        let _ = reply_channel_text(
-            channel_id,
-            config,
-            crate::i18n::tr(lang, "select.msgNoWorkingTarget"),
-        )
-        .await;
-        return None;
+    if require_sendable {
+        let can = super::agent_control::can_send(state, rec);
+        if !can.ok {
+            let message = super::agent_control::message_refusal(
+                can.reason.as_deref().unwrap_or("nativeUnavailable"),
+                lang,
+            );
+            let _ = reply_channel_text(channel_id, config, &message).await;
+            return None;
+        }
     }
     rec.get("sessionId")
         .and_then(|v| v.as_str())
@@ -345,23 +333,24 @@ pub(super) async fn handle_msg_cmd(
     // `/msg` 插话＝在该渠道主动参与 → 设为活跃槽（用户决策）。
     activate_channel_on_action(state, channel_id, config, lang).await;
     match (sel, content) {
-        // 显式编号 + 内容 → 发送（收紧为仅工作中）。
+        // An explicit target uses its currently available delivery channel.
         (Some(_), Some(content)) => {
             let Some(sid) = resolve_msg_target(state, channel_id, sel, true, config, lang).await
             else {
                 return;
             };
-            let text = deliver_msg(state, channel_id, &sid, &content, lang);
+            let text = deliver_msg(state, channel_id, &sid, &content, lang)
+                .unwrap_or_else(|message| message);
             let _ = reply_channel_text(channel_id, config, &text).await;
         }
-        // 显式编号无内容：工作中 → 输入卡；空闲 → 沿用待送达回显。
+        // Open a composer for a messageable session, or show its pending queue.
         (Some(_), None) => {
             let Some(sid) = resolve_msg_target(state, channel_id, sel, false, config, lang).await
             else {
                 return;
             };
             let snapshot = state.agents.snapshot();
-            if is_working_non_grok(&snapshot, &sid) {
+            if can_message_session(state, &snapshot, &sid) {
                 open_msg_compose_or_reply(state, channel_id, config, &sid, lang).await;
             } else {
                 let text = msg_echo_text(state, &sid, lang);
@@ -409,13 +398,15 @@ async fn handle_msg_compose_auto(
     let watching = watching_sessions(state, channel_id);
     if watching.len() == 1 {
         if let Some(session_id) = watching.iter().next() {
-            if is_working_non_grok(&snapshot, session_id) {
+            if can_message_session(state, &snapshot, session_id) {
                 open_msg_compose_or_reply(state, channel_id, config, session_id, lang).await;
                 return;
             }
         }
     }
-    let options = crate::select::msg_options(&snapshot, &watching, now_secs(), lang);
+    let options = crate::select::msg_options(&snapshot, &watching, now_secs(), lang, |record| {
+        super::agent_control::can_send(state, record).ok
+    });
     if options.is_empty() {
         let _ = reply_channel_text(
             channel_id,
@@ -451,7 +442,55 @@ pub(super) fn deliver_msg(
     session_id: &str,
     content: &str,
     lang: Lang,
-) -> String {
+) -> Result<String, String> {
+    let snapshot = state.agents.snapshot();
+    let Some(record) = find_agent_by_session(&snapshot, session_id) else {
+        return Err(super::agent_control::message_refusal("notFound", lang));
+    };
+    let can = super::agent_control::can_send(state, record);
+    if !can.ok {
+        return Err(super::agent_control::message_refusal(
+            can.reason.as_deref().unwrap_or("nativeUnavailable"),
+            lang,
+        ));
+    }
+    if record["state"] != "working" {
+        let kind = record["kind"].as_str().and_then(AgentKind::parse).unwrap();
+        let state = state.clone();
+        let channel = channel_id.to_string();
+        let sid = session_id.to_string();
+        let text = content.to_string();
+        tokio::spawn(async move {
+            let source = format!("im:{channel}");
+            let message_id = uuid::Uuid::new_v4().to_string();
+            let sent = super::agent_control::send(
+                &state,
+                super::agent_control::Message {
+                    phone: &source,
+                    message_id: &message_id,
+                    kind,
+                    sid: &sid,
+                    text: &text,
+                    files: Vec::new(),
+                    expected_result_id: None,
+                    continuation_instruction: None,
+                },
+            )
+            .await;
+            let receipt = match (sent.status, sent.reason.as_deref()) {
+                ("delivered", _) => crate::i18n::tr(lang, "autoChannel.msgDeliveredNow").into(),
+                (_, Some("controlUnknown" | "desktopUnknown")) => {
+                    super::agent_control::message_unknown(lang)
+                }
+                (_, reason) => super::agent_control::message_refusal(
+                    reason.unwrap_or("nativeUnavailable"),
+                    lang,
+                ),
+            };
+            let _ = reply_channel_text(&channel, &state.config_snapshot(), &receipt).await;
+        });
+        return Ok(crate::i18n::tr(lang, "autoChannel.msgSubmitting").into());
+    }
     if crate::codex_desktop::shared().session(session_id).is_some() {
         let state = state.clone();
         let channel = channel_id.to_string();
@@ -478,22 +517,18 @@ pub(super) fn deliver_msg(
             };
             let _ = reply_channel_text(&channel, &state.config_snapshot(), &receipt).await;
         });
-        return if lang == Lang::Zh {
-            "正在提交到 Codex App…".into()
-        } else {
-            "Submitting to Codex App…".into()
-        };
+        return Ok(crate::i18n::tr(lang, "autoChannel.msgSubmitting").into());
     }
     let n = state
         .interject
         .append(session_id, content, Vec::new(), Some(channel_id));
     state.interject.persist();
     broadcast_agents_state(state);
-    if n == 0 {
+    Ok(if n == 0 {
         crate::i18n::tr(lang, "autoChannel.msgDeliveredNow").to_string()
     } else {
         crate::i18n::tr(lang, "autoChannel.msgQueued").replace("{n}", &n.to_string())
-    }
+    })
 }
 
 /// 排队插话被消费后，给各来源渠道回推一条「已阅读」回执（编号按当前快照现算）。仅在有待回执
@@ -549,47 +584,44 @@ pub(super) fn msg_echo_text(state: &Arc<ServerState>, session_id: &str, lang: La
     }
 }
 
-/// 快照中该 session 是否「工作中·非 grok」（插话可发的前提；直发短路判定用）。
-pub(super) fn is_working_non_grok(snapshot: &serde_json::Value, session_id: &str) -> bool {
+/// Whether this session has a native message channel or a working interjection hook.
+pub(super) fn can_message_session(
+    state: &Arc<ServerState>,
+    snapshot: &serde_json::Value,
+    session_id: &str,
+) -> bool {
     find_agent_by_session(snapshot, session_id)
-        .map(|r| {
-            (r.get("state").and_then(|v| v.as_str()) == Some("working")
-                || r["desktop"]["connected"] == true)
-                && r.get("kind").and_then(|v| v.as_str()) != Some("grok")
-        })
-        .unwrap_or(false)
+        .is_some_and(|record| super::agent_control::can_send(state, record).ok)
 }
 
-/// 工作中·非 grok 的 agent 列表行（`[编号] 类型 — 标题（项目）`；用法提示 / 兜底文本用）。
-pub(super) fn working_agent_lines(snapshot: &serde_json::Value, lang: Lang) -> Vec<String> {
-    let empty = Vec::new();
+/// Messageable sessions for the text fallback of the IM picker.
+pub(super) fn messageable_agent_lines(
+    state: &Arc<ServerState>,
+    snapshot: &serde_json::Value,
+    lang: Lang,
+) -> Vec<String> {
     snapshot
         .as_array()
-        .unwrap_or(&empty)
-        .iter()
-        .filter(|r| {
-            (r.get("state").and_then(|v| v.as_str()) == Some("working")
-                || r["desktop"]["connected"] == true)
-                && r.get("kind").and_then(|v| v.as_str()) != Some("grok")
-        })
-        .map(|r| {
-            let seq = r.get("seq").and_then(|v| v.as_u64()).unwrap_or(0);
+        .into_iter()
+        .flatten()
+        .filter(|record| super::agent_control::can_send(state, record).ok)
+        .map(|record| {
+            let seq = record.get("seq").and_then(|v| v.as_u64()).unwrap_or(0);
             format!(
                 "[{}] {}",
                 seq,
-                crate::autochannel::kind_title_project(r, lang)
+                crate::autochannel::kind_title_project(record, lang)
             )
         })
         .collect()
 }
 
-/// `/msg`（无编号无内容）增强用法提示：用法示例 + 当前工作中 agent 列表（带编号，可直接
-/// `/msg <编号> <内容>` 定向）。无工作中 → 附一行「当前没有工作中的 Agent」。
+/// Usage text plus the current messageable sessions and their stable numbers.
 pub(super) fn msg_usage_hint(state: &Arc<ServerState>, channel_id: &str, lang: Lang) -> String {
     let prefix = crate::autochannel::cmd_prefix(channel_id);
     let mut out = crate::i18n::tr(lang, "autoChannel.msgUsage").replace("{p}", prefix);
     let snapshot = state.agents.snapshot();
-    let lines = working_agent_lines(&snapshot, lang);
+    let lines = messageable_agent_lines(state, &snapshot, lang);
     out.push_str("\n\n");
     if lines.is_empty() {
         out.push_str(crate::i18n::tr(lang, "select.msgNoWorking"));
@@ -599,8 +631,7 @@ pub(super) fn msg_usage_hint(state: &Arc<ServerState>, channel_id: &str, lang: L
     out
 }
 
-/// `/msg <内容>`（无编号）：本渠道关注恰 1 个且该 agent 工作中·非 grok → 直发；否则弹选择卡
-/// （列工作中·非 grok，每行「发送」按钮）；无可发对象 → 提示、不弹卡。
+/// An unnumbered message goes to the sole followed, messageable session or opens a picker.
 pub(super) async fn handle_msg_auto(
     state: &Arc<ServerState>,
     channel_id: &str,
@@ -610,18 +641,21 @@ pub(super) async fn handle_msg_auto(
 ) {
     let snapshot = state.agents.snapshot();
     let watching = watching_sessions(state, channel_id);
-    // 直发条件（用户定案）：只有明确关注恰 1 个、且它工作中·非 grok 时才直发，避免发错。
+    // An explicit sole follow identifies the destination when its channel is available.
     if watching.len() == 1 {
         if let Some(sid) = watching.iter().next().cloned() {
-            if is_working_non_grok(&snapshot, &sid) {
-                let text = deliver_msg(state, channel_id, &sid, &content, lang);
+            if can_message_session(state, &snapshot, &sid) {
+                let text = deliver_msg(state, channel_id, &sid, &content, lang)
+                    .unwrap_or_else(|message| message);
                 let _ = reply_channel_text(channel_id, config, &text).await;
                 return;
             }
         }
     }
-    // 否则弹选择卡（列工作中·非 grok）；关注中的仍带「· 关注中」徽标。
-    let opts = crate::select::msg_options(&snapshot, &watching, now_secs(), lang);
+    // Otherwise offer every messageable destination, preserving follow badges.
+    let opts = crate::select::msg_options(&snapshot, &watching, now_secs(), lang, |record| {
+        super::agent_control::can_send(state, record).ok
+    });
     if opts.is_empty() {
         let _ = reply_channel_text(
             channel_id,

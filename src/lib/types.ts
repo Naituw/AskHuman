@@ -803,8 +803,7 @@ export interface AgentRecord {
   waitingPreview?: string | null;
   /** 累计有效工作时长（秒，registry snapshot 含当前区间的生效总值）。 */
   activeElapsedSecs?: number | null;
-  /** 控制台可以把消息直接送进这个聊天（daemon 注入，只给订阅快照；目前是 Cursor Desktop 的空闲 /
-   *  已结束聊天）：它们没有会有下一次工具调用的 hook，消息不能排队，只能立刻发。 */
+  /** The daemon has an available native message channel for this idle or ended session. */
   canMessage?: boolean;
 }
 

@@ -505,25 +505,20 @@ pub fn watch_options(
     out
 }
 
-/// 由注册表快照组装「可发送插话」的候选选项（`/msg` 无编号单选卡）：**仅列「工作中」且非 grok**
-/// 的 agent（插话只对工作中有意义、grok 无可靠传话通道）。`watching` 命中仍加「· 关注中」徽标。
+/// Message picker options filtered by the caller's current delivery capabilities.
 pub fn msg_options(
     snapshot: &Value,
     watching: &HashSet<String>,
     now: u64,
     lang: Lang,
+    can_message: impl Fn(&Value) -> bool,
 ) -> Vec<SelectOption> {
     let empty = Vec::new();
     let list = snapshot.as_array().unwrap_or(&empty);
     let mut out: Vec<SelectOption> = Vec::new();
     for rec in list {
-        if rec.get("state").and_then(|v| v.as_str()) != Some("working")
-            && rec["desktop"]["connected"] != true
-        {
-            continue; // 仅工作中。
-        }
-        if rec.get("kind").and_then(|v| v.as_str()) == Some("grok") {
-            continue; // grok 无法插话。
+        if !can_message(rec) {
+            continue;
         }
         let sid = rec
             .get("sessionId")
@@ -898,7 +893,9 @@ mod tests {
         snap.as_array_mut().unwrap().push(json!({
             "seq":4,"kind":"grok","sessionId":"s-grok","state":"working","title":"g","cwd":"/tmp/g"
         }));
-        let opts = msg_options(&snap, &HashSet::new(), NOW, Lang::Zh);
+        let opts = msg_options(&snap, &HashSet::new(), NOW, Lang::Zh, |record| {
+            record["state"] == "working" && record["kind"] != "grok"
+        });
         // 仅剩工作中·非 grok 的那一个（claude s-work）。
         assert_eq!(opts.len(), 1);
         assert_eq!(opts[0].id, "s-work");
@@ -906,7 +903,9 @@ mod tests {
         // 关注徽标仍生效。
         let mut watching = HashSet::new();
         watching.insert("s-work".to_string());
-        let opts2 = msg_options(&snap, &watching, NOW, Lang::Zh);
+        let opts2 = msg_options(&snap, &watching, NOW, Lang::Zh, |record| {
+            record["state"] == "working" && record["kind"] != "grok"
+        });
         assert_eq!(opts2[0].badge.as_deref(), Some("· 关注中"));
     }
 }

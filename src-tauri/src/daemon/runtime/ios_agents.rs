@@ -118,16 +118,15 @@ pub(super) fn can_interject(rec: &Value) -> CanInterject {
         ok: false,
         reason: Some(reason.to_string()),
     };
-    if text(rec, "state") == "ended" {
-        return refuse("ended");
-    }
-    if text(rec, "kind") == "grok" {
+    if matches!(text(rec, "kind"), "grok" | "antigravity") {
         return refuse("unsupported");
     }
     if crate::codex_desktop::is_desktop_session(rec) {
         if rec["desktop"]["connected"] != true {
             return refuse("desktopDisconnected");
         }
+    } else if text(rec, "state") == "ended" {
+        return refuse("ended");
     } else if text(rec, "state") != "working" {
         return refuse("notWorking");
     }
@@ -325,10 +324,8 @@ pub(super) async fn interject(
     if text(rec, "kind") != kind.as_str() {
         return InterjectResult::rejected("notFound");
     }
-    // A Cursor Desktop chat the registry has called "ended" is still a chat; whether it can be
-    // continued is `agent_control`'s call (`can_send`), not a queue for a hook that will not run.
-    if text(rec, "state") == "idle" || (text(rec, "state") == "ended" && kind == AgentKind::Cursor)
-    {
+    // Native continuation capability is checked by the shared submission service.
+    if matches!(text(rec, "state"), "idle" | "ended") {
         let sent = super::agent_control::send(
             state,
             super::agent_control::Message {
@@ -571,7 +568,7 @@ mod tests {
 
     #[test]
     fn desktop_can_continue_idle_chats_but_never_falls_back_to_a_hook() {
-        for state in ["working", "idle"] {
+        for state in ["working", "idle", "ended"] {
             assert!(
                 can_interject(&record(json!({
                     "kind":"codex", "state":state, "terminal":"codex-app",
@@ -590,14 +587,6 @@ mod tests {
                 );
             }
         }
-        assert_eq!(
-            can_interject(&record(json!({
-                "kind":"codex", "state":"ended", "desktop":{"connected":true}
-            })))
-            .reason
-            .as_deref(),
-            Some("ended")
-        );
     }
 
     #[test]

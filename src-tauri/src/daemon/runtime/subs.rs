@@ -48,9 +48,8 @@ pub(super) fn agents_snapshot_for_gui(state: &Arc<ServerState>) -> serde_json::V
     snap
 }
 
-/// 给状态窗口订阅者的快照：`agents_snapshot_for_gui` 再标上控制台可以直接发消息的聊天
-/// （`canMessage: true`，目前只有 Cursor Desktop 的空闲 / 已结束聊天）。手机端自己按会话算
-/// `canInterject`，故不走这里。
+/// Annotate the console snapshot with native continuation capabilities for idle and ended sessions.
+/// The phone derives its canInterject field from the same capability check.
 pub(super) fn agents_snapshot_for_console(state: &Arc<ServerState>) -> serde_json::Value {
     let mut snap = agents_snapshot_for_gui(state);
     super::agent_control::mark_messageable(state, &mut snap, &super::agent_control::cached_chat);

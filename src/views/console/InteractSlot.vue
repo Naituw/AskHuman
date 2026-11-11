@@ -1,7 +1,6 @@
 <script setup lang="ts">
-// 交互区插槽（spec gui-agent-console R1/C3/C9）：按优先级切换——插话输入（工作中且非 Grok）/
-// Cursor Desktop 聊天直发输入（空闲或已结束，daemon 标 `canMessage`）/
-// Grok 提示 / 空闲提示（+ 新建任务快捷入口）/ 已结束提示。未来「提问卡」为最高优先级内容。
+// The daemon advertises native continuation for idle and ended sessions through canMessage.
+// Working sessions use their existing native or tool-hook message channel.
 import { agentsMessage, codexDesktop, codexDesktopAttachments } from "../../lib/ipc";
 import { onBeforeUnmount, onMounted, ref, watch } from "vue";
 import { useI18n } from "vue-i18n";
@@ -39,7 +38,7 @@ const busy = ref(false);
 const error = ref("");
 const receipt = ref("");
 const pending = ref<{op: "send"; sessionId: string; text: string; files: string[]; id: string} | null>(null);
-// A message sent straight to a Cursor chat that is not working. Its id, text and files are fixed
+// A message sent through an available native channel while the session is not working. Its id, text and files are fixed
 // when the first attempt starts, so pressing Send again after a lost answer is the same operation;
 // `unknown` marks a verdict that says it may have been sent, which only the user can settle.
 const direct = ref<{id: string; kind: AgentKind; sessionId: string; text: string; files: string[]; unknown: boolean} | null>(null);
@@ -71,7 +70,7 @@ function canSend(): boolean {
 
 function placeholder(): string {
   if (props.record.desktop) return t("desktop.message");
-  return t(props.record.canMessage || direct.value ? "console.cursorPlaceholder" : "console.composerPlaceholder");
+  return t(props.record.canMessage || direct.value ? "console.messagePlaceholder" : "console.composerPlaceholder");
 }
 
 async function sendDirect(text: string): Promise<void> {
@@ -92,7 +91,7 @@ async function sendDirect(text: string): Promise<void> {
       direct.value = null;
       draft.value = "";
       attachments.reset();
-      receipt.value = t("console.cursorSent");
+      receipt.value = t("console.messageSent");
     } else if (result.status === "rejected") {
       // Nothing was sent and the id is spent: the draft stays for another try under a new id.
       direct.value = null;

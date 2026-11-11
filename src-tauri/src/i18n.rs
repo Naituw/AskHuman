@@ -1244,24 +1244,26 @@ pub fn tr(lang: Lang, key: &'static str) -> &'static str {
         // 单选卡定格为「已选择 [n]」、另发一张新的实时 watch 卡。
         "select.pickedCard" => pick(lang, "Selected [{id}]", "已选择 [{id}]"),
         // `/msg` 选择卡点「发送」后定格（{id} = 展示编号；{note} = 送达/排队回执）。
+        "select.msgSubmittingCard" => pick(lang, "Submitting to [{id}]…", "正在提交给 [{id}]…"),
         "select.msgSentCard" => pick(lang, "Sent to [{id}] · {note}", "已发送给 [{id}] · {note}"),
-        // 点「发送」瞬间目标已不在工作中（状态漂移）→ 定格提示、不发送。
+        // The message channel became unavailable before submission.
         "select.msgTargetGone" => pick(
             lang,
-            "That agent is no longer working; not sent.",
-            "该 Agent 已不在工作中，未发送。",
+            "This session’s message channel is unavailable. Nothing was sent.",
+            "该会话的消息通道当前不可用，未发送。",
         ),
-        // `/msg` 无编号但当前没有可发送对象（无工作中·非 grok）。
+        // IM submission and unavailable-target feedback.
+        "autoChannel.msgSubmitting" => pick(lang, "Submitting message…", "正在提交消息…"),
         "select.msgNoWorking" => pick(
             lang,
-            "No working agents to message right now.",
-            "当前没有工作中的 Agent，无法发送。",
+            "No sessions with an available message channel right now.",
+            "当前没有消息通道可用的会话。",
         ),
-        // 显式 `/msg <编号>` 发送但目标不在工作中（仅工作中可发）。
+        // An explicitly selected session has no available message channel.
         "select.msgNoWorkingTarget" => pick(
             lang,
-            "That agent is idle; you can only message a working agent.",
-            "该 Agent 当前空闲，只能给工作中的 Agent 发送。",
+            "This session’s message channel is unavailable.",
+            "该会话的消息通道当前不可用。",
         ),
 
         // —— Slack 渠道：发给用户的文案 + 本地诊断 ——
