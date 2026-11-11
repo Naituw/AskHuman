@@ -37,21 +37,19 @@ impl<T: Transport<RoleServer>> Transport<RoleServer> for LegacyDiscoveryTranspor
             let message = self.inner.receive().await?;
             if self.awaiting_initialize {
                 if let ClientJsonRpcMessage::Request(request) = &message {
-                    if let ClientRequest::CustomRequest(custom) = &request.request {
-                        if custom.method == "server/discover" {
-                            // MCP 2026-07-28 stdio probing permits an error to trigger the
-                            // legacy initialize flow. Do not advertise modern semantics.
-                            let error = ErrorData::new(
-                                ErrorCode::METHOD_NOT_FOUND,
-                                "server/discover is unsupported; use initialize",
-                                None,
-                            );
-                            self.inner
-                                .send(ServerJsonRpcMessage::error(error, Some(request.id.clone())))
-                                .await
-                                .ok()?;
-                            continue;
-                        }
+                    if matches!(request.request, ClientRequest::DiscoverRequest(_)) {
+                        // MCP 2026-07-28 stdio probing permits an error to trigger the
+                        // legacy initialize flow. Do not advertise modern semantics.
+                        let error = ErrorData::new(
+                            ErrorCode::METHOD_NOT_FOUND,
+                            "server/discover is unsupported; use initialize",
+                            None,
+                        );
+                        self.inner
+                            .send(ServerJsonRpcMessage::error(error, Some(request.id.clone())))
+                            .await
+                            .ok()?;
+                        continue;
                     }
                     if matches!(request.request, ClientRequest::InitializeRequest(_)) {
                         self.awaiting_initialize = false;
@@ -74,7 +72,7 @@ mod tests {
     use serde_json::{json, Value};
     use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 
-    async fn handshake_and_list(probe: bool) {
+    async fn handshake_and_list(probe: bool, requested_version: &str, negotiated_version: &str) {
         let (server_io, client_io) = tokio::io::duplex(64 * 1024);
         let server_task = tokio::spawn(async move {
             super::super::ask::AskServer::new()
@@ -105,7 +103,7 @@ mod tests {
             }
         }
         let request = json!({"jsonrpc":"2.0","id":2,"method":"initialize","params":{
-            "protocolVersion":"2025-11-25","capabilities":{},
+            "protocolVersion":requested_version,"capabilities":{},
             "clientInfo":{"name":"discovery-test","version":"0"}}});
         write
             .write_all(format!("{request}\n").as_bytes())
@@ -114,7 +112,7 @@ mod tests {
         let mut line = String::new();
         reader.read_line(&mut line).await.unwrap();
         let reply: Value = serde_json::from_str(&line).unwrap();
-        assert_eq!(reply["result"]["protocolVersion"], "2025-11-25");
+        assert_eq!(reply["result"]["protocolVersion"], negotiated_version);
         write.write_all(b"{\"jsonrpc\":\"2.0\",\"method\":\"notifications/initialized\"}\n{\"jsonrpc\":\"2.0\",\"id\":3,\"method\":\"tools/list\"}\n").await.unwrap();
         line.clear();
         reader.read_line(&mut line).await.unwrap();
@@ -130,15 +128,33 @@ mod tests {
 
     #[tokio::test]
     async fn discovery_probe_falls_back_to_real_sdk_handshake() {
-        tokio::time::timeout(std::time::Duration::from_secs(3), handshake_and_list(true))
-            .await
-            .unwrap();
+        tokio::time::timeout(
+            std::time::Duration::from_secs(3),
+            handshake_and_list(true, "2025-11-25", "2025-11-25"),
+        )
+        .await
+        .unwrap();
     }
 
     #[tokio::test]
     async fn legacy_client_handshake_remains_supported() {
-        tokio::time::timeout(std::time::Duration::from_secs(3), handshake_and_list(false))
+        for version in ["2024-11-05", "2025-03-26", "2025-06-18", "2025-11-25"] {
+            tokio::time::timeout(
+                std::time::Duration::from_secs(3),
+                handshake_and_list(false, version, version),
+            )
             .await
             .unwrap();
+        }
+    }
+
+    #[tokio::test]
+    async fn newer_initialize_version_negotiates_the_existing_lifecycle() {
+        tokio::time::timeout(
+            std::time::Duration::from_secs(3),
+            handshake_and_list(false, "2026-07-28", "2025-11-25"),
+        )
+        .await
+        .unwrap();
     }
 }

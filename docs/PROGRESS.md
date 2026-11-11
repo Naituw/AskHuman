@@ -899,18 +899,3 @@ WebKit 可刷新页面缩放，但 Popup / 历史窗口的几何仍沿用旧值�
 下一步：按 WebView 观测有效页面比例（保留初始化估算），处理 GTK DPI / 原生 scale 变化和过期回调；
 复用现有几何队列完成合并窗口、独立弹窗与历史预览的瞬态重排，避免把比例切换存成用户尺寸。
 覆盖折叠 / 展开、预览开关、约束 / 最大化、在途几何事务和多屏；自动测试与 Linux 原生运行都通过后删除本节。
-
-
-## 待修复：主分支 CI 的既有失败
-
-2026-11-11 发布 Build 17 时核对 [82dd1452 的 CI](https://github.com/Naituw/AskHuman/actions/runs/42878218594)，
-iOS Swift 包与 relay 已通过，Linux、Windows 和依赖审计失败；这些检查在此前
-[f25e2764 的 CI](https://github.com/Naituw/AskHuman/actions/runs/42866079514) 也已失败。
-前一轮日志已定位到：
-
-- Linux 的独立安装器测试引入 `executable.rs` 后缺少 `crate::development::routing`，编译报 E0433。
-- Windows Clippy 在 `src-tauri/src/paths/account.rs` 测试里报告 `temp` 未使用。
-- `cargo audit` 报告 libsqlite3-sys（RUSTSEC-2026-0459）与 rmcp（RUSTSEC-2026-0462、RUSTSEC-2026-0457）的漏洞。
-
-下一步：对照当前失败日志修复跨平台测试／编译问题，核对依赖公告与实际调用范围后升级依赖并回归。
-本次仅完成 TestFlight 分发、Mac 本机安装和代码推送，没有把这些失败作为已修复或忽略处理。

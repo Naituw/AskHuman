@@ -19,7 +19,8 @@ use base64::Engine;
 use rmcp::handler::server::router::tool::ToolRouter;
 use rmcp::handler::server::wrapper::Parameters;
 use rmcp::model::{
-    CallToolResult, ContentBlock, Implementation, Meta, ServerCapabilities, ServerInfo,
+    CallToolResult, ContentBlock, Implementation, ProtocolVersion, RequestMetaObject,
+    ServerCapabilities, ServerConfig,
 };
 use rmcp::service::RequestContext;
 use rmcp::{tool, tool_handler, tool_router, ErrorData as McpError, RoleServer, ServerHandler};
@@ -54,7 +55,7 @@ fn is_blocked_thread_source(source: &str) -> bool {
 
 /// Codex attaches trusted per-turn context under this namespaced `_meta` entry for every MCP call.
 /// Older versions may encode the inner value as JSON text, so both representations are accepted.
-fn codex_turn_metadata(meta: &Meta) -> Option<Value> {
+fn codex_turn_metadata(meta: &RequestMetaObject) -> Option<Value> {
     let turn_metadata = meta.0.get(CODEX_TURN_METADATA_KEY)?;
     match turn_metadata {
         Value::Object(_) => Some(turn_metadata.clone()),
@@ -76,7 +77,7 @@ struct CodexTurnIdentity {
     turn_id: String,
 }
 
-fn codex_turn_identity(meta: &Meta) -> Option<CodexTurnIdentity> {
+fn codex_turn_identity(meta: &RequestMetaObject) -> Option<CodexTurnIdentity> {
     let metadata = codex_turn_metadata(meta)?;
     let session_id = metadata_id(&metadata, "session_id", "sessionId")?
         .trim()
@@ -110,7 +111,7 @@ fn codex_turn_aborted_line(line: &[u8], turn_id: &str) -> bool {
 /// Tail that one turn's rollout as a fallback and cancel only this child request. Native MCP
 /// cancellation remains the primary protocol path; non-Codex clients never start this monitor.
 fn start_codex_turn_abort_monitor(
-    meta: &Meta,
+    meta: &RequestMetaObject,
     cancel: CancellationToken,
 ) -> Option<AbortOnDropHandle<()>> {
     let identity = codex_turn_identity(meta)?;
@@ -191,7 +192,7 @@ async fn watch_codex_turn_abort(
 
 /// Guard decision + audit label for one call: `(action, reason)`. `None` means the call does not
 /// carry the Codex `_meta` namespace at all (non-Codex client; nothing to guard or audit).
-fn codex_guard_action_reason(meta: &Meta) -> Option<(&'static str, &'static str)> {
+fn codex_guard_action_reason(meta: &RequestMetaObject) -> Option<(&'static str, &'static str)> {
     meta.0.get(CODEX_TURN_METADATA_KEY)?;
     let Some(metadata) = codex_turn_metadata(meta) else {
         return Some(("passed", "codex_turn_metadata_unreadable"));
@@ -213,7 +214,10 @@ Do not retry or contact the human; continue the task and return the result direc
 
 /// Codex session id of this tool call: the turn metadata carries it; the plain `_meta` keys are
 /// the fallback. It is the same id the SessionStart hook sees, so it keys the delegated marker.
-fn codex_session_id<'a>(meta: &'a Meta, metadata: Option<&'a Value>) -> Option<&'a str> {
+fn codex_session_id<'a>(
+    meta: &'a RequestMetaObject,
+    metadata: Option<&'a Value>,
+) -> Option<&'a str> {
     metadata
         .and_then(|metadata| metadata_id(metadata, "session_id", "sessionId"))
         .or_else(|| meta.0.get("sessionId").and_then(Value::as_str))
@@ -230,12 +234,12 @@ fn codex_session_id<'a>(meta: &'a Meta, metadata: Option<&'a Value>) -> Option<&
 /// failing open invisibly.
 ///
 /// `todo_list` does not call this: it only reads, and a delegated run listing todos changes nothing.
-fn codex_thread_guard(meta: &Meta, tool: &str) -> Option<CallToolResult> {
+fn codex_thread_guard(meta: &RequestMetaObject, tool: &str) -> Option<CallToolResult> {
     codex_thread_guard_with(meta, tool, &crate::agents::delegated::marker_silenced)
 }
 
 fn codex_thread_guard_with(
-    meta: &Meta,
+    meta: &RequestMetaObject,
     tool: &str,
     delegated_marker: &dyn Fn(&str) -> Option<String>,
 ) -> Option<CallToolResult> {
@@ -963,7 +967,7 @@ required.",
 
     async fn bound_project(
         &self,
-        meta: &Meta,
+        meta: &RequestMetaObject,
         token: Option<&str>,
         tool: &str,
         arguments: &Value,
@@ -1034,7 +1038,7 @@ required.",
 
     async fn resolve_binding(
         &self,
-        meta: &Meta,
+        meta: &RequestMetaObject,
         token: Option<&str>,
         tool_name: &str,
         public_arguments: &Value,
@@ -1133,7 +1137,7 @@ fn show_last_scope(
 }
 
 fn resolve_direct_binding(
-    meta: &Meta,
+    meta: &RequestMetaObject,
     token: Option<&str>,
     tool_name: &str,
 ) -> Option<crate::context_binding::AgentBinding> {
@@ -1296,11 +1300,17 @@ pub(crate) async fn capture_output(
 
 #[tool_handler(router = self.tool_router)]
 impl ServerHandler for AskServer {
-    fn get_info(&self) -> ServerInfo {
+    fn supported_protocol_versions(&self) -> std::borrow::Cow<'static, [ProtocolVersion]> {
+        // Keep the established initialize lifecycle while upgrading the SDK's security fixes.
+        std::borrow::Cow::Borrowed(ProtocolVersion::known_up_to(&ProtocolVersion::V_2025_11_25))
+    }
+
+    fn get_info(&self) -> ServerConfig {
         // No experimental capabilities on purpose: Codex's own tool-catalog cache (in-process, one
         // entry per server identity) is left on. A delegated `codex exec` is a fresh process, so
         // its empty catalog is never shadowed by a catalog cached for an interactive thread.
-        let mut info = ServerInfo::new(ServerCapabilities::builder().enable_tools().build());
+        let mut info = ServerConfig::new(ServerCapabilities::builder().enable_tools().build())
+            .with_protocol_version(ProtocolVersion::V_2025_11_25);
         // A hidden server advertises no tools, so it must not tell the model to call any.
         if !self.hidden {
             info = info.with_instructions(
@@ -1465,11 +1475,11 @@ mod tests {
         serde_json::from_value(json).unwrap()
     }
 
-    fn meta(json: Value) -> Meta {
-        Meta(json.as_object().unwrap().clone())
+    fn meta(json: Value) -> RequestMetaObject {
+        json.as_object().unwrap().clone().into()
     }
 
-    fn codex_meta(turn_metadata: Value) -> Meta {
+    fn codex_meta(turn_metadata: Value) -> RequestMetaObject {
         meta(json!({ CODEX_TURN_METADATA_KEY: turn_metadata }))
     }
 
@@ -1498,7 +1508,7 @@ mod tests {
         .expect("MCP response timeout")
     }
 
-    fn guard_decision(meta: &Meta) -> Option<(&'static str, &'static str)> {
+    fn guard_decision(meta: &RequestMetaObject) -> Option<(&'static str, &'static str)> {
         codex_guard_action_reason(meta)
     }
 
@@ -1545,7 +1555,7 @@ mod tests {
             guard_decision(&meta(json!({ "thread_source": "system" }))),
             None
         );
-        assert_eq!(guard_decision(&Meta::default()), None);
+        assert_eq!(guard_decision(&RequestMetaObject::default()), None);
     }
 
     #[test]

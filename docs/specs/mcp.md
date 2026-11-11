@@ -60,7 +60,10 @@
 - **Codex 的长超时只能靠 MCP**：Codex MCP 工具调用默认超时 `tool_timeout_sec = 60s`，但**可在 `~/.codex/config.toml` 的 `[mcp_servers.<name>]` 里调大**（如 `tool_timeout_sec = 86400`）。即「Codex 用 MCP 时超时可以很长」是指**可配置**，而非默认。
 - **MCP 模式不需要超时 Hook**：超时改由 MCP 配置项（Codex `tool_timeout_sec`）控制；Cursor/Claude 的 MCP 工具调用不受 Shell 10 分钟硬上限约束（具体上限实现期复核）。
 - **图片可直接返回**：MCP 协议支持 `ImageContent`(base64 + mimeType) 作为工具结果；Codex 近期版本（2025-10 起，PR #5600 等）、Claude 均能把 MCP 图片喂给模型。CLI 模式只能把图片落盘后回传路径让 AI 再读——**直返图片是 MCP 模式相对 CLI 的实质增益**。
-- **Rust 官方 SDK `rmcp`**（0.16，`server` + `transport-io` + 宏）可低成本实现 STDIO server。
+- **Rust 官方 SDK `rmcp`**（当前 3.9，`server` + `transport-io` + 默认宏）承载 STDIO server。
+  为保留已验证的会话生命周期，协议支持上限仍为 `2025-11-25`；初始化前的 `server/discover`
+  探测返回 method-not-found，客户端可在同一连接回退到 `initialize`。SDK 升级不自动启用
+  `2026-07-28` 的免初始化会话；旧版本协商、工具目录与取消行为均需回归。
 - **MCP（STDIO）拿不到 turn 级生命周期**：MCP server 由客户端在 **session 期间**拉起常驻，协议无 turn-start/turn-end 通知，server 只在「工具被调用」时知情。故 MCP **替代不了** lifecycle hook 的 turn 追踪。
 
 MCP 模式当前覆盖 Codex、Claude Code、Cursor、Grok 与 Unix 上的 Antigravity。各客户端按自身能力提供
