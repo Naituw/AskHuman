@@ -59,6 +59,16 @@ pub const JOURNAL_MAX_AGE_DAYS: i64 = 30;
 pub const PUSH_PREVIEW_MAX_CHARS: usize = 120;
 /// The session title in a push is cut shorter than in the app: a notification title is one line.
 pub const PUSH_SESSION_MAX_CHARS: usize = 60;
+/// Session history (docs/specs/ios-session-history.md §5.3): the page a phone asks for by default, the most
+/// one page carries, the budget for the JSON of its items, and how long each text of an exchange may be
+/// (characters; a longer one is cut and ends in `…`). The Swift `Wire` constants must match.
+pub const SESSION_HISTORY_PAGE: usize = 8;
+pub const SESSION_HISTORY_PAGE_MAX: usize = 20;
+pub const SESSION_HISTORY_BYTES: usize = 256 * 1024;
+pub const HISTORY_MESSAGE_MAX_CHARS: usize = 4000;
+pub const HISTORY_QUESTION_MAX_CHARS: usize = 1000;
+pub const HISTORY_OPTION_MAX_CHARS: usize = 500;
+pub const HISTORY_INPUT_MAX_CHARS: usize = 2000;
 
 // ---------------------------------------------------------------- topics
 
@@ -182,6 +192,9 @@ pub mod t {
     pub const TODO_WATCH: &str = "todo.watch";
     pub const TODO_CHANGED: &str = "todo.changed";
 
+    pub const HISTORY_SESSION_GET: &str = "history.session.get";
+    pub const HISTORY_SESSION: &str = "history.session";
+
     pub const ASSET_GET: &str = "asset.get";
     pub const ASSET_CHUNK: &str = "asset.chunk";
     pub const ASSET_ERROR: &str = "asset.error";
@@ -245,6 +258,11 @@ pub struct Caps {
     /// so the capability sets pinned by the wire fixtures keep their shape.
     #[serde(default, skip_serializing_if = "is_false")]
     pub annotations: bool,
+    /// The Mac answers `history.session.get` (the earlier exchanges of an Agent session) and sends the session
+    /// key with its requests (`RequestView::agent_key`; docs/specs/ios-session-history.md). Older Macs do not
+    /// send it, and the phone then offers no history. Left out when false, like `annotations`.
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub session_history: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -546,6 +564,11 @@ pub struct RequestView {
     /// `SESSION_TITLE_MAX_CHARS` characters. Additive: older phones ignore it.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub session_title: Option<String>,
+    /// The key (`{kind}:{sessionId}`, the same string as `AgentView::key`) of the Agent session that asks, when the
+    /// Mac knows it is a real session. It is what the phone asks `history.session.get` with
+    /// (docs/specs/ios-session-history.md S5). Additive: older phones ignore it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub agent_key: Option<String>,
     pub source: String,
     pub content_hash: String,
     #[serde(default, skip_serializing_if = "is_false")]
@@ -1390,6 +1413,130 @@ pub struct TodoChanged {
 }
 msg!(TodoChanged, t::TODO_CHANGED);
 
+// ---------------------------------------------------------------- session history (docs/specs/ios-session-history.md §5)
+
+/// Asks for the exchanges of one Agent session that are older than a cursor, newest first.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SessionHistoryGet {
+    /// The phone's own number for this call, handed back in the answer. It is not the id of an AskHuman
+    /// request (`request.get` calls that `requestId`).
+    pub req_id: String,
+    /// `{kind}:{sessionId}`: what `AgentView::key` and `RequestView::agent_key` carry.
+    pub agent_key: String,
+    /// The cursor: only exchanges whose `(at, id)` is below `(before_ms, before_id)` come back; without a
+    /// `before_id` that is the ones with `at < before_ms`.
+    pub before_ms: i64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub before_id: Option<String>,
+    /// How many the phone would like; the Mac keeps it within `1..=SESSION_HISTORY_PAGE_MAX`.
+    pub limit: u32,
+}
+msg!(SessionHistoryGet, t::HISTORY_SESSION_GET);
+
+/// One question of a past exchange and what was answered to it.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SessionQuestion {
+    pub text: String,
+    /// The options that were chosen, as text; empty when none was or the answer is words only.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub selected: Vec<String>,
+    /// What was written to the question.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub input: Option<String>,
+    /// How many images and files went with the answer (never their names or paths).
+    #[serde(default, skip_serializing_if = "is_zero")]
+    pub images: u64,
+    #[serde(default, skip_serializing_if = "is_zero")]
+    pub files: u64,
+}
+
+/// One entry of the Mac's history: an ask and how it was answered. Its `id` is the request's id.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SessionExchange {
+    pub id: String,
+    /// Unix milliseconds the answer was recorded.
+    pub at: i64,
+    /// Where it was answered: `popup`, `dingding`, `feishu`, `telegram`, `slack`, `ios`, or `away` / `mute`
+    /// for the automatic replies. Passed on as the Mac knows it.
+    pub channel: String,
+    /// The message and the questions are Markdown.
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub markdown: bool,
+    pub message: String,
+    /// Files that went with the message (a count: no names, no paths).
+    #[serde(default, skip_serializing_if = "is_zero")]
+    pub attachments: u64,
+    pub qs: Vec<SessionQuestion>,
+    /// Notes written on passages of the message (a count).
+    #[serde(default, skip_serializing_if = "is_zero")]
+    pub notes: u64,
+}
+
+/// A page of a session's earlier exchanges, newest first, in answer to `history.session.get`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SessionHistory {
+    pub req_id: String,
+    pub agent_key: String,
+    pub items: Vec<SessionExchange>,
+    /// There are exchanges older than the last of `items`.
+    pub more: bool,
+}
+msg!(SessionHistory, t::HISTORY_SESSION);
+
+impl SessionHistory {
+    /// The answer when there is nothing to show: a key the Mac cannot read, a session without records,
+    /// a history switched off. Not an error.
+    pub fn empty(req_id: &str, agent_key: &str) -> Self {
+        Self {
+            req_id: req_id.to_string(),
+            agent_key: agent_key.to_string(),
+            items: Vec::new(),
+            more: false,
+        }
+    }
+
+    /// Makes the page smaller: drops the older half of the exchanges (the phone asks again from the oldest one
+    /// it got, so `more` turns true), and with one exchange left cuts every text of it in half. Returns `false`
+    /// when there is nothing left to cut.
+    pub fn shrink(&mut self) -> bool {
+        if self.items.len() > 1 {
+            self.items.truncate(self.items.len().div_ceil(2));
+            self.more = true;
+            return true;
+        }
+        let Some(item) = self.items.first_mut() else {
+            return false;
+        };
+        let mut cut = halve_text(&mut item.message);
+        for question in &mut item.qs {
+            cut |= halve_text(&mut question.text);
+            for option in &mut question.selected {
+                cut |= halve_text(option);
+            }
+            if let Some(input) = question.input.as_mut() {
+                cut |= halve_text(input);
+            }
+        }
+        cut
+    }
+}
+
+/// Cuts a text to half its characters (it then ends in `…`). Texts of a few characters stay.
+fn halve_text(text: &mut String) -> bool {
+    const FLOOR: usize = 32;
+    let chars = text.chars().count();
+    if chars <= FLOOR {
+        return false;
+    }
+    let keep = (chars / 2).max(FLOOR - 1);
+    *text = text.chars().take(keep).collect::<String>() + "…";
+    true
+}
+
 // ---------------------------------------------------------------- assets and uploads
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -1563,6 +1710,8 @@ registry!(
     TodoAck,
     TodoWatch,
     TodoChanged,
+    SessionHistoryGet,
+    SessionHistory,
     AssetGet,
     AssetChunk,
     AssetError,
@@ -1732,6 +1881,7 @@ mod tests {
             answer_todos: true,
             away: true,
             annotations,
+            session_history: false,
         };
         assert!(serde_json::to_value(caps(false))
             .unwrap()
@@ -1820,5 +1970,173 @@ mod tests {
         })
         .unwrap();
         assert_eq!(flagged["escalated"], true);
+    }
+
+    /// The session history is additive (docs/specs/ios-session-history.md §5.4): the capability bit and the key of the
+    /// session are left out when there is nothing to say and read as "none" when missing.
+    #[test]
+    fn the_session_history_additions_are_additive_in_both_directions() {
+        let caps = |session_history: bool| Caps {
+            live_update: false,
+            new_task: true,
+            interject: true,
+            watch: true,
+            todos: true,
+            answer_todos: true,
+            away: true,
+            annotations: false,
+            session_history,
+        };
+        assert!(serde_json::to_value(caps(false))
+            .unwrap()
+            .get("sessionHistory")
+            .is_none());
+        assert_eq!(
+            serde_json::to_value(caps(true)).unwrap()["sessionHistory"],
+            true
+        );
+        let old: Caps = serde_json::from_value(serde_json::json!({
+            "newTask": true, "interject": true, "watch": true
+        }))
+        .unwrap();
+        assert!(!old.session_history);
+
+        let view = |key: Option<&str>| -> serde_json::Value {
+            let mut value = serde_json::json!({
+                "id": "r", "kind": "ask", "createdAt": 1,
+                "agent": {"kind": "claude", "label": "Claude Code"},
+                "project": {"key": "k", "name": "p"},
+                "source": "mcp", "contentHash": "h"
+            });
+            if let Some(key) = key {
+                value["agentKey"] = key.into();
+            }
+            value
+        };
+        let without: RequestView = serde_json::from_value(view(None)).unwrap();
+        assert_eq!(without.agent_key, None);
+        assert!(serde_json::to_value(&without)
+            .unwrap()
+            .get("agentKey")
+            .is_none());
+        let with: RequestView = serde_json::from_value(view(Some("claude:s1"))).unwrap();
+        assert_eq!(with.agent_key.as_deref(), Some("claude:s1"));
+        assert_eq!(
+            serde_json::to_value(&with).unwrap()["agentKey"],
+            "claude:s1"
+        );
+    }
+
+    fn exchange(index: usize, chars: usize) -> SessionExchange {
+        SessionExchange {
+            id: format!("x{index}"),
+            at: 1_000 - index as i64,
+            channel: "popup".into(),
+            markdown: true,
+            message: "m".repeat(chars),
+            attachments: 0,
+            qs: vec![SessionQuestion {
+                text: "q".repeat(chars / 10),
+                selected: vec!["s".repeat(chars / 10)],
+                input: Some("i".repeat(chars / 10)),
+                images: 0,
+                files: 0,
+            }],
+            notes: 0,
+        }
+    }
+
+    fn items_len(page: &SessionHistory) -> usize {
+        serde_json::to_vec(&page.items).unwrap().len()
+    }
+
+    #[test]
+    fn a_session_history_page_drops_its_oldest_exchanges_until_it_fits() {
+        let mut page = SessionHistory {
+            req_id: "h".into(),
+            agent_key: "claude:s".into(),
+            items: (0..SESSION_HISTORY_PAGE_MAX)
+                .map(|index| exchange(index, 40_000))
+                .collect(),
+            more: false,
+        };
+        assert!(items_len(&page) > SESSION_HISTORY_BYTES);
+        let mut rounds = 0;
+        while items_len(&page) > SESSION_HISTORY_BYTES && page.shrink() {
+            rounds += 1;
+            assert!(rounds < 64, "shrink does not converge");
+        }
+        assert!(items_len(&page) <= SESSION_HISTORY_BYTES);
+        assert!(page.more, "dropped exchanges leave more to ask for");
+        // The newest ones stay (the page is newest first), so the phone's cursor lands on the oldest kept one.
+        assert_eq!(page.items[0].id, "x0");
+        let last = page.items.len() - 1;
+        assert_eq!(page.items[last].id, format!("x{last}"));
+    }
+
+    #[test]
+    fn a_single_huge_exchange_is_cut_down_and_then_nothing_is_left_to_cut() {
+        let mut page = SessionHistory {
+            req_id: "h".into(),
+            agent_key: "claude:s".into(),
+            items: vec![exchange(0, 2_000_000)],
+            more: false,
+        };
+        let mut rounds = 0;
+        while items_len(&page) > SESSION_HISTORY_BYTES {
+            assert!(
+                page.shrink(),
+                "an exchange that is still too large can be cut"
+            );
+            rounds += 1;
+            assert!(rounds < 64, "shrink does not converge");
+        }
+        assert!(
+            !page.more,
+            "cutting the text of an exchange does not hide others"
+        );
+        assert!(page.items[0].message.ends_with('…'));
+        while page.shrink() {}
+        assert!(!page.shrink());
+        assert!(page.items[0].message.chars().count() <= 33);
+        // Nothing to cut in an empty page.
+        assert!(!SessionHistory::empty("h", "claude:s").shrink());
+    }
+
+    #[test]
+    fn the_session_history_messages_are_registered_and_keep_their_optional_fields_out() {
+        assert_eq!(SessionHistoryGet::TYPE, "history.session.get");
+        assert_eq!(SessionHistory::TYPE, "history.session");
+        let get = SessionHistoryGet {
+            req_id: "h1".into(),
+            agent_key: "claude:s1".into(),
+            before_ms: 5,
+            before_id: None,
+            limit: 8,
+        };
+        assert_eq!(
+            get.to_value(),
+            serde_json::json!({"reqId": "h1", "agentKey": "claude:s1", "beforeMs": 5, "limit": 8})
+        );
+        let bare = SessionExchange {
+            id: "r".into(),
+            at: 1,
+            channel: "away".into(),
+            markdown: false,
+            message: String::new(),
+            attachments: 0,
+            qs: vec![SessionQuestion {
+                text: "ok?".into(),
+                selected: Vec::new(),
+                input: None,
+                images: 0,
+                files: 0,
+            }],
+            notes: 0,
+        };
+        assert_eq!(
+            serde_json::to_value(&bare).unwrap(),
+            serde_json::json!({"id": "r", "at": 1, "channel": "away", "message": "", "qs": [{"text": "ok?"}]})
+        );
     }
 }

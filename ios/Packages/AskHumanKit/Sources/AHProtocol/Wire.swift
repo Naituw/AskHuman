@@ -37,6 +37,17 @@ public enum Wire {
     public static let maxNoteChars = 2000
     public static let maxQuoteChars = 2000
 
+    /// Session history (docs/specs/ios-session-history.md §5.3); mirror `SESSION_HISTORY_*` and `HISTORY_*` in
+    /// `ios/wire.rs`: the page asked for by default, the most one page carries, the budget for the JSON of its
+    /// items, and how long each text of an exchange may be (characters).
+    public static let sessionHistoryPage = 8
+    public static let sessionHistoryPageMax = 20
+    public static let sessionHistoryBytes = 256 * 1024
+    public static let historyMessageMaxChars = 4000
+    public static let historyQuestionMaxChars = 1000
+    public static let historyOptionMaxChars = 500
+    public static let historyInputMaxChars = 2000
+
     public static let publishRatePerSec = 6.0
     public static let publishBurst = 10.0
     public static let watchMinIntervalMs = 2_000

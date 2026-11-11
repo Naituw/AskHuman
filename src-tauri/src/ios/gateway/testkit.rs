@@ -211,6 +211,7 @@ impl Host for TestHost {
             answer_todos: true,
             away: true,
             annotations: true,
+            session_history: true,
         }
     }
 
@@ -597,6 +598,7 @@ pub fn sample_ask(id: &str) -> (Arc<AskRequest>, RequestView) {
             repo: None,
         },
         session_title: None,
+        agent_key: None,
         source: "Codex".into(),
         content_hash: String::new(),
         truncated: false,
@@ -649,6 +651,7 @@ pub fn sample_confirm(id: &str, expires_at: i64) -> RequestView {
             repo: None,
         },
         session_title: None,
+        agent_key: None,
         source: "Claude Code".into(),
         content_hash: String::new(),
         truncated: false,

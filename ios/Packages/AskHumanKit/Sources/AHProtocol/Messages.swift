@@ -25,10 +25,14 @@ public struct Caps: Codable, Equatable, Sendable {
     /// none for it. Left out of the wire when false, like on the Mac side, so a Mac and a phone that both
     /// predate it exchange exactly what they always did.
     @OmitFalse public var annotations: Bool
+    /// The Mac answers `history.session.get` (the earlier exchanges of an Agent session) and sends the session key
+    /// with its requests (`RequestView.agentKey`; docs/specs/ios-session-history.md). A Mac without it has no
+    /// history to show, so the phone offers none for it. Left out of the wire when false, like `annotations`.
+    @OmitFalse public var sessionHistory: Bool
 
     public init(
         newTask: Bool, interject: Bool, watch: Bool, todos: Bool = false, answerTodos: Bool = false,
-        away: Bool = false, annotations: Bool = false, liveUpdate: Bool = false
+        away: Bool = false, annotations: Bool = false, liveUpdate: Bool = false, sessionHistory: Bool = false
     ) {
         self.liveUpdate = liveUpdate
         self.newTask = newTask
@@ -38,6 +42,7 @@ public struct Caps: Codable, Equatable, Sendable {
         self.answerTodos = answerTodos
         self.away = away
         self.annotations = annotations
+        self.sessionHistory = sessionHistory
     }
 
     public init(from decoder: Decoder) throws {
@@ -50,6 +55,7 @@ public struct Caps: Codable, Equatable, Sendable {
         away = try c.decodeIfPresent(Bool.self, forKey: .away) ?? false
         annotations = try c.decodeIfPresent(Bool.self, forKey: .annotations) ?? false
         liveUpdate = try c.decodeIfPresent(Bool.self, forKey: .liveUpdate) ?? false
+        sessionHistory = try c.decodeIfPresent(Bool.self, forKey: .sessionHistory) ?? false
     }
 }
 
@@ -423,6 +429,9 @@ public struct RequestView: Codable, Equatable, Hashable, Sendable {
     /// Title of the Agent session that asks, as the Mac knew it when it delivered the request (one line);
     /// `nil` when it knew none. Older Macs never send it.
     public var sessionTitle: String?
+    /// The key (`{kind}:{sessionId}`, the same string as `AgentView.key`) of the Agent session that asks, when the
+    /// Mac knows it is a real session; what `history.session.get` is asked with. Older Macs never send it.
+    public var agentKey: String?
     public var source: String
     public var contentHash: String
     @OmitFalse public var truncated: Bool
@@ -434,8 +443,8 @@ public struct RequestView: Codable, Equatable, Hashable, Sendable {
 
     public init(
         id: String, kind: String, createdAt: Int64, agent: AgentRef, project: ProjectRef, sessionTitle: String? = nil,
-        source: String, contentHash: String, truncated: Bool = false, escalated: Bool = false, ask: AskView? = nil,
-        confirm: ConfirmView? = nil
+        agentKey: String? = nil, source: String, contentHash: String, truncated: Bool = false, escalated: Bool = false,
+        ask: AskView? = nil, confirm: ConfirmView? = nil
     ) {
         self.id = id
         self.kind = kind
@@ -443,6 +452,7 @@ public struct RequestView: Codable, Equatable, Hashable, Sendable {
         self.agent = agent
         self.project = project
         self.sessionTitle = sessionTitle
+        self.agentKey = agentKey
         self.source = source
         self.contentHash = contentHash
         self.truncated = truncated
@@ -1481,6 +1491,100 @@ public struct TodoChanged: WireMessage {
     public init(rev: UInt64) { self.rev = rev }
 }
 
+// MARK: session history (docs/specs/ios-session-history.md §5)
+
+/// Asks for the exchanges of one Agent session that are older than a cursor, newest first.
+public struct SessionHistoryGet: WireMessage {
+    public static let type = "history.session.get"
+    /// The phone's own number for this call, handed back in the answer. Not the id of an AskHuman request.
+    public var reqId: String
+    /// `{kind}:{sessionId}`: what `AgentView.key` and `RequestView.agentKey` carry.
+    public var agentKey: String
+    /// The cursor: only exchanges whose `(at, id)` is below `(beforeMs, beforeId)` come back; without a `beforeId`
+    /// that is the ones with `at < beforeMs`.
+    public var beforeMs: Int64
+    public var beforeId: String?
+    /// How many the phone would like; the Mac keeps it within `1...Wire.sessionHistoryPageMax`.
+    public var limit: Int
+
+    public init(reqId: String, agentKey: String, beforeMs: Int64, beforeId: String? = nil, limit: Int) {
+        self.reqId = reqId
+        self.agentKey = agentKey
+        self.beforeMs = beforeMs
+        self.beforeId = beforeId
+        self.limit = limit
+    }
+}
+
+/// One question of a past exchange and what was answered to it.
+public struct SessionQuestion: Codable, Equatable, Hashable, Sendable {
+    public var text: String
+    /// The options that were chosen, as text; empty when none was or the answer is words only.
+    @OmitEmpty public var selected: [String]
+    /// What was written to the question.
+    public var input: String?
+    /// How many images and files went with the answer (never their names or paths).
+    @OmitZero public var images: UInt64
+    @OmitZero public var files: UInt64
+
+    public init(text: String, selected: [String] = [], input: String? = nil, images: UInt64 = 0, files: UInt64 = 0) {
+        self.text = text
+        self.selected = selected
+        self.input = input
+        self.images = images
+        self.files = files
+    }
+}
+
+/// One entry of the Mac's history: an ask and how it was answered. Its `id` is the request's id.
+public struct SessionExchange: Codable, Equatable, Hashable, Sendable, Identifiable {
+    public var id: String
+    /// Unix milliseconds the answer was recorded.
+    public var at: Int64
+    /// Where it was answered: `popup`, `dingding`, `feishu`, `telegram`, `slack`, `ios`, or `away` / `mute` for the
+    /// automatic replies. Passed on as the Mac knows it, so an unknown one is shown as a plain name.
+    public var channel: String
+    /// The message and the questions are Markdown.
+    @OmitFalse public var markdown: Bool
+    public var message: String
+    /// Files that went with the message (a count: no names, no paths).
+    @OmitZero public var attachments: UInt64
+    public var qs: [SessionQuestion]
+    /// Notes written on passages of the message (a count).
+    @OmitZero public var notes: UInt64
+
+    public init(
+        id: String, at: Int64, channel: String, markdown: Bool = false, message: String, attachments: UInt64 = 0,
+        qs: [SessionQuestion], notes: UInt64 = 0
+    ) {
+        self.id = id
+        self.at = at
+        self.channel = channel
+        self.markdown = markdown
+        self.message = message
+        self.attachments = attachments
+        self.qs = qs
+        self.notes = notes
+    }
+}
+
+/// A page of a session's earlier exchanges, newest first, in answer to `history.session.get`.
+public struct SessionHistory: WireMessage {
+    public static let type = "history.session"
+    public var reqId: String
+    public var agentKey: String
+    public var items: [SessionExchange]
+    /// There are exchanges older than the last of `items`.
+    public var more: Bool
+
+    public init(reqId: String, agentKey: String, items: [SessionExchange] = [], more: Bool = false) {
+        self.reqId = reqId
+        self.agentKey = agentKey
+        self.items = items
+        self.more = more
+    }
+}
+
 // MARK: assets and uploads
 
 public struct AssetGet: WireMessage {
@@ -1597,7 +1701,7 @@ public enum MessageRegistry {
         TaskTodos.self, TaskCreate.self, TaskStatus.self, SlotTake.self, SlotState.self,
         AwayState.self, AwaySet.self, AwaySessionSet.self,
         TodoProjectsGet.self, TodoProjects.self, TodoListGet.self, ProjectTodos.self, TodoOperation.self,
-        TodoAck.self, TodoWatch.self, TodoChanged.self,
+        TodoAck.self, TodoWatch.self, TodoChanged.self, SessionHistoryGet.self, SessionHistory.self,
         AssetGet.self, AssetChunk.self, AssetError.self, UploadBegin.self, UploadChunk.self,
         UploadAck.self, UploadCancel.self,
     ]

@@ -256,6 +256,30 @@
     {"type": "task.options", "name": "max-control", "body": {"enabled": true, "permissionMode": "ask", "workspaces": [], "agents": [{"kind": "cursor", "label": "Cursor", "ready": true, "subtitle": "CLI", "permissionSelectable": true, "maxControl": true, "defaultModel": {"label": "Model B", "maxRequired": true}, "models": [{"id": "model-a", "label": "Model A", "maxRequired": false}, {"id": "model-b", "label": "Model B", "maxRequired": true}, {"id": "model-c", "label": "Model C"}]}]}},
     {"type": "task.options", "name": "task-attachments", "body": {"enabled": true, "permissionMode": "ask", "workspaces": [{"id": "w1", "label": "HumanInLoop", "subtitle": "~/Developer/HumanInLoop", "pinned": true, "lastUsedAt": 1792900000000}], "agents": [{"kind": "claude", "label": "Claude Code", "ready": true, "subtitle": "claude", "permissionSelectable": true}, {"kind": "codex", "label": "Codex", "ready": false, "subtitle": "codex", "permissionSelectable": false, "reason": "not installed"}], "attachmentsSupported": true}},
     {"type": "upload.begin", "name": "task-scope", "body": {"uploadId": "u1", "name": "photo.jpg", "mime": "image/jpeg", "size": 400000, "chunks": 3, "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855", "scope": {"taskId": "n-files"}}},
-    {"type": "task.create", "name": "task-attachments", "body": {"clientMsgId": "n-files", "workspaceId": "w1", "agentKind": "claude", "permission": "yolo", "todoId": "t1", "text": "Do the thing", "files": ["u1"]}}
+    {"type": "task.create", "name": "task-attachments", "body": {"clientMsgId": "n-files", "workspaceId": "w1", "agentKind": "claude", "permission": "yolo", "todoId": "t1", "text": "Do the thing", "files": ["u1"]}},
+
+    {"type": "hello.ack", "name": "session-history", "body": {"nonce": "q3ZkL1m0Xw4", "epoch": "0123456789abcdef", "macName": "Home Mac", "caps": {"newTask": true, "interject": true, "watch": true, "todos": true, "answerTodos": true, "away": true, "annotations": true, "sessionHistory": true}, "slot": {"active": true, "autoActivation": true}}},
+    {"type": "request.new", "name": "agent-key", "body": {"rev": 16, "full": true, "request": {
+      "id": "req6", "kind": "ask", "createdAt": 1792900006000,
+      "agent": {"kind": "claude", "label": "Claude Code"}, "project": {"key": "p1", "name": "HumanInLoop"},
+      "sessionTitle": "Refactor the gateway", "agentKey": "claude:s1",
+      "source": "mcp", "contentHash": "sha256-ak",
+      "ask": {
+        "isMarkdown": false,
+        "message": {"text": "Ship it?", "files": []},
+        "questions": [{"text": "Go?", "options": [{"text": "Yes", "recommended": false}]}],
+        "selectOnly": false, "single": false
+      }
+    }}},
+    {"type": "history.session.get", "name": "first", "body": {"reqId": "h1", "agentKey": "claude:s1", "beforeMs": 1792900006000, "limit": 8}},
+    {"type": "history.session.get", "name": "cursor", "body": {"reqId": "h2", "agentKey": "claude:s1", "beforeMs": 1792798000000, "beforeId": "req-8", "limit": 20}},
+    {"type": "history.session", "name": "page", "body": {"reqId": "h2", "agentKey": "claude:s1", "items": [
+      {"id": "req-9", "at": 1792799000000, "channel": "popup", "markdown": true, "message": "Which **migration** path?", "attachments": 1, "notes": 2, "qs": [
+        {"text": "Pick one", "selected": ["Online dual-write"], "input": "go slowly", "images": 1, "files": 2},
+        {"text": "Anything else?"}
+      ]},
+      {"id": "req-8", "at": 1792798000000, "channel": "away", "message": "", "qs": [{"text": "Continue?", "selected": ["Yes", "Later"]}]}
+    ], "more": true}},
+    {"type": "history.session", "name": "end", "body": {"reqId": "h3", "agentKey": "claude:s1", "items": [], "more": false}}
   ]
 }

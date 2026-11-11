@@ -165,6 +165,7 @@ impl Host for DaemonHost {
             answer_todos: true,
             away: true,
             annotations: true,
+            session_history: false,
         }
     }
 
