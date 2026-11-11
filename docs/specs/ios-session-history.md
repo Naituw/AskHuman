@@ -1,8 +1,8 @@
 # 需求：iOS 请求页查看「此会话的历史问答」（下拉加载 / 更多菜单）
 
-> 状态：**2026-11-11 起草并经用户评审通过，尚未实现**（用户在 AskHuman 里逐项确认了 S6、S10、S13 并保留「回到当前提问」胶囊，见 §14）。用户原话：「我希望能更容易看到一个会话的历史记录。在 iOS 的 APP 上，比如说收到个消息，我是不是可以下滑去下拉刷新加载历史的回答记录？我刷新之后，我继续往上滑，看到的就是之前的回答。然后从更多菜单也可以进入。你觉得怎么样？帮我设计一下。」
+> 状态：**2026-11-11 起草并经用户评审通过，2026-11-12 已在主工作树实现**（手机端过了模拟器自动化测试，引擎到真实 daemon 有端到端测试，真机验收见 `docs/PROGRESS.md`；本文是决策时的口径，落地时的偏差见计划「实施记录」。用户在 AskHuman 里逐项确认了 S6、S10、S13 并保留「回到当前提问」胶囊，见 §14）。用户原话：「我希望能更容易看到一个会话的历史记录。在 iOS 的 APP 上，比如说收到个消息，我是不是可以下滑去下拉刷新加载历史的回答记录？我刷新之后，我继续往上滑，看到的就是之前的回答。然后从更多菜单也可以进入。你觉得怎么样？帮我设计一下。」
 > 经一轮 AskHuman 问答，用户定了 S1–S4（读 Mac 的完整历史；更多菜单等价于下拉；只做作答页 / 确认页，含已结束页；不做任何提示），并补充：「这个也不是一个刚需功能，就是一个 Power User 功能。一般的用户也可以在更多菜单里找到。」其余决策（S5–S17）是我按默认定的，评审时用户没有否决；标 ⚠ 的 S6、S10、S13 与上一轮口头方案不同，用户已明确点头。
-> 关联计划：`docs/plans/ios-session-history.md`。落地后同步修订：`docs/overview-ios.md`（能力位与新消息）、`docs/specs/ios-channel.md`（§6 手机端功能）、`docs/specs/ios-answer-flow.md`（§3.8 E12 的打断源）、`docs/specs/reply-history.md`（一句交叉引用）、`docs/wiki/ios-setup.md`（可选的一句话）。
+> 关联计划：`docs/plans/ios-session-history.md`。已同步修订：`docs/overview-ios.md`（能力位与新消息）、`docs/specs/ios-channel.md`（§6 手机端功能）、`docs/specs/ios-answer-flow.md`（§3.8 E12 的打断源）、`docs/specs/reply-history.md`（一句交叉引用）、`docs/wiki/ios-setup.md` 与英文版（一条说明）。
 > 前置资料：`docs/specs/reply-history.md`（Mac 历史记录什么、会话身份 F1–F12）、`docs/specs/ios-todos.md`（同一类「请求 / 应答」读取消息的写法与限额）、`docs/specs/ios-answer-flow.md`（请求页、已结束页、3 秒倒计时）、`docs/overview-ios.md`。
 > 平台：Mac 端沿用现有 Daemon（代码跨平台，macOS 验证）；手机端 iPhone（iPad 随既有大屏布局），iOS 17+，中 / 英双语。
 
@@ -189,7 +189,7 @@ Daemon 的 Host `caps()` 返回 `session_history: true`。
 - 「⋯」菜单（`RequestScreen.moreMenu`）加一项「此会话的历史」（`clock.arrow.circlepath`，标识 `request-menu-session-history`）：线程未加载就加载并滚到最新一条往来；加载过就只滚动；失败显示 S15 的错误行并滚到顶。
 - **滚动做法**（P1 原型的结论，依据与踩到的坑见 `docs/plans/ios-session-history.md` 的「P1 结论」）：
   - **下拉**：`ThreadScrollHook` 挂在滚动内容的背景上，沿 `superview` 找到页面的 `UIScrollView`，只在入口条件满足、且还没读到会话开头时给它装一个 `UIRefreshControl`（到头就拆，之后只剩普通回弹）。系统的 `.refreshable` 试过不用：线程晚于首帧出现时，条件修饰符会改变 `ScrollView` 的结构身份，页面被重建。SwiftUI 会在自己的更新里摘掉这个控件，还会按内容高度把 `alwaysBounceVertical` 改回 `false`（内容不足一屏的页面——多数请求——因此拉不动），所以两者都用 KVO 在被改掉的那一刻放回去。
-  - **前插不动**：一页到手 → `endRefreshing()` → 等页面回到顶部（至多 1.5 秒）→ 记下 `request-top` 锚点在视口里的位置 → 前插线程；此后 0.5 秒内的每一次布局（附着视图的 `layoutSubviews`、`contentSize` 与锚点各级祖先层 `position` / `bounds` 的 KVO）都把 `contentOffset` 调回到锚点原来的位置，与新内容是同一次布局，所以没有任何一帧是错位的。线程区用普通 `VStack`，不用 `LazyVStack`（估算高度会让前插后的位置漂）。
+  - **前插不动**：一页到手 → `endRefreshing()` → 等页面回到顶部（手指抬起后至多 1.5 秒，回弹的弹簧尾巴很长；手指一直按着最多等 10 秒）→ 记下 `request-top` 锚点在视口里的位置 → 前插线程；此后 0.5 秒内的每一次布局（附着视图的 `layoutSubviews`、`contentSize` 与锚点各级祖先层 `position` / `bounds` 的 KVO）都把 `contentOffset` 调回到锚点原来的位置，与新内容是同一次布局，所以没有任何一帧是错位的。线程区用普通 `VStack`，不用 `LazyVStack`（估算高度会让前插后的位置漂）。
   - **短页要留余地**：当前提问不足一屏时，它下面没有内容可滚，要调回的偏移就超出内容末端；UIKit 不会夹住程序设置的越界偏移，页面停在越界处还是被夹回，取决于时序（两次运行不一样），停在越界处时第一次触摸会跳一下。所以线程出现（含「没有更早的记录了」与错误行）后，当前提问的区域用 `ZStack` 里一块 `containerRelativeFrame(.vertical)` 的透明垫子补到至少一屏高（`requestRoom`）；没有线程时垫子高度为 0，结构不变，页面不会因此重建。「滚到最新一条」与「回到当前提问」的目标位置也因此总在有效范围内。
   - **与阅读位置**：`RequestScrollPosition` 多一个 `intent` 令牌（变了就放弃还没还原的位置，菜单入口不是手指拖动，不然会与「滚到最新一条」打架），兜底分支在视口停在请求之上时保存「`request-top` 加 0」，所以重进页面回到请求顶部，而不是被还原到页面中间。
   - **菜单入口**：`RequestHistory.reveal()` 用同一套前插补偿加载，等 120 毫秒让页面布局完，结束补偿窗口，再滚到最新一张卡片（没有记录就滚到顶）；已加载过就只滚动。

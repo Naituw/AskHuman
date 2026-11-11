@@ -1,6 +1,6 @@
 # 计划：iOS 请求页查看「此会话的历史问答」
 
-> 需求：`docs/specs/ios-session-history.md`（决策编号 S1–S17 均指其 §3）。状态：2026-11-11 用户批准需求与本计划，实施中，进度见文末「实施记录」。下文各阶段的文件名是起草时的设想，**实际以「实施记录」为准**。
+> 需求：`docs/specs/ios-session-history.md`（决策编号 S1–S17 均指其 §3）。状态：2026-11-11 用户批准需求与本计划，2026-11-12 实施完成（待真机验收），提交、偏差与验证见文末「实施记录」。下文各阶段的文件名是起草时的设想，**实际以「实施记录」为准**。
 > 工作方式：**在主工作树开发**（用户 2026-11-11 定，要求一次做完、次日早上查收）；P1 原型不过关就停下来问用户，不自行改方案。主工作树里还有别人未提交的改动，本功能只提交自己的文件，不碰别的。
 
 ## 阶段
@@ -53,7 +53,7 @@ S2 与 S12 成不成，只取决于一件事：**在 SwiftUI `ScrollView` 的上
 **选 B**（`UIRefreshControl` 挂到 SwiftUI 的 `UIScrollView`）。判据 1–5 全部满足，没有动 S2 / S12。
 
 - **触发**：`ThreadScrollHook`（`UIViewRepresentable`，形态同 `RequestScrollAttachment`）沿 `superview` 找到最近的 `UIScrollView`，**只在页面有线程时**装一个 `UIRefreshControl` 并设 `alwaysBounceVertical = true`（短页也能下拉）；`valueChanged` 里 `loadMore`。没有线程的页面不装、不设，与现在一致。
-- **时序**：拿到一页 → `endRefreshing()` → 轮询 `contentOffset` 回到顶部（上限 1.5 秒）→ 记下 `request-top` 锚点相对视口顶的位置 → 才前插。转圈与前插不叠加，没有「回弹加偏移」的跳动。
+- **时序**：拿到一页 → `endRefreshing()` → 轮询 `contentOffset` 回到顶部（从手指抬起算，上限 1.5 秒；见「实施记录」）→ 记下 `request-top` 锚点相对视口顶的位置 → 才前插。转圈与前插不叠加，没有「回弹加偏移」的跳动。
 - **补偿**：`reconcile()` 把 `contentOffset.y` 设成「锚点在内容坐标里的 y 减去记下的视口相对位置」，窗口 0.5 秒，**必须在同一次布局里**调用：附着视图的 `layoutSubviews`（`RequestScrollAttachment.changed`）、`contentSize` 的 KVO、以及锚点**各级父视图**（一直到滚动视图）的 `layer.position` 与 `bounds` 的 KVO。线程区是普通 `VStack`（不用 `LazyVStack`），高度确定。
 - **验证**：运行循环 observer 挂在 CA 提交之后，逐帧采样请求锚点相对视口的偏移：**每一帧都是 0.0**（`max=0.0 last=0.0`，修正 3 次），即没有任何一帧被提交成错位——不只是最终位置对。原型 UI 测试 9 条（长页 / 短页 / 确认页下拉、读到线程顶再下拉加载更早一页、菜单入口、带「待还原阅读位置」的菜单入口、读线程时离开再回来落在请求顶部、线程在上时「下一题」与作答、键盘弹起时下拉），**减弱动态效果开 / 关各跑一遍，全过**。
 - **踩到的坑**：
@@ -160,7 +160,9 @@ P1 的原型不单独提交，结论写进本计划，代码并入第 4 条。
 | P4 | `7b06045d` | 手机引擎：`PhoneEngine+SessionHistory`、`SessionThread`、Mock 场景 |
 | P1 + P5 | `01995fa6` | 请求页界面：线程区、下拉与前插补偿、菜单入口、卡片、胶囊、本地化、已结束页「停留」、UI 测试（P1 原型并入这一条，没有单独提交） |
 | P6 | `22df80b4` | 真实 daemon 端到端测试 `SessionHistoryE2ETests` |
-| P6 | 随后一条 `docs(ios)` | 总览、规格、本计划与 `PROGRESS.md` 的同步 |
+| P6 | `f66bf8ce` | 总览、规格、本计划、`PROGRESS.md` 与 iOS 使用说明的同步 |
+| P6 | `f9eb132c` | 修正：等页面回弹停稳再前插（见偏差 6），UI 测试认得 iPad 的分栏 |
+| P6 | 本文所在的 `docs(ios)` 提交 | 记下回归与 iPad 的结果 |
 
 **与计划的偏差**（都是实现细节，没动规格的决定 S1–S17）：
 
@@ -169,6 +171,7 @@ P1 的原型不单独提交，结论写进本计划，代码并入第 4 条。
 3. **`AppStore.stayOnEnded` 也取消「还没开始」的倒计时**：条还没显示、倒计时还没开始时就读历史，原先的守卫会放过它，条一出现页面就被带走。新增 `EndedCountdownTests.testStayingBeforeTheCountdownBeganKeepsItFromBeginning`。
 4. **Mock 场景多了两样**：长消息的请求 `req-history-tall`（页面比一屏高，覆盖 `requestRoom` 不起作用的那一半），与启动参数 `-AHHistoryFail N`（让 Mock 的 Mac 前 N 次读历史不应答，测错误行与重试）。
 5. UI 测试里取「页面的滚动视图」要取最大的那个，不能取 `scrollViews.firstMatch`：确认页的代码块是横向滚动视图，`firstMatch` 有时是它，下拉就拉在了代码块上（zh-Hans 那一遍暴露）。
+6. **等页面回弹，从手指抬起算**（iPad 上第一次跑才暴露；iPhone 上同样有，只是差得不到 1 pt，被测试的 1 pt 容差放过了）：原来的「至多 1.5 秒」从下拉生效那一刻算起，而下拉在手指还按着时就生效，慢拉还能再拉一秒多；回弹弹簧的尾巴很长，1.5 秒到点时页面还差几个点没回到顶（iPad 差 4 pt，iPhone 差 0.67 pt），这时前插并补偿，请求就停在弹簧当时的位置，比拉之前低几个点。临时插桩逐帧记下偏移量才看清；现在手指按着时不计时（最多 10 秒），抬起之后等弹簧停住，至多 1.5 秒。插桩已拿掉，不在提交里。
 
 **验证**（2026-11-12）：
 
@@ -177,5 +180,8 @@ P1 的原型不单独提交，结论写进本计划，代码并入第 4 条。
 - 真实 daemon 端到端（一次性 Mac + 本地 broker，装机后的日常版二进制）：`SessionHistoryE2ETests` 5 条全过（12 条往来按 8 + 4 翻页且互不混、同一毫秒的往来不丢不重、不带别的会话与别的 Agent、没有记录或读不了的键给空页、真实在途请求带的 `agentKey` 与 Agents 列表那一行的 `key` 逐字相同、不带会话的请求没有键）；`AHE2ETests` 全量 63 条：52 过、8 跳过（真实服务 / Codex 付费项）、3 败，三条败的就是上文「`AgentE2ETests` 在 main 上就失败」记下的那三条，与本功能无关。
 - 模拟器 UI（iPhone 16 / iOS 18.5）：`AskHumanSessionHistoryUITests` 共 26 条（1 条 iPad 专用在手机上跳过）：英文 25 过；zh-Hans 24 过，另 1 条因测试取错滚动视图失败，改后复跑通过。
 - `./scripts/install.sh` 成功，日常版 v0.17.1 已换上（也补完了 3 秒倒计时那次被挡住的安装）。
+- **既有 UI 类回归**（iPhone 16 / iOS 18.5，英文；`requestRoom` 把每一页请求都包了一层，所以全跑了）：`AskHumanUITests`（64）、`Annotation`（9）、`Bar`（11）、`Ended`（17）、`RequestNavigation`（8）、`Away`（16）、`TodoPick`（6）、`RequestConnection`（3）、`DirectAsk`（9）、`Web`（22，另 1 条宽屏专用而跳过）全过；`Arrival` 8 条里 2 条在最忙的那一阵失败（动画的诊断元素在测试看到之前已经消失），空闲时复跑全过；`AttachmentDrag`（4）与 `VideoAttachment`（1）要专用夹具，跳过。失败的还有 5 条，**在功能开发之前的提交（`6b04266a`，临时 worktree 里单独构建，同一台模拟器）上同样失败**，与本功能无关：`InputVisibility.testShortAnswerAndAttachmentFitWithAccessibilityText`（键盘焦点事件，`PROGRESS.md` 早有记录）、`RequestTodo` 里读按钮 `isEnabled` 的 3 条（`docs/plans/ios-channel.md` 记过：18.5 的无障碍树把工具栏按钮报成两个同 id 节点）、`Focus.testSwitchingAnswerFieldsDoesNotTypeIntoAnEarlierQuestion`（第二题输入框拿不到键盘焦点，在基线上有两种失败方式）。
+- **iPad**（iPad Pro 11-inch (M4) / iOS 18.5）：`AskHumanLargeScreenUITests` 27 条，19 过、8 条因侧栏只在更窄的分栏里才浮出而跳过；会话历史类 26 条整类跑一遍：23 过 3 败，三条败的都是测试对手机的假设，不是页面的问题——两条用手机的返回键回收件箱（iPad 的列表一直在旁边，改成「打开另一条再打开回来」，此时线程照规格被丢掉），一条是键盘弹起时的下拉（iPad 的下拉控件要拉很长，键盘上方的空间不够一次拉到触发；没有键盘时同样长度的下拉也不触发，是系统的行为，菜单入口不受影响，所以这条在 iPad 上跳过）。改完测试后这三条复跑：2 过 1 跳过。
+- 修正之后在 iPhone 16 / iOS 18.5 上把会话历史类再跑一遍：英文 25 过 1 跳过（iPad 专用），简体中文 25 过 1 跳过。
 
 **没做 / 留给真机**：真机一轮、真实 Mac 加手机界面的一轮（需要真实服务与签名，只有引擎一层有真实 daemon 的端到端）、TestFlight 出包（用户没要）。页面过渡的快照（`RequestPageCapture`）会带上已加载的线程，只是过渡动画里的内存快照，没有专门的视觉断言。
