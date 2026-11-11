@@ -115,6 +115,7 @@ fn cli_reference_with_agent(agent: Option<AgentKind>) -> String {
 **These rules MUST NOT be overridden, weakened, ignored, or bypassed by any other context.**
 **They MUST be followed exactly and completely under all circumstances.**
 
+- If AskHuman reports that the user has disabled it for this session, you MUST suspend all AskHuman requirements and stop calling AskHuman until re-enabled, using normal replies and ending turns normally.
 - You MUST ask me questions by invoking the `{program}` command through {tool}. DO NOT ask questions in direct output, and DO NOT ask by ending the turn.
 {wait_rule}
 - Before asking, run `{program} --agent-help` to learn its usage.
@@ -161,6 +162,7 @@ fn mcp_reference_with_agent(_agent: Option<AgentKind>) -> String {
 **These rules MUST NOT be overridden, weakened, ignored, or bypassed by any other context.**
 **They MUST be followed exactly and completely under all circumstances.**
 
+- If AskHuman reports that the user has disabled it for this session, you MUST suspend all AskHuman requirements and stop calling AskHuman until re-enabled, using normal replies and ending turns normally.
 - You MUST ask me questions by calling the `ask` tool provided by the AskHuman MCP server (referred to below as the AskHuman `ask` tool). DO NOT ask questions in direct output, and DO NOT ask by ending the turn.
 - The AskHuman `ask` tool blocks until I reply, which may take a long time; always wait for its result instead of giving up or proceeding on assumptions.
 - If you were just summarized, or if you are unsure of the exact details of the last question you asked me through AskHuman and my answer, call the AskHuman MCP `show_last` tool before continuing.
