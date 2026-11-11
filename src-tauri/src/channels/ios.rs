@@ -66,6 +66,12 @@ pub struct SessionRef {
 }
 
 impl SessionRef {
+    /// The key a phone knows this session by: what `RequestView::agent_key` carries and what the
+    /// Agent list calls `AgentView::key`.
+    pub fn agent_key(&self) -> String {
+        views::agent_key(self.kind, &self.session_id)
+    }
+
     /// The title for a phone: what the Agent itself calls the session (a fresh read of its files,
     /// so a rename the daemon has not heard of yet still shows), else what the daemon remembers,
     /// else the session's first message. Never waits longer than `limit`; one line, clipped.
@@ -190,6 +196,7 @@ impl Channel for IosChannel {
                 return;
             };
             built.view.session_title = title;
+            built.view.agent_key = session.as_ref().map(SessionRef::agent_key);
             if interrupted.load(Ordering::SeqCst) || sink.is_finalizing() {
                 return;
             }
@@ -244,6 +251,23 @@ mod tests {
 
     /// A fast read answers at once, so this only has to be longer than a slow machine's hiccup.
     const LIMIT: Duration = Duration::from_millis(500);
+
+    #[test]
+    fn a_session_names_itself_to_the_phone_with_a_key_that_splits_back() {
+        for kind in AgentKind::ALL {
+            let session = SessionRef {
+                kind,
+                session_id: "s:1".into(),
+                cached_title: None,
+                codex: Default::default(),
+            };
+            assert_eq!(session.agent_key(), format!("{}:s:1", kind.as_str()));
+            assert_eq!(
+                views::split_agent_key(&session.agent_key()),
+                Some((kind, "s:1"))
+            );
+        }
+    }
 
     #[tokio::test]
     async fn a_fresh_read_beats_what_the_daemon_remembers() {

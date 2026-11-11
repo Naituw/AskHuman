@@ -1014,6 +1014,7 @@ pub fn start_ios(
         let mut view = crate::ios::views::confirm_view(&entry.request, &origin);
         if let Some(session) = &session {
             view.session_title = session.title(crate::channels::ios::TITLE_WAIT).await;
+            view.agent_key = Some(session.agent_key());
         }
         if !entry.mark_ready(channel, entry.request_id.clone()) {
             return;

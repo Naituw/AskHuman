@@ -7,6 +7,7 @@ pub mod connstr;
 pub mod crypto;
 pub mod envelope;
 pub mod gateway;
+pub mod history_view;
 pub mod push;
 pub mod qr;
 pub mod store;

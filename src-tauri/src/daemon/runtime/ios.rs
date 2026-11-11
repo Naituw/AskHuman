@@ -165,7 +165,7 @@ impl Host for DaemonHost {
             answer_todos: true,
             away: true,
             annotations: true,
-            session_history: false,
+            session_history: true,
         }
     }
 
@@ -285,6 +285,10 @@ impl Host for DaemonHost {
 
     fn todo_merge_line(&self, text: &str) -> String {
         crate::i18n::tr(crate::i18n::Lang::current(), "todo.mergeLine").replace("{text}", text)
+    }
+
+    async fn session_history(&self, get: &wire::SessionHistoryGet) -> wire::SessionHistory {
+        ios_history::session_history(get).await
     }
 
     fn slot(&self) -> SlotInfo {

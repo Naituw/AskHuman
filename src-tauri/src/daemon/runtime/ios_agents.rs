@@ -24,16 +24,15 @@ use crate::todo_sync::identity::{FsResolver, IdentityResolver};
 /// Longest "current tool" caption sent to the phone.
 const TOOL_CAPTION_MAX_CHARS: usize = 80;
 
-/// The identifier a phone uses for one Agent session.
+/// The identifier a phone uses for one Agent session. One definition, shared with the request views
+/// (`RequestView::agent_key`) and the history reads.
 pub(super) fn agent_key(kind: AgentKind, session_id: &str) -> String {
-    format!("{}:{session_id}", kind.as_str())
+    crate::ios::views::agent_key(kind, session_id)
 }
 
 /// Splits `{kind}:{sessionId}`; the session id may contain colons itself.
 pub(super) fn split_key(key: &str) -> Option<(AgentKind, &str)> {
-    let (kind, session_id) = key.split_once(':')?;
-    let kind = AgentKind::parse(kind)?;
-    (!session_id.is_empty()).then_some((kind, session_id))
+    crate::ios::views::split_agent_key(key)
 }
 
 pub(super) fn event_kind(event: LifecycleEvent) -> AgentEventKind {
@@ -491,6 +490,28 @@ mod tests {
         assert!(split_key("nokind").is_none());
         assert!(split_key("unknown:s1").is_none());
         assert!(split_key("claude:").is_none());
+    }
+
+    /// A request names its session (`RequestView::agent_key`) exactly as the Agent list does
+    /// (`AgentView::key`): the phone opens the session's history with the key of the request.
+    #[test]
+    fn a_request_names_its_session_the_way_the_agent_list_does() {
+        let projects = ProjectCache::default();
+        for kind in AgentKind::ALL {
+            let session = crate::channels::ios::SessionRef {
+                kind,
+                session_id: "s-1".into(),
+                cached_title: None,
+                codex: Default::default(),
+            };
+            let view = agent_view(
+                &record(json!({"kind": kind.as_str(), "sessionId": "s-1"})),
+                0,
+                &projects,
+            )
+            .unwrap();
+            assert_eq!(session.agent_key(), view.key, "{}", kind.as_str());
+        }
     }
 
     #[test]

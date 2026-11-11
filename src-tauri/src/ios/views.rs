@@ -2,6 +2,7 @@
 
 use std::path::PathBuf;
 
+use crate::agents::AgentKind;
 use crate::channels::ConversationOrigin;
 use crate::confirm::ActionRole;
 use crate::models::{
@@ -98,6 +99,19 @@ pub fn thumbnail(path: &std::path::Path) -> Option<Vec<u8>> {
         }
     }
     None
+}
+
+/// The identifier a phone uses for one Agent session: `{kind}:{sessionId}`. `AgentView::key`,
+/// `RequestView::agent_key` and `history.session.get` all carry it, so there is one place that writes it.
+pub fn agent_key(kind: AgentKind, session_id: &str) -> String {
+    format!("{}:{session_id}", kind.as_str())
+}
+
+/// Splits `{kind}:{sessionId}`; the session id may contain colons itself.
+pub fn split_agent_key(key: &str) -> Option<(AgentKind, &str)> {
+    let (kind, session_id) = key.split_once(':')?;
+    let kind = AgentKind::parse(kind)?;
+    (!session_id.is_empty()).then_some((kind, session_id))
 }
 
 /// A session title as a request carries it: one line (whitespace runs collapse into one space) of

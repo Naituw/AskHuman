@@ -7,6 +7,7 @@
 
 mod agents;
 mod assets;
+mod history;
 mod hostapi;
 mod pairing;
 pub mod requests;
@@ -22,6 +23,8 @@ mod tests_agents;
 mod tests_assets;
 #[cfg(test)]
 mod tests_away;
+#[cfg(test)]
+mod tests_history;
 #[cfg(test)]
 mod tests_requests;
 #[cfg(test)]
@@ -194,6 +197,13 @@ pub trait Host: Send + Sync + 'static {
     /// `popup.todos.mergeLine`, in the language of the Mac's interface.
     fn todo_merge_line(&self, text: &str) -> String {
         format!("Also look into this todo task: {text}")
+    }
+
+    /// One page of the earlier exchanges of an Agent session, newest first (docs/specs/ios-session-history.md
+    /// §6.2). `get.limit` is already within range; the page echoes `get.req_id` and `get.agent_key`. A key
+    /// the host cannot read, a session without records and a switched-off history all give an empty page.
+    async fn session_history(&self, get: &wire::SessionHistoryGet) -> wire::SessionHistory {
+        wire::SessionHistory::empty(&get.req_id, &get.agent_key)
     }
 
     /// Seconds since the last keyboard / mouse input on this Mac; `None` when unknown. A question
@@ -1274,6 +1284,10 @@ impl Actor {
             t::TODO_WATCH => {
                 let watch = body!(wire::TodoWatch);
                 self.on_todo_watch(phone_id, watch.on);
+            }
+            t::HISTORY_SESSION_GET => {
+                let get = body!(wire::SessionHistoryGet);
+                self.on_session_history_get(phone_id, get);
             }
             _ => self.send_error(phone_id, &plain.i, "unknown_type", None),
         }

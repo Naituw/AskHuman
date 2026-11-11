@@ -167,6 +167,37 @@ pub fn recent_sends_for_project(project: &str, n: usize) -> RecentSends {
     recent_sends_for_project_at(&paths::history_file(), project, n)
 }
 
+/// A page of one Agent session's completed exchanges, newest first.
+#[derive(Debug, Clone)]
+pub struct SendsPage {
+    /// At most the requested count.
+    pub entries: Vec<HistoryEntry>,
+    /// There are matching exchanges older than the last of `entries`.
+    pub more: bool,
+}
+
+/// Completed exchanges of one exact native Agent session that are older than the cursor, newest first
+/// (docs/specs/ios-session-history.md §5.2). The cursor is `(before_ms, before_id)`: an exchange is older when
+/// its `(timestamp, id)` is below it, and, without an id, when its timestamp is below `before_ms`. Exchanges
+/// are ordered by `(timestamp, id)`, so two answers recorded in the same millisecond are neither skipped nor
+/// repeated from one page to the next.
+pub fn sends_for_session_before(
+    agent_kind: &str,
+    session_id: &str,
+    before_ms: i64,
+    before_id: Option<&str>,
+    limit: usize,
+) -> SendsPage {
+    sends_for_session_before_at(
+        &paths::history_file(),
+        agent_kind,
+        session_id,
+        before_ms,
+        before_id,
+        limit,
+    )
+}
+
 /// Count completed Send entries in a session with `timestamp_ms` strictly after `after_ms`.
 pub fn count_sends_for_session_after(agent_kind: &str, session_id: &str, after_ms: i64) -> usize {
     count_sends_after_at(&paths::history_file(), after_ms, |entry| {
@@ -315,6 +346,36 @@ fn recent_sends_for_mcp_instance_at(
     recent_sends_at(path, n, |entry| {
         entry.mcp_instance_id.as_deref() == Some(mcp_instance_id) && entry.project == project
     })
+}
+
+fn sends_for_session_before_at(
+    path: &Path,
+    agent_kind: &str,
+    session_id: &str,
+    before_ms: i64,
+    before_id: Option<&str>,
+    limit: usize,
+) -> SendsPage {
+    let older = |entry: &HistoryEntry| match before_id {
+        Some(id) => (entry.timestamp_ms, entry.id.as_str()) < (before_ms, id),
+        None => entry.timestamp_ms < before_ms,
+    };
+    let mut matching: Vec<HistoryEntry> = read_all_at(path)
+        .into_iter()
+        .filter(|entry| {
+            entry.action == ChannelAction::Send
+                && entry.agent_kind.as_deref() == Some(agent_kind)
+                && entry.agent_session_id.as_deref() == Some(session_id)
+                && older(entry)
+        })
+        .collect();
+    matching.sort_by(|a, b| (b.timestamp_ms, b.id.as_str()).cmp(&(a.timestamp_ms, a.id.as_str())));
+    let more = matching.len() > limit;
+    matching.truncate(limit);
+    SendsPage {
+        entries: matching,
+        more,
+    }
 }
 
 fn recent_sends_for_project_at(path: &Path, project: &str, n: usize) -> RecentSends {
@@ -769,6 +830,105 @@ mod tests {
         assert_eq!(all.total, 5);
         assert_eq!(all.entries.len(), 5);
         assert_eq!(all.entries[4].id, "e1");
+    }
+
+    fn in_session(mut entry: HistoryEntry, kind: &str, session: &str) -> HistoryEntry {
+        entry.agent_kind = Some(kind.into());
+        entry.agent_session_id = Some(session.into());
+        entry
+    }
+
+    #[test]
+    fn a_session_page_is_newest_first_exact_and_ends_at_the_cursor() {
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("history.jsonl");
+        for i in 1..=5 {
+            let e = in_session(entry(&format!("e{i}"), "/p", i * 10), "codex", "s1");
+            record_at(&path, e, 200);
+        }
+        // Not this session: another native id, another family with the same id, a cancel, and one
+        // that has no Agent at all.
+        record_at(
+            &path,
+            in_session(entry("other-id", "/p", 25), "codex", "s2"),
+            200,
+        );
+        record_at(
+            &path,
+            in_session(entry("other-kind", "/p", 25), "claude", "s1"),
+            200,
+        );
+        let mut cancelled = in_session(entry("cancelled", "/p", 35), "codex", "s1");
+        cancelled.action = ChannelAction::Cancel;
+        record_at(&path, cancelled, 200);
+        record_at(&path, entry("manual", "/p", 45), 200);
+
+        let ids = |page: &SendsPage| -> Vec<String> {
+            page.entries.iter().map(|e| e.id.clone()).collect()
+        };
+
+        // From "now": the two newest, and there is more.
+        let first = sends_for_session_before_at(&path, "codex", "s1", i64::MAX, None, 2);
+        assert_eq!(ids(&first), ["e5", "e4"]);
+        assert!(first.more);
+
+        // A cursor on a timestamp alone is exclusive: the exchange at 40 is not repeated.
+        let next = sends_for_session_before_at(&path, "codex", "s1", 40, None, 2);
+        assert_eq!(ids(&next), ["e3", "e2"]);
+        assert!(next.more);
+
+        // The last page holds what is left and says there is no more, however large the limit.
+        let last = sends_for_session_before_at(&path, "codex", "s1", 20, None, 8);
+        assert_eq!(ids(&last), ["e1"]);
+        assert!(!last.more);
+
+        // Exactly as many as asked for is not "more".
+        let exact = sends_for_session_before_at(&path, "codex", "s1", 40, None, 3);
+        assert_eq!(ids(&exact), ["e3", "e2", "e1"]);
+        assert!(!exact.more);
+
+        // Nothing older than the oldest, and an unknown session has nothing at all.
+        let none = sends_for_session_before_at(&path, "codex", "s1", 10, None, 8);
+        assert!(none.entries.is_empty() && !none.more);
+        let unknown = sends_for_session_before_at(&path, "codex", "nope", i64::MAX, None, 8);
+        assert!(unknown.entries.is_empty() && !unknown.more);
+    }
+
+    #[test]
+    fn answers_in_the_same_millisecond_are_never_skipped_or_repeated_between_pages() {
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("history.jsonl");
+        // Five exchanges share one millisecond, with one older and one newer around them.
+        record_at(
+            &path,
+            in_session(entry("a-old", "/p", 100), "codex", "s1"),
+            200,
+        );
+        for id in ["c", "a", "e", "b", "d"] {
+            record_at(&path, in_session(entry(id, "/p", 200), "codex", "s1"), 200);
+        }
+        record_at(
+            &path,
+            in_session(entry("z-new", "/p", 300), "codex", "s1"),
+            200,
+        );
+
+        let mut seen = Vec::new();
+        let (mut ms, mut id) = (i64::MAX, None::<String>);
+        loop {
+            let page = sends_for_session_before_at(&path, "codex", "s1", ms, id.as_deref(), 2);
+            for entry in &page.entries {
+                seen.push(entry.id.clone());
+            }
+            if !page.more {
+                break;
+            }
+            let last = page.entries.last().unwrap();
+            ms = last.timestamp_ms;
+            id = Some(last.id.clone());
+        }
+        // Newest first; inside one millisecond the larger id comes first.
+        assert_eq!(seen, ["z-new", "e", "d", "c", "b", "a", "a-old"]);
     }
 
     #[test]

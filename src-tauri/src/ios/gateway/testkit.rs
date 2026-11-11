@@ -70,6 +70,10 @@ pub struct TestHost {
     pub todo_refreshes: AtomicUsize,
     /// The pending todos `todo_picks` finds, by project key.
     pub todo_pick_store: Mutex<HashMap<String, Vec<TodoPick>>>,
+    /// The scripted session history: the page `session_history` answers by agent key (the phone's own
+    /// `req_id` is filled in), and every request that reached the host.
+    pub session_pages: Mutex<HashMap<String, wire::SessionHistory>>,
+    pub session_history_calls: Mutex<Vec<wire::SessionHistoryGet>>,
     pub task_result: Mutex<Result<(), String>>,
     /// Virtual time `task_create` takes.
     pub task_delay_ms: AtomicU64,
@@ -116,6 +120,8 @@ impl TestHost {
             todo_store_rev: AtomicU64::new(1),
             todo_refreshes: AtomicUsize::new(0),
             todo_pick_store: Mutex::new(HashMap::new()),
+            session_pages: Mutex::new(HashMap::new()),
+            session_history_calls: Mutex::new(Vec::new()),
             task_result: Mutex::new(Ok(())),
             task_delay_ms: AtomicU64::new(0),
             launches: Mutex::new(Vec::new()),
@@ -360,6 +366,20 @@ impl Host for TestHost {
         ids.iter()
             .filter_map(|id| known.iter().find(|pick| &pick.id == id).cloned())
             .collect()
+    }
+
+    async fn session_history(&self, get: &wire::SessionHistoryGet) -> wire::SessionHistory {
+        self.session_history_calls.lock().unwrap().push(get.clone());
+        let mut page = self
+            .session_pages
+            .lock()
+            .unwrap()
+            .get(&get.agent_key)
+            .cloned()
+            .unwrap_or_else(|| wire::SessionHistory::empty(&get.req_id, &get.agent_key));
+        page.req_id = get.req_id.clone();
+        page.agent_key = get.agent_key.clone();
+        page
     }
 }
 

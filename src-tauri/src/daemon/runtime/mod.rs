@@ -46,6 +46,7 @@ mod inbound;
 mod inbox;
 mod ios;
 mod ios_agents;
+mod ios_history;
 mod ios_tasks;
 mod ios_todos;
 mod live_update;

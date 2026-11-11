@@ -699,6 +699,86 @@ async fn a_question_without_a_session_title_says_nothing_of_one() {
     assert!(plain.get("session").is_none(), "{plain}");
 }
 
+// ---------------------------------------------------------------- session key
+
+fn deliver_keyed_ask(fx: &Fixture, id: &str, key: &str) {
+    let (ask, mut view) = sample_ask(id);
+    view.agent_key = Some(key.to_string());
+    fx.gateway.deliver(DeliverRequest {
+        view,
+        sink: Sink::Ask(FakeAsk::new()),
+        ask: Some(ask),
+        deadline_ms: None,
+        assets: Vec::new(),
+    });
+}
+
+#[tokio::test(start_paused = true)]
+async fn the_session_key_goes_with_a_request_to_a_live_phone_and_only_when_there_is_one() {
+    let fx = Fixture::new().await;
+    let mut phone = fx.live_phone().await;
+    phone.clear_queue();
+
+    deliver_keyed_ask(&fx, "req1", "claude:s-1");
+    let new: wire::RequestNew = phone.recv_body(t::REQUEST_NEW).await;
+    assert_eq!(new.request.agent_key.as_deref(), Some("claude:s-1"));
+
+    deliver_ask(&fx, "req2");
+    let new: wire::RequestNew = phone.recv_body(t::REQUEST_NEW).await;
+    assert_eq!(new.request.agent_key, None);
+
+    // A request too large to go in one piece names its session in the light view too.
+    let (ask, mut view) = sample_ask("big");
+    view.agent_key = Some("claude:s-2".into());
+    view.ask.as_mut().unwrap().message.text = "x".repeat(200 * 1024);
+    fx.gateway.deliver(DeliverRequest {
+        view,
+        sink: Sink::Ask(FakeAsk::new()),
+        ask: Some(ask),
+        deadline_ms: None,
+        assets: Vec::new(),
+    });
+    let new: wire::RequestNew = phone.recv_body(t::REQUEST_NEW).await;
+    assert!(!new.full);
+    assert_eq!(new.request.agent_key.as_deref(), Some("claude:s-2"));
+}
+
+#[tokio::test(start_paused = true)]
+async fn the_full_view_keeps_the_session_key_and_the_summary_describes_that_very_view() {
+    let fx = Fixture::new().await;
+    let mut phone = fx.pair_phone().await;
+    deliver_keyed_ask(&fx, "req1", "codex:thread:7");
+    deliver_ask(&fx, "req2");
+    phone.set_presence(true, true).await;
+    phone.hello().await;
+
+    let inbox: wire::InboxSnapshot = phone.recv_body(t::INBOX_SNAPSHOT).await;
+    let keyed = inbox.items.iter().find(|item| item.id == "req1").unwrap();
+    let plain = inbox.items.iter().find(|item| item.id == "req2").unwrap();
+
+    phone
+        .send(&wire::RequestGet {
+            request_id: "req1".into(),
+        })
+        .await;
+    let full: wire::RequestFull = phone.recv_body(t::REQUEST_FULL).await;
+    assert_eq!(full.request.agent_key.as_deref(), Some("codex:thread:7"));
+    assert_eq!(full.request.content_hash, keyed.content_hash);
+
+    phone
+        .send(&wire::RequestGet {
+            request_id: "req2".into(),
+        })
+        .await;
+    let full: wire::RequestFull = phone.recv_body(t::REQUEST_FULL).await;
+    assert_eq!(full.request.agent_key, None);
+    assert_eq!(full.request.content_hash, plain.content_hash);
+    assert_ne!(
+        keyed.content_hash, plain.content_hash,
+        "the key is part of what the hash describes, so a phone that cached the old view fetches it again"
+    );
+}
+
 // ---------------------------------------------------------------- push
 
 #[tokio::test(start_paused = true)]
