@@ -23,6 +23,98 @@ final class TransferTests: XCTestCase {
 
     // MARK: downloads
 
+    func testAnExportContinuesInTheBackgroundWithoutClaimingForegroundPresence() async throws {
+        let h = Harness()
+        await h.pair()
+        let data = randomData(100)
+        let ref = asset(size: data.count)
+        h.mac.register(asset: ref.assetId, data: data)
+        h.mac.dropAssetGets = 1
+        let task = Task { try await h.engine.downloadForExport(macId: h.mac.macId, asset: ref) { _ in } }
+        await eventually("export starts") { h.mac.count(AssetGet.type) == 1 }
+        await h.engine.setForeground(false)
+        XCTAssertTrue(h.phone.isConnected)
+        XCTAssertEqual(h.presence(of: h.phoneId)?.o, 1)
+        XCTAssertEqual(h.presence(of: h.phoneId)?.fg, 0)
+        await h.advance(until: { h.mac.count(AssetGet.type) == 2 }, "export retries in the background")
+        let url = try await task.value
+        XCTAssertEqual(try Data(contentsOf: url), data)
+        XCTAssertFalse(h.phone.isConnected, "the last export releases the background connection")
+    }
+
+    func testAReceiverCanRequestItsFileAfterTheAppAlreadyDisconnected() async throws {
+        let h = Harness()
+        await h.pair()
+        let data = randomData(100)
+        let ref = asset(size: data.count)
+        h.mac.register(asset: ref.assetId, data: data)
+        await h.engine.setForeground(false)
+        let progress = Counter()
+        let task = Task { try await h.engine.downloadForExport(macId: h.mac.macId, asset: ref) { progress.record($0) } }
+        await h.advance(until: { progress.last == 1 }, step: 0.2, limit: 15, "the receiver's lazy download")
+        let url = try await task.value
+        XCTAssertEqual(try Data(contentsOf: url), data)
+        XCTAssertFalse(h.phone.isConnected)
+        XCTAssertEqual(h.presence(of: h.phoneId)?.fg, 0)
+    }
+
+    func testAReceiverArrivingDuringGoodbyeWaitsForTheFreshConnection() async throws {
+        let h = Harness()
+        await h.pair()
+        let data = randomData(100)
+        let ref = asset(size: data.count)
+        h.mac.register(asset: ref.assetId, data: data)
+        let gate = ExportGate()
+        let topic = Wire.topicPresence(user: "u1", deviceId: h.phoneId)
+        h.phone.beforePublish = { name in if name == topic { await gate.hold() } }
+        let leaving = Task { await h.engine.setForeground(false) }
+        await eventually("the goodbye is in flight") { await gate.isHolding }
+        let progress = Counter()
+        let export = Task { try await h.engine.downloadForExport(macId: h.mac.macId, asset: ref) { progress.record($0) } }
+        await Task.yield()
+        XCTAssertEqual(h.mac.count(AssetGet.type), 0)
+        h.phone.beforePublish = nil
+        await gate.release()
+        await leaving.value
+        await h.advance(until: { progress.last == 1 }, step: 0.2, limit: 15, "the export reconnects after goodbye")
+        let url = try await export.value
+        XCTAssertEqual(try Data(contentsOf: url), data)
+        XCTAssertFalse(h.phone.isConnected)
+    }
+
+    func testAFileAlreadyCachedExportsOfflineWithoutOpeningAConnection() async throws {
+        let h = Harness()
+        await h.pair()
+        let data = randomData(100)
+        let ref = asset(size: data.count)
+        h.mac.register(asset: ref.assetId, data: data)
+        _ = try await h.engine.download(macId: h.mac.macId, asset: ref) { _ in }
+        await h.engine.setForeground(false)
+        let url = try await h.engine.downloadForExport(macId: h.mac.macId, asset: ref) { _ in }
+        XCTAssertEqual(try Data(contentsOf: url), data)
+        XCTAssertFalse(h.phone.isConnected)
+        XCTAssertEqual(h.mac.count(AssetGet.type), 1)
+    }
+
+    func testCancellingOneExportKeepsTheOtherExportConnected() async throws {
+        let h = Harness()
+        await h.pair()
+        let first = asset(size: 100), second = asset(size: 100)
+        h.mac.register(asset: first.assetId, data: randomData(100))
+        h.mac.register(asset: second.assetId, data: randomData(100))
+        h.mac.dropAssetGets = 100
+        let a = Task { try await h.engine.downloadForExport(macId: h.mac.macId, asset: first) { _ in } }
+        let b = Task { try await h.engine.downloadForExport(macId: h.mac.macId, asset: second) { _ in } }
+        await eventually("both exports") { h.mac.count(AssetGet.type) == 2 }
+        await h.engine.setForeground(false)
+        a.cancel()
+        _ = await a.result
+        XCTAssertTrue(h.phone.isConnected)
+        b.cancel()
+        _ = await b.result
+        XCTAssertFalse(h.phone.isConnected)
+    }
+
     func testASmallAssetIsFetchedInOneChunkAndCached() async throws {
         let h = Harness()
         await h.pair()
@@ -286,6 +378,22 @@ final class TransferTests: XCTestCase {
         } catch {
             XCTAssertEqual(error as? BackendError, .timedOut)
         }
+    }
+}
+
+private actor ExportGate {
+    private(set) var isHolding = false
+    private var waiter: CheckedContinuation<Void, Never>?
+
+    func hold() async {
+        isHolding = true
+        await withCheckedContinuation { waiter = $0 }
+    }
+
+    func release() {
+        waiter?.resume()
+        waiter = nil
+        isHolding = false
     }
 }
 

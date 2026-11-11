@@ -79,6 +79,7 @@ Agent / CLI ─► Daemon ── IosGateway（一个 actor）──► MQTT（TL
 - 回复、插话与新任务共用 `Views/Attachments/ReplyAttachments.swift` 的附件菜单：相册允许照片 / 视频混选，视频通过文件型 `Transferable` 读取。
   `AHCore/VideoAttachmentPreparer.swift` 保留限额内原视频，超限时先预估可用压缩档位，只有预估 ≤8 MB 才尝试；编码一次后核对实际体积与完整时长。回答区、插话栏与新任务表单直接显示压缩进度及取消按钮，由用户决定是否继续等待。
   导出器的状态与取消约束在 MainActor，原文件 / 导出临时目录按生命周期清理；三个 Composer 用准备任务的 token 集合阻止处理期间发送。验证办法见 `docs/plans/ios-video-attachments.md`。
+- 提问附件列表与预览支持拖出（[规格](specs/ios-attachment-drag-export.md)）：`AttachmentDrag` 接入 SwiftUI 的列表／文件预览及 UIKit 图片拖拽；`AHCore/AttachmentFilePromise` 通过 `NSItemProvider` 的异步文件表示，在接收 App 请求时才调用 `downloadForExport`，导出带原名的文件副本。具体类型优先，并提供通用文件表示供不认识该类型的接收方读取；不导出路径字符串。provider 持有交付临时目录，页面离开不删除；取消与错误不交付空文件。实际加载申请有期限的系统后台任务，`PhoneEngine.assetExports` 仅在导出期间保留后台 MQTT，presence 为 `fg=0`、Watch 停止，最后一份导出结束后恢复断连。普通预览仍走原下载入口；没有新增线协议。
 - 新任务的手机附件最多 5 个、单个 10 MiB，必须有文字或待办，全部上传成功才创建。`TaskComposer` 持有本机临时文件与进度，
   `upload.begin.scope.taskId` 与 `task.create.files` 将上传绑定至手机和任务；Mac 在共享启动管线合并待办附件。能力缺失时不允许带文件启动；规格见 `docs/specs/ios-task-attachments.md`。
 - 通知扩展 `AskHumanNotification` 只解密预览（`NotificationText`），不连网络。点击通知经 `AppStore.openNotification` 路由：提问类打开请求（请求还没到手机时页面用通知原文占位、转圈等待，只有 Mac 已答复且没有它才说「不可用」），`follow.*` 打开 Agent 页。

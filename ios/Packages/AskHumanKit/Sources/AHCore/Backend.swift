@@ -12,7 +12,7 @@ public protocol RemoteBackend: AnyObject, Sendable {
 
     /// Loads persisted data and publishes the first state.
     func start() async
-    /// `true` connects to the broker; `false` says goodbye and disconnects.
+    /// `true` connects to the broker; `false` says goodbye and disconnects after any active file exports finish.
     func setForeground(_ foreground: Bool) async
     /// The app is on screen but not receiving events (Control Center, the notification center, the app
     /// switcher, a system alert): not a departure. The connection stays for a grace period and only a
@@ -61,6 +61,8 @@ public protocol RemoteBackend: AnyObject, Sendable {
     func upload(macId: String, requestId: String, source: UploadSource, progress: @escaping @Sendable (Double) -> Void) async throws -> String
     /// Downloads an attachment of a request into the cache.
     func download(macId: String, asset: AssetRef, progress: @escaping @Sendable (Double) -> Void) async throws -> URL
+    /// Delivers a file requested by another app, including while this app is in the background.
+    func downloadForExport(macId: String, asset: AssetRef, progress: @escaping @Sendable (Double) -> Void) async throws -> URL
 
     // agents
     /// Follows an Agent (the Mac tells the phone the first time it finishes or fails, and then drops the
@@ -121,6 +123,10 @@ public protocol RemoteBackend: AnyObject, Sendable {
 }
 
 public extension RemoteBackend {
+    func downloadForExport(macId: String, asset: AssetRef, progress: @escaping @Sendable (Double) -> Void) async throws -> URL {
+        try await download(macId: macId, asset: asset, progress: progress)
+    }
+
     func createTask(macId: String, draft: TaskDraft) async throws -> String {
         try await createTask(macId: macId, draft: draft, progress: { _ in })
     }

@@ -25,7 +25,7 @@ struct AskHumanApp: App {
                         // leave the app on screen: the connection stays for a grace period.
                         await environment.store.setInactive()
                     default:
-                        // Background (the home screen, a locked phone): the Mac hears goodbye at once.
+                        // Only a file actively requested by a drag receiver can briefly keep the transport alive.
                         await environment.store.setForeground(false)
                     }
                 }

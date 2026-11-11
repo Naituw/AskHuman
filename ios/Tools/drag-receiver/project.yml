@@ -1,0 +1,24 @@
+name: AttachmentDragReceiver
+options:
+  deploymentTarget:
+    iOS: "17.0"
+targets:
+  AttachmentDragReceiver:
+    type: application
+    platform: iOS
+    sources: [Receiver.swift]
+    info:
+      path: Info.plist
+      properties:
+        CFBundleDisplayName: Drag Receiver
+        UILaunchScreen: {}
+        UISupportedInterfaceOrientations: [UIInterfaceOrientationPortrait]
+        UIApplicationSceneManifest:
+          UIApplicationSupportsMultipleScenes: false
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.naituw.askhuman.drag-receiver
+        SWIFT_VERSION: "5.0"
+        GENERATE_INFOPLIST_FILE: NO
+        TARGETED_DEVICE_FAMILY: "1,2"
+        CODE_SIGNING_ALLOWED: NO

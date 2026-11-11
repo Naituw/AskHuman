@@ -137,7 +137,7 @@ extension PhoneEngine {
 
     func onWatchFrame(_ macId: String, _ message: WatchFrame) async {
         let id = AgentItem.key(macId, message.agentKey)
-        guard wantedWatches.contains(id) else {
+        guard foreground, wantedWatches.contains(id) else {
             // Frames nobody asks for any more (the screen is gone): stop them.
             await send(WatchClose(agentKey: message.agentKey), to: macId)
             return
@@ -161,9 +161,19 @@ extension PhoneEngine {
     /// Asks the Mac for the frames of every watch the user still has open (after a reconnect the
     /// Mac knows none of them).
     func reopenWatches(_ macId: String) async {
+        guard foreground else { return }
         for id in wantedWatches.sorted() where id.hasPrefix(macId + "|") {
             await send(WatchOpen(agentKey: String(id.dropFirst(macId.count + 1))), to: macId)
         }
+    }
+
+    func suspendWatches() async {
+        for macId in macs.keys where macs[macId]?.sync == .synced {
+            for id in wantedWatches where id.hasPrefix(macId + "|") {
+                await send(WatchClose(agentKey: String(id.dropFirst(macId.count + 1))), to: macId)
+            }
+        }
+        watches = [:]
     }
 
     public func watch(macId: String, agentKey: String, open: Bool) async {

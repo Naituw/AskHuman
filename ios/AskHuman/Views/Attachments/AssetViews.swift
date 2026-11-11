@@ -34,12 +34,15 @@ struct AssetList: View {
                             .buttonStyle(.plain)
                             .accessibilityLabel(asset.name)
                             .accessibilityIdentifier("asset-picture-\(asset.assetId)")
+                            .attachmentDrag(macId: macId, asset: asset)
                     }
                 }
             }
             ForEach(files, id: \.assetId) { asset in
                 Button { shown = .file(asset) } label: { FileRow(asset: asset) }
                     .buttonStyle(.plain)
+                    .accessibilityIdentifier("asset-file-\(asset.assetId)")
+                    .attachmentDrag(macId: macId, asset: asset)
             }
         }
         .sheet(item: $shown) { shown in
@@ -171,7 +174,7 @@ struct AssetPage: View {
             case .loading(let fraction):
                 waiting(fraction)
             case .ready(let url):
-                if near { AssetContent(url: url, asset: asset) } else { waiting(nil) }
+                if near { AssetContent(macId: macId, url: url, asset: asset) } else { waiting(nil) }
             case .failed(let message):
                 ContentUnavailableView {
                     Label("Could not open the file", systemImage: "exclamationmark.triangle")
@@ -240,13 +243,25 @@ struct AssetPage: View {
 }
 
 private struct AssetContent: View {
+    let macId: String
     let url: URL
     let asset: AssetRef
+    @Environment(AppStore.self) private var store
 
+    @ViewBuilder
     var body: some View {
+        if asset.kind == .image {
+            PictureContent(url: url) { AttachmentDrag.provider(store: store, macId: macId, asset: asset) }
+        } else {
+            fileContent.contentShape(.rect).attachmentDrag(macId: macId, asset: asset)
+                .accessibilityIdentifier("asset-file-preview")
+        }
+    }
+
+    @ViewBuilder private var fileContent: some View {
         switch asset.kind {
         case .image:
-            PictureContent(url: url)
+            EmptyView()
         case .markdown:
             TextFile(url: url) { text in
                 ScrollView { MarkdownView(text: text).padding() }
@@ -272,14 +287,16 @@ private struct AssetContent: View {
 /// while it scrolls does not hand the image view a new (and so newly decoded) image each time.
 private struct PictureContent: View {
     @State private var picture: UIImage?
+    let dragProvider: () -> NSItemProvider
 
-    init(url: URL) {
+    init(url: URL, dragProvider: @escaping () -> NSItemProvider) {
         _picture = State(initialValue: UIImage(contentsOfFile: url.path))
+        self.dragProvider = dragProvider
     }
 
     var body: some View {
         if let picture {
-            ZoomableImage(image: picture).ignoresSafeArea(edges: .bottom)
+            ZoomableImage(image: picture, dragProvider: dragProvider).ignoresSafeArea(edges: .bottom)
         } else {
             ContentUnavailableView("Not a readable image", systemImage: "photo.badge.exclamationmark")
         }

@@ -34,6 +34,60 @@ extension PhoneEngine {
 
     // MARK: downloads
 
+    /// The caller owns a bounded OS background execution task and cancels this operation on expiry.
+    public func downloadForExport(macId: String, asset: AssetRef, progress: @escaping @Sendable (Double) -> Void) async throws -> URL {
+        guard Bytes.isValidId(asset.assetId) else { throw BackendError.invalid("Bad asset id.") }
+        if asset.tooLarge { throw BackendError.tooLarge }
+        let cached = cachedAssetURL(asset.assetId)
+        if let attributes = try? FileManager.default.attributesOfItem(atPath: cached.path),
+           (attributes[.size] as? NSNumber)?.uint64Value == asset.size {
+            return try await download(macId: macId, asset: asset, progress: progress)
+        }
+        guard macs[macId] != nil else { throw BackendError.macOffline }
+        let token = UUID()
+        assetExports.insert(token)
+        startConnecting()
+        do {
+            // A receiver may ask for the promise only after the ordinary foreground connection closed.
+            let deadline = clock.now().addingTimeInterval(15)
+            while departing || macs[macId]?.sync != .synced {
+                try Task.checkCancellation()
+                if presenceSettled, macs[macId]?.online != true { throw BackendError.macOffline }
+                if clock.now() >= deadline { throw BackendError.timedOut }
+                try await clock.sleep(seconds: 0.1)
+            }
+            try Task.checkCancellation()
+            let url = try await download(macId: macId, asset: asset, progress: progress)
+            await finishAssetExport(token)
+            return url
+        } catch {
+            await finishAssetExport(token)
+            throw error
+        }
+    }
+
+    private func finishAssetExport(_ token: UUID) async {
+        assetExports.remove(token)
+        if !foreground, assetExports.isEmpty, !departing {
+            await goodbye()
+            if foreground || !assetExports.isEmpty { startConnecting() }
+        }
+    }
+
+    func exportBackgroundPresence() async {
+        guard subscribed, !exportPresencePublished, let active = activeSettings else { return }
+        exportPresencePublished = true
+        let presence = Presence(o: 1, t: clock.nowMs() / 1000, r: "phone", fg: 0)
+        if let payload = try? AHJSON.encoder.encode(presence) {
+            _ = await broker.publish(topic: Wire.topicPresence(user: active.username, deviceId: vault.phoneId()), payload: payload, retain: true)
+        }
+        // Foreground may have returned while the publication was in flight.
+        if foreground {
+            foregroundPublished = false
+            await ensureForegroundPresence()
+        }
+    }
+
     func cachedAssetURL(_ assetId: String) -> URL {
         config.assetDirectory.appendingPathComponent(assetId, isDirectory: false)
     }

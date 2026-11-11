@@ -53,6 +53,8 @@ public actor PhoneEngine: RemoteBackend {
 
     var started = false
     var foreground = false
+    /// Only exports actively requested by another app may keep the transport alive in the background.
+    var assetExports: Set<UUID> = []
     var phase: ConnectionPhase = .idle
     var settings: BrokerSettings?
     var endpoints: [BrokerEndpoint] = []
@@ -64,6 +66,9 @@ public actor PhoneEngine: RemoteBackend {
     var subscribed = false
     var presenceSettled = false
     var foregroundPublished = false
+    var exportPresencePublished = false
+    /// A new file promise waits until an already-started goodbye has released the old connection.
+    var departing = false
     var clockSkew = false
     /// The token of the link probe in flight until it comes back (`PhoneEngine+Repair.swift`).
     var probeToken: Data?
@@ -173,7 +178,7 @@ public actor PhoneEngine: RemoteBackend {
 
     /// The app is on screen but not receiving events. The connection stays; a stay that outlasts
     /// `inactiveGrace` says goodbye as if the app had left. Leaving (`setForeground(false)`, which a
-    /// locked phone or the home screen leads to within moments) says goodbye at once, and coming back
+    /// locked phone or the home screen leads to within moments) says goodbye unless a file export is active. Coming back
     /// (`setForeground(true)`) keeps the connection.
     public func setInactive() async {
         // After a departure there is nothing to cut short, and a timer started now would end the next
@@ -191,13 +196,20 @@ public actor PhoneEngine: RemoteBackend {
         foreground = value
         if value {
             startConnecting()
+            await ensureForegroundPresence()
+            for id in macs.keys where macs[id]?.sync == .synced { await reopenWatches(id) }
+        } else if !assetExports.isEmpty {
+            foregroundPublished = false
+            exportPresencePublished = false
+            await suspendWatches()
+            await exportBackgroundPresence()
         } else {
             await goodbye()
             // The goodbye suspends this actor while the offline presence goes out. When the app came back
             // in the meantime (a system alert, the notification center …), its `startConnecting` found the
             // old link still up and did nothing, and the goodbye then dropped that link: the app would
             // sit there disconnected, in the foreground, until the next change of scene phase.
-            if foreground { startConnecting() }
+            if foreground || !assetExports.isEmpty { startConnecting() }
         }
         publish()
     }
@@ -228,6 +240,8 @@ public actor PhoneEngine: RemoteBackend {
 
     /// Says goodbye (offline presence) and drops the connection.
     func goodbye() async {
+        departing = true
+        defer { departing = false }
         cancelTimer("connect")
         cancelTimer("reconnect")
         let wasConnected: Bool
@@ -247,6 +261,7 @@ public actor PhoneEngine: RemoteBackend {
         subscribed = false
         presenceSettled = false
         foregroundPublished = false
+        exportPresencePublished = false
         pendingSubscriptions = []
         presenceCache = [:]
         probeToken = nil
@@ -300,7 +315,7 @@ public actor PhoneEngine: RemoteBackend {
     var activeSettings: BrokerSettings? { pairingFlow?.settings ?? settings }
 
     func wantsConnection() -> Bool {
-        guard foreground, activeSettings != nil else { return false }
+        guard foreground || !assetExports.isEmpty, activeSettings != nil else { return false }
         return !macs.isEmpty || pairingFlow != nil
     }
 
@@ -469,7 +484,12 @@ public actor PhoneEngine: RemoteBackend {
     /// Publishes `fg = 1` once per connection, when the first Mac is in sync (or the presence
     /// messages have settled without any Mac being online).
     func ensureForegroundPresence() async {
-        guard subscribed, !foregroundPublished, let active = activeSettings else { return }
+        guard subscribed, let active = activeSettings else { return }
+        if !foreground {
+            if !assetExports.isEmpty { await exportBackgroundPresence() }
+            return
+        }
+        guard !foregroundPublished else { return }
         let anySynced = macs.values.contains { $0.sync == .synced }
         guard anySynced || presenceSettled else { return }
         foregroundPublished = true

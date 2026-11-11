@@ -780,6 +780,10 @@ public final class AppStore {
         try await backend.download(macId: macId, asset: asset, progress: progress)
     }
 
+    public func downloadForExport(macId: String, asset: AssetRef, progress: @escaping @Sendable (Double) -> Void) async throws -> URL {
+        try await backend.downloadForExport(macId: macId, asset: asset, progress: progress)
+    }
+
     // MARK: actions
 
     /// Uploads the attachments and sends the answers. `quickReply` is one of the replies of the bar menu: it becomes

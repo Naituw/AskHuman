@@ -5,6 +5,7 @@ import QuickLook
 /// Pinch to zoom, drag to pan, double-tap to toggle.
 struct ZoomableImage: UIViewRepresentable {
     let image: UIImage
+    var dragProvider: (() -> NSItemProvider)?
 
     func makeCoordinator() -> Coordinator { Coordinator() }
 
@@ -17,6 +18,11 @@ struct ZoomableImage: UIViewRepresentable {
         scroll.showsHorizontalScrollIndicator = false
         scroll.bouncesZoom = true
         let imageView = UIImageView(image: image)
+        imageView.isUserInteractionEnabled = true
+        let drag = UIDragInteraction(delegate: context.coordinator)
+        drag.isEnabled = true
+        imageView.addInteraction(drag)
+        context.coordinator.dragProvider = dragProvider
         imageView.contentMode = .scaleAspectFit
         imageView.frame = scroll.bounds
         imageView.autoresizingMask = [.flexibleWidth, .flexibleHeight]
@@ -30,17 +36,25 @@ struct ZoomableImage: UIViewRepresentable {
     }
 
     func updateUIView(_ scroll: UIScrollView, context: Context) {
+        context.coordinator.dragProvider = dragProvider
         // Leave the image view alone unless the image itself changed.
         if let imageView = context.coordinator.imageView, imageView.image !== image {
             imageView.image = image
         }
     }
 
-    final class Coordinator: NSObject, UIScrollViewDelegate {
+    final class Coordinator: NSObject, UIScrollViewDelegate, UIDragInteractionDelegate {
+        var dragProvider: (() -> NSItemProvider)?
         var imageView: UIImageView?
         weak var scroll: UIScrollView?
 
         func viewForZooming(in scrollView: UIScrollView) -> UIView? { imageView }
+
+        func dragInteraction(_ interaction: UIDragInteraction, itemsForBeginning session: UIDragSession) -> [UIDragItem] {
+            dragProvider.map { [UIDragItem(itemProvider: $0())] } ?? []
+        }
+
+        func dragInteraction(_ interaction: UIDragInteraction, sessionAllowsMoveOperation session: UIDragSession) -> Bool { false }
 
         @objc func doubleTapped(_ gesture: UITapGestureRecognizer) {
             guard let scroll else { return }
