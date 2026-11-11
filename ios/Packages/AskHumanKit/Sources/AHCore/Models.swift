@@ -131,9 +131,13 @@ public struct InboxItem: Identifiable, Sendable, Equatable {
     public var summary: RequestSummary
     /// Full content once it arrived; `nil` while only the summary is known.
     public var view: RequestView?
+    /// When the phone first learned of the request, independently of when the Agent asked.
     public var receivedAt: Date
     public var unread: Bool
     public var state: RequestState
+
+    /// When the Agent asked, also available before the full content has arrived.
+    public var createdAt: Date { Date(timeIntervalSince1970: TimeInterval(summary.createdAt) / 1000) }
 
     /// Title of the Agent session that asks, when the Mac told one.
     public var sessionTitle: String? { SessionTitle.clean(view?.sessionTitle ?? summary.sessionTitle) }

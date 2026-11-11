@@ -512,7 +512,7 @@ public final class AppStore {
         }
     }
 
-    /// Requests grouped by project, groups and items newest first (spec §6.2).
+    /// Requests grouped by project, groups and items newest first by when the Agent asked (spec §6.2).
     public func inboxSections(filter: InboxFilter? = nil) -> [InboxSection] {
         var order: [String] = []
         var groups: [String: InboxSection] = [:]
@@ -522,16 +522,16 @@ public final class AppStore {
                 order.append(id)
                 groups[id] = InboxSection(
                     id: id, projectName: item.summary.project.name, macId: item.macId, macName: item.macName,
-                    items: [], latest: item.receivedAt
+                    items: [], latest: item.createdAt
                 )
             }
             groups[id]?.items.append(item)
-            if let latest = groups[id]?.latest, item.receivedAt > latest { groups[id]?.latest = item.receivedAt }
+            if let latest = groups[id]?.latest, item.createdAt > latest { groups[id]?.latest = item.createdAt }
         }
         return order.compactMap { groups[$0] }
             .map { section in
                 var section = section
-                section.items.sort { $0.receivedAt > $1.receivedAt }
+                section.items.sort { $0.createdAt > $1.createdAt }
                 return section
             }
             .sorted { $0.latest > $1.latest }

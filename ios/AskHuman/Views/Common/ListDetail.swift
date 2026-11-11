@@ -36,6 +36,18 @@ extension View {
 
 // MARK: two columns
 
+private struct SidebarRevealRequestKey: EnvironmentKey {
+    static let defaultValue = 0
+}
+
+extension EnvironmentValues {
+    /// Repeated taps on this tab request its list, including when no detail is selected.
+    var sidebarRevealRequest: Int {
+        get { self[SidebarRevealRequestKey.self] }
+        set { self[SidebarRevealRequestKey.self] = newValue }
+    }
+}
+
 /// What a tab shows in two columns: its list on the left and what the list opened on the right.
 ///
 /// The columns stay for as long as the window is wide, whatever the tab has to show. Changing from a
@@ -43,18 +55,18 @@ extension View {
 /// list) leaves that bar where it was laid for the stack: on top of the list's own bar. A tab without
 /// a list yet puts its page in the detail and keeps the list out of sight.
 ///
-/// The list is what a tab shows first: while nothing is open it is always on screen. The system lays
+/// The list is what a tab shows first when nothing is open. The system lays
 /// the list over the detail where the window is too narrow for two columns (the inner screen of a
 /// foldable held upright), and hides it once something was picked; a window that turns from wide to
-/// narrow hides it too. Without these rules a turn of the device could leave a detail that says "pick
-/// something" and no list to pick from.
+/// narrow hides it too. A repeated tap on the current tab reveals a list dismissed by an edge swipe,
+/// including while the detail still says "pick something".
 struct ListDetailColumns<List: View, Detail: View>: View {
     /// Whether there is a list at all. Without one the detail has the whole window.
     let hasList: Bool
     /// What the detail shows that the list opened (a request, an Agent, a project), if anything. Told
     /// apart, not only present or not, so that another pick puts away a list that was called back over it.
     let opened: AnyHashable?
-    let showListRequest: Int
+    @Environment(\.sidebarRevealRequest) private var showListRequest
     let list: List
     let detail: Detail
 
@@ -68,11 +80,10 @@ struct ListDetailColumns<List: View, Detail: View>: View {
     private var fit: Fit { Self.fit(of: width) }
     private var isOpen: Bool { opened != nil }
 
-    init(hasList: Bool = true, opened: AnyHashable?, showListRequest: Int = 0,
+    init(hasList: Bool = true, opened: AnyHashable?,
          @ViewBuilder list: () -> List, @ViewBuilder detail: () -> Detail) {
         self.hasList = hasList
         self.opened = opened
-        self.showListRequest = showListRequest
         self.list = list()
         self.detail = detail()
         // These columns come up again whenever the window turns wide (a foldable opened, an iPad window
@@ -122,7 +133,8 @@ struct ListDetailColumns<List: View, Detail: View>: View {
             detail
                 .removingSidebarToggle(!hasList)
                 .background {
-                    WindowWidth { width = $0 }.frame(maxWidth: .infinity, maxHeight: .infinity)
+                    ColumnHost(revealRequest: showListRequest, canRevealList: hasList && fit == .narrow) { width = $0 }
+                        .frame(maxWidth: .infinity, maxHeight: .infinity)
                 }
         }
         .navigationSplitViewStyle(.balanced)
@@ -137,8 +149,8 @@ struct ListDetailColumns<List: View, Detail: View>: View {
             if hasList, fit == .narrow { visibility = .all }
         }
         .onChange(of: visibility) {
-            // The list cannot be put away while there is nothing else to look at, and it cannot be
-            // brought out where there is none. With a request open it is the reader's to show and hide.
+            // Keep the toggle from hiding the list over an empty detail, or revealing a nonexistent
+            // list. An edge swipe can still finish hiding the native column after this binding resets.
             if !hasList || !isOpen { settle() }
         }
     }
@@ -156,28 +168,56 @@ extension View {
     }
 }
 
-/// Reports the width the window gives its content: the window less the columns the system keeps at its
-/// sides (the bar of a foldable held sideways). It is the width of the two columns together, which no
+/// Connects the columns to their native host. Reports the window's width less the columns the system
+/// keeps at its sides (the bar of a foldable held sideways). It is the width of both columns, which no
 /// single column can tell: the detail has the window to itself where the list lies over it, and what is
 /// left where the list stands beside it.
-private struct WindowWidth: UIViewRepresentable {
+private struct ColumnHost: UIViewRepresentable {
+    let revealRequest: Int
+    let canRevealList: Bool
     let onChange: (CGFloat) -> Void
 
     func makeUIView(context: Context) -> Reader {
         let view = Reader()
         view.isUserInteractionEnabled = false
         view.isAccessibilityElement = false
+        // Rebuilding the columns after a size change must not replay an earlier tab tap.
+        view.revealRequest = revealRequest
         return view
     }
 
     func updateUIView(_ view: Reader, context: Context) {
         view.onChange = onChange
+        view.canRevealList = canRevealList
         view.report()
+        view.revealList(request: revealRequest)
     }
 
     final class Reader: UIView {
         var onChange: ((CGFloat) -> Void)?
+        var revealRequest = 0
+        var canRevealList = false
         private var last: CGFloat = -1
+
+        func revealList(request: Int) {
+            guard request != revealRequest else { return }
+            revealRequest = request
+            guard canRevealList else { return }
+            // Swiping away an unselected sidebar can leave SwiftUI's visibility at `.all`: the
+            // empty-detail guard restores it before UIKit finishes hiding the column. Writing `.all`
+            // again is then a no-op. Ask the actual split view to show its column, after SwiftUI updates.
+            DispatchQueue.main.async { [weak self] in
+                guard let self, self.window != nil, self.canRevealList, self.revealRequest == request else { return }
+                var responder: UIResponder? = self
+                while let current = responder {
+                    if let controller = current as? UIViewController, let split = controller.splitViewController {
+                        split.show(.primary)
+                        return
+                    }
+                    responder = current.next
+                }
+            }
+        }
 
         override func didMoveToWindow() {
             super.didMoveToWindow()

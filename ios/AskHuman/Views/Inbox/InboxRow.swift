@@ -39,7 +39,7 @@ struct InboxRow: View {
                         .font(.subheadline.weight(.semibold))
                         .lineLimit(1)
                     Spacer(minLength: 8)
-                    RelativeTimeText(date: item.receivedAt)
+                    RelativeTimeText(date: item.createdAt)
                         .font(.caption)
                         .foregroundStyle(.secondary)
                 }

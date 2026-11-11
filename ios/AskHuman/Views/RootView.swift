@@ -22,7 +22,7 @@ struct RootView: View {
 
     private var tabSelection: Binding<AppTab> {
         Binding(get: { store.tab }, set: { tab in
-            if tab == .inbox, store.tab == .inbox { presentation.inboxReselection += 1 }
+            if store.tab == tab { presentation.listRevealRequests[tab, default: 0] += 1 }
             store.tab = tab
         })
     }
@@ -153,7 +153,7 @@ struct RootView: View {
 @MainActor @Observable
 private final class TabPresentation {
     var showPairing = false
-    var inboxReselection = 0
+    var listRevealRequests: [AppTab: Int] = [:]
 }
 
 private struct TabPage: View {
@@ -162,13 +162,16 @@ private struct TabPage: View {
 
     var body: some View {
         @Bindable var presentation = presentation
-        switch tab {
-        case .inbox: InboxScreen(showPairing: $presentation.showPairing, reselection: presentation.inboxReselection)
-        case .agents: AgentsScreen(showPairing: $presentation.showPairing)
-        case .todos: TodosScreen(showPairing: $presentation.showPairing)
-        case .history: HistoryScreen()
-        case .macs: MacsScreen(showPairing: $presentation.showPairing)
+        Group {
+            switch tab {
+            case .inbox: InboxScreen(showPairing: $presentation.showPairing)
+            case .agents: AgentsScreen(showPairing: $presentation.showPairing)
+            case .todos: TodosScreen(showPairing: $presentation.showPairing)
+            case .history: HistoryScreen()
+            case .macs: MacsScreen(showPairing: $presentation.showPairing)
+            }
         }
+        .environment(\.sidebarRevealRequest, presentation.listRevealRequests[tab, default: 0])
     }
 }
 

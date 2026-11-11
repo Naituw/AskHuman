@@ -5,14 +5,13 @@ import AHProtocol
 struct InboxScreen: View {
     @Environment(AppStore.self) private var store
     @Binding var showPairing: Bool
-    let reselection: Int
 
     var body: some View {
         // A wide window shows the list beside the request that was picked, and shows them from the first
         // frame on: the page of a tab that changes from a stack to columns (the Macs have answered, or the
         // first one was paired) is where an iPad's bar at the top goes wrong.
         ColumnsOrStack {
-            InboxColumns(showPairing: $showPairing, reselection: reselection)
+            InboxColumns(showPairing: $showPairing)
         } stack: {
             stack
         }
@@ -55,14 +54,13 @@ struct InboxScreen: View {
 private struct InboxColumns: View {
     @Environment(AppStore.self) private var store
     @Binding var showPairing: Bool
-    let reselection: Int
 
     var body: some View {
         let open = store.inboxPath.last
         // Before the Macs have answered nobody knows whether one is paired: the list stays until they
         // say so, as it does for everyone who has one.
         let hasList = store.hasPairedMacs || !store.hasState
-        ListDetailColumns(hasList: hasList, opened: open, showListRequest: reselection) {
+        ListDetailColumns(hasList: hasList, opened: open) {
             InboxList(selection: selection)
                 .awayStrip()
                 .navigationTitle("Inbox")

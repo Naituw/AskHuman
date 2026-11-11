@@ -97,10 +97,13 @@ final class AskHumanLargeScreenUITests: XCTestCase {
         }
     }
 
-    /// The button of the bar that calls the list back: the one at the left end of the bar over the request.
-    /// It is the system's, with a label of its own in every language, so it is told by where it is.
+    /// Prefer the system's localized sidebar label: with an empty detail the leftmost button can be
+    /// the list's filter instead. Older systems fall back to the left end of the detail's bar.
     private func sidebarToggle() -> XCUIElement {
         let buttons = app.navigationBars.buttons.allElementsBoundByIndex.filter { $0.isHittable }
+        if let toggle = buttons.first(where: { $0.label.contains("Sidebar") || $0.label.contains("边栏") }) {
+            return toggle
+        }
         return buttons.min { $0.frame.minX < $1.frame.minX } ?? app.navigationBars.buttons.firstMatch
     }
 
@@ -236,6 +239,71 @@ final class AskHumanLargeScreenUITests: XCTestCase {
         app.windows.firstMatch.coordinate(withNormalizedOffset: CGVector(dx: 0.85, dy: 0.5)).tap()
         becomes(row, "isHittable == false")
         XCTAssertTrue(option.isSelected, "the draft survives showing and dismissing the list")
+    }
+
+    private func checkReselectingTab(_ tab: String, rowID: String, label: String, picksItem: Bool = false) throws {
+        try launch(extra: ["-AHTab", tab])
+        try XCTSkipIf(isTiled, "The sidebar only floats in a narrower split view.")
+        let row = require(rowID)
+        becomes(row, "isHittable == true")
+        let button = app.tabBars.buttons[label]
+        XCTAssertTrue(button.isSelected)
+
+        if picksItem {
+            row.tap()
+            becomes(row, "isHittable == false", timeout: 20)
+            button.tap()
+            becomes(row, "isHittable == true", timeout: 20)
+        } else {
+            sidebarToggle().tap()
+            becomes(row, "isHittable == true", timeout: 20)
+        }
+        for _ in 0..<(picksItem ? 1 : 3) {
+            let window = app.windows.firstMatch
+            let start = window.coordinate(withNormalizedOffset: CGVector(dx: 0.48, dy: 0.5))
+            let end = window.coordinate(withNormalizedOffset: CGVector(dx: 0.02, dy: 0.5))
+            start.press(forDuration: 0.05, thenDragTo: end)
+            becomes(row, "isHittable == false", timeout: 20)
+            if !picksItem { require("detail-placeholder") }
+            button.tap()
+            becomes(row, "isHittable == true", timeout: 20)
+            XCTAssertEqual(row.isSelected, picksItem, "revealing a list must preserve its selection")
+        }
+    }
+
+    func testReselectingInboxRevealsTheListAfterSwipingItAwayWithoutPickingARequest() throws {
+        try checkReselectingTab("inbox", rowID: "inbox-row-req-migration", label: language == "en" ? "Inbox" : "收件箱")
+    }
+
+    func testReselectingAgentsRevealsTheListAfterSwipingItAwayWithoutPickingASession() throws {
+        try checkReselectingTab("agents", rowID: "agent-row-claude:cc-flaky", label: "Agents")
+    }
+
+    func testReselectingTodosRevealsTheListAfterSwipingItAwayWithoutPickingAProject() throws {
+        try checkReselectingTab("todos", rowID: "todo-project-a1b2c3d4e5f60001", label: language == "en" ? "Todos" : "待办")
+    }
+
+    func testReselectingHistoryRevealsTheListAfterSwipingItAwayWithoutPickingAnEntry() throws {
+        try checkReselectingTab("history", rowID: "history-row-req-old-1", label: language == "en" ? "History" : "历史")
+    }
+
+    func testReselectingMacsRevealsTheListAfterSwipingItAwayWithoutPickingAMac() throws {
+        try checkReselectingTab("macs", rowID: "mac-row-mockhomemacmacmacmacmacmac", label: "Macs")
+    }
+
+    func testReselectingEachTabKeepsItsOpenItem() throws {
+        let cases = [
+            ("inbox", "inbox-row-req-migration", language == "en" ? "Inbox" : "收件箱"),
+            ("agents", "agent-row-claude:cc-flaky", "Agents"),
+            ("todos", "todo-project-a1b2c3d4e5f60001", language == "en" ? "Todos" : "待办"),
+            ("history", "history-row-req-old-1", language == "en" ? "History" : "历史"),
+            ("macs", "mac-row-mockhomemacmacmacmacmacmac", "Macs"),
+        ]
+        for (tab, row, label) in cases {
+            try XCTContext.runActivity(named: "Reselect \(tab) with a detail open") { _ in
+                try checkReselectingTab(tab, rowID: row, label: label, picksItem: true)
+            }
+        }
     }
 
     /// Sending the one request that is open, with nothing to follow it, is what going back to the list is

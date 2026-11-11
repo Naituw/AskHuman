@@ -451,7 +451,7 @@ struct RequestHeader: View {
                     .foregroundStyle(.secondary)
                     .lineLimit(1)
                 }
-                Text(Date(timeIntervalSince1970: TimeInterval(item.summary.createdAt) / 1000), format: .dateTime.month().day().hour().minute())
+                Text(item.createdAt, format: .dateTime.month().day().hour().minute())
                     .font(.caption)
                     .foregroundStyle(.tertiary)
             }

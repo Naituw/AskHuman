@@ -1,7 +1,7 @@
 import XCTest
 import AHProtocol
 import AHStore
-import AHMock
+@testable import AHMock
 @testable import AHCore
 
 @MainActor
@@ -40,6 +40,50 @@ final class AppStoreTests: XCTestCase {
         // Newest first inside a group; the most recently active group comes first.
         XCTAssertEqual(home?.items.map(\.requestId), ["req-permission", "req-migration", "req-next"])
         XCTAssertEqual(sections.first?.id, home?.id)
+    }
+
+    func testSyncedRequestsKeepTheirCreationTimeBeforeFullContentArrives() async throws {
+        await make()
+        var request = try item("req-migration")
+        request.summary.createdAt = 1_700_000_000_125
+        request.view = nil
+        request.receivedAt = Date(timeIntervalSince1970: 1_700_003_600)
+        XCTAssertEqual(request.createdAt.timeIntervalSince1970, 1_700_000_000.125, accuracy: 0.0001)
+    }
+
+    func testInboxSortsByCreationWhenOlderRequestsArriveLater() async {
+        await make()
+        var requests = store.state.inbox
+        let received = Date()
+        for index in requests.indices {
+            requests[index].receivedAt = received.addingTimeInterval(Double(index))
+        }
+        await backend.replaceInboxForTimeTest(requests)
+        await eventually { self.store.state.inbox == requests }
+        assertInboxCreationOrder()
+    }
+
+    func testInboxSortsByCreationWhenSnapshotRequestsArriveTogether() async {
+        await make()
+        let received = Date()
+        let requests = store.state.inbox.reversed().map { item in
+            var item = item
+            item.receivedAt = received
+            item.view = nil
+            return item
+        }
+        await backend.replaceInboxForTimeTest(requests)
+        await eventually { self.store.state.inbox == requests }
+        assertInboxCreationOrder()
+    }
+
+    private func assertInboxCreationOrder(file: StaticString = #filePath, line: UInt = #line) {
+        let sections = store.inboxSections()
+        XCTAssertEqual(sections.map(\.macId), [MockData.homeMacId, MockData.officeMacId], file: file, line: line)
+        XCTAssertEqual(sections.first?.items.map(\.requestId), ["req-permission", "req-migration", "req-next"], file: file, line: line)
+        XCTAssertEqual(sections.last?.items.map(\.requestId), ["req-select", "req-stop"], file: file, line: line)
+        XCTAssertEqual(sections.first?.latest, sections.first?.items.first?.createdAt, file: file, line: line)
+        XCTAssertEqual(store.inboxSections(filter: .asks).first?.items.map(\.requestId), ["req-migration", "req-next"], file: file, line: line)
     }
 
     func testTheSameProjectOnTwoMacsStaysSeparate() async {
@@ -735,5 +779,12 @@ final class AppStoreTests: XCTestCase {
         store.autoAdvance = false
         let again = AppStore(backend: backend, drafts: MemoryDraftStore(), defaults: defaults)
         XCTAssertFalse(again.autoAdvance)
+    }
+}
+
+private extension MockBackend {
+    func replaceInboxForTimeTest(_ items: [InboxItem]) {
+        state.inbox = items
+        publish()
     }
 }

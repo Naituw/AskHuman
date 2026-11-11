@@ -38,7 +38,7 @@ struct AppTabs<Content: View, Overlay: View>: UIViewControllerRepresentable {
         let controller = host.tabs
         let coordinator = context.coordinator
         coordinator.selection = $selection
-        // Programmatic synchronization must not become a user selection or inbox reselection.
+        // Programmatic synchronization must not become a user selection or sidebar reveal request.
         controller.delegate = nil
         defer { controller.delegate = coordinator }
         for tab in AppTab.allCases {
