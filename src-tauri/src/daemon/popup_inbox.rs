@@ -65,7 +65,7 @@ impl<T: Clone> Host<T> {
             phase: Phase::Starting(saved.lease),
             recovery_pid: Some(saved.pid),
             recovery_birth: saved.birth,
-            recovered: true,
+            recovered: false,
             ..Self::default()
         }
     }
@@ -200,6 +200,8 @@ impl<T: Clone> Host<T> {
         if self.generation() != Some(generation) {
             return Recovery::Stale;
         }
+        let was_connected =
+            matches!(self.phase, Phase::Connected(_, _)) || self.recovery_pid.is_some();
         self.phase = Phase::Absent;
         if self.requests.is_empty() && !prewarm {
             return Recovery::Idle;
@@ -215,7 +217,7 @@ impl<T: Clone> Host<T> {
         if self.failures.len() > 2 {
             return Recovery::Failed(std::mem::take(&mut self.requests).into_values().collect());
         }
-        self.recovered = !self.requests.is_empty();
+        self.recovered = !self.requests.is_empty() && (self.recovered || was_connected);
         Recovery::Restart(self.start().expect("disconnected host is absent"))
     }
 
@@ -276,6 +278,65 @@ mod tests {
             ["first", "later"]
         );
     }
+    #[test]
+    fn retaining_a_host_for_handoff_preserves_the_lease_without_a_reopened_notice() {
+        let mut host = Host::<()>::restore(SavedHost {
+            lease: Lease {
+                generation: 7,
+                token: "saved".into(),
+            },
+            pid: std::process::id(),
+            birth: None,
+        });
+        host.enqueue("r".into(), 1, ());
+        let (tx, _) = tokio::sync::mpsc::unbounded_channel();
+        assert_eq!(host.connect("saved", tx), Some((7, false)));
+    }
+
+    #[test]
+    fn a_retained_host_that_cannot_reconnect_still_warns_when_rebuilt() {
+        let mut host = Host::<()>::restore(SavedHost {
+            lease: Lease {
+                generation: 7,
+                token: "saved".into(),
+            },
+            pid: std::process::id(),
+            birth: None,
+        });
+        host.enqueue("r".into(), 1, ());
+        let Recovery::Restart(lease) = host.disconnected(7, Instant::now(), true) else {
+            panic!("host must restart");
+        };
+        let (tx, _) = tokio::sync::mpsc::unbounded_channel();
+        assert_eq!(
+            host.connect(&lease.token, tx),
+            Some((lease.generation, true))
+        );
+    }
+
+    #[test]
+    fn only_connected_hosts_with_pending_requests_need_a_reopened_notice() {
+        for connected in [false, true] {
+            let mut host = Host::default();
+            host.enqueue("r".into(), 1, ());
+            let first = host.start().unwrap();
+            if connected {
+                let (tx, _) = tokio::sync::mpsc::unbounded_channel();
+                host.connect(&first.token, tx).unwrap();
+            }
+            let Recovery::Restart(second) =
+                host.disconnected(first.generation, Instant::now(), true)
+            else {
+                panic!("host must restart");
+            };
+            let (tx, _) = tokio::sync::mpsc::unbounded_channel();
+            assert_eq!(
+                host.connect(&second.token, tx),
+                Some((second.generation, connected))
+            );
+        }
+    }
+
     #[test]
     fn stale_disconnect_cannot_replace_recovery_host() {
         let mut host = Host::default();

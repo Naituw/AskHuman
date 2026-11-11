@@ -46,6 +46,30 @@ describe("shared popup navigation", () => {
     wrapper = mount(PopupInboxView, { attachTo: document.body, global: { plugins: [createI18n({ legacy: false, locale: "en", messages: { en } })] } });
     await flushPromises();
   }
+  it("describes a reopened window without claiming a draft was lost", async () => {
+    mock.invoke.mockImplementation(async (command: string) => {
+      if (command === "popup_inbox_init") return { recovered: true, requests: [request("a")] };
+      if (command === "popup_inbox_layout") return { revision: 1, sidebarWidth: 240, mainWidth: 560, mainHeight: 620, previewWidth: 0 };
+    });
+    await start();
+    expect(wrapper.find(".inbox-recovery").text()).toContain("The answer window has reopened.");
+    expect(wrapper.find(".inbox-recovery").text()).not.toContain("drafts were lost");
+    await wrapper.find(".inbox-recovery button").trigger("click");
+    expect(wrapper.find(".inbox-recovery").exists()).toBe(false);
+  });
+  it("preserves the draft during an update and clears its progress without a recovery warning", async () => {
+    await start();
+    const editor = wrapper.find('[data-form-id="a"]');
+    await editor.setValue("retained draft");
+    emit("popup-connection", true);
+    await flushPromises();
+    expect(wrapper.find(".inbox-recovery").text()).toContain(en.popup.inbox.updating);
+    emit("popup-connection", false);
+    await flushPromises();
+    expect(wrapper.find(".inbox-recovery").exists()).toBe(false);
+    expect(wrapper.find('[data-form-id="a"]').element).toBe(editor.element);
+    expect((editor.element as HTMLTextAreaElement).value).toBe("retained draft");
+  });
   it("shows the session task title as secondary text and keeps untitled entries compact", async () => {
     mock.invoke.mockImplementation(async (command: string) => {
       if (command === "popup_inbox_init") return { recovered: false, requests: [

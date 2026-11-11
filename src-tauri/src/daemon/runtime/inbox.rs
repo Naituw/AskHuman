@@ -426,10 +426,17 @@ fn spawn_inbox_host(lease: Lease, state: &Arc<ServerState>) -> bool {
         return false;
     }
     let result = std::env::current_exe().and_then(|exe| spawn_inbox_process(&exe, &lease.token));
-    if let Err(error) = result {
-        log(&format!("failed to start popup host: {error}"));
-        recover_inbox(state, lease.generation);
-        return false;
+    match result {
+        Ok(pid) => log(&format!(
+            "popup host started generation={} pid={pid} pending={}",
+            lease.generation,
+            state.popup_inbox.lock().unwrap().requests().len()
+        )),
+        Err(error) => {
+            log(&format!("failed to start popup host: {error}"));
+            recover_inbox(state, lease.generation);
+            return false;
+        }
     }
     let state = state.clone();
     tokio::spawn(async move {
@@ -568,11 +575,15 @@ pub(super) async fn handle_popup_host_supported<R, W>(
         .lock()
         .unwrap()
         .connect(&token, tx.clone());
-    let Some((generation, _)) = accepted else {
+    let Some((generation, recovered)) = accepted else {
         state.active.fetch_add(1, Ordering::SeqCst);
         log("rejected unreserved popup host connection");
         return;
     };
+    log(&format!(
+        "popup host connected generation={generation} pid={pid:?} known={} recovered={recovered}",
+        known_ids.len()
+    ));
     if let Some(pid) = pid {
         let saved = {
             let mut host = state.popup_inbox.lock().unwrap();

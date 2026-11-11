@@ -192,6 +192,48 @@ pub fn log_path() -> PathBuf {
     crate::paths::config_dir().join("daemon.log")
 }
 
+/// Repair silent stderr inherited from an older login item, including across Unix exec handoff.
+#[cfg(unix)]
+pub fn restore_background_logging() -> std::io::Result<bool> {
+    redirect_null_output(&log_path(), libc::STDERR_FILENO)
+}
+
+#[cfg(unix)]
+#[allow(clippy::unnecessary_cast)] // dev_t has different widths across Unix platforms.
+fn redirect_null_output(path: &Path, output_fd: std::os::fd::RawFd) -> std::io::Result<bool> {
+    use std::os::fd::{AsRawFd, IntoRawFd};
+    use std::os::unix::fs::{MetadataExt, OpenOptionsExt};
+
+    let null = std::fs::metadata("/dev/null")?;
+    let mut metadata = std::mem::MaybeUninit::<libc::stat>::uninit();
+    // fstat initializes the structure only on success. A closed descriptor also needs repair.
+    if unsafe { libc::fstat(output_fd, metadata.as_mut_ptr()) } == 0 {
+        let metadata = unsafe { metadata.assume_init() };
+        if metadata.st_dev as u64 != null.dev() || metadata.st_ino != null.ino() {
+            return Ok(false);
+        }
+    }
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent)?;
+    }
+    let file = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .mode(0o600)
+        .open(path)?;
+    if unsafe { libc::dup2(file.as_raw_fd(), output_fd) } == -1 {
+        return Err(std::io::Error::last_os_error());
+    }
+    if file.as_raw_fd() == output_fd {
+        // Opening the log can reuse a closed output descriptor. Retain it and clear FD_CLOEXEC.
+        let _ = file.into_raw_fd();
+        if unsafe { libc::fcntl(output_fd, libc::F_SETFD, 0) } == -1 {
+            return Err(std::io::Error::last_os_error());
+        }
+    }
+    Ok(true)
+}
+
 /// Privacy-safe audit context for a guard decision ("suppressed" or "passed") taken before
 /// any side effects.
 ///
@@ -457,6 +499,35 @@ mod tests {
         std::fs::write(&path, "started\n").unwrap();
         append_line_to(&path, "{}").unwrap();
         assert_eq!(std::fs::read_to_string(&path).unwrap(), "started\n{}\n");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn silent_daemon_output_is_repaired_once_and_other_destinations_are_preserved() {
+        use std::io::Write;
+        use std::os::fd::AsRawFd;
+        let directory = tempfile::tempdir().unwrap();
+        let log = directory.path().join("state/daemon.log");
+        let mut output = std::fs::OpenOptions::new()
+            .write(true)
+            .open("/dev/null")
+            .unwrap();
+        assert!(redirect_null_output(&log, output.as_raw_fd()).unwrap());
+        output.write_all(b"handoff starting\n").unwrap();
+        assert!(!redirect_null_output(&log, output.as_raw_fd()).unwrap());
+        output.write_all(b"handoff healthy\n").unwrap();
+        assert_eq!(
+            std::fs::read_to_string(&log).unwrap(),
+            "handoff starting\nhandoff healthy\n"
+        );
+        assert_eq!(
+            unsafe { libc::fcntl(output.as_raw_fd(), libc::F_GETFD) } & libc::FD_CLOEXEC,
+            0
+        );
+        let mut capture = tempfile::tempfile().unwrap();
+        assert!(!redirect_null_output(&log, capture.as_raw_fd()).unwrap());
+        capture.write_all(b"foreground output").unwrap();
+        assert_eq!(capture.metadata().unwrap().len(), 17);
     }
 
     #[test]

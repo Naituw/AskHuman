@@ -83,7 +83,7 @@ export default {
       dropAddedQuestion: "Added {n} file to “{title}”, question {q} | Added {n} files to “{title}”, question {q}",
       dropFailed: "Could not add the files to “{title}”",
       kind: { ask: "Question", permission: "Permission", stop: "Finish task" },
-      recovered: "The answer window has recovered. Unsubmitted drafts were lost; please enter them again.",
+      recovered: "The answer window has reopened. Please check any unsubmitted answers.",
       external: "This request ended ({source}). Continuing to the next request…", submitError: "Answer was not sent. Please retry: {message}",
       closeTitle: "How should pending requests be handled?", continue: "Continue answering", cancelCurrent: "Cancel current request", cancelAll: "Cancel all pending requests", cancelOne: "Cancel this request",
       newExcluded: "{n} newly arrived request is excluded from this cancellation. | {n} newly arrived requests are excluded from this cancellation.", draftsLost: "{n} unsubmitted draft will be discarded | {n} unsubmitted drafts will be discarded", separator: "; ",

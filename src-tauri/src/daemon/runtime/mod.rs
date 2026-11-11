@@ -178,6 +178,10 @@ pub fn dispatch(args: &[String]) -> i32 {
 // —— run：前台运行 Daemon 主体 ——
 
 fn run_cmd(background: bool) -> i32 {
+    #[cfg(unix)]
+    if let Err(error) = lifecycle::restore_background_logging() {
+        eprintln!("askhuman: could not restore daemon logging: {error}");
+    }
     #[cfg(windows)]
     BACKGROUND_LOG_TO_FILE.store(background, Ordering::Relaxed);
     #[cfg(not(windows))]

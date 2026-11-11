@@ -232,11 +232,17 @@ impl Runtime {
                 .store
                 .metadata::<Option<crate::daemon::popup_inbox::SavedHost>>("popup/host")?
                 .flatten();
-            if let Some(saved) = saved.filter(|saved| {
-                crate::daemon::recovery::process_alive(saved.pid, saved.birth.as_deref())
-            }) {
-                *state.popup_inbox.lock().unwrap() =
-                    crate::daemon::popup_inbox::Host::restore(saved);
+            if let Some(saved) = saved {
+                let alive =
+                    crate::daemon::recovery::process_alive(saved.pid, saved.birth.as_deref());
+                log(&format!(
+                    "popup host handoff restore generation={} pid={} alive={alive}",
+                    saved.lease.generation, saved.pid
+                ));
+                if alive {
+                    *state.popup_inbox.lock().unwrap() =
+                        crate::daemon::popup_inbox::Host::restore(saved);
+                }
             }
             if let Some(mut focus) = self.store.metadata::<PopupFocusArbiter>("popup/focus")? {
                 let mut live = std::collections::HashSet::new();

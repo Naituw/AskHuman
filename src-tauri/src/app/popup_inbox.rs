@@ -136,10 +136,11 @@ impl Inbox {
                 .cmp(&b.sequence)
                 .then_with(|| a.request_id.cmp(&b.request_id))
         });
+        let recovered = self.recovered && !requests.is_empty();
         Snapshot {
             updating: state.updating,
             requests,
-            recovered: self.recovered,
+            recovered,
             presented: state.presented,
             focused_request_id: state.focus.clone(),
         }
@@ -492,6 +493,15 @@ mod tests {
             annotations: Vec::new(),
         }
     }
+    #[test]
+    fn a_reopened_notice_requires_a_pending_request() {
+        let (tx, _) = tokio::sync::mpsc::unbounded_channel();
+        let inbox = Inbox::new(tx, 1, true);
+        assert!(!inbox.snapshot().recovered);
+        inbox.inner.lock().unwrap().insert(show("restored"));
+        assert!(inbox.snapshot().recovered);
+    }
+
     #[test]
     fn session_titles_survive_snapshots_and_cannot_revive_finished_requests() {
         let (tx, _) = tokio::sync::mpsc::unbounded_channel();
