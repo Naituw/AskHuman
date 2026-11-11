@@ -69,6 +69,7 @@ Mac 端的 `history.jsonl` 已经按请求保存了完整的问答（任何渠�
 - 「⋯」菜单 →「此会话的历史」。
 
 **下拉**：转圈约 0.3 秒，最近 8 条往来出现在当前提问**上方**，页面仍停在当前提问的顶部（视口不动）。继续上滑，看到更早的往来；再到顶再下拉，加载更早的一页。没有更早的了，线程顶端写「没有更早的记录了」（Mac 只保留最近 N 条，所以不说「第一条」），之后不再请求。
+当前提问本身不足一屏时（多数请求如此），线程出现后它所在的区域会补到至少一屏高（下方留白，与没有线程时短页「请求在上、下面空着」的样子一致），所以当前提问同样留在原处，页面也不会停在内容之外（§7.2）。
 
 **菜单**：与下拉等价，但加载完会**滚到最新一条往来**，已加载过则只滚动。没有更早的记录时，滚到顶并显示「没有更早的记录了」。
 
@@ -177,7 +178,7 @@ Daemon 的 Host `caps()` 返回 `session_history: true`。
 
 ### 7.2 模型与通路
 
-- `SessionThread`（`AHCore`，`@MainActor @Observable`，由请求页（`RequestScreen`）持有，**不进 `AppStore` 的缓存**：页面随请求切换重建时一并丢掉，不落盘，即 S14）：状态 `idle / loading / failed / ready`、`reachedStart`；`items`（旧到新）；`loadMore()`（首次与翻页共用一个入口）；同一时刻只有一个在途请求（重复触发忽略）；游标由线程里最旧一条决定，首次用当前请求的 `createdAt`。
+- `SessionThread`（`AHCore`，`@MainActor @Observable`，由请求页持有：`RequestScreen` 里的 `RequestHistoryHolder` 按请求留一份 `RequestHistory`，它包着线程与滚动协调者；**不进 `AppStore` 的缓存**：页面随请求切换重建时一并丢掉，不落盘，即 S14）：状态 `idle / loading / failed / ready`、`reachedStart`；`items`（旧到新）；`loadMore(beforeInsert:)`（首次与翻页共用一个入口，页面到手、显示之前先调一次 `beforeInsert`，让界面记下滚动位置）；同一时刻只有一个在途请求（重复触发忽略）；游标由线程里最旧一条决定，首次用当前请求的 `createdAt`；`intent` 计数每次用户要求历史加一（下拉、菜单、重试），`RequestScrollPosition` 据此放弃还没还原的阅读位置。
 - `Backend` 新增 `sessionHistory(macId:agentKey:beforeMs:beforeId:limit:)`（`AHCore/Backend.swift`）。`PhoneEngine+SessionHistory.swift` 用与 `PhoneEngine+Todos.swift` 相同的「信箱 + 超时」（键为 `reqId`，超时 10 秒，沿用 `todoReadTimeout`）；离线、能力位缺失分别抛 `macOffline`、`rejected("unsupported")`。
 - `AHMock` 有对应的 `MockBackend+SessionHistory.swift` 与一个带多页历史的场景；`AHCoreTests` 有 `TestMac+SessionHistory.swift`（与 `TestMac+Todos.swift` 同款）。
 
@@ -186,11 +187,16 @@ Daemon 的 Host `caps()` 返回 `session_history: true`。
 - `AnswerScreen` 与 `ConfirmScreen` 现在是 `ScrollView { VStack { … }.background(RequestReadingAnchor(name: "request-top")).background(RequestScrollPosition(…)) }`。改成：滚动内容外层再包一层 `VStack`：`[线程区][当前请求区]`，**原来的 VStack 连同 `request-top` 锚点与 `RequestScrollPosition` 整个留在「当前请求区」**，所以阅读位置的保存与还原、「下一题」、问题卡的锚点都不受影响。线程区为空时高度为 0。
 - 新文件 `Views/Request/SessionThreadView.swift`：卡片、转圈行、错误行、「没有更早的记录了」行、「回到当前提问」胶囊。
 - 「⋯」菜单（`RequestScreen.moreMenu`）加一项「此会话的历史」（`clock.arrow.circlepath`，标识 `request-menu-session-history`）：线程未加载就加载并滚到最新一条往来；加载过就只滚动；失败显示 S15 的错误行并滚到顶。
-- **滚动原型先行**（计划阶段第一件事）：验证三件事：(a) 下拉怎么触发（系统 `refreshable`，还是在 `RequestScrollPosition` 里自己判断过度下拉）；(b) 前插之后可见内容不动（`contentOffset` 补偿等于新增内容高度，在同一次布局里完成，不闪）；(c) 与阅读位置还原、键盘的交互式收起、「下一题」的滚动互不干扰。原型不过关，不自行改方案：回来问用户（因为会动 S2 / S12）。
+- **滚动做法**（P1 原型的结论，依据与踩到的坑见 `docs/plans/ios-session-history.md` 的「P1 结论」）：
+  - **下拉**：`ThreadScrollHook` 挂在滚动内容的背景上，沿 `superview` 找到页面的 `UIScrollView`，只在入口条件满足、且还没读到会话开头时给它装一个 `UIRefreshControl`（到头就拆，之后只剩普通回弹）。系统的 `.refreshable` 试过不用：线程晚于首帧出现时，条件修饰符会改变 `ScrollView` 的结构身份，页面被重建。SwiftUI 会在自己的更新里摘掉这个控件，还会按内容高度把 `alwaysBounceVertical` 改回 `false`（内容不足一屏的页面——多数请求——因此拉不动），所以两者都用 KVO 在被改掉的那一刻放回去。
+  - **前插不动**：一页到手 → `endRefreshing()` → 等页面回到顶部（至多 1.5 秒）→ 记下 `request-top` 锚点在视口里的位置 → 前插线程；此后 0.5 秒内的每一次布局（附着视图的 `layoutSubviews`、`contentSize` 与锚点各级祖先层 `position` / `bounds` 的 KVO）都把 `contentOffset` 调回到锚点原来的位置，与新内容是同一次布局，所以没有任何一帧是错位的。线程区用普通 `VStack`，不用 `LazyVStack`（估算高度会让前插后的位置漂）。
+  - **短页要留余地**：当前提问不足一屏时，它下面没有内容可滚，要调回的偏移就超出内容末端；UIKit 不会夹住程序设置的越界偏移，页面停在越界处还是被夹回，取决于时序（两次运行不一样），停在越界处时第一次触摸会跳一下。所以线程出现（含「没有更早的记录了」与错误行）后，当前提问的区域用 `ZStack` 里一块 `containerRelativeFrame(.vertical)` 的透明垫子补到至少一屏高（`requestRoom`）；没有线程时垫子高度为 0，结构不变，页面不会因此重建。「滚到最新一条」与「回到当前提问」的目标位置也因此总在有效范围内。
+  - **与阅读位置**：`RequestScrollPosition` 多一个 `intent` 令牌（变了就放弃还没还原的位置，菜单入口不是手指拖动，不然会与「滚到最新一条」打架），兜底分支在视口停在请求之上时保存「`request-top` 加 0」，所以重进页面回到请求顶部，而不是被还原到页面中间。
+  - **菜单入口**：`RequestHistory.reveal()` 用同一套前插补偿加载，等 120 毫秒让页面布局完，结束补偿窗口，再滚到最新一张卡片（没有记录就滚到顶）；已加载过就只滚动。
 
 ### 7.4 与已结束页的接缝
 
-在已结束页上加载历史（下拉或菜单）时，调 `AppStore.stayOnEnded(_:)`，等同于点了「停留」：取消该页的 3 秒倒计时（S13）。其余打断规则（E12）不变。
+在已结束页上加载历史（下拉、菜单或「重试」）时，调 `AppStore.stayOnEnded(_:)`（经 `RequestHistory` 的 `engaged` 回调），等同于点了「停留」：取消该页的倒计时（S13）。落地时 `stayOnEnded` 也管「条还没显示、倒计时还没开始」的那段（`pendingEndedCountdownId`），所以在条出现之前就开始读历史也不会被带走。其余打断规则（E12）不变。
 
 ### 7.5 其它
 

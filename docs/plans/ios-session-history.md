@@ -48,6 +48,24 @@ S2 与 S12 成不成，只取决于一件事：**在 SwiftUI `ScrollView` 的上
 
 **产出**：本节末尾写结论（选 A 或 B，补偿的具体做法与踩到的坑）；原型代码留作 P5 的起点（去掉启动参数）。**两种都不过关**：停下来用 AskHuman 问用户（会动 S2 / S12，不自行改方案）。两种都过，选代码更少的那个，不必问。
 
+### P1 结论（2026-11-12，iPhone 16 / iOS 18.5 模拟器）
+
+**选 B**（`UIRefreshControl` 挂到 SwiftUI 的 `UIScrollView`）。判据 1–5 全部满足，没有动 S2 / S12。
+
+- **触发**：`ThreadScrollHook`（`UIViewRepresentable`，形态同 `RequestScrollAttachment`）沿 `superview` 找到最近的 `UIScrollView`，**只在页面有线程时**装一个 `UIRefreshControl` 并设 `alwaysBounceVertical = true`（短页也能下拉）；`valueChanged` 里 `loadMore`。没有线程的页面不装、不设，与现在一致。
+- **时序**：拿到一页 → `endRefreshing()` → 轮询 `contentOffset` 回到顶部（上限 1.5 秒）→ 记下 `request-top` 锚点相对视口顶的位置 → 才前插。转圈与前插不叠加，没有「回弹加偏移」的跳动。
+- **补偿**：`reconcile()` 把 `contentOffset.y` 设成「锚点在内容坐标里的 y 减去记下的视口相对位置」，窗口 0.5 秒，**必须在同一次布局里**调用：附着视图的 `layoutSubviews`（`RequestScrollAttachment.changed`）、`contentSize` 的 KVO、以及锚点**各级父视图**（一直到滚动视图）的 `layer.position` 与 `bounds` 的 KVO。线程区是普通 `VStack`（不用 `LazyVStack`），高度确定。
+- **验证**：运行循环 observer 挂在 CA 提交之后，逐帧采样请求锚点相对视口的偏移：**每一帧都是 0.0**（`max=0.0 last=0.0`，修正 3 次），即没有任何一帧被提交成错位——不只是最终位置对。原型 UI 测试 9 条（长页 / 短页 / 确认页下拉、读到线程顶再下拉加载更早一页、菜单入口、带「待还原阅读位置」的菜单入口、读线程时离开再回来落在请求顶部、线程在上时「下一题」与作答、键盘弹起时下拉），**减弱动态效果开 / 关各跑一遍，全过**。
+- **踩到的坑**：
+  1. 只观察锚点自己的 `layer.position` **不行**：SwiftUI 移动的是 `UIViewRepresentable` 外面的宿主视图，锚点在宿主里的 frame 不变，KVO 一次都不触发，请求被整个线程高度（实测 1430 pt）推走且回不来。改为观察各级父视图，并在附着视图的 `layoutSubviews` 里补偿（它在内容摆好之后才布局，正是修正的时机）。
+  2. 菜单入口的「滚到最新一条」要先结束补偿窗口，否则动画滚动期间的布局事件会把页面拉回去。
+  3. `RequestScrollPosition` 的两处改动已在原型里验证：「新的阅读意图」令牌（`intent`，变了就放弃待还原位置；菜单入口不是拖动，没有它会与「滚到最新一条」打架），与兜底分支（视口在请求之上时保存「`request-top` 加 0」，重进页面回到请求顶部，而不是被还原到页面中间）。
+  4. XCUITest：键盘弹起时 `app.scrollViews.firstMatch` 可能是键盘建议栏的滚动视图，拖动要用 app 窗口坐标，否则会把建议词打进输入框；增量构建曾跑到旧的测试代码，拿不准时在测试里加一行标记输出确认。
+  5. （P5 才暴露，原型里没有踩到）SwiftUI 会在自己的更新里把 `scrollView.refreshControl` 摘掉（页面没有 `.refreshable`），还会按内容高度把 `alwaysBounceVertical` 改回 `false`——内容不足一屏的页面（多数请求）因此拉不动。原型的页面碰巧每次都重装，产品里不行：两个属性都用 KVO 盯着，被改掉的那一刻放回去，并在每次附着时再确认一遍。
+  6. （P5 才暴露）当前提问不足一屏时，它下面没有内容可滚，补偿要设的偏移超出内容末端。UIKit 不夹住程序设置的越界偏移：页面可能停在越界处（第一次触摸时跳一下），也可能在之后的某次布局被夹回，结果取决于时序——同一个测试在机器卡顿时请求落到页面底部（y 差 212 pt），空闲时又纹丝不动。办法是让线程出现后当前提问的区域至少一屏高（`requestRoom`：`ZStack` 里一块 `containerRelativeFrame(.vertical)` 的透明垫子，没有线程时高度为 0、结构不变），所有要滚到的位置（原位、最新一条、回到当前提问）就都在有效范围内。UI 测试：短页、确认页、长页（`req-history-tall`，长消息）都断言请求原位不动，短页再拖一下确认页面没有越界回弹。
+- **A（`.refreshable`）试过，不选**：条件修饰符在线程晚于首帧出现时改变 `ScrollView` 的结构身份（滚动视图被重建，补偿失效，线程把请求推走）；线程从首帧就在时，同一个下拉手势没有触发。B 已全部过关，没有再深究 A。
+- **原型代码**（`SessionThread.swift` 等）留在工作树里作 P5 的起点，不单独提交。
+
 ## P2 细节（线协议，Rust 与 Swift 同一提交）
 
 - **Rust `ios/wire.rs`**：
@@ -130,4 +148,34 @@ P1 的原型不单独提交，结论写进本计划，代码并入第 4 条。
 
 ## 实施记录
 
-（开工后填写。）
+**在主工作树做完，2026-11-11 夜到 2026-11-12 凌晨，一次做完等用户查收。** 机器全程很卡（负载 100–370，交换区 15 GiB 以上，另有别的项目的模拟器在跑），编译与模拟器测试普遍是文档基线的几倍时间；没有因此砍掉任何一项验证。
+
+提交（都只含本功能的文件，工作树里别人的改动没碰）：
+
+| 阶段 | 提交 | 内容 |
+|---|---|---|
+| P0 | `c3e0e6b2` | 规格与计划 |
+| P2 | `6e2957c3` | 线协议：`history.session.get` / `history.session`、`Caps.sessionHistory`、`RequestView.agentKey`，Rust + Swift + 夹具 |
+| P3 | `1cd65337` | Mac：会话键、`history.jsonl` 分页读取、投影、Host、网关限额与预算、能力位 |
+| P4 | `7b06045d` | 手机引擎：`PhoneEngine+SessionHistory`、`SessionThread`、Mock 场景 |
+| P1 + P5 | `01995fa6` | 请求页界面：线程区、下拉与前插补偿、菜单入口、卡片、胶囊、本地化、已结束页「停留」、UI 测试（P1 原型并入这一条，没有单独提交） |
+| P6 | `22df80b4` | 真实 daemon 端到端测试 `SessionHistoryE2ETests` |
+| P6 | 随后一条 `docs(ios)` | 总览、规格、本计划与 `PROGRESS.md` 的同步 |
+
+**与计划的偏差**（都是实现细节，没动规格的决定 S1–S17）：
+
+1. **下拉控件要靠两处 KVO 才立得住**（P1 原型里没有踩到，P5 才暴露）：SwiftUI 会在自己的更新里摘掉 `scrollView.refreshControl`，还会按内容高度把 `alwaysBounceVertical` 改回 `false`，短页因此拉不动。两个属性都用 KVO 盯着，被改掉的那一刻放回去（`ThreadScrollCoordinator.installRefresh`）。
+2. **短页要给当前提问留余地**（`requestRoom`）：见上文 P1 结论第 6 条。首次全量跑 UI 测试时同一个断言在机器卡顿时落到页面底部（差 212 pt），空闲时又纹丝不动，才看出是时序相关的越界偏移。
+3. **`AppStore.stayOnEnded` 也取消「还没开始」的倒计时**：条还没显示、倒计时还没开始时就读历史，原先的守卫会放过它，条一出现页面就被带走。新增 `EndedCountdownTests.testStayingBeforeTheCountdownBeganKeepsItFromBeginning`。
+4. **Mock 场景多了两样**：长消息的请求 `req-history-tall`（页面比一屏高，覆盖 `requestRoom` 不起作用的那一半），与启动参数 `-AHHistoryFail N`（让 Mock 的 Mac 前 N 次读历史不应答，测错误行与重试）。
+5. UI 测试里取「页面的滚动视图」要取最大的那个，不能取 `scrollViews.firstMatch`：确认页的代码块是横向滚动视图，`firstMatch` 有时是它，下拉就拉在了代码块上（zh-Hans 那一遍暴露）。
+
+**验证**（2026-11-12）：
+
+- Rust：`cargo fmt --check`、`cargo clippy --all-targets -- -D warnings` 干净；`cargo test` 2963 过、0 败、11 忽略。
+- Swift：`swift test`（AskHumanKit）533 条全过（`SessionHistoryStoreTests` 10 条、`EndedCountdownTests` 29 条）。
+- 真实 daemon 端到端（一次性 Mac + 本地 broker，装机后的日常版二进制）：`SessionHistoryE2ETests` 5 条全过（12 条往来按 8 + 4 翻页且互不混、同一毫秒的往来不丢不重、不带别的会话与别的 Agent、没有记录或读不了的键给空页、真实在途请求带的 `agentKey` 与 Agents 列表那一行的 `key` 逐字相同、不带会话的请求没有键）；`AHE2ETests` 全量 63 条：52 过、8 跳过（真实服务 / Codex 付费项）、3 败，三条败的就是上文「`AgentE2ETests` 在 main 上就失败」记下的那三条，与本功能无关。
+- 模拟器 UI（iPhone 16 / iOS 18.5）：`AskHumanSessionHistoryUITests` 共 26 条（1 条 iPad 专用在手机上跳过）：英文 25 过；zh-Hans 24 过，另 1 条因测试取错滚动视图失败，改后复跑通过。
+- `./scripts/install.sh` 成功，日常版 v0.17.1 已换上（也补完了 3 秒倒计时那次被挡住的安装）。
+
+**没做 / 留给真机**：真机一轮、真实 Mac 加手机界面的一轮（需要真实服务与签名，只有引擎一层有真实 daemon 的端到端）、TestFlight 出包（用户没要）。页面过渡的快照（`RequestPageCapture`）会带上已加载的线程，只是过渡动画里的内存快照，没有专门的视觉断言。
