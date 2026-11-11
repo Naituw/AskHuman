@@ -125,7 +125,16 @@ final class AskHumanSessionHistoryUITests: XCTestCase {
     private func settle() { Thread.sleep(forTimeInterval: 1.2) }
 
     private func backToInboxAndReopen(_ id: String) {
-        app.navigationBars.buttons.element(boundBy: 0).tap()
+        if UIDevice.current.userInterfaceIdiom == .pad {
+            // The list stays beside the page: leaving is opening another request, coming back is opening this one again.
+            let others = app.descendants(matching: .any).matching(NSPredicate(format: "identifier BEGINSWITH 'inbox-row-' AND identifier != %@", "inbox-row-\(id)"))
+            XCTAssertTrue(others.firstMatch.waitForExistence(timeout: 10), "no other request in the list")
+            others.firstMatch.tap()
+            _ = requireElement("request-menu")
+            Thread.sleep(forTimeInterval: 1)
+        } else {
+            app.navigationBars.buttons.element(boundBy: 0).tap()
+        }
         requireElement("inbox-row-\(id)").tap()
         _ = requireElement("request-menu")
     }
@@ -428,6 +437,9 @@ final class AskHumanSessionHistoryUITests: XCTestCase {
     }
 
     func testPullingWithTheKeyboardUpDoesNotJump() throws {
+        // A pull on a big screen has to go a long way before the control takes it, further than the room that is left above
+        // the keyboard of an iPad (also without a keyboard, a pull of the length that fits there is not taken).
+        try XCTSkipIf(UIDevice.current.userInterfaceIdiom == .pad, "The room above an iPad keyboard is shorter than a pull.")
         launch()
         let field = app.textFields.firstMatch.exists ? app.textFields.firstMatch : app.textViews.firstMatch
         guard field.waitForExistence(timeout: 3) else { throw XCTSkip("the request has no text field") }

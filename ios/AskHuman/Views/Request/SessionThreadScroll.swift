@@ -255,11 +255,25 @@ final class ThreadScrollCoordinator: NSObject {
     }
 
     /// The control goes back first; the thread is put in once the page is at rest again.
+    ///
+    /// A pull takes effect while the finger is still down, and the finger may stay down a good while after that. The wait
+    /// is for the page to come to rest once the finger is up: the spring that brings it back has a long tail, and a
+    /// thread put in before the tail is over would keep the request a few points off the place it had before the pull.
+    /// How long the spring gets is counted from the lift, not from the start, so that a slow pull does not eat it.
     func collapseAndPrepare() async {
         refresh?.endRefreshing()
-        let deadline = CACurrentMediaTime() + 1.5
-        while let scroll, CACurrentMediaTime() < deadline,
-              scroll.contentOffset.y < -scroll.adjustedContentInset.top - 0.5 || scroll.isTracking {
+        let start = CACurrentMediaTime()
+        var lifted: CFTimeInterval?
+        while let scroll, !Task.isCancelled, CACurrentMediaTime() - start < 10 {
+            let now = CACurrentMediaTime()
+            if scroll.isTracking {
+                lifted = nil
+            } else {
+                let since = lifted ?? now
+                lifted = since
+                if !scroll.isDecelerating, scroll.contentOffset.y >= -scroll.adjustedContentInset.top - 0.5 { break }
+                if now - since > 1.5 { break }
+            }
             try? await Task.sleep(for: .milliseconds(16))
         }
         prepareInsertion()
