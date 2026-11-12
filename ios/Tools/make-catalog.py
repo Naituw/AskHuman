@@ -265,6 +265,11 @@ ZH = {
     "%lld images attached": "已附 %lld 张图片",
     "%lld files attached": "已附 %lld 个文件",
     "Not answered": "未回答",
+    # Pictures in the history (docs/specs/ios-history-pictures.md)
+    "No longer on the Mac": "已不在 Mac 上",
+    "The file was deleted from the Mac, often because the system clears temporary files. There is nothing left to show.": "文件已从 Mac 上删除（临时文件常被系统清理），没有可显示的内容了。",
+    "%@, no longer on the Mac": "%@，已不在 Mac 上",
+    "%@, and %lld more": "%@，后面还有 %lld 张",
     "Delete": "删除",
     "Requests you answer or cancel are listed here. They stay on this phone only.": "你回答或取消的请求会列在这里，仅保存在这部手机上。",
     "No history yet": "还没有历史记录",

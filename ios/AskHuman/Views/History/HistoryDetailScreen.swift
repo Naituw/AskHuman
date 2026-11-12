@@ -7,6 +7,14 @@ import AHStore
 struct HistoryDetailScreen: View {
     let entry: HistoryEntry
 
+    @Environment(AppStore.self) private var store
+    /// What the Mac still has of this request's exchange, for its pictures (docs/specs/ios-history-pictures.md HP9). It is
+    /// asked for when the page opens and stays `nil` when the Mac cannot say: the page is whole without it, and the
+    /// pictures take their places when they come.
+    @State private var exchange: SessionExchange?
+    /// The picture just tapped: it opens the viewer, or says why there is nothing to open.
+    @State private var tapped: AssetRef?
+
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 16) {
@@ -23,6 +31,8 @@ struct HistoryDetailScreen: View {
         .background(Color(.systemGroupedBackground))
         .navigationTitle(entry.request.agent.label)
         .navigationBarTitleDisplayMode(.inline)
+        .task(id: entry.id) { exchange = await store.historyExchange(for: entry) }
+        .historyPictureOpening(macId: entry.macId, pictures: HistoryPictures(exchange).all, tapped: $tapped)
     }
 
     private var header: some View {
@@ -66,13 +76,19 @@ struct HistoryDetailScreen: View {
     @ViewBuilder
     private func askContent(_ ask: AskView) -> some View {
         let message = ask.message.text.trimmingCharacters(in: .whitespacesAndNewlines)
+        let pictures = HistoryPictures(exchange)
+        // The images the Mac described are shown as pictures; the other files, and any image it did not describe, stay names.
+        let rows = Self.namesLeft(of: ask.message.files, after: pictures.message.count)
         if !message.isEmpty || !ask.message.files.isEmpty {
             VStack(alignment: .leading, spacing: 10) {
                 if !message.isEmpty {
                     if ask.isMarkdown { WebMarkdownView(text: message) } else { Text(verbatim: message).textSelection(.enabled) }
                 }
-                ForEach(ask.message.files, id: \.assetId) { file in FileRow(asset: file).allowsHitTesting(false) }
-                if !ask.message.files.isEmpty {
+                if !pictures.message.isEmpty {
+                    HistoryPictureGrid(pictures: pictures.message, idPrefix: "history-picture-m") { tapped = $0 }
+                }
+                ForEach(rows, id: \.assetId) { file in FileRow(asset: file).allowsHitTesting(false) }
+                if !rows.isEmpty {
                     Text("Only the file names are kept on this phone.").font(.caption).foregroundStyle(.secondary)
                 }
             }
@@ -95,11 +111,17 @@ struct HistoryDetailScreen: View {
                     Divider()
                     Text(verbatim: text).font(.body).textSelection(.enabled)
                 }
-                if let answer, !answer.images.isEmpty || !answer.files.isEmpty {
+                // The pictures of what this phone answered (the Mac's record of another channel's answer is not shown here).
+                let replyPictures = answer == nil ? [] : pictures.replies(of: index)
+                if !replyPictures.isEmpty {
+                    HistoryPictureGrid(pictures: replyPictures, idPrefix: "history-picture-q\(index)") { tapped = $0 }
+                }
+                let unshownImages = max(0, (answer?.images.count ?? 0) - replyPictures.count)
+                if let answer, unshownImages > 0 || !answer.files.isEmpty {
                     HStack(alignment: .firstTextBaseline, spacing: 6) {
                         Image(systemName: "paperclip")
                         VStack(alignment: .leading, spacing: 2) {
-                            if !answer.images.isEmpty { Text("\(answer.images.count) images attached") }
+                            if unshownImages > 0 { Text("\(unshownImages) images attached") }
                             if !answer.files.isEmpty { Text("\(answer.files.count) files attached") }
                         }
                     }
@@ -128,6 +150,17 @@ struct HistoryDetailScreen: View {
                 }
             }
             .card()
+        }
+    }
+
+    /// The files of the message that stay names once `shown` of its images are shown as pictures: the first `shown` images
+    /// (the Mac describes them in the order they were attached) go, everything else stays in its place.
+    private static func namesLeft(of files: [AssetRef], after shown: Int) -> [AssetRef] {
+        var skip = shown
+        return files.filter { file in
+            guard file.kind == .image, skip > 0 else { return true }
+            skip -= 1
+            return false
         }
     }
 

@@ -60,8 +60,11 @@ extension AssetRef: @retroactive Identifiable {
 
 /// A square cell with the picture cropped to fill it. The square alone sets the size: a picture that is
 /// wide or tall only fills it and is clipped, so it can neither spill out of its cell nor cover the next.
-private struct ImageThumbnail: View {
+struct ImageThumbnail: View {
     let asset: AssetRef
+    var cornerRadius: CGFloat = 10
+    /// A small cell (the strip of a history card) has room for the sign only: no words on its "Too large" mark.
+    var compact = false
 
     var body: some View {
         Color(.tertiarySystemFill)
@@ -75,11 +78,15 @@ private struct ImageThumbnail: View {
                     Image(systemName: "photo").foregroundStyle(.secondary)
                 }
             }
-            .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
-            .contentShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+            .clipShape(RoundedRectangle(cornerRadius: cornerRadius, style: .continuous))
+            .contentShape(RoundedRectangle(cornerRadius: cornerRadius, style: .continuous))
             .overlay(alignment: .bottomLeading) {
                 if asset.tooLarge {
-                    Chip(text: "Too large", systemImage: "exclamationmark.triangle.fill", tint: .orange).padding(4)
+                    if compact {
+                        Image(systemName: "exclamationmark.triangle.fill").font(.caption2).foregroundStyle(.orange).padding(3)
+                    } else {
+                        Chip(text: "Too large", systemImage: "exclamationmark.triangle.fill", tint: .orange).padding(4)
+                    }
                 }
             }
     }

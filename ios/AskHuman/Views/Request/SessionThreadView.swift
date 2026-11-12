@@ -21,7 +21,7 @@ struct SessionThreadView: View {
             VStack(alignment: .leading, spacing: 12) {
                 if let state { SessionStateRow(kind: state) { Task { await history.retry() } } }
                 ForEach(thread.items) { exchange in
-                    SessionExchangeCard(exchange: exchange)
+                    SessionExchangeCard(exchange: exchange, macId: history.macId)
                         .background { if exchange.id == newest { SessionThreadAnchor(name: "thread-newest") } }
                 }
                 if !thread.items.isEmpty { CurrentRequestDivider() }
@@ -143,9 +143,17 @@ private struct SessionThreadErrorRow: View {
 
 /// One exchange: when and where it was answered, what the Agent said, and each question with its answer. A tap opens it in
 /// place (the whole message, every question, the counts of what was attached) and closes it again.
+///
+/// An exchange with pictures (docs/specs/ios-history-pictures.md) shows a row of them under the message while it is folded
+/// (HP3), the message's pictures as a grid and each answer's under the answer when it is open (HP4). A tap on a picture
+/// opens the viewer and does not open the card.
 private struct SessionExchangeCard: View {
     let exchange: SessionExchange
+    /// The Mac the exchange is from: a picture's original is fetched from it.
+    let macId: String
     @State private var expanded = false
+    /// The picture just tapped: it opens the viewer, or says why there is nothing to open.
+    @State private var tapped: AssetRef?
     /// About four lines of the message, whatever the text size.
     @ScaledMetric(relativeTo: .subheadline) private var foldHeight: CGFloat = 84
     /// Questions a folded card names; the rest are counted.
@@ -154,27 +162,51 @@ private struct SessionExchangeCard: View {
     private var automatic: Bool { SessionChannel.isAutomatic(exchange.channel) }
 
     var body: some View {
+        let pictures = HistoryPictures(exchange)
         VStack(alignment: .leading, spacing: 8) {
-            Text(verbatim: header).font(.caption).foregroundStyle(.secondary)
-            if !exchange.message.isEmpty { message }
-            questions
-            if expanded { extras }
+            if pictures.isEmpty {
+                Text(verbatim: header).font(.caption).foregroundStyle(.secondary)
+                if !exchange.message.isEmpty { message }
+                questions(pictures)
+                if expanded { extras(pictures) }
+            } else {
+                pictureContent(pictures)
+            }
         }
         .card()
         // An answer the Mac gave by itself (away or mute) is there to explain what the Agent did, not to be weighed.
         .opacity(automatic ? 0.6 : 1)
         .contentShape(Rectangle())
         .onTapGesture { toggle() }
-        .accessibilityElement(children: .ignore)
-        .accessibilityLabel(spoken)
-        .accessibilityValue(expanded ? Text("Expanded") : Text("Collapsed"))
-        .accessibilityAddTraits(.isButton)
-        .accessibilityAction { toggle() }
+        .modifier(CardSpeech(segmented: !pictures.isEmpty, label: spoken, expanded: expanded, toggle: toggle))
         .accessibilityIdentifier("session-exchange")
+        .historyPictureOpening(macId: macId, pictures: pictures.all, tapped: $tapped)
     }
 
     private func toggle() {
         withAnimation(.easeInOut(duration: 0.2)) { expanded.toggle() }
+    }
+
+    /// A card with pictures is not one spoken stop: its pictures are buttons of their own, so the text around them is read
+    /// in pieces (the head, each question), in the order it is drawn.
+    @ViewBuilder
+    private func pictureContent(_ pictures: HistoryPictures) -> some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text(verbatim: header).font(.caption).foregroundStyle(.secondary)
+            if !exchange.message.isEmpty { message }
+        }
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(headSpoken)
+        .accessibilityValue(expanded ? Text("Expanded") : Text("Collapsed"))
+        .accessibilityAddTraits(.isButton)
+        .accessibilityAction { toggle() }
+        if expanded {
+            if !pictures.message.isEmpty { HistoryPictureGrid(pictures: pictures.message) { tapped = $0 } }
+        } else {
+            HistoryPictureStrip(pictures: pictures.all) { tapped = $0 }
+        }
+        questions(pictures)
+        if expanded { extras(pictures) }
     }
 
     // MARK: header
@@ -233,13 +265,20 @@ private struct SessionExchangeCard: View {
     // MARK: questions
 
     @ViewBuilder
-    private var questions: some View {
+    private func questions(_ pictures: HistoryPictures) -> some View {
         let all = exchange.qs
         let shown = expanded ? all : Array(all.prefix(Self.foldedQuestions))
+        let segmented = !pictures.isEmpty
         ForEach(Array(shown.enumerated()), id: \.offset) { _, question in
             VStack(alignment: .leading, spacing: 2) {
-                questionText(question)
-                answer(of: question)
+                VStack(alignment: .leading, spacing: 2) {
+                    questionText(question)
+                    answer(of: question)
+                }
+                .modifier(SpokenStop(label: questionSpoken(question), enabled: segmented))
+                if expanded, !question.pictures.isEmpty {
+                    HistoryPictureGrid(pictures: question.pictures) { tapped = $0 }.padding(.vertical, 4)
+                }
                 if expanded { counts(of: question) }
             }
         }
@@ -284,10 +323,13 @@ private struct SessionExchangeCard: View {
 
     // MARK: what was attached
 
+    /// What went with the answer and is not shown as a picture: the images that came without one (an older Mac, or past the
+    /// twelve it describes), and the files.
     @ViewBuilder
     private func counts(of question: SessionQuestion) -> some View {
+        let unshown = question.images > UInt64(question.pictures.count) ? question.images - UInt64(question.pictures.count) : 0
         let parts = [
-            question.images > 0 ? String(localized: "\(Int(question.images)) images") : nil,
+            unshown > 0 ? String(localized: "\(Int(unshown)) images") : nil,
             question.files > 0 ? String(localized: "\(Int(question.files)) files") : nil,
         ].compactMap { $0 }
         if !parts.isEmpty {
@@ -295,10 +337,13 @@ private struct SessionExchangeCard: View {
         }
     }
 
+    /// The attachments are the files that are not shown as pictures (HP4): the message's pictures are drawn above.
     @ViewBuilder
-    private var extras: some View {
+    private func extras(_ pictures: HistoryPictures) -> some View {
+        let shown = UInt64(pictures.message.count)
+        let unshown = exchange.attachments > shown ? exchange.attachments - shown : 0
         let parts = [
-            exchange.attachments > 0 ? String(localized: "\(Int(exchange.attachments)) attachments") : nil,
+            unshown > 0 ? String(localized: "\(Int(unshown)) attachments") : nil,
             exchange.notes > 0 ? String(localized: "\(Int(exchange.notes)) annotations") : nil,
         ].compactMap { $0 }
         if !parts.isEmpty {
@@ -308,18 +353,60 @@ private struct SessionExchangeCard: View {
 
     // MARK: spoken
 
-    /// What VoiceOver reads for the card as a whole: when, where, the message, and each question with its answer.
-    private var spoken: String {
+    /// What VoiceOver reads for the head of the card: when, where, and the message.
+    private var headSpoken: String {
         var parts = [header]
         if !exchange.message.isEmpty {
             parts.append(exchange.markdown ? MarkdownParser.plainText(exchange.message) : exchange.message)
         }
-        for question in exchange.qs {
-            let written = question.input.flatMap { $0.isEmpty ? nil : $0 }
-            let given = question.selected + (written.map { [$0] } ?? [])
-            parts.append(question.text + ": " + (given.isEmpty ? String(localized: "Not answered") : given.joined(separator: ", ")))
-        }
         return parts.joined(separator: ". ")
+    }
+
+    /// What VoiceOver reads for a question with its answer.
+    private func questionSpoken(_ question: SessionQuestion) -> String {
+        let written = question.input.flatMap { $0.isEmpty ? nil : $0 }
+        let given = question.selected + (written.map { [$0] } ?? [])
+        return question.text + ": " + (given.isEmpty ? String(localized: "Not answered") : given.joined(separator: ", "))
+    }
+
+    /// What VoiceOver reads for the card as a whole: when, where, the message, and each question with its answer.
+    private var spoken: String {
+        ([headSpoken] + exchange.qs.map(questionSpoken)).joined(separator: ". ")
+    }
+}
+
+/// How a card is read out: one stop, or (with pictures, which are buttons of their own) a container of stops.
+private struct CardSpeech: ViewModifier {
+    let segmented: Bool
+    let label: String
+    let expanded: Bool
+    let toggle: () -> Void
+
+    func body(content: Content) -> some View {
+        if segmented {
+            content.accessibilityElement(children: .contain)
+        } else {
+            content
+                .accessibilityElement(children: .ignore)
+                .accessibilityLabel(label)
+                .accessibilityValue(expanded ? Text("Expanded") : Text("Collapsed"))
+                .accessibilityAddTraits(.isButton)
+                .accessibilityAction { toggle() }
+        }
+    }
+}
+
+/// A piece of a card that is one spoken stop (when the card is read in pieces).
+private struct SpokenStop: ViewModifier {
+    let label: String
+    let enabled: Bool
+
+    func body(content: Content) -> some View {
+        if enabled {
+            content.accessibilityElement(children: .ignore).accessibilityLabel(label)
+        } else {
+            content
+        }
     }
 }
 

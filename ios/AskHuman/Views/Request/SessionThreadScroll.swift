@@ -19,6 +19,8 @@ import AHCore
 @MainActor @Observable
 final class RequestHistory {
     let thread: SessionThread
+    /// The Mac the thread is read from: the pictures of its exchanges are fetched from it.
+    let macId: String
     /// The page is more than a screen above the request: "Back to the current request" is offered.
     private(set) var farAbove = false
     /// The menu is loading the thread (a pull has its own room on the page).
@@ -33,8 +35,9 @@ final class RequestHistory {
 
     /// `engaged` is told whenever the person asks for the history: on a request that has ended it stops the page's
     /// countdown (S13), as the strip's "Stay" does.
-    init(thread: SessionThread, engaged: @escaping () -> Void) {
+    init(thread: SessionThread, macId: String, engaged: @escaping () -> Void) {
         self.thread = thread
+        self.macId = macId
         self.engaged = engaged
     }
 
@@ -144,7 +147,7 @@ final class RequestHistoryHolder {
         if currentId != item.id || current == nil {
             guard let thread = store.makeSessionThread(for: item) else { return nil }
             let id = item.id
-            current = RequestHistory(thread: thread) { [weak store] in store?.stayOnEnded(id) }
+            current = RequestHistory(thread: thread, macId: item.macId) { [weak store] in store?.stayOnEnded(id) }
             currentId = id
         }
         return current
