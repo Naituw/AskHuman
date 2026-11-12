@@ -1,5 +1,6 @@
 import Foundation
 import AHProtocol
+import AHStore
 
 extension AppStore {
     /// Whether the request page can show the earlier exchanges of its session (docs/specs/ios-session-history.md
@@ -19,5 +20,14 @@ extension AppStore {
         return SessionThread(anchorMs: item.summary.createdAt) { beforeMs, beforeId, limit in
             try await backend.sessionHistory(macId: macId, agentKey: key, beforeMs: beforeMs, beforeId: beforeId, limit: limit)
         }
+    }
+
+    /// What the Mac still has of a finished request's exchange, pictures included (docs/specs/ios-history-pictures.md
+    /// HP9), for the detail page of the History tab. `nil` is every way of not getting it: the Mac is offline, is older,
+    /// has forgotten the request, or does not answer in time. The page is then what it was before the pictures, so none
+    /// of them is an error to show.
+    public func historyExchange(for entry: HistoryEntry) async -> SessionExchange? {
+        guard state.macs.first(where: { $0.id == entry.macId })?.caps.historyPictures == true else { return nil }
+        return try? await backend.sessionExchange(macId: entry.macId, id: entry.request.id)
     }
 }

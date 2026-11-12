@@ -19,15 +19,7 @@ extension MockBackend {
         sessionHistoryCalls.append(
             SessionHistoryCall(macId: macId, agentKey: agentKey, beforeMs: beforeMs, beforeId: beforeId, limit: limit)
         )
-        await pause(sessionHistoryDelay)
-        if let gate = sessionHistoryGate {
-            // A test that has to do something while the load is in flight decides when the answer is ready, instead of
-            // racing a timer against a test runner that can be seconds late on a busy machine.
-            let giveUp = Date().addingTimeInterval(60)
-            while !FileManager.default.fileExists(atPath: gate), Date() < giveUp {
-                try? await Task.sleep(nanoseconds: 50_000_000)
-            }
-        }
+        await waitForSessionHistoryRead()
         try requireSessionHistoryMac(macId)
         if failNextSessionHistory > 0 {
             failNextSessionHistory -= 1
@@ -40,6 +32,31 @@ extension MockBackend {
             return exchange.at < beforeMs || (exchange.at == beforeMs && exchange.id < beforeId)
         }
         return SessionHistory(reqId: "mock", agentKey: agentKey, items: Array(older.prefix(limit)), more: older.count > limit)
+    }
+
+    /// A read takes its delay, then waits for the gate a UI test may have set.
+    private func waitForSessionHistoryRead() async {
+        await pause(sessionHistoryDelay)
+        if let gate = sessionHistoryGate {
+            // A test that has to do something while the load is in flight decides when the answer is ready, instead of
+            // racing a timer against a test runner that can be seconds late on a busy machine.
+            let giveUp = Date().addingTimeInterval(60)
+            while !FileManager.default.fileExists(atPath: gate), Date() < giveUp {
+                try? await Task.sleep(nanoseconds: 50_000_000)
+            }
+        }
+    }
+
+    /// One exchange of the Mac's history by its id, with its pictures (docs/specs/ios-history-pictures.md HP9); `nil`
+    /// when the Mac holds no such record. Waits like a read of a session does, so a test can tell the page from its
+    /// pictures.
+    public func sessionExchange(macId: String, id: String) async throws -> SessionExchange? {
+        guard let mac = state.macs.first(where: { $0.id == macId }) else { throw BackendError.unknownMac }
+        if unreachable.contains(macId) || mac.link != .online { throw BackendError.macOffline }
+        guard mac.caps.historyPictures else { throw BackendError.rejected("unsupported") }
+        sessionExchangeCalls.append(SessionExchangeCall(macId: macId, id: id))
+        await waitForSessionHistoryRead()
+        return sessionHistories.values.lazy.flatMap { $0 }.first { $0.id == id }
     }
 
     /// What the Mac holds of a session (a test sets up its own), kept newest first the way the Mac orders it.

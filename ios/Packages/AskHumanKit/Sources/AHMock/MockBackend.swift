@@ -61,6 +61,10 @@ public actor MockBackend: RemoteBackend {
         /// four sessions: one with 23 exchanges, one with 3, one with none, a request that names no session, and one on the Mac
         /// that cannot read history. `demo` keeps its requests as they are: it is the page without an entry.
         case sessionHistory
+        /// `sessionHistory` with a Home MacBook Pro that also describes the pictures of the exchanges
+        /// (`caps.historyPictures`), a session whose exchanges carry pictures of every kind (docs/specs/
+        /// ios-history-pictures.md), and a finished request of the History tab whose pictures the Mac still has.
+        case historyPictures
     }
 
     /// A submission as the mock received it (for tests).
@@ -171,6 +175,17 @@ public actor MockBackend: RemoteBackend {
         public var limit: Int
     }
     public internal(set) var sessionHistoryCalls: [SessionHistoryCall] = []
+    /// A read of one exchange as the mock received it (for tests).
+    public struct SessionExchangeCall: Equatable, Sendable {
+        public var macId: String
+        public var id: String
+
+        public init(macId: String, id: String) {
+            self.macId = macId
+            self.id = id
+        }
+    }
+    public internal(set) var sessionExchangeCalls: [SessionExchangeCall] = []
     /// The next this many reads get no answer from the Mac (the call times out); then it answers again.
     public var failNextSessionHistory = 0
     /// Seconds a read takes before the latency scales it.
@@ -205,7 +220,7 @@ public actor MockBackend: RemoteBackend {
         var initial: EngineState
         switch scenario {
         case .demo, .agentResults, .quota, .single, .longs, .markdown, .strict, .tall, .links, .gallery, .outdated, .bothSync, .todoPick,
-             .away, .awayOn, .annotations, .direct, .sessionHistory:
+             .away, .awayOn, .annotations, .direct, .sessionHistory, .historyPictures:
             let inbox: [InboxItem]
             switch scenario {
             case .single: inbox = MockData.inbox(now: date).filter { $0.requestId == "req-select" }
@@ -218,6 +233,7 @@ public actor MockBackend: RemoteBackend {
             case .annotations: inbox = MockData.annotationsInbox(now: date)
             case .direct: inbox = MockData.directInbox(now: date)
             case .sessionHistory: inbox = MockData.sessionHistoryInbox(now: date)
+            case .historyPictures: inbox = MockData.historyPicturesInbox(now: date)
             default: inbox = MockData.inbox(now: date)
             }
             let traffic = scenario == .quota
@@ -228,13 +244,15 @@ public actor MockBackend: RemoteBackend {
                 macs: MockData.macs(
                     now: date, knowTodos: scenario != .outdated, pickTodos: scenario == .todoPick,
                     awayMode: scenario == .away || scenario == .awayOn, annotations: scenario == .annotations || scenario == .direct,
-                    sessionHistoryMacs: scenario == .sessionHistory ? [MockData.homeMacId] : []
+                    sessionHistoryMacs: scenario == .sessionHistory || scenario == .historyPictures ? [MockData.homeMacId] : [],
+                    historyPictureMacs: scenario == .historyPictures ? [MockData.homeMacId] : []
                 ), inbox: inbox,
                 push: .registered(expiresAt: date.addingTimeInterval(86_400 * 80)), historyRevision: 1,
                 traffic: traffic,
                 brokerHost: "broker.example.com", agents: MockData.agents(now: date)
             )
             entries = MockData.history(now: date)
+            if scenario == .historyPictures { entries.insert(MockData.picturesHistoryEntry(now: date), at: 0) }
         case .empty:
             initial = EngineState(phase: .idle, foreground: true, push: .noToken)
             entries = []
@@ -281,6 +299,7 @@ public actor MockBackend: RemoteBackend {
         }
         state = initial
         if scenario == .sessionHistory { sessionHistories = MockData.sessionHistories(now: date) }
+        if scenario == .historyPictures { sessionHistories = MockData.sessionHistories(now: date, withPictures: true) }
         let sample = MockData.todoSample(now: date)
         todoRows = sample.rows
         todoSyncedRows = sample.syncedRows

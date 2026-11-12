@@ -16,6 +16,7 @@ enum TodoReply: Sendable {
     case list(ProjectTodos)
     case ack(TodoAck)
     case history(SessionHistory)
+    case exchange(HistoryExchange)
 }
 
 extension PhoneEngine {

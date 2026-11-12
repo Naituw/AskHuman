@@ -92,6 +92,13 @@ final class TestMac: @unchecked Sendable {
     var ignoreSessionHistory = false
     /// Replaces the page the Mac would send; returning `nil` sends no answer.
     var sessionHistoryAnswer: ((SessionHistoryGet) -> SessionHistory?)?
+    /// The exchanges the Mac can hand over one by one (`history.exchange.get`), by id.
+    var historyExchanges: [String: SessionExchange] = [:]
+    /// The `history.exchange.get` messages received, in order.
+    var historyExchangeGets: [HistoryExchangeGet] = []
+    var ignoreHistoryExchange = false
+    /// Replaces the answer the Mac would send to `history.exchange.get`; returning `nil` sends no answer.
+    var historyExchangeAnswer: ((HistoryExchangeGet) -> HistoryExchange?)?
 
     init(broker: LoopbackBroker, user: String, clock: ManualClock, macId: String = Bytes.newId(), macName: String = "Home Mac") {
         self.user = user
@@ -373,6 +380,8 @@ final class TestMac: @unchecked Sendable {
             await handleAway(plain, from: phoneId)
         case SessionHistoryGet.type:
             await handleSessionHistory(plain, from: phoneId)
+        case HistoryExchangeGet.type:
+            await handleHistoryExchange(plain, from: phoneId)
         default:
             await handleAgents(plain, from: phoneId)
         }

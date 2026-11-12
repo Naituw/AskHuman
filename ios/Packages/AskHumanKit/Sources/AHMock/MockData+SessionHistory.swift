@@ -68,13 +68,16 @@ extension MockData {
         ], now: now)
     }
 
-    /// What the Home MacBook Pro holds of each session, newest first.
-    public static func sessionHistories(now: Date = Date()) -> [String: [SessionExchange]] {
-        [
+    /// What the Home MacBook Pro holds of each session, newest first. `withPictures` adds the session whose exchanges carry
+    /// pictures (docs/specs/ios-history-pictures.md).
+    public static func sessionHistories(now: Date = Date(), withPictures: Bool = false) -> [String: [SessionExchange]] {
+        var all: [String: [SessionExchange]] = [
             longSessionKey: (0..<longSessionCount).map { sessionExchange(index: $0, of: longSessionCount, now: now) },
             shortSessionKey: (0..<shortSessionCount).map { sessionExchange(index: $0, of: shortSessionCount, now: now) },
             emptySessionKey: [],
         ]
+        if withPictures { all[picturesSessionKey] = picturesSessionExchanges(now: now) }
+        return all
     }
 
     /// The `index`-th exchange, newest first, of a session of `count`. Every kind of exchange is among them: Markdown,

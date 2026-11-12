@@ -630,6 +630,7 @@ public actor PhoneEngine: RemoteBackend {
             case TodoChanged.type: onTodoChanged(macId, try plain.body(as: TodoChanged.self))
             case TrafficSync.type: onTrafficSync(macId, try plain.body(as: TrafficSync.self))
             case SessionHistory.type: onSessionHistory(macId, try plain.body(as: SessionHistory.self))
+            case HistoryExchange.type: onHistoryExchange(macId, try plain.body(as: HistoryExchange.self))
             case AssetChunk.type: await onAssetChunk(macId, try plain.body(as: AssetChunk.self))
             case AssetError.type: onAssetError(macId, try plain.body(as: AssetError.self))
             case UploadAck.type: onUploadAck(macId, try plain.body(as: UploadAck.self))

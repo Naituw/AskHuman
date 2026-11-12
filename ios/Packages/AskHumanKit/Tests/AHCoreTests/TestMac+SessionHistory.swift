@@ -19,6 +19,19 @@ extension TestMac {
         if let page { await sendDown(page, to: phoneId) }
     }
 
+    /// One exchange by its id: the answer says whether the Mac has it.
+    func handleHistoryExchange(_ plain: Plain, from phoneId: String) async {
+        guard let get = try? plain.body(as: HistoryExchangeGet.self) else { return }
+        let (ignore, answer, held) = lock.withLock {
+            historyExchangeGets.append(get)
+            return (ignoreHistoryExchange, historyExchangeAnswer, historyExchanges[get.id])
+        }
+        guard !ignore else { return }
+        let reply: HistoryExchange?
+        if let answer { reply = answer(get) } else { reply = HistoryExchange(reqId: get.reqId, id: get.id, item: held) }
+        if let reply { await sendDown(reply, to: phoneId) }
+    }
+
     /// The page the Mac sends for `get` out of `held` (newest first): what is older than the cursor `(beforeMs, beforeId)`,
     /// or than `beforeMs` alone without an id, at most `limit` of it, and whether any is left.
     static func page(for get: SessionHistoryGet, in held: [SessionExchange]) -> SessionHistory {

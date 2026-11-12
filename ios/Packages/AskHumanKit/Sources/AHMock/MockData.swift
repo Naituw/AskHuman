@@ -22,14 +22,15 @@ public enum MockData {
     /// message (`caps.annotations`), as only the newest Macs do.
     public static func macs(
         now: Date = Date(), link: MacLink = .online, knowTodos: Bool = true, pickTodos: Bool = false, awayMode: Bool = false,
-        annotations: Bool = false, sessionHistoryMacs: Set<String> = []
+        annotations: Bool = false, sessionHistoryMacs: Set<String> = [], historyPictureMacs: Set<String> = []
     ) -> [MacState] {
         [
             MacState(
                 id: homeMacId, name: "Home MacBook Pro", macName: "Home MacBook Pro", alias: nil, link: link,
                 caps: Caps(
                     newTask: true, interject: true, watch: true, todos: knowTodos, answerTodos: knowTodos && pickTodos,
-                    away: awayMode, annotations: annotations, sessionHistory: sessionHistoryMacs.contains(homeMacId)
+                    away: awayMode, annotations: annotations, sessionHistory: sessionHistoryMacs.contains(homeMacId),
+                    historyPictures: historyPictureMacs.contains(homeMacId)
                 ),
                 slot: SlotInfo(active: false, autoActivation: true),
                 pairedAt: now.addingTimeInterval(-86_400 * 12), lastSeenAt: now, pendingCount: 0, pushStatus: "ok"
@@ -38,7 +39,8 @@ public enum MockData {
                 id: officeMacId, name: "Office iMac", macName: "wutian's iMac", alias: "Office iMac", link: link,
                 caps: Caps(
                     newTask: true, interject: true, watch: true, todos: knowTodos, answerTodos: knowTodos && pickTodos,
-                    away: awayMode, annotations: annotations, sessionHistory: sessionHistoryMacs.contains(officeMacId)
+                    away: awayMode, annotations: annotations, sessionHistory: sessionHistoryMacs.contains(officeMacId),
+                    historyPictures: historyPictureMacs.contains(officeMacId)
                 ),
                 slot: SlotInfo(active: true, autoActivation: false),
                 pairedAt: now.addingTimeInterval(-86_400 * 3), lastSeenAt: now.addingTimeInterval(link == .online ? 0 : -3_600),
@@ -533,6 +535,9 @@ public enum MockData {
             let shape = galleryPictures[index]
             return picture(number: index + 1, width: shape.width, height: shape.height, hue: shape.hue, type: .png) ?? Data()
         }
+        if let shape = historyPictureShape(of: asset.assetId) {
+            return picture(number: shape.number, width: shape.width, height: shape.height, hue: shape.hue, type: .png) ?? Data()
+        }
         if asset.isImage { return chartPNG() ?? Data() }
         switch asset.name {
         case "schema.diff":
@@ -599,7 +604,7 @@ public enum MockData {
 
     /// A picture of one hue with a frame and its number in the middle: its shape shows how a
     /// thumbnail crops it, its number which picture a viewer page holds.
-    private static func picture(number: Int, width: Int, height: Int, hue: CGFloat, type: UTType) -> Data? {
+    static func picture(number: Int, width: Int, height: Int, hue: CGFloat, type: UTType) -> Data? {
         guard width > 0, height > 0, let context = CGContext(
             data: nil, width: width, height: height, bitsPerComponent: 8, bytesPerRow: 0,
             space: CGColorSpace(name: CGColorSpace.sRGB)!, bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue

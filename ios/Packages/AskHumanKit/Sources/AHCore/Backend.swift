@@ -119,6 +119,10 @@ public protocol RemoteBackend: AnyObject, Sendable {
     /// reached, `.rejected("unsupported")` when it predates the feature and `.timedOut` when it does not answer.
     /// An unknown session is not an error: the page is empty and `more` is false.
     func sessionHistory(macId: String, agentKey: String, beforeMs: Int64, beforeId: String?, limit: Int) async throws -> SessionHistory
+    /// One exchange of the Mac's history by its id (the id of the request it answered), with its pictures
+    /// (docs/specs/ios-history-pictures.md HP9); `nil` when the Mac has no such record. Throws `.macOffline`,
+    /// `.rejected("unsupported")` for a Mac that does not describe pictures, and `.timedOut`.
+    func sessionExchange(macId: String, id: String) async throws -> SessionExchange?
 
     // history
     func history() async -> [HistoryEntry]
