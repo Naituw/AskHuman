@@ -2,9 +2,10 @@ import { mount, type VueWrapper } from "@vue/test-utils";
 import { nextTick, ref } from "vue";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { i18n } from "../../i18n";
-import type { AgentId, AgentModeStatus } from "../../lib/types";
+import type { AgentId, AgentMode, AgentModeStatus, AppConfig } from "../../lib/types";
 import { modeStatus } from "./integration.testkit";
 import IntegrationTab from "./IntegrationTab.vue";
+import { settings } from "../setup/setup.testkit";
 import { revealSettingsTarget } from "./reveal";
 import { useAgentDetails } from "./useAgentDetails";
 
@@ -14,6 +15,7 @@ vi.mock("./context", () => ({ useSettingsContext }));
 vi.mock("./CursorDesktopSettings.vue", () => ({ default: { template: '<div class="cursor-desktop-settings-stub" />' } }));
 
 function agentDefinition(id: AgentId, hasTimeoutHook: boolean) {
+  const recommended: AgentMode = id === "cursor" || id === "claude" || id === "pi" || id === "antigravity" ? "cli" : "mcp";
   return {
     id,
     title: id,
@@ -21,7 +23,7 @@ function agentDefinition(id: AgentId, hasTimeoutHook: boolean) {
     hasCli: id !== "grok",
     hasMcp: id !== "pi",
     instructionKind: id === "grok" ? "skill" : id === "codex" ? "hook" : "rule",
-    recommended: id === "cursor" || id === "claude" || id === "pi" || id === "antigravity" ? "cli" : "mcp",
+    recommended,
   };
 }
 
@@ -37,15 +39,19 @@ function settingsContext(
   const details = useAgentDetails([agent], modes, modeReadError, piVersionLoading);
   return {
     ...details,
-    config: ref(null),
+    config: ref<AppConfig | null>(null),
     revealLabel: "Reveal",
     prompt: ref(""),
     promptCopied: ref(false),
     promptVariant: ref<"cli" | "mcp">("cli"),
-    collabBusy: ref(false),
-    collabError: ref(""),
-    changeCollaborationStyle: vi.fn(),
-    saveCustomCollaborationText: vi.fn(),
+    collabBusy: ref({}),
+    collabError: ref({}),
+    collabMessage: ref({}),
+    collabResults: ref({}),
+    collabDefaults: ref({ aligned: "aligned body", autonomous: "autonomous body" }),
+    collaborationSummary: vi.fn(() => "Follow default (Aligned)"),
+    saveAgentCollaborationStyle: vi.fn(),
+    retryCollaborationStyle: vi.fn(),
     AGENTS: [agent],
     modes,
     modeReadError,
@@ -113,6 +119,69 @@ describe("IntegrationTab", () => {
     expect(row).toBeDefined();
     return row!;
   }
+
+  it("places the style editor last in the Agent details and exposes the saved summary when folded", async () => {
+    const { wrapper, context } = mountAgent(agentDefinition("cursor", true), modeStatus());
+    context.config.value = settings().config;
+    await nextTick();
+    expect(wrapper.get(".agent-details").element.lastElementChild?.id).toBe("collaboration-cursor");
+    expect(wrapper.get(".collab-summary").text()).toBe("Collaboration style · Follow default (Aligned)");
+    expect(wrapper.get("#collaboration-cursor").isVisible()).toBe(false);
+    await wrapper.get('[data-testid="agent-details-toggle-cursor"]').trigger("click");
+    expect(context.agentExpanded.value.cursor).toBe(true);
+    expect(wrapper.get(".agent-details").attributes("style") ?? "").not.toContain("display: none");
+    expect(wrapper.find(".collab-summary").exists()).toBe(false);
+    wrapper.unmount();
+  });
+
+  it.each(["cursor", "claude", "codex", "grok", "pi", "antigravity"] as AgentId[])(
+    "gates %s collaboration controls and its summary on readable, active integration",
+    async (id) => {
+      const agent = agentDefinition(id, true);
+      const { wrapper, context } = mountAgent(agent, modeStatus({ mode: "none" }));
+      context.config.value = settings().config;
+      context.config.value.general.agentCollaborationStyles = {
+        [id]: { style: "custom", customText: "previously saved draft" },
+      };
+      await nextTick();
+      const details = () => wrapper.get(`#agent-details-${id}`);
+      expect(details().attributes("style")).toContain("display: none");
+      expect(wrapper.find(".collab-summary").exists()).toBe(false);
+      expect(wrapper.find(`[data-testid="agent-details-toggle-${id}"]`).exists()).toBe(false);
+
+      context.modes.value[id].mode = agent.recommended;
+      await nextTick();
+      expect(wrapper.find(".collab-summary").exists()).toBe(true);
+      await wrapper.get(`[data-testid="agent-details-toggle-${id}"]`).trigger("click");
+      expect(details().attributes("style") ?? "").not.toContain("display: none");
+      expect(details().element.lastElementChild?.id).toBe(`collaboration-${id}`);
+
+      context.modeReadError.value[id] = true;
+      await nextTick();
+      expect(details().attributes("style")).toContain("display: none");
+      expect(wrapper.find(".collab-summary").exists()).toBe(false);
+      wrapper.unmount();
+    },
+  );
+
+  it("retains an unsaved custom draft while switching the integration off and on", async () => {
+    const { wrapper, context } = mountAgent(agentDefinition("cursor", true), modeStatus());
+    context.config.value = settings().config;
+    await nextTick();
+    await wrapper.get('[data-testid="agent-details-toggle-cursor"]').trigger("click");
+    await wrapper.get("#collaboration-cursor select").setValue("custom");
+    await wrapper.get("#collaboration-cursor textarea").setValue("unsaved custom draft");
+    context.modes.value.cursor.mode = "none";
+    await nextTick();
+    expect(wrapper.get("#agent-details-cursor").attributes("style")).toContain("display: none");
+    expect(wrapper.find(".collab-summary").exists()).toBe(false);
+    expect((wrapper.get("#collaboration-cursor textarea").element as HTMLTextAreaElement).value).toBe("unsaved custom draft");
+    context.modes.value.cursor.mode = "cli";
+    await nextTick();
+    expect((wrapper.get("#collaboration-cursor textarea").element as HTMLTextAreaElement).value).toBe("unsaved custom draft");
+    expect(context.config.value.general.agentCollaborationStyles?.cursor).toBeUndefined();
+    wrapper.unmount();
+  });
 
   it("shows Cursor Desktop control only inside an active Cursor integration", () => {
     const active = mountAgent(agentDefinition("cursor", true), modeStatus());

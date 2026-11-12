@@ -178,6 +178,8 @@ export function createSettingsContext() {
     config: core.config,
     activeTab: core.activeTab,
     everydayIntegrationsReadOnly: core.everydayIntegrationsReadOnly,
+    collaborationAvailable: (agent) =>
+      integration.modes.value[agent].mode !== "none" && !integration.modeReadError.value[agent],
   });
 
   const ctx = {

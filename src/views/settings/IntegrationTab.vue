@@ -7,6 +7,7 @@ import type { AgentId } from "../../lib/types";
 import BrandBadge from "../setup/BrandBadge.vue";
 import CodexDesktopSettings from "./CodexDesktopSettings.vue";
 import CursorDesktopSettings from "./CursorDesktopSettings.vue";
+import CollaborationStyleEditor from "./CollaborationStyleEditor.vue";
 import { useI18n } from "vue-i18n";
 import { agentTags, hasDetails, type AgentCardInput } from "./agentCard";
 import { useSettingsContext } from "./context";
@@ -18,10 +19,18 @@ const {
   prompt,
   promptCopied,
   promptVariant,
+  promptAgent,
+  promptSupportsCli,
+  promptSupportsMcp,
+  setPromptAgent,
   collabBusy,
   collabError,
-  changeCollaborationStyle,
-  saveCustomCollaborationText,
+  collabDefaults,
+  collabMessage,
+  collabResults,
+  collaborationSummary,
+  saveAgentCollaborationStyle,
+  retryCollaborationStyle,
   AGENTS,
   modes,
   integrationLoading,
@@ -87,73 +96,14 @@ const messageUnderHeader = (id: AgentId) =>
   ></div>
   <p class="section-intro">{{ t("settings.integration.overviewDesc") }}</p>
 
-  <!-- 协作风格（全局）：对齐 / 自主 / 自定义 -->
-  <div class="card collab-style-card">
-    <p class="card-title">{{ t("settings.integration.collabTitle") }}</p>
-    <div class="row">
-      <div class="segmented">
-        <button
-          type="button"
-          class="seg"
-          :class="{ active: (config?.general.collaborationStyle ?? 'aligned') === 'aligned' }"
-          :disabled="collabBusy"
-          @click="changeCollaborationStyle('aligned')"
-        >
-          {{ t("settings.integration.collabAligned") }}
-        </button>
-        <button
-          type="button"
-          class="seg"
-          :class="{ active: config?.general.collaborationStyle === 'autonomous' }"
-          :disabled="collabBusy"
-          @click="changeCollaborationStyle('autonomous')"
-        >
-          {{ t("settings.integration.collabAutonomous") }}
-        </button>
-        <button
-          type="button"
-          class="seg"
-          :class="{ active: config?.general.collaborationStyle === 'custom' }"
-          :disabled="collabBusy"
-          @click="changeCollaborationStyle('custom')"
-        >
-          {{ t("settings.integration.collabCustom") }}
-        </button>
-      </div>
-    </div>
-    <p
-      v-if="(config?.general.collaborationStyle ?? 'aligned') === 'aligned'"
-      class="card-desc"
-    >
-      {{ t("settings.integration.collabAlignedDesc") }}
-    </p>
-    <p
-      v-else-if="config?.general.collaborationStyle === 'autonomous'"
-      class="card-desc"
-    >
-      {{ t("settings.integration.collabAutonomousDesc") }}
-    </p>
-    <template v-else-if="config?.general.collaborationStyle === 'custom' && config">
-      <p class="card-desc">{{ t("settings.integration.collabCustomDesc") }}</p>
-      <textarea
-        v-model="config.general.collaborationStyleCustomText"
-        class="input collab-custom-input"
-        rows="8"
-        spellcheck="false"
-      />
-      <div class="row" style="margin-top: 8px">
-        <span class="spacer"></span>
-        <button
-          type="button"
-          class="btn"
-          :disabled="collabBusy"
-          @click="saveCustomCollaborationText"
-        >
-          {{ t("settings.integration.collabSaveCustom") }}
-        </button>
-      </div>
-    </template>
-    <p v-if="collabError" class="error-text">{{ collabError }}</p>
+  <div v-if="config" class="card collab-style-card">
+    <CollaborationStyleEditor
+      :general="config.general" :defaults="collabDefaults"
+      :busy="collabBusy.default" :error="collabError.default"
+      :message="collabMessage.default" :results="collabResults.default"
+      @save="(style, text) => saveAgentCollaborationStyle(null, style, text)"
+      @retry="retryCollaborationStyle"
+    />
   </div>
 
   <div class="integration-manual">
@@ -164,10 +114,16 @@ const messageUnderHeader = (id: AgentId) =>
     <div class="row">
       <p class="card-title">{{ t("settings.integration.promptTitle") }}</p>
       <span class="spacer"></span>
+      <select class="input prompt-agent-choice" :aria-label="t('settings.integration.collabPreviewAgent')"
+        :value="promptAgent" @change="setPromptAgent(($event.target as HTMLSelectElement).value as AgentId | '')">
+        <option value="">{{ t("settings.integration.collabPreviewDefault") }}</option>
+        <option v-for="agent in AGENTS" :key="agent.id" :value="agent.id">{{ agent.title }}</option>
+      </select>
       <div class="segmented">
         <button
           type="button"
           class="seg"
+          :disabled="promptSupportsCli === false"
           :class="{ active: promptVariant === 'cli' }"
           @click="setPromptVariant('cli')"
         >
@@ -176,6 +132,7 @@ const messageUnderHeader = (id: AgentId) =>
         <button
           type="button"
           class="seg"
+          :disabled="promptSupportsMcp === false"
           :class="{ active: promptVariant === 'mcp' }"
           @click="setPromptVariant('mcp')"
         >
@@ -312,6 +269,9 @@ const messageUnderHeader = (id: AgentId) =>
             {{ t(`settings.integration.tag.${tag.key}`) }}
           </span>
         </div>
+        <p v-if="config && detailsOf(a.id) && !agentExpanded[a.id]" class="card-desc collab-summary">
+          {{ t("settings.integration.collabSummary", { style: collaborationSummary(a.id) }) }}
+        </p>
       </div>
       <div v-if="!modeReadError?.[a.id]" class="segmented">
         <button
@@ -406,11 +366,12 @@ const messageUnderHeader = (id: AgentId) =>
     <!-- Details: every row of the integrated card. Folded with v-show, not v-if, so a deep link or a
          settings-search hit can still find its row in the DOM and then open the card. -->
     <div
-      v-if="detailsOf(a.id)"
-      v-show="agentExpanded[a.id]"
+      v-if="detailsOf(a.id) || config"
+      v-show="detailsOf(a.id) && agentExpanded[a.id]"
       :id="`agent-details-${a.id}`"
       class="agent-details"
     >
+      <template v-if="detailsOf(a.id)">
       <hr class="divider" />
 
       <p
@@ -951,8 +912,22 @@ const messageUnderHeader = (id: AgentId) =>
       >
         {{ modeMessage[a.id] }}
       </p>
+      </template>
+      <hr v-if="config" class="divider" />
+      <CollaborationStyleEditor
+        v-if="config" :general="config.general" :agent="a.id" :defaults="collabDefaults"
+        :busy="collabBusy[a.id]" :error="collabError[a.id]"
+        :message="collabMessage[a.id]" :results="collabResults[a.id]"
+        @save="(style, text) => saveAgentCollaborationStyle(a.id, style, text)"
+        @retry="retryCollaborationStyle"
+      />
     </div>
   </div>
   </template>
   </div>
 </template>
+
+<style scoped>
+.prompt-agent-choice { width: auto; max-width: 150px; }
+.collab-summary { margin: 4px 0 0; }
+</style>

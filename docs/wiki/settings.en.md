@@ -4,6 +4,10 @@
 
 Run `AskHuman --settings` (or click the gear in the popup's top-right) to open the settings UI. It has three tabs: **General**, **Agents**, and **Channels**. This page covers the **General** preferences; for Agents integration see the "Integrate with your Agent" section in the README, and for channels see "Set up communication channels".
 
+## Agent collaboration styles
+
+Choose the default collaboration style at the top of Settings → Agents. At the end of the details in each connected Agent card, choose Follow default, Aligned, Autonomous or Custom, then click Save and apply. Each Agent keeps its own complete custom paragraph and retains its draft when you switch styles. Folded cards show the saved style. To use a paragraph only with Codex, save it as Codex’s custom style and choose the default for the other Agents. Codex loads it on a subsequent session protocol injection. Open a new session for Agents using rule files.
+
 ## General
 
 iCloud todo sync stays under Experimental and requires enabling experimental features first.

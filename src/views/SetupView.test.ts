@@ -29,7 +29,7 @@ const ipc = vi.hoisted(() => ({
   setupFinish: vi.fn(),
   setupProbeStart: vi.fn(),
   setupProbeCancel: vi.fn(),
-  collaborationStyleApplyIntegrations: vi.fn(),
+  saveCollaborationStyle: vi.fn(),
   agentModeStatus: vi.fn(),
   channelHealth: vi.fn(),
   detectCancel: vi.fn(),
@@ -148,8 +148,11 @@ describe("setup wizard", () => {
       return id;
     });
     ipc.setupProbeCancel.mockImplementation(async () => {});
-    ipc.collaborationStyleApplyIntegrations.mockImplementation(async () => {
-      order.push("applyStyle");
+    ipc.saveCollaborationStyle.mockImplementation(async (_agent, style) => {
+      order.push("save", "applyStyle");
+      const general = { ...payload.config.general, collaborationStyle: style };
+      saves.push({ config: { ...payload.config, general }, actions: {} });
+      return { general, results: [] };
     });
     ipc.agentModeStatus.mockImplementation(async () => ({
       lifecycle: { supported: false, enabled: false },

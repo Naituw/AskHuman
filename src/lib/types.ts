@@ -936,8 +936,24 @@ export type UiLanguage = "auto" | "en" | "zh";
 /** Popup/Confirm submit key mode (mirrors Rust `PopupSubmitKey`). */
 export type PopupSubmitKey = "cmdEnter" | "enter";
 
-/** Global collaboration style for agent prompts (mirrors Rust `CollaborationStyle`). */
+/** Collaboration style for agent prompts (mirrors Rust `CollaborationStyle`). */
 export type CollaborationStyle = "aligned" | "autonomous" | "custom";
+
+export interface AgentCollaborationStyle {
+  style?: CollaborationStyle | null;
+  customText?: string | null;
+}
+
+export interface CollaborationStyleApplyResult {
+  agent: AgentId;
+  applied: boolean;
+  error: string | null;
+}
+
+export interface CollaborationStyleSaved {
+  general: GeneralConfig;
+  results: CollaborationStyleApplyResult[];
+}
 
 export interface GeneralConfig {
   theme: ThemeMode;
@@ -960,6 +976,8 @@ export interface GeneralConfig {
   collaborationStyle: CollaborationStyle;
   /** 自定义协作风格正文；空则回退对齐默认。 */
   collaborationStyleCustomText: string;
+  /** Per-family preferences. Missing styles inherit the default. */
+  agentCollaborationStyles?: Partial<Record<AgentId, AgentCollaborationStyle>>;
   /** 回复历史保留条数上限。默认 200；0 = 停止新增记录（但保留旧记录）。 */
   historyLimit: number;
   /** 待办执行历史保留条数（每项目）。默认 100；0 = 停止新增记录（保留旧历史）。 */

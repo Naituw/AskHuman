@@ -96,6 +96,7 @@ fn group_for(command: &str) -> Group {
         || matches!(
             command,
             "permission_rules_panel"
+                | "save_collaboration_style"
                 | "collaboration_style_defaults"
                 | "collaboration_style_apply_integrations"
                 | "focus_agent_terminal"
@@ -232,6 +233,7 @@ fn integration(invoke: Invoke<Wry>) -> bool {
         crate::commands::agent_task_readiness,
         crate::commands::agent_task_cursor_plan,
         crate::commands::agent_task_test_terminal,
+        crate::commands::save_collaboration_style,
         crate::commands::collaboration_style_defaults,
         crate::commands::collaboration_style_apply_integrations,
         crate::commands::cursor_hook_status,

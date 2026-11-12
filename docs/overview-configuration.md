@@ -21,6 +21,7 @@
   `general.daemonLifecycle`；None 停止接入但保留偏好，终端 Cursor CLI 不在范围内。
 - `cursorDesktop.launchPreference`：`terminal|desktop`，默认 `terminal`；新 Cursor 任务的运行位置。`desktop` 在 macOS 上经 Agents 窗口创建（实验）。偏好只决定两条路谁优先：首选路线不可用、另一条可用时双向自动改用另一条（与 Codex 对称，状态行说明原因）——所以只装了 Cursor Desktop、没有 CLI 也算「能启动」（`integrations/agent_start.rs` 的统一判定）；任务开始后不再改走另一条路径。
 - `general`
+  - `collaborationStyle`、`collaborationStyleCustomText` 作为默认协作风格。`agentCollaborationStyles` 按六类 Agent 保存 `style` 与 `customText`，缺省 / 空的 `style` 跟随默认，显式自定义使用单家正文。保存与各载体的应用见 [协作风格 §10](specs/collaboration-style.md#10-按-agent-设置协作风格)。
   - `theme`、`language`、`alwaysOnTop`、`appearAnimation`、`windowEffect`（`solid|blur|glass`；配置默认 `blur`，显式 `glass` 在 macOS 26 以下有效值自动解析为 `blur`）
   - `speechLanguage`、`speechShortcut`
   - `historyLimit`（默认 200）与 `popupSound`

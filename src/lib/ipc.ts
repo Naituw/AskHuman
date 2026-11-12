@@ -6,6 +6,8 @@ import type {
   AwaySnapshot,
   CapsuleInit,
   ChannelIssue,
+  CollaborationStyle,
+  CollaborationStyleSaved,
   DingTalkDetectArgs,
   DingTalkTestArgs,
   DingTalkWaitArgs,
@@ -226,8 +228,15 @@ export const agentTaskTestTerminal = () =>
 export const agentTaskCursorPlan = () =>
   invoke<"legacy" | "token-based" | "unknown">("agent_task_cursor_plan");
 
-export const getPrompt = (variant?: "cli" | "mcp") =>
-  invoke<string>("get_prompt", { variant });
+export const getPrompt = (variant?: "cli" | "mcp", agent?: AgentId) =>
+  invoke<string>("get_prompt", { variant, agent });
+
+export const saveCollaborationStyle = (
+  agent: AgentId | null,
+  style: CollaborationStyle | null,
+  customText?: string | null,
+  retry = false,
+) => invoke<CollaborationStyleSaved>("save_collaboration_style", { agent, style, customText, retry });
 
 export const collaborationStyleDefaults = () =>
   invoke<{ aligned: string; autonomous: string }>("collaboration_style_defaults");

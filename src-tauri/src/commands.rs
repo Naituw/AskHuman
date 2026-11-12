@@ -2769,7 +2769,17 @@ pub async fn save_settings(
         crate::secrets::ACCOUNT_IOS_BROKER_PASSWORD,
         secret_actions.ios_broker_password,
     );
-    config.save().map_err(|e| e.to_string())?;
+    {
+        let _lock = crate::file_lock::FileLock::exclusive(
+            &crate::paths::config_file().with_extension("lock"),
+        )
+        .map_err(|error| error.to_string())?;
+        let saved = AppConfig::load_without_secrets().general;
+        config.general.collaboration_style = saved.collaboration_style;
+        config.general.collaboration_style_custom_text = saved.collaboration_style_custom_text;
+        config.general.agent_collaboration_styles = saved.agent_collaboration_styles;
+        config.save().map_err(|e| e.to_string())?;
+    }
     if config.agent_tasks.enabled {
         crate::client::ensure_running()
             .await
@@ -3375,11 +3385,20 @@ fn fallback_secret(provided: &str, pick: impl FnOnce(&AppConfig) -> String) -> S
 /// 返回参考提示词正文：`variant = "mcp"` → MCP 版；其余（含缺省）→ CLI 版。
 /// 供手动集成卡按 CLI/MCP 切换展示。
 #[tauri::command]
-pub fn get_prompt(variant: Option<String>) -> String {
-    match variant.as_deref() {
-        Some("mcp") => crate::prompts::mcp_reference(),
+pub fn get_prompt(variant: Option<String>, agent: Option<String>) -> Result<String, String> {
+    let kind = agent
+        .as_deref()
+        .map(|name| {
+            crate::agents::AgentKind::parse(name).ok_or_else(|| format!("unknown agent: {name}"))
+        })
+        .transpose()?;
+    Ok(match (variant.as_deref(), kind) {
+        (_, Some(crate::agents::AgentKind::Grok)) => crate::prompts::grok_skill_body(),
+        (Some("mcp"), Some(kind)) => crate::prompts::mcp_reference_for(kind),
+        (_, Some(kind)) => crate::prompts::cli_reference_for(kind),
+        (Some("mcp"), None) => crate::prompts::mcp_reference(),
         _ => crate::prompts::cli_reference(),
-    }
+    })
 }
 
 /// Default collaboration-style paragraphs for the custom editor (aligned + autonomous).
@@ -3398,55 +3417,171 @@ pub fn collaboration_style_defaults() -> CollaborationStyleDefaults {
     }
 }
 
-/// After collaboration style changes: rewrite rules/skill for every agent whose mode is not None.
-#[tauri::command]
-pub fn collaboration_style_apply_integrations() -> Result<(), String> {
+/// Outcome for one integrated agent. Configuration is already saved when applying begins.
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CollaborationStyleApplyResult {
+    pub agent: String,
+    pub applied: bool,
+    pub error: Option<String>,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CollaborationStyleSaved {
+    pub general: crate::config::GeneralConfig,
+    pub results: Vec<CollaborationStyleApplyResult>,
+}
+
+fn apply_collaboration_target(kind: crate::agents::AgentKind) -> Result<bool, String> {
     use crate::integrations::agent_mode::{self, Mode};
     use crate::integrations::agent_rules::AgentTarget;
-    for target in [
-        AgentTarget::Cursor,
-        AgentTarget::ClaudeCode,
-        AgentTarget::Codex,
-        AgentTarget::Grok,
-        AgentTarget::Pi,
-        AgentTarget::Antigravity,
-    ] {
-        // An unavailable platform adapter must not break updates to existing integrations.
-        // Dedicated Antigravity status/mutations still return the explicit unsupported error.
-        if target == AgentTarget::Antigravity && !cfg!(unix) {
+    let target = AgentTarget::parse(kind.as_str()).unwrap();
+    if target == AgentTarget::Antigravity && !cfg!(unix) {
+        return Ok(false);
+    }
+    let mode = if target == AgentTarget::Antigravity {
+        agent_mode::antigravity_status()
+            .map_err(|error| format!("{error:#}"))?
+            .0
+    } else {
+        agent_mode::current(target)
+    };
+    if mode == Mode::None {
+        return Ok(false);
+    }
+    if target == AgentTarget::Codex {
+        // The runtime hook reads preferences on injection. Refreshing only the legacy block
+        // preserves the explicit migration boundary.
+        crate::integrations::codex_protocol::apply_collaboration_style()
+    } else {
+        agent_mode::update(target)
+    }
+    .map_err(|error| format!("{error:#}"))?;
+    Ok(true)
+}
+
+fn apply_collaboration_targets(
+    kinds: &[crate::agents::AgentKind],
+) -> Vec<CollaborationStyleApplyResult> {
+    kinds
+        .iter()
+        .map(|&kind| {
+            let result = apply_collaboration_target(kind);
+            CollaborationStyleApplyResult {
+                agent: kind.as_str().to_string(),
+                applied: result.as_ref().copied().unwrap_or(false),
+                error: result.err(),
+            }
+        })
+        .collect()
+}
+
+/// Compatibility entry point for setup: refresh agents that inherit the default.
+#[tauri::command]
+pub fn collaboration_style_apply_integrations() -> Result<(), String> {
+    use crate::agents::AgentKind;
+    let config = AppConfig::load_without_secrets();
+    let mut targets = Vec::new();
+    for kind in AgentKind::ALL {
+        let preference = config.general.agent_collaboration_styles.get(kind.as_str());
+        if preference.and_then(|value| value.style).is_some() {
             continue;
         }
-        let mode = if target == AgentTarget::Antigravity {
-            match agent_mode::antigravity_status() {
-                Ok(status) => status.0,
-                Err(error) => {
-                    // The strict status read refuses linked or unreadable paths. That must not
-                    // fail a style change that already reached the other agents, nor one made by
-                    // a user who never enabled Antigravity; its settings card shows the error.
-                    eprintln!(
-                        "[askhuman] collaboration style: skipped Antigravity, status unreadable: {error:#}"
-                    );
-                    continue;
-                }
+        if kind == AgentKind::Antigravity {
+            if let Err(error) = crate::integrations::agent_mode::antigravity_status() {
+                eprintln!("[askhuman] collaboration style: skipped Antigravity, status unreadable: {error:#}");
+                continue;
+            }
+        }
+        targets.push(kind);
+    }
+    let errors: Vec<_> = apply_collaboration_targets(&targets)
+        .into_iter()
+        .filter_map(|result| {
+            result
+                .error
+                .map(|error| format!("{}: {error}", result.agent))
+        })
+        .collect();
+    if errors.is_empty() {
+        Ok(())
+    } else {
+        Err(errors.join("\n"))
+    }
+}
+
+/// Merge a scoped preference into the latest config before updating the affected carriers.
+#[tauri::command]
+pub fn save_collaboration_style(
+    agent: Option<String>,
+    style: Option<crate::config::CollaborationStyle>,
+    custom_text: Option<String>,
+    retry: Option<bool>,
+) -> Result<CollaborationStyleSaved, String> {
+    use crate::agents::AgentKind;
+    let kind = agent
+        .as_deref()
+        .map(|name| AgentKind::parse(name).ok_or_else(|| format!("unknown agent: {name}")))
+        .transpose()?;
+    if kind.is_none() && style.is_none() {
+        return Err("a default collaboration style is required".to_string());
+    }
+    let (before, after) = {
+        let _integration_lock =
+            crate::integrations::mutation_lock::IntegrationMutationLock::acquire()
+                .map_err(|error| format!("{error:#}"))?;
+        let _config_lock = crate::file_lock::FileLock::exclusive(
+            &crate::paths::config_file().with_extension("lock"),
+        )
+        .map_err(|error| error.to_string())?;
+        let before = AppConfig::load_without_secrets();
+        let mut after = before.clone();
+        if let Some(kind) = kind {
+            let preference = after
+                .general
+                .agent_collaboration_styles
+                .entry(kind.as_str().to_string())
+                .or_default();
+            preference.style = style;
+            if let Some(text) = custom_text {
+                preference.custom_text = Some(text);
             }
         } else {
-            agent_mode::current(target)
-        };
-        if mode == Mode::None {
-            continue;
+            after.general.collaboration_style = style.unwrap();
+            if let Some(text) = custom_text {
+                after.general.collaboration_style_custom_text = text;
+            }
         }
-        if target == AgentTarget::Codex {
-            // The Codex protocol hook reads the collaboration style when a session starts, so
-            // only a legacy AGENTS.md block (which holds a copy of the text) needs rewriting. A
-            // full `update` would also migrate that block away, and migration is an explicit
-            // user action, never a side effect of changing the style.
-            crate::integrations::codex_protocol::apply_collaboration_style()
-                .map_err(|e| e.to_string())?;
-            continue;
-        }
-        agent_mode::update(target).map_err(|e| e.to_string())?;
-    }
-    Ok(())
+        // This snapshot came directly from disk and already has the persisted secret representation.
+        after
+            .save_to(&crate::paths::config_file())
+            .map_err(|error| error.to_string())?;
+        (before, after)
+    };
+    let targets: Vec<_> = AgentKind::ALL
+        .into_iter()
+        .filter(|candidate| {
+            if let Some(kind) = kind {
+                return *candidate == kind;
+            }
+            after
+                .general
+                .agent_collaboration_styles
+                .get(candidate.as_str())
+                .and_then(|value| value.style)
+                .is_none()
+        })
+        .filter(|&candidate| {
+            crate::prompts::collaboration_section(&before, Some(candidate))
+                != crate::prompts::collaboration_section(&after, Some(candidate))
+                || retry.unwrap_or(false)
+        })
+        .collect();
+    Ok(CollaborationStyleSaved {
+        general: after.general,
+        results: apply_collaboration_targets(&targets),
+    })
 }
 
 /// 设置页「弹出测试窗口」：以独立子进程跑一个多问题示例，
@@ -5347,6 +5482,209 @@ mod tests {
             assert_eq!(mode, agent_mode::Mode::Mcp);
             assert!(installed);
         }
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn collaboration_style_scopes_preserve_preferences_and_carriers() {
+        use crate::config::CollaborationStyle;
+        use crate::integrations::agent_rules::{self, AgentTarget, Variant};
+        const CHILD: &str = "ASKHUMAN_TEST_AGENT_STYLE_CHILD";
+        if std::env::var_os(CHILD).is_none() {
+            let root = tempfile::tempdir().unwrap();
+            let root_path = root.path().canonicalize().unwrap();
+            let result = std::process::Command::new(std::env::current_exe().unwrap())
+                .args([
+                    "--exact",
+                    "commands::tests::collaboration_style_scopes_preserve_preferences_and_carriers",
+                    "--nocapture",
+                ])
+                .env(CHILD, "1")
+                .env("HOME", &root_path)
+                .env("ASKHUMAN_HOME", root_path.join("state"))
+                .output()
+                .unwrap();
+            assert!(
+                result.status.success(),
+                "stdout: {}\nstderr: {}",
+                String::from_utf8_lossy(&result.stdout),
+                String::from_utf8_lossy(&result.stderr)
+            );
+            return;
+        }
+        let mut config = AppConfig::default();
+        config.general.collaboration_style = CollaborationStyle::Custom;
+        config.general.collaboration_style_custom_text = "default A".to_string();
+        config.save_to(&crate::paths::config_file()).unwrap();
+        agent_rules::install_variant(AgentTarget::Cursor, Variant::Cli).unwrap();
+        crate::integrations::grok_skill::install().unwrap();
+        let codex_file = crate::paths::codex_agents_md();
+        std::fs::create_dir_all(codex_file.parent().unwrap()).unwrap();
+        std::fs::write(
+            &codex_file,
+            agent_rules::upsert_block(
+                "user instructions\n",
+                &crate::prompts::mcp_reference_for(crate::agents::AgentKind::Codex),
+            ),
+        )
+        .unwrap();
+        let cursor_file = crate::paths::cursor_rule_file();
+        let grok_file = crate::paths::grok_skill_md();
+        let cursor_before = std::fs::read(&cursor_file).unwrap();
+        let grok_before = std::fs::read(&grok_file).unwrap();
+        let protocol_before = crate::prompts::codex_protocol(true, false).needle;
+        let codex = save_collaboration_style(
+            Some("codex".to_string()),
+            Some(CollaborationStyle::Custom),
+            Some("codex only".to_string()),
+            None,
+        )
+        .unwrap();
+        assert_eq!(codex.results.len(), 1);
+        assert!(codex.results[0].applied);
+        let protocol_custom = crate::prompts::codex_protocol(true, false).needle;
+        assert_ne!(protocol_custom, protocol_before);
+        let codex_before = std::fs::read(&codex_file).unwrap();
+        assert_eq!(std::fs::read(&cursor_file).unwrap(), cursor_before);
+        assert_eq!(std::fs::read(&grok_file).unwrap(), grok_before);
+        assert!(String::from_utf8_lossy(&codex_before).contains("codex only"));
+        assert!(crate::integrations::codex_protocol::has_legacy_block());
+
+        let saved = save_collaboration_style(
+            None,
+            Some(CollaborationStyle::Custom),
+            Some("default B".to_string()),
+            None,
+        )
+        .unwrap();
+        assert!(saved.results.iter().all(|result| result.agent != "codex"));
+        assert_eq!(std::fs::read(&codex_file).unwrap(), codex_before);
+        assert_eq!(
+            crate::prompts::codex_protocol(true, false).needle,
+            protocol_custom
+        );
+        assert!(std::fs::read_to_string(&cursor_file)
+            .unwrap()
+            .contains("default B"));
+        assert!(std::fs::read_to_string(&grok_file)
+            .unwrap()
+            .contains("default B"));
+        save_collaboration_style(Some("codex".to_string()), None, None, None).unwrap();
+        let config = AppConfig::load_without_secrets();
+        assert_eq!(
+            config.general.agent_collaboration_styles["codex"]
+                .custom_text
+                .as_deref(),
+            Some("codex only")
+        );
+        assert!(std::fs::read_to_string(&codex_file)
+            .unwrap()
+            .contains("default B"));
+
+        let workers: Vec<_> = ["claude", "pi"]
+            .into_iter()
+            .map(|agent| {
+                std::thread::spawn(move || {
+                    save_collaboration_style(
+                        Some(agent.to_string()),
+                        Some(CollaborationStyle::Custom),
+                        Some(format!("{agent} text")),
+                        None,
+                    )
+                    .unwrap();
+                })
+            })
+            .collect();
+        for worker in workers {
+            worker.join().unwrap();
+        }
+        let config = AppConfig::load_without_secrets();
+        assert_eq!(
+            config.general.agent_collaboration_styles["claude"]
+                .custom_text
+                .as_deref(),
+            Some("claude text")
+        );
+        assert_eq!(
+            config.general.agent_collaboration_styles["pi"]
+                .custom_text
+                .as_deref(),
+            Some("pi text")
+        );
+        let before = std::fs::read(crate::paths::config_file()).unwrap();
+        assert!(save_collaboration_style(
+            Some("unknown".to_string()),
+            Some(CollaborationStyle::Aligned),
+            None,
+            None
+        )
+        .is_err());
+        assert!(save_collaboration_style(None, None, None, None).is_err());
+        assert_eq!(std::fs::read(crate::paths::config_file()).unwrap(), before);
+
+        save_collaboration_style(
+            Some("codex".to_string()),
+            Some(CollaborationStyle::Custom),
+            Some(String::new()),
+            None,
+        )
+        .unwrap();
+        assert!(std::fs::read_to_string(&codex_file)
+            .unwrap()
+            .contains(crate::prompts::default_aligned_collaboration_text()));
+        save_collaboration_style(
+            Some("grok".to_string()),
+            Some(CollaborationStyle::Custom),
+            Some("grok only".to_string()),
+            None,
+        )
+        .unwrap();
+        assert!(
+            get_prompt(Some("mcp".to_string()), Some("grok".to_string()))
+                .unwrap()
+                .contains("grok only")
+        );
+        assert!(
+            get_prompt(Some("mcp".to_string()), Some("codex".to_string()))
+                .unwrap()
+                .contains(crate::prompts::default_aligned_collaboration_text())
+        );
+        save_collaboration_style(Some("grok".to_string()), None, None, None).unwrap();
+
+        // One failed carrier must not prevent the remaining targets from updating.
+        std::fs::remove_file(&cursor_file).unwrap();
+        std::fs::create_dir(&cursor_file).unwrap();
+        let partial = save_collaboration_style(
+            None,
+            Some(CollaborationStyle::Custom),
+            Some("default C".to_string()),
+            None,
+        )
+        .unwrap();
+        assert!(partial
+            .results
+            .iter()
+            .any(|result| result.agent == "cursor" && result.error.is_some()));
+        assert!(partial
+            .results
+            .iter()
+            .any(|result| result.agent == "grok" && result.applied));
+        assert!(std::fs::read_to_string(&grok_file)
+            .unwrap()
+            .contains("default C"));
+        std::fs::remove_dir(&cursor_file).unwrap();
+        let retry =
+            save_collaboration_style(Some("cursor".to_string()), None, None, Some(true)).unwrap();
+        assert!(retry.results[0].applied);
+        save_collaboration_style(None, Some(CollaborationStyle::Aligned), None, None).unwrap();
+        let draft_only = save_collaboration_style(
+            None,
+            Some(CollaborationStyle::Aligned),
+            Some("future draft".to_string()),
+            None,
+        )
+        .unwrap();
+        assert!(draft_only.results.is_empty());
     }
 
     #[cfg(unix)]

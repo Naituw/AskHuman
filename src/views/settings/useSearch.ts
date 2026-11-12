@@ -2,7 +2,7 @@
 // Cmd/Ctrl+F 快捷键）。
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch, type Ref } from "vue";
 import { useI18n } from "vue-i18n";
-import type { AppConfig } from "../../lib/types";
+import type { AgentId, AppConfig } from "../../lib/types";
 import { isMac, supportsAgentTasks } from "../../lib/platform";
 import type { Tab } from "./context";
 import { revealSettingsTarget } from "./reveal";
@@ -16,6 +16,7 @@ interface SearchEntry {
   title: string;
   /** 额外参与匹配的文案（描述/子项等），不展示。 */
   extra: string[];
+  target?: string;
 }
 
 export function useSettingsSearch(deps: {
@@ -23,6 +24,7 @@ export function useSettingsSearch(deps: {
   activeTab: Ref<Tab>;
   /** Hides results on tabs this window does not have (the Agents tab in a Dev instance). */
   everydayIntegrationsReadOnly?: Ref<boolean>;
+  collaborationAvailable?: (agent: AgentId) => boolean;
 }) {
   const { t } = useI18n();
   const { activeTab } = deps;
@@ -141,6 +143,15 @@ export function useSettingsSearch(deps: {
       ]),
       // Agents 集成
       e("integration", "settings.integration.promptTitle"),
+      e("integration", "settings.integration.collabDefaultTitle", ["settings.integration.collabDefaultHint"]),
+      ...Object.entries({ cursor: "Cursor", claude: "Claude Code", codex: "Codex", grok: "Grok", pi: "Pi", antigravity: "Antigravity" })
+        .filter(([id]) => deps.collaborationAvailable?.(id as AgentId))
+        .map(([id, agent]) => ({
+        tab: "integration" as Tab,
+        title: t("settings.integration.collabAgentTitle", { agent }),
+        extra: ["collaboration style", "协作风格"],
+        target: `collaboration-${id}`,
+      })),
       e("integration", "settings.integration.stopTitle"),
       e("integration", "settings.integration.delegatedTitle", [
         "settings.integration.delegatedHint",
@@ -256,10 +267,11 @@ export function useSettingsSearch(deps: {
     const nodes = Array.from(
       document.querySelectorAll(".settings-body .card-title, .settings-body .label"),
     );
-    const anchor = nodes.find((n) => (n.textContent ?? "").trim().startsWith(entry.title));
+    const anchor = entry.target ? document.getElementById(entry.target)
+      : nodes.find((n) => (n.textContent ?? "").trim().startsWith(entry.title));
     if (!anchor) return;
     // 行级条目高亮所在行，卡片标题条目高亮整卡。
-    const el = (anchor.classList.contains("label")
+    const el = (entry.target ? anchor : anchor.classList.contains("label")
       ? (anchor.closest(".row") ?? anchor.closest(".card") ?? anchor)
       : (anchor.closest(".card") ?? anchor)) as HTMLElement;
     // A hit inside a folded card: open the card first, or there is nothing to scroll to.

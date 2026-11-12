@@ -356,7 +356,9 @@ pub fn classify_body(body: &str, agent: AgentTarget) -> Variant {
     if body == crate::prompts::cli_reference_for(agent.kind()) {
         return Variant::Cli;
     }
-    if body.contains("Shell/Bash") {
+    // Custom wording may mention either tool path. Classify from the fixed protocol only.
+    let protocol = body.split("<collaboration_style").next().unwrap_or(body);
+    if protocol.contains("Shell/Bash") {
         Variant::Cli
     } else {
         Variant::Mcp
@@ -849,6 +851,13 @@ mod tests {
         assert_eq!(
             classify_body(
                 "... call the AskHuman `ask` tool ... (older wording)",
+                AgentTarget::Codex,
+            ),
+            Variant::Mcp
+        );
+        assert_eq!(
+            classify_body(
+                "Use the AskHuman MCP tool.\n<collaboration_style name=\"custom\">Investigate using the Shell/Bash tool.</collaboration_style>",
                 AgentTarget::Codex,
             ),
             Variant::Mcp

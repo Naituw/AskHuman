@@ -22,7 +22,7 @@ import {
   agentHookOpen,
   getPrompt,
   collaborationStyleDefaults,
-  collaborationStyleApplyIntegrations,
+  saveCollaborationStyle,
 } from "../../lib/ipc";
 import type {
   AgentId,
@@ -30,6 +30,7 @@ import type {
   AgentModeStatus,
   AgentTaskReadiness,
   CollaborationStyle,
+  CollaborationStyleApplyResult,
 } from "../../lib/types";
 import { isMac, isWindows, supportsAgentTasks } from "../../lib/platform";
 import type { SettingsCore } from "./context";
@@ -47,7 +48,7 @@ export function useIntegration(
   },
 ) {
   const { t } = useI18n();
-  const { config, persist } = core;
+  const { config } = core;
   const {
     refreshAgentTaskSettings,
     ensurePiReadiness,
@@ -66,6 +67,9 @@ export function useIntegration(
   const promptCopied = ref(false);
   // 手动集成卡的提示词变体：CLI 版 / MCP 版（切换即重载正文）。
   const promptVariant = ref<"cli" | "mcp">("cli");
+  const promptAgent = ref<AgentId | "">("");
+  const promptSupportsCli = computed(() => !promptAgent.value || AGENTS.find((agent) => agent.id === promptAgent.value)?.hasCli);
+  const promptSupportsMcp = computed(() => !promptAgent.value || AGENTS.find((agent) => agent.id === promptAgent.value)?.hasMcp);
 
   // 各 Agent 的展示信息。Codex 没有「超时 Hook」概念（hasTimeoutHook=false），
   // 且无法延长 CLI 超时，故推荐 MCP；Cursor / Claude Code 有可靠超时 Hook，推荐 CLI。
@@ -471,8 +475,11 @@ export function useIntegration(
     closeOpenMenu();
   }
 
+  let promptRequest = 0;
   async function loadPrompt() {
-    prompt.value = await getPrompt(promptVariant.value);
+    const request = ++promptRequest;
+    const text = await getPrompt(promptVariant.value, promptAgent.value || undefined);
+    if (request === promptRequest) prompt.value = text;
   }
 
   function setPromptVariant(v: "cli" | "mcp") {
@@ -481,61 +488,85 @@ export function useIntegration(
     void loadPrompt();
   }
 
-  // —— 协作风格（全局；切换后重写已开集成 + 刷新手动 Prompt）——
-  const collabBusy = ref(false);
-  const collabError = ref<string | null>(null);
+  function setPromptAgent(agent: AgentId | "") {
+    promptAgent.value = agent;
+    if (!promptSupportsCli.value) promptVariant.value = "mcp";
+    if (!promptSupportsMcp.value) promptVariant.value = "cli";
+    void loadPrompt();
+  }
+
+  const collabBusy = ref<Record<string, boolean>>({});
+  const collabError = ref<Record<string, string | null>>({});
+  const collabMessage = ref<Record<string, string>>({});
+  const collabResults = ref<Record<string, CollaborationStyleApplyResult[]>>({});
   const collabDefaults = ref({ aligned: "", autonomous: "" });
 
   async function ensureCollabDefaults() {
-    if (collabDefaults.value.aligned) return;
-    try {
-      collabDefaults.value = await collaborationStyleDefaults();
-    } catch {
-      /* ignore */
-    }
+    collabDefaults.value = await collaborationStyleDefaults();
   }
 
-  async function changeCollaborationStyle(style: CollaborationStyle) {
-    if (!config.value || collabBusy.value) return;
-    await ensureCollabDefaults();
-    if (
-      style === "custom" &&
-      !config.value.general.collaborationStyleCustomText?.trim()
-    ) {
-      config.value.general.collaborationStyleCustomText =
-        collabDefaults.value.aligned;
-    }
-    config.value.general.collaborationStyle = style;
-    collabBusy.value = true;
-    collabError.value = null;
-    try {
-      await persist();
-      await collaborationStyleApplyIntegrations();
-      await loadPrompt();
-      await Promise.all(AGENTS.map((a) => refreshMode(a.id)));
-    } catch (e) {
-      collabError.value = String(e);
-    } finally {
-      collabBusy.value = false;
-    }
+  function collaborationSummary(agent: AgentId) {
+    const general = config.value?.general;
+    if (!general) return "";
+    const chosen = general.agentCollaborationStyles?.[agent]?.style;
+    const value = chosen ?? general.collaborationStyle;
+    const label = t(`settings.integration.collab${value[0].toUpperCase()}${value.slice(1)}`);
+    return chosen ? label : t("settings.integration.collabInheritSummary", { style: label });
   }
 
-  async function saveCustomCollaborationText() {
-    if (!config.value || collabBusy.value) return;
-    collabBusy.value = true;
-    collabError.value = null;
+  async function saveAgentCollaborationStyle(
+    agent: AgentId | null,
+    style: CollaborationStyle | null,
+    text: string | null,
+    retry = false,
+  ) {
+    const key = agent ?? "default";
+    if (!config.value || collabBusy.value[key]) return;
+    collabBusy.value[key] = true;
+    collabError.value[key] = null;
+    collabMessage.value[key] = "";
     try {
-      await persist();
-      if (config.value.general.collaborationStyle === "custom") {
-        await collaborationStyleApplyIntegrations();
-        await loadPrompt();
-        await Promise.all(AGENTS.map((a) => refreshMode(a.id)));
+      const saved = await saveCollaborationStyle(agent, style, text, retry);
+      const general = config.value.general;
+      if (agent) {
+        general.agentCollaborationStyles ??= {};
+        general.agentCollaborationStyles[agent] = saved.general.agentCollaborationStyles?.[agent] ?? {};
+      } else {
+        general.collaborationStyle = saved.general.collaborationStyle;
+        general.collaborationStyleCustomText = saved.general.collaborationStyleCustomText;
       }
-    } catch (e) {
-      collabError.value = String(e);
+      collabResults.value[key] = saved.results;
+      // Clear a retry's earlier error wherever the default-scope save displayed it.
+      for (const result of saved.results) {
+        for (const [scope, results] of Object.entries(collabResults.value)) {
+          if (scope === key) continue;
+          collabResults.value[scope] = results.map((previous) =>
+            previous.agent === result.agent ? result : previous,
+          );
+        }
+      }
+      const applied = saved.results.some((result) => result.applied);
+      let messageKey = "collabSaved";
+      if (agent && modes.value[agent].mode === "none") {
+        messageKey = "collabSavedPending";
+      } else if (applied) {
+        messageKey = agent === "codex" ? "collabSavedCodex" : "collabSavedRestart";
+      }
+      collabMessage.value[key] = t(`settings.integration.${messageKey}`);
+      await Promise.all([
+        loadPrompt(),
+        ...AGENTS.filter((candidate) => !agent || candidate.id === agent).map((candidate) => refreshMode(candidate.id)),
+      ]);
+    } catch (error) {
+      collabError.value[key] = String(error);
     } finally {
-      collabBusy.value = false;
+      collabBusy.value[key] = false;
     }
+  }
+
+  async function retryCollaborationStyle(agent: AgentId) {
+    const preference = config.value?.general.agentCollaborationStyles?.[agent];
+    await saveAgentCollaborationStyle(agent, preference?.style ?? null, preference?.customText ?? null, true);
   }
 
   // MCP 手动配置示例。直接填入当前可执行文件绝对路径（与自动集成写入一致），免用户手改；
@@ -587,8 +618,12 @@ tool_timeout_sec = 86400`,
 
   // 集成域初始化：加载提示词、可执行路径与各 Agent 集成状态。
   async function initIntegration() {
-    await ensureCollabDefaults();
-    await loadPrompt();
+    try {
+      await ensureCollabDefaults();
+      await loadPrompt();
+    } catch (error) {
+      collabError.value.default = String(error);
+    }
     try {
       mcpExePath.value = await mcpCommandPath();
     } catch {
@@ -606,11 +641,18 @@ tool_timeout_sec = 86400`,
     prompt,
     promptCopied,
     promptVariant,
+    promptAgent,
+    promptSupportsCli,
+    promptSupportsMcp,
+    setPromptAgent,
     collabBusy,
     collabError,
     collabDefaults,
-    changeCollaborationStyle,
-    saveCustomCollaborationText,
+    collabMessage,
+    collabResults,
+    collaborationSummary,
+    saveAgentCollaborationStyle,
+    retryCollaborationStyle,
     AGENTS,
     modes,
     integrationLoading,

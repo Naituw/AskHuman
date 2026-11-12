@@ -41,7 +41,7 @@ pub trait TextDeps {
     fn agents_read_only(&mut self) -> bool;
     fn load_config(&mut self) -> AppConfig;
     fn save_config(&mut self, config: &AppConfig) -> Result<(), String>;
-    /// Re-render the rules / skill of every integrated Agent after a style change.
+    /// Re-render integrations inheriting the default after a style change.
     fn apply_style_to_integrations(&mut self) -> Result<(), String>;
     fn apply_agents(&mut self, selections: &[Selection]) -> Vec<ApplyResult>;
     fn channel_rows(&mut self) -> Vec<ChannelStatus>;
@@ -628,8 +628,8 @@ impl Flow<'_> {
         let current = self.deps.load_config().general.collaboration_style;
         self.blank();
         self.say(
-            "Collaboration style (how often your Agents check in with you):",
-            "协作风格（Agent 向你确认的频繁程度）：",
+            "Default collaboration style (for Agents following the default):",
+            "默认协作风格（供跟随默认的 Agent 使用，单家偏好可在设置中编辑）：",
         );
         let mark = self.t(" (current)", "（当前）");
         let aligned_mark = if current == CollaborationStyle::Aligned {
@@ -1248,6 +1248,14 @@ impl TextDeps for RealDeps {
     }
 
     fn save_config(&mut self, config: &AppConfig) -> Result<(), String> {
+        let _lock = crate::file_lock::FileLock::exclusive(
+            &crate::paths::config_file().with_extension("lock"),
+        )
+        .map_err(|error| error.to_string())?;
+        let mut config = config.clone();
+        config.general.agent_collaboration_styles = AppConfig::load_without_secrets()
+            .general
+            .agent_collaboration_styles;
         config.save().map_err(|error| error.to_string())
     }
 

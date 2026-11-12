@@ -7,7 +7,7 @@ import { computed, inject, provide, reactive, ref, watch, type InjectionKey } fr
 import { getCurrentWebviewWindow } from "@tauri-apps/api/webviewWindow";
 import {
   agentModeStatus,
-  collaborationStyleApplyIntegrations,
+  saveCollaborationStyle,
   getSettings,
   setupAgentsScan,
   setupApplyAgents,
@@ -201,10 +201,12 @@ export function createSetup(initialPage: SetupPage = "agents") {
     applyError.value = null;
     try {
       if (styleChanged.value) {
-        cfg.general.collaborationStyle = style.value;
-        await persist();
-        await collaborationStyleApplyIntegrations();
+        const saved = await saveCollaborationStyle(null, style.value);
+        cfg.general.collaborationStyle = saved.general.collaborationStyle;
+        cfg.general.collaborationStyleCustomText = saved.general.collaborationStyleCustomText;
         styleBaseline.value = style.value;
+        const errors = saved.results.filter((result) => result.error);
+        if (errors.length) throw new Error(errors.map((result) => `${result.agent}: ${result.error}`).join("\n"));
       }
       const selections = pendingRows.value.map((row) => ({
         agent: row.id,

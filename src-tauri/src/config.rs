@@ -4,6 +4,7 @@
 use crate::paths;
 use crate::secrets;
 use serde::{Deserialize, Serialize};
+use std::collections::BTreeMap;
 use std::path::Path;
 
 /// Maps each channel secret to its keychain account and its `&mut String` field in `AppConfig`.
@@ -123,7 +124,7 @@ impl WindowEffect {
     }
 }
 
-/// Global collaboration style for installed agent prompts (spec collaboration-style.md).
+/// Collaboration style for installed agent prompts (spec collaboration-style.md).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 #[serde(rename_all = "camelCase")]
 pub enum CollaborationStyle {
@@ -153,6 +154,14 @@ impl CollaborationStyle {
             _ => None,
         }
     }
+}
+
+/// A missing style inherits the default. Draft text survives selecting another style.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", default)]
+pub struct AgentCollaborationStyle {
+    pub style: Option<CollaborationStyle>,
+    pub custom_text: Option<String>,
 }
 
 /// Popup / Confirm submit keyboard shortcut mode.
@@ -195,6 +204,9 @@ pub struct GeneralConfig {
     /// 自定义协作风格正文（英文契约段）；`collaboration_style == custom` 时使用，空则回退对齐默认。
     #[serde(default)]
     pub collaboration_style_custom_text: String,
+    /// Per-family preferences. Missing entries inherit the default style and text.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub agent_collaboration_styles: BTreeMap<String, AgentCollaborationStyle>,
     /// 回复历史保留条数上限。默认 200；`0` 表示停止新增记录（但保留并仍可查看旧记录）。
     pub history_limit: u32,
     /// 待办执行历史保留条数（按项目各留 N 条，第 16 轮定案）。默认 100；`0` 同 history_limit
@@ -321,6 +333,7 @@ impl Default for GeneralConfig {
             popup_submit_key: PopupSubmitKey::CmdEnter,
             collaboration_style: CollaborationStyle::Aligned,
             collaboration_style_custom_text: String::new(),
+            agent_collaboration_styles: BTreeMap::new(),
             history_limit: default_history_limit(),
             todo_history_limit: default_todo_history_limit(),
             popup_sound: String::new(),

@@ -43,6 +43,32 @@ describe("useSettingsSearch", () => {
       i18n.global.locale.value = "en";
     }
   });
+  it("indexes collaboration controls only while the Agent integration is available", async () => {
+    i18n.global.locale.value = "en";
+    const available = ref(false);
+    let search!: ReturnType<typeof useSettingsSearch>;
+    const wrapper = mount(defineComponent({
+      setup() {
+        search = useSettingsSearch({
+          config: ref<AppConfig | null>(null),
+          activeTab: ref<Tab>("integration"),
+          collaborationAvailable: (agent) => agent === "codex" && available.value,
+        });
+        return () => null;
+      },
+    }), { global: { plugins: [i18n] } });
+    search.searchQuery.value = "codex collaboration";
+    await nextTick();
+    expect(search.searchResults.value).toEqual([]);
+    available.value = true;
+    await nextTick();
+    expect(search.searchResults.value).toContainEqual(expect.objectContaining({ target: "collaboration-codex" }));
+    available.value = false;
+    await nextTick();
+    expect(search.searchResults.value).toEqual([]);
+    wrapper.unmount();
+  });
+
   it("indexes the Pi integration card", async () => {
     i18n.global.locale.value = "en";
     let search!: ReturnType<typeof useSettingsSearch>;

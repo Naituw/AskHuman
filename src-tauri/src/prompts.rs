@@ -63,13 +63,26 @@ fn wrap_collaboration_style(style: CollaborationStyle, body: &str) -> String {
     )
 }
 
-fn collaboration_section_from_config() -> String {
-    let cfg = AppConfig::load_without_secrets();
-    let body = collaboration_body(
-        cfg.general.collaboration_style,
-        &cfg.general.collaboration_style_custom_text,
-    );
-    wrap_collaboration_style(cfg.general.collaboration_style, &body)
+pub fn collaboration_section(cfg: &AppConfig, agent: Option<AgentKind>) -> String {
+    let preference =
+        agent.and_then(|kind| cfg.general.agent_collaboration_styles.get(kind.as_str()));
+    let (style, text) = match preference.and_then(|value| value.style) {
+        Some(style) => (
+            style,
+            preference
+                .and_then(|value| value.custom_text.as_deref())
+                .unwrap_or(""),
+        ),
+        None => (
+            cfg.general.collaboration_style,
+            cfg.general.collaboration_style_custom_text.as_str(),
+        ),
+    };
+    wrap_collaboration_style(style, &collaboration_body(style, text))
+}
+
+fn collaboration_section_from_config(agent: Option<AgentKind>) -> String {
+    collaboration_section(&AppConfig::load_without_secrets(), agent)
 }
 
 /// CLI 版：行为约束 + 当前协作风格段。
@@ -105,7 +118,7 @@ fn cli_reference_with_agent(agent: Option<AgentKind>) -> String {
     } else {
         ""
     };
-    let collab = collaboration_section_from_config();
+    let collab = collaboration_section_from_config(agent);
     let scope_rules = protocol_scope_rules();
 
     format!(
@@ -152,8 +165,8 @@ pub fn mcp_reference_for(agent: AgentKind) -> String {
     mcp_reference_with_agent(Some(agent))
 }
 
-fn mcp_reference_with_agent(_agent: Option<AgentKind>) -> String {
-    let collab = collaboration_section_from_config();
+fn mcp_reference_with_agent(agent: Option<AgentKind>) -> String {
+    let collab = collaboration_section_from_config(agent);
     let scope_rules = protocol_scope_rules();
     format!(
         r#"<mandatory_interaction_protocol>
@@ -187,10 +200,9 @@ fn mcp_reference_with_agent(_agent: Option<AgentKind>) -> String {
 /// Grok skill 正文：装进 `~/.grok/skills/interaction-protocol/SKILL.md` 的 Markdown 主体（不含 YAML
 /// frontmatter，由 `grok_skill.rs` 拼接）。
 ///
-/// **复用 [`mcp_reference`] + 追加一小段 Grok 说明**（单一来源，避免协议措辞漂移）：正文 = MCP 版参考
-/// 提示词原样 + 末尾一段「在 Grok 里怎么联系我」。为何还要那段：Grok 默认模型 Composer **不读**
-/// `~/.grok/AGENTS.md` 全局 rules（调研证实），交互协议只能经 skill 承载；且 Grok 把 MCP 工具的暴露/发现
-/// 方式做得与「直接可见工具」不同，需点明「工具没列出时先搜再调」。
+/// Uses [`mcp_reference_for`] with Grok's effective style and appends tool-discovery guidance.
+/// Composer receives the protocol through this skill, and its MCP tools may require discovery
+/// before the model can invoke them.
 ///
 /// **刻意保持通用、不写死具体 harness / 工具名**（如 Composer / Grok Build / `CallMcpTool` / `search_tool` /
 /// `use_tool`）：Grok 后续版本会改这些名字与机制，写死会过时误导。故只声明一条「联系人类」的降级阶梯：
@@ -199,7 +211,7 @@ fn mcp_reference_with_agent(_agent: Option<AgentKind>) -> String {
 pub fn grok_skill_body() -> String {
     format!(
         "{}\n\n{}",
-        mcp_reference(),
+        mcp_reference_for(AgentKind::Grok),
         r#"<contacting_me_from_grok>
 - To contact me (the human), use the AskHuman `ask` MCP tool described above.
 - If the AskHuman `ask` MCP tool is not listed among your currently available tools, first use your tool-search/discovery mechanism to find it.
@@ -641,6 +653,55 @@ mod tests {
         assert_eq!(custom, "only ask when blocked");
         let empty_custom = collaboration_body(CollaborationStyle::Custom, "  \n");
         assert!(empty_custom.contains("relentlessly"));
+    }
+
+    #[test]
+    fn collaboration_preferences_inherit_or_resolve_their_own_body() {
+        use crate::config::AgentCollaborationStyle;
+        let mut config = AppConfig::default();
+        config.general.collaboration_style = CollaborationStyle::Custom;
+        config.general.collaboration_style_custom_text = "default body".to_string();
+        let original = collaboration_section(&config, None);
+        for kind in AgentKind::ALL {
+            assert_eq!(collaboration_section(&config, Some(kind)), original);
+        }
+        config.general.agent_collaboration_styles.insert(
+            "codex".to_string(),
+            AgentCollaborationStyle {
+                style: Some(CollaborationStyle::Custom),
+                custom_text: Some("codex body".to_string()),
+            },
+        );
+        config.general.collaboration_style_custom_text = "updated default".to_string();
+        assert!(collaboration_section(&config, Some(AgentKind::Codex)).contains("codex body"));
+        assert!(collaboration_section(&config, Some(AgentKind::Cursor)).contains("updated default"));
+        let preference = config
+            .general
+            .agent_collaboration_styles
+            .get_mut("codex")
+            .unwrap();
+        preference.custom_text = Some(" \n ".to_string());
+        let empty = collaboration_section(&config, Some(AgentKind::Codex));
+        assert!(empty.contains(default_aligned_collaboration_text()));
+        assert!(!empty.contains("updated default"));
+        config
+            .general
+            .agent_collaboration_styles
+            .get_mut("codex")
+            .unwrap()
+            .style = None;
+        assert!(collaboration_section(&config, Some(AgentKind::Codex)).contains("updated default"));
+        let serialized = serde_json::to_value(&config).unwrap();
+        let restored: AppConfig = serde_json::from_value(serialized).unwrap();
+        assert_eq!(
+            restored.general.agent_collaboration_styles,
+            config.general.agent_collaboration_styles
+        );
+        assert!(
+            serde_json::to_value(AppConfig::default()).unwrap()["general"]
+                .get("agentCollaborationStyles")
+                .is_none()
+        );
     }
 
     #[test]
