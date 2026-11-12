@@ -25,6 +25,15 @@ Mac 端：此前 `./scripts/install.sh` 被会话历史开发中的 `RequestView
 [Build 19 交付记录](plans/ios-channel.md#2026-11-12testflight-内部与外部构建-19)。下一步在真机确认 3 秒后切换／关闭。已有项目待办
 `666e7f5c-2ebb-45eb-9ee3-04957f742366`，完成后删除本节。
 
+2026-11-12 用户再次反馈 Agent 取消后不倒计时。已在 iOS 26.2 模拟器复现：点按真实网页正文后，
+没有键盘，`WKContentView` 仍成为第一响应者并符合 `UITextInput`，旧 `PageEditing.isCovered` 因而
+误认为正在输入、永久放弃倒计时；原生正文对照通过，网页正文用例在原逻辑下失败，运行日志确认了视图类型。
+现只保护可编辑的 `UITextView`／启用的 `UITextField`，保留原有键盘、弹层、停留与历史阅读规则。
+修复后 6 项 iOS UI 回归全过，含原失败场景、网页阅读后后台取消再返回、实际输入、弹层与停留。
+证据在 `/tmp/askhuman-ended-web-repro.xcresult`、`/tmp/askhuman-ended-web-repro-diagnostics/`、
+`/tmp/askhuman-ended-web-fixed.xcresult`。`./scripts/install.sh` 已成功安装日常版；iOS 修复尚未发布
+TestFlight，后续出包后仍需手机日常观察。
+
 ## 待真机验收：iOS 请求页的「此会话的历史」
 
 2026-11-11 用户想在收到消息的请求页上更容易回看会话历史：作答页 / 确认页（含已结束页）下拉加载这个 Agent 会话更早的问答，「⋯」菜单里有等价入口；不做任何提示，定位是 Power User 功能。数据读 Mac 的完整历史，手机不落盘。[规格](specs/ios-session-history.md)（用户逐项确认了 S6 / S10 / S13，并保留「回到当前提问」胶囊）与[计划](plans/ios-session-history.md)已通过；用户选择在主工作树开发，让 agent 一次做完、次日早上查收。

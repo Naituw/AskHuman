@@ -17,7 +17,13 @@ enum PageEditing {
     static var isCovered: Bool {
         guard let window else { return false }
         if let presented = window.rootViewController?.presentedViewController, !presented.isBeingDismissed { return true }
-        return firstResponder(in: window) is UITextInput
+        // Read-only WKContentView also adopts UITextInput and becomes first responder on a tap, without a keyboard.
+        // Protect the app's actual editors, including when a hardware keyboard is used, rather than any text responder.
+        switch firstResponder(in: window) {
+        case let editor as UITextView: return editor.isEditable
+        case let field as UITextField: return field.isEnabled
+        default: return false
+        }
     }
 
     /// Lets the editor under the keyboard publish its final composition, and puts the keyboard away. Before the

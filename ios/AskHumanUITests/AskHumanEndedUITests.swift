@@ -26,14 +26,14 @@ final class AskHumanEndedUITests: XCTestCase {
     private func launch(
         _ request: String, how: String = "answeredElsewhere", by: String? = "Popup", after: Double = 6, latency: Double = 0.05,
         scenario: String = "demo", autoAdvance: Bool = false, countdown: Double? = nil, contentSize: String? = nil,
-        endInBackground: Bool = false, receiptHold: Double? = nil
+        endInBackground: Bool = false, receiptHold: Double? = nil, webMarkdown: Bool = false
     ) -> XCUIApplication {
         app?.terminate()
         let app = XCUIApplication()
         let locale = language == "en" ? "en_US" : "zh_CN"
         var arguments = [
             "-AHMock", "YES", "-AHScenario", scenario, "-AHLatency", "\(latency)", "-AHAutoAdvance", autoAdvance ? "YES" : "NO",
-            "-AHWebMarkdown", "NO",
+            "-AHWebMarkdown", webMarkdown ? "YES" : "NO",
             "-AHOpen", request, "-AHEndAfter", "\(after)", "-AHEndHow", how,
             "-AppleLanguages", "(\(language))", "-AppleLocale", locale,
         ]
@@ -193,6 +193,36 @@ final class AskHumanEndedUITests: XCTestCase {
         requireElement("finished-stay", timeout: 30)
         XCTAssertTrue(stripLabel().contains(localized("The Agent cancelled it.", "Agent 已取消它。")))
         XCTAssertTrue(gone("finished-notice", timeout: 20))
+        XCTAssertTrue(aLiveRequestIsUp())
+    }
+
+    func testReadingWebMarkdownDoesNotSuppressTheCancellationCountdown() {
+        launch("req-permission", how: "cancelled", by: nil, after: 35, autoAdvance: true, countdown: 6, webMarkdown: true)
+        XCTAssertTrue(app.buttons["Copy"].waitForExistence(timeout: 20), "only the web renderer has this code-block button")
+        let text = app.staticTexts.matching(NSPredicate(format: "label CONTAINS %@", "git push")).firstMatch
+        XCTAssertTrue(text.waitForExistence(timeout: 5))
+        text.tap()
+        XCTAssertEqual(app.keyboards.count, 0, "reading the message does not open an editor")
+        requireElement("finished-notice", timeout: 45)
+        requireElement("finished-stay", timeout: 3)
+        XCTAssertTrue(gone("finished-notice", timeout: 20))
+        XCTAssertTrue(aLiveRequestIsUp())
+    }
+
+    func testReadingWebMarkdownBeforeBackgroundingStillCountsDownOnReturn() {
+        launch("req-permission", how: "cancelled", by: nil, after: 3, autoAdvance: true, countdown: 10,
+               endInBackground: true, webMarkdown: true)
+        XCTAssertTrue(app.buttons["Copy"].waitForExistence(timeout: 20))
+        let text = app.staticTexts.matching(NSPredicate(format: "label CONTAINS %@", "git push")).firstMatch
+        XCTAssertTrue(text.waitForExistence(timeout: 5))
+        text.tap()
+        XCTAssertEqual(app.keyboards.count, 0)
+        backgroundApp()
+        Thread.sleep(forTimeInterval: 8)
+        app.activate()
+        requireElement("finished-notice", timeout: 10)
+        requireElement("finished-stay", timeout: 3)
+        XCTAssertTrue(gone("finished-notice", timeout: 25))
         XCTAssertTrue(aLiveRequestIsUp())
     }
 

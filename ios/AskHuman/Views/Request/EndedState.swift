@@ -92,7 +92,7 @@ struct EndedStrip: View {
         // sizes (that is what the largest accessibility size does to it); VoiceOver speaks the text whatever its size.
         .dynamicTypeSize(...DynamicTypeSize.accessibility1)
         .modifier(EndedStripBackground(tint: finished.outcome.color))
-        // Mounting the visible strip, rather than receiving a network event, starts its five seconds.
+        // Mounting the visible strip, rather than receiving a network event, starts its three seconds.
         .task(id: id) { await monitorPresentation() }
     }
 
