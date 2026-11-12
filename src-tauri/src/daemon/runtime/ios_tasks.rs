@@ -27,6 +27,8 @@ use crate::ios::wire::{
 
 /// Longest todo text sent to the phone; the full text stays on the Mac and is resolved by id.
 const TODO_PREVIEW_CHARS: usize = 600;
+/// Leave room for the message wrapper below the 512 KiB plaintext limit.
+const TODO_OPTIONS_BYTES_BUDGET: usize = 480 * 1024;
 /// Longest reason text passed through to the phone.
 const REASON_MAX_CHARS: usize = 160;
 /// How long `task.options` waits for an Agent's model list the first time it is asked for. A
@@ -410,24 +412,43 @@ pub(super) async fn choices(state: &Arc<ServerState>) -> TaskChoices {
     }
 }
 
-/// The TODOs of the project a workspace belongs to, as IM `/new` offers them.
+/// The TODOs of the project a workspace belongs to, with the same row cap as the phone's todo tab.
 pub(super) fn todos(workspace: &str) -> TodoChoices {
     let project = crate::project::detect_from(Path::new(workspace));
     crate::todo_sync::service::before_read(&project);
-    let mut todos = crate::todos::list(&project);
-    let overflow = todos.len().saturating_sub(crate::todos::MAX_OPTION_TODOS) as u64;
-    todos.truncate(crate::todos::MAX_OPTION_TODOS);
+    todo_choices(crate::todos::list(&project))
+}
+
+fn todo_choices(entries: Vec<crate::todos::TodoEntry>) -> TodoChoices {
+    let total = entries.len();
+    let mut todos: Vec<_> = entries
+        .into_iter()
+        .take(crate::ios::wire::TODO_MAX_PENDING)
+        .map(|todo| TodoOption {
+            id: todo.id,
+            text: clip(&todo.text, TODO_PREVIEW_CHARS),
+            auto: todo.auto,
+            attachments: todo.attachments.len() as u64,
+        })
+        .collect();
+    let mut preview_chars = TODO_PREVIEW_CHARS;
+    while serde_json::to_vec(&todos).map_or(usize::MAX, |json| json.len())
+        > TODO_OPTIONS_BYTES_BUDGET
+    {
+        if preview_chars > 1 {
+            // Shorten previews before dropping any choices. Launch resolves the full text by id.
+            preview_chars /= 2;
+            for todo in &mut todos {
+                todo.text = clip(&todo.text, preview_chars);
+            }
+        } else {
+            // Even pathological stored ids must not make the whole response unsendable.
+            todos.pop();
+        }
+    }
     TodoChoices {
-        todos: todos
-            .into_iter()
-            .map(|todo| TodoOption {
-                id: todo.id,
-                text: clip(&todo.text, TODO_PREVIEW_CHARS),
-                auto: todo.auto,
-                attachments: todo.attachments.len() as u64,
-            })
-            .collect(),
-        overflow,
+        overflow: total.saturating_sub(todos.len()) as u64,
+        todos,
     }
 }
 
@@ -668,6 +689,89 @@ mod model_tests;
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn todo_entry(index: usize, text: &str) -> crate::todos::TodoEntry {
+        crate::todos::TodoEntry {
+            id: format!("00000000-0000-0000-0000-{index:012}"),
+            text: text.into(),
+            created_at_ms: index as u64,
+            agent_kind: None,
+            auto: index % 2 == 0,
+            attachments: Vec::new(),
+        }
+    }
+
+    #[test]
+    fn task_todos_include_choices_beyond_the_im_menu_limit() {
+        let entries: Vec<_> = (0..15)
+            .map(|i| todo_entry(i, &format!("task {i}")))
+            .collect();
+        let choices = todo_choices(entries.clone());
+        assert_eq!(choices.overflow, 0);
+        assert_eq!(choices.todos.len(), 15);
+        for (choice, entry) in choices.todos.iter().zip(&entries) {
+            assert_eq!(choice.id, entry.id);
+            assert_eq!(choice.text, entry.text);
+            assert_eq!(choice.auto, entry.auto);
+        }
+        // The id the phone selects still resolves to the complete stored task.
+        let selected = &choices.todos[14];
+        let entry = entries.iter().find(|todo| todo.id == selected.id).unwrap();
+        let resolved = resolve_task_input(Some(entry), Some("also verify it")).unwrap();
+        assert!(resolved.contains("task 14"));
+        assert!(resolved.contains("also verify it"));
+    }
+
+    #[test]
+    fn task_todos_share_the_todo_tabs_cap_and_report_the_remainder() {
+        let cap = crate::ios::wire::TODO_MAX_PENDING;
+        let choices = todo_choices((0..cap + 5).map(|i| todo_entry(i, "task")).collect());
+        assert_eq!(choices.todos.len(), cap);
+        assert_eq!(choices.overflow, 5);
+        assert_eq!(choices.todos.last().unwrap().id, todo_entry(cap - 1, "").id);
+        let empty = todo_choices(Vec::new());
+        assert!(empty.todos.is_empty());
+        assert_eq!(empty.overflow, 0);
+    }
+
+    #[test]
+    fn task_todos_shorten_large_previews_without_losing_choices() {
+        for text in ["待".repeat(600), "\u{0001}".repeat(600)] {
+            let choices = todo_choices(
+                (0..crate::ios::wire::TODO_MAX_PENDING)
+                    .map(|i| todo_entry(i, &text))
+                    .collect(),
+            );
+            assert_eq!(choices.todos.len(), crate::ios::wire::TODO_MAX_PENDING);
+            assert_eq!(choices.overflow, 0);
+            assert!(choices.todos.iter().all(|todo| todo.text.ends_with('…')));
+            let message = crate::ios::wire::TaskTodos {
+                workspace_id: workspace_id("/w/app"),
+                todos: choices.todos,
+                overflow: choices.overflow,
+            };
+            let bytes = serde_json::to_vec(&message).unwrap();
+            assert!(bytes.len() < crate::ios::wire::MAX_PLAIN_BYTES);
+            assert_eq!(
+                serde_json::from_slice::<crate::ios::wire::TaskTodos>(&bytes).unwrap(),
+                message
+            );
+        }
+    }
+
+    #[test]
+    fn task_todos_keep_full_previews_when_the_list_fits() {
+        let text = "a".repeat(TODO_PREVIEW_CHARS + 20);
+        let choices = todo_choices(
+            (0..crate::ios::wire::TODO_MAX_PENDING)
+                .map(|i| todo_entry(i, &text))
+                .collect(),
+        );
+        assert_eq!(choices.overflow, 0);
+        assert!(choices.todos.iter().all(|todo| {
+            todo.text.chars().count() == TODO_PREVIEW_CHARS && todo.text.ends_with('…')
+        }));
+    }
 
     #[test]
     fn workspace_ids_are_stable_and_distinct() {

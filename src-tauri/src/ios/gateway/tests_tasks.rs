@@ -396,12 +396,15 @@ async fn options_come_from_the_host() {
 #[tokio::test(start_paused = true)]
 async fn todos_are_only_offered_for_workspaces_from_the_options() {
     let (fx, mut phone) = with_agent().await;
-    fx.host.todos.lock().unwrap().todos = vec![TodoOption {
-        id: "t1".into(),
-        text: "Fix the flaky test".into(),
-        auto: false,
-        attachments: 1,
-    }];
+    let choices: Vec<_> = (1..=15)
+        .map(|i| TodoOption {
+            id: format!("t{i}"),
+            text: format!("Fix flaky test {i}"),
+            auto: i % 2 == 0,
+            attachments: 1,
+        })
+        .collect();
+    fx.host.todos.lock().unwrap().todos = choices.clone();
     fx.host.todos.lock().unwrap().overflow = 3;
     let ask = wire::TaskTodosGet {
         workspace_id: "ws1".into(),
@@ -414,7 +417,7 @@ async fn todos_are_only_offered_for_workspaces_from_the_options() {
     phone.send(&ask).await;
     let todos: wire::TaskTodos = phone.recv_body(t::TASK_TODOS).await;
     assert_eq!(todos.workspace_id, "ws1");
-    assert_eq!(todos.todos[0].text, "Fix the flaky test");
+    assert_eq!(todos.todos, choices, "the full list reaches the phone");
     assert_eq!(todos.overflow, 3);
 
     phone
