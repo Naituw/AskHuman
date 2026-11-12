@@ -690,3 +690,156 @@ async fn an_uncommitted_submission_keeps_its_upload_for_the_same_submission_retr
         data
     );
 }
+
+// ---------------------------------------------------------------- pictures of the history
+
+/// A picture of the history that the scripted host finds by its asset id.
+fn history_picture(fx: &Fixture, name: &str, data: &[u8]) -> AssetSource {
+    let source = asset_file(fx.dir.path(), name, data);
+    fx.host
+        .history_pictures
+        .lock()
+        .unwrap()
+        .insert(source.asset_id.clone(), source.clone());
+    source
+}
+
+fn asked_of_the_host(fx: &Fixture) -> Vec<String> {
+    fx.host.history_picture_calls.lock().unwrap().clone()
+}
+
+async fn fetch_first_chunk(phone: &mut TestPhone, asset_id: &str) {
+    phone.send(&get(asset_id, 0, 1)).await;
+    let _: wire::AssetChunk = phone.recv_body(t::ASSET_CHUNK).await;
+}
+
+#[tokio::test(start_paused = true)]
+async fn a_picture_of_the_history_is_downloaded_through_the_host_and_remembered() {
+    let fx = Fixture::new().await;
+    let mut phone = fx.live_phone().await;
+    let data = bytes(ASSET_CHUNK_BYTES + 1_000, 3);
+    let picture = history_picture(&fx, "shot.png", &data);
+
+    // No request is pending, so the id is not one of a request's files: the host is asked.
+    phone.send(&get(&picture.asset_id, 0, 1)).await;
+    let first: wire::AssetChunk = phone.recv_body(t::ASSET_CHUNK).await;
+    assert_eq!(
+        (first.index, first.total, first.size),
+        (0, 2, data.len() as u64)
+    );
+    assert_eq!(first.sha256.as_deref(), Some(sha_hex(&data).as_str()));
+
+    phone.send(&get(&picture.asset_id, 1, 1)).await;
+    let second: wire::AssetChunk = phone.recv_body(t::ASSET_CHUNK).await;
+    assert_eq!(second.index, 1);
+    assert!(second.sha256.is_none());
+    let mut joined = crypto::b64u_decode(&first.data).unwrap();
+    joined.extend(crypto::b64u_decode(&second.data).unwrap());
+    assert_eq!(joined, data);
+
+    // The host looked for the file once; the second window came from the gateway's memory.
+    assert_eq!(asked_of_the_host(&fx), vec![picture.asset_id.clone()]);
+}
+
+#[tokio::test(start_paused = true)]
+async fn a_picture_nobody_knows_is_not_found_and_an_id_of_the_wrong_shape_is_not_even_asked_about()
+{
+    let fx = Fixture::new().await;
+    let mut phone = fx.live_phone().await;
+    let stranger = crypto::new_id();
+    phone.send(&get(&stranger, 0, 1)).await;
+    let error: wire::AssetError = phone.recv_body(t::ASSET_ERROR).await;
+    assert_eq!(
+        (error.asset_id.as_str(), error.reason.as_str()),
+        (stranger.as_str(), "notFound")
+    );
+
+    for malformed in ["not-an-id", "", &"a".repeat(80), "../etc/passwd"] {
+        phone.send(&get(malformed, 0, 1)).await;
+        let error: wire::AssetError = phone.recv_body(t::ASSET_ERROR).await;
+        assert_eq!(error.reason, "notFound", "{malformed:?}");
+        assert_eq!(error.asset_id, malformed);
+    }
+    assert_eq!(asked_of_the_host(&fx), [stranger]);
+}
+
+#[tokio::test(start_paused = true)]
+async fn a_picture_whose_file_vanished_or_is_too_large_is_refused_like_any_asset() {
+    let fx = Fixture::new().await;
+    let mut phone = fx.live_phone().await;
+
+    let vanished = history_picture(&fx, "vanished.png", b"pixels");
+    std::fs::remove_file(&vanished.path).unwrap();
+    phone.send(&get(&vanished.asset_id, 0, 1)).await;
+    let error: wire::AssetError = phone.recv_body(t::ASSET_ERROR).await;
+    assert_eq!(error.reason, "notFound");
+
+    let mut huge = history_picture(&fx, "huge.png", b"x");
+    huge.size = MAX_ASSET_BYTES + 1;
+    fx.host
+        .history_pictures
+        .lock()
+        .unwrap()
+        .insert(huge.asset_id.clone(), huge.clone());
+    phone.send(&get(&huge.asset_id, 0, 1)).await;
+    let error: wire::AssetError = phone.recv_body(t::ASSET_ERROR).await;
+    assert_eq!(error.reason, "tooLarge");
+}
+
+#[tokio::test(start_paused = true)]
+async fn the_gateway_forgets_a_picture_after_a_while_and_asks_the_host_again() {
+    let fx = Fixture::new().await;
+    let mut phone = fx.live_phone().await;
+    let picture = history_picture(&fx, "shot.png", &bytes(2_000, 4));
+
+    fetch_first_chunk(&mut phone, &picture.asset_id).await;
+    tokio::time::sleep(std::time::Duration::from_secs(9 * 60)).await;
+    fetch_first_chunk(&mut phone, &picture.asset_id).await;
+    assert_eq!(
+        asked_of_the_host(&fx).len(),
+        1,
+        "still remembered after nine minutes"
+    );
+
+    tokio::time::sleep(std::time::Duration::from_secs(2 * 60)).await;
+    fetch_first_chunk(&mut phone, &picture.asset_id).await;
+    assert_eq!(asked_of_the_host(&fx).len(), 2, "forgotten after eleven");
+}
+
+#[tokio::test(start_paused = true)]
+async fn a_file_of_a_pending_request_is_served_without_asking_the_host() {
+    let fx = Fixture::new().await;
+    let mut phone = fx.live_phone().await;
+    let asset = asset_file(fx.dir.path(), "attached.bin", b"hello");
+    deliver_with_assets(&fx, "req1", vec![asset.clone()]);
+    phone.recv(t::REQUEST_NEW).await;
+    phone.send(&get(&asset.asset_id, 0, 1)).await;
+    let chunk: wire::AssetChunk = phone.recv_body(t::ASSET_CHUNK).await;
+    assert_eq!(crypto::b64u_decode(&chunk.data).unwrap(), b"hello");
+    assert!(asked_of_the_host(&fx).is_empty());
+}
+
+#[test]
+fn the_gateway_remembers_at_most_a_few_hundred_pictures_and_drops_the_oldest() {
+    let source = |n: usize| AssetSource {
+        asset_id: format!("id{n}"),
+        path: format!("/p/{n}.png").into(),
+        name: format!("{n}.png"),
+        mime: "image/png".into(),
+        size: 1,
+    };
+    let mut memory = assets::HistoryAssets::default();
+    for n in 0..300 {
+        memory.insert(source(n), 1_000);
+    }
+    assert!(memory.get("id0", 1_000).is_none(), "the oldest is gone");
+    assert!(memory.get("id43", 1_000).is_none());
+    assert!(memory.get("id44", 1_000).is_some());
+    assert!(memory.get("id299", 1_000).is_some());
+    // Remembering one again does not make room for it by forgetting another.
+    memory.insert(source(299), 2_000);
+    assert!(memory.get("id44", 2_000).is_some());
+    // And a picture is only believed for ten minutes from when it was remembered (again).
+    assert!(memory.get("id299", 2_000 + 10 * 60 * 1000).is_some());
+    assert!(memory.get("id299", 2_000 + 10 * 60 * 1000 + 1).is_none());
+}

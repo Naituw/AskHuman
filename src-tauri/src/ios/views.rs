@@ -13,7 +13,8 @@ use super::crypto;
 use super::wire::{
     AgentRef, AskView, AssetRef, ConfirmChoiceView, ConfirmDetailView, ConfirmFieldView,
     ConfirmInputView, ConfirmView, MessageView, OptionView, ProjectRef, QuestionView, RequestView,
-    MAX_ASSET_BYTES, MAX_REQUEST_IMAGES, SESSION_TITLE_MAX_CHARS, THUMB_MAX_BYTES,
+    HISTORY_THUMB_MAX_BYTES, MAX_ASSET_BYTES, MAX_REQUEST_IMAGES, SESSION_TITLE_MAX_CHARS,
+    THUMB_MAX_BYTES,
 };
 
 /// A file the phone may fetch with `asset.get` while the request is pending.
@@ -84,21 +85,45 @@ pub fn mime_for(name: &str) -> &'static str {
     }
 }
 
-/// Small JPEG preview (<= 24 KB) of an image file; `None` when it cannot be decoded.
-pub fn thumbnail(path: &std::path::Path) -> Option<Vec<u8>> {
+/// Decodes `path` and tries each `(longest edge, JPEG quality)` of `ladder` in turn, returning the first
+/// preview of at most `max_bytes`; `None` when the file cannot be decoded or no step is small enough.
+fn jpeg_thumbnail(
+    path: &std::path::Path,
+    ladder: &[(u32, u8)],
+    max_bytes: usize,
+) -> Option<Vec<u8>> {
     let image = image::open(path).ok()?;
-    for (edge, quality) in [(240, 70), (200, 60), (160, 50), (120, 40)] {
+    for &(edge, quality) in ladder {
         let small = image.thumbnail(edge, edge).to_rgb8();
         let mut out = Vec::new();
         let encoder = image::codecs::jpeg::JpegEncoder::new_with_quality(&mut out, quality);
         if small.write_with_encoder(encoder).is_err() {
             return None;
         }
-        if out.len() <= THUMB_MAX_BYTES {
+        if out.len() <= max_bytes {
             return Some(out);
         }
     }
     None
+}
+
+/// Small JPEG preview (<= 24 KB) of an image file; `None` when it cannot be decoded.
+pub fn thumbnail(path: &std::path::Path) -> Option<Vec<u8>> {
+    jpeg_thumbnail(
+        path,
+        &[(240, 70), (200, 60), (160, 50), (120, 40)],
+        THUMB_MAX_BYTES,
+    )
+}
+
+/// The preview of a picture in the history (docs/specs/ios-history-pictures.md HP6): smaller than a request's
+/// (<= 6 KiB), because a page can carry a few dozen of them; `None` when it cannot be decoded.
+pub fn history_thumbnail(path: &std::path::Path) -> Option<Vec<u8>> {
+    jpeg_thumbnail(
+        path,
+        &[(200, 60), (160, 50), (120, 40), (96, 35)],
+        HISTORY_THUMB_MAX_BYTES,
+    )
 }
 
 /// The identifier a phone uses for one Agent session: `{kind}:{sessionId}`. `AgentView::key`,
@@ -144,6 +169,7 @@ fn asset_for(file: &FileAttachment, with_thumb: bool) -> (AssetRef, Option<Asset
         is_image: file.is_image,
         thumb,
         too_large,
+        gone: false,
     };
     let source = (!too_large).then(|| AssetSource {
         asset_id,
@@ -471,6 +497,67 @@ mod tests {
         // Oversized files are listed but cannot be fetched.
         assert_eq!(built.assets.len(), 2);
         assert_eq!(built.assets[0].asset_id, files[0].asset_id);
+    }
+
+    /// A screenshot-like picture: flat areas with a few edges, which is what the history mostly holds.
+    fn screenshot_like(path: &std::path::Path, width: u32, height: u32) {
+        image::RgbImage::from_fn(width, height, |x, y| {
+            if (x / 40 + y / 40) % 7 == 0 {
+                image::Rgb([30, 60, 200])
+            } else if y % 97 < 3 {
+                image::Rgb([20, 20, 20])
+            } else {
+                image::Rgb([240, 240, 245])
+            }
+        })
+        .save(path)
+        .unwrap();
+    }
+
+    #[test]
+    fn a_history_thumbnail_is_a_small_jpeg_within_its_own_byte_limit() {
+        let dir = tempfile::tempdir().unwrap();
+        let png = dir.path().join("shot.png");
+        screenshot_like(&png, 1170, 2532);
+        let thumb = history_thumbnail(&png).expect("a thumbnail");
+        assert!(
+            thumb.len() <= HISTORY_THUMB_MAX_BYTES,
+            "{} bytes",
+            thumb.len()
+        );
+        assert_eq!(&thumb[..2], &[0xff, 0xd8], "JPEG");
+        let decoded = image::load_from_memory(&thumb).unwrap();
+        assert!(decoded.width().max(decoded.height()) <= 200);
+        // The aspect ratio survives: a tall phone screenshot stays tall.
+        assert!(decoded.height() > decoded.width());
+        // It is smaller than the preview of a request.
+        assert!(thumb.len() < thumbnail(&png).unwrap().len());
+    }
+
+    #[test]
+    fn a_picture_that_cannot_be_decoded_or_is_missing_has_no_thumbnail() {
+        let dir = tempfile::tempdir().unwrap();
+        let fake = dir.path().join("fake.png");
+        std::fs::write(&fake, b"this is not a picture").unwrap();
+        assert!(history_thumbnail(&fake).is_none());
+        assert!(history_thumbnail(&dir.path().join("missing.png")).is_none());
+
+        // Noise does not compress: no step of the ladder fits in 6 KiB, so there is none rather than a
+        // thumbnail over the limit.
+        let noise = dir.path().join("noise.png");
+        let mut state = 0x2545_F491_4F6C_DD1Du64;
+        image::RgbImage::from_fn(600, 600, |_, _| {
+            state ^= state << 13;
+            state ^= state >> 7;
+            state ^= state << 17;
+            image::Rgb([state as u8, (state >> 8) as u8, (state >> 16) as u8])
+        })
+        .save(&noise)
+        .unwrap();
+        match history_thumbnail(&noise) {
+            None => {}
+            Some(thumb) => assert!(thumb.len() <= HISTORY_THUMB_MAX_BYTES),
+        }
     }
 
     fn confirm_request() -> ConfirmRequest {

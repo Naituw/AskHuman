@@ -47,6 +47,11 @@ public enum Wire {
     public static let historyQuestionMaxChars = 1000
     public static let historyOptionMaxChars = 500
     public static let historyInputMaxChars = 2000
+    /// Pictures in the history (docs/specs/ios-history-pictures.md §5); mirror `HISTORY_PICTURES_MAX` and
+    /// `HISTORY_THUMB_MAX_BYTES`: the most picture references the message of an exchange (and, apart, the reply to
+    /// one question) carries, and the most bytes of JPEG one thumbnail of the history may take.
+    public static let historyPicturesMax = 12
+    public static let historyThumbMaxBytes = 6 * 1024
 
     public static let publishRatePerSec = 6.0
     public static let publishBurst = 10.0

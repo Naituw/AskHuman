@@ -15,6 +15,7 @@ use crate::ios::gateway::{
 use crate::ios::push::HttpPushClient;
 use crate::ios::store::Store;
 use crate::ios::transport::{ConnectParams, RumqttcTransport, Will};
+use crate::ios::views::AssetSource;
 use crate::ios::wire::{self, Caps, Presence, SlotInfo};
 
 /// Settings that need a fresh broker connection when they change.
@@ -168,6 +169,7 @@ impl Host for DaemonHost {
             away: true,
             annotations: true,
             session_history: true,
+            history_pictures: true,
         }
     }
 
@@ -291,6 +293,14 @@ impl Host for DaemonHost {
 
     async fn session_history(&self, get: &wire::SessionHistoryGet) -> wire::SessionHistory {
         ios_history::session_history(get).await
+    }
+
+    async fn history_exchange(&self, get: &wire::HistoryExchangeGet) -> wire::HistoryExchange {
+        ios_history::history_exchange(get).await
+    }
+
+    async fn history_picture(&self, asset_id: &str) -> Option<AssetSource> {
+        ios_history::history_picture(asset_id).await
     }
 
     fn slot(&self) -> SlotInfo {

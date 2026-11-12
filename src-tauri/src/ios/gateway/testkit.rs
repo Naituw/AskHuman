@@ -24,6 +24,7 @@ use crate::ios::store::{PhoneKeys, Store};
 use crate::ios::transport::{
     BrokerTransport, LoopbackBroker, LoopbackTransport, TransportEvent, Will,
 };
+use crate::ios::views::AssetSource;
 use crate::ios::wire::{
     self, t, AgentRef, AgentView, AskView, CanInterject, Caps, ConfirmChoiceView,
     ConfirmDetailView, ConfirmView, Msg, OptionView, PairCode, Presence, ProjectRef, QuestionView,
@@ -74,6 +75,12 @@ pub struct TestHost {
     /// `req_id` is filled in), and every request that reached the host.
     pub session_pages: Mutex<HashMap<String, wire::SessionHistory>>,
     pub session_history_calls: Mutex<Vec<wire::SessionHistoryGet>>,
+    /// The scripted history records `history_exchange` answers by id, and every request that reached the host.
+    pub history_exchanges: Mutex<HashMap<String, wire::SessionExchange>>,
+    pub history_exchange_calls: Mutex<Vec<wire::HistoryExchangeGet>>,
+    /// The scripted pictures of the history `history_picture` finds by asset id, and every id it was asked for.
+    pub history_pictures: Mutex<HashMap<String, AssetSource>>,
+    pub history_picture_calls: Mutex<Vec<String>>,
     pub task_result: Mutex<Result<(), String>>,
     /// Virtual time `task_create` takes.
     pub task_delay_ms: AtomicU64,
@@ -122,6 +129,10 @@ impl TestHost {
             todo_pick_store: Mutex::new(HashMap::new()),
             session_pages: Mutex::new(HashMap::new()),
             session_history_calls: Mutex::new(Vec::new()),
+            history_exchanges: Mutex::new(HashMap::new()),
+            history_exchange_calls: Mutex::new(Vec::new()),
+            history_pictures: Mutex::new(HashMap::new()),
+            history_picture_calls: Mutex::new(Vec::new()),
             task_result: Mutex::new(Ok(())),
             task_delay_ms: AtomicU64::new(0),
             launches: Mutex::new(Vec::new()),
@@ -220,6 +231,7 @@ impl Host for TestHost {
             away: true,
             annotations: true,
             session_history: true,
+            history_pictures: true,
         }
     }
 
@@ -382,6 +394,24 @@ impl Host for TestHost {
         page.req_id = get.req_id.clone();
         page.agent_key = get.agent_key.clone();
         page
+    }
+
+    async fn history_exchange(&self, get: &wire::HistoryExchangeGet) -> wire::HistoryExchange {
+        self.history_exchange_calls
+            .lock()
+            .unwrap()
+            .push(get.clone());
+        let mut answer = wire::HistoryExchange::empty(&get.req_id, &get.id);
+        answer.item = self.history_exchanges.lock().unwrap().get(&get.id).cloned();
+        answer
+    }
+
+    async fn history_picture(&self, asset_id: &str) -> Option<AssetSource> {
+        self.history_picture_calls
+            .lock()
+            .unwrap()
+            .push(asset_id.to_string());
+        self.history_pictures.lock().unwrap().get(asset_id).cloned()
     }
 }
 

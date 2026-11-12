@@ -9,10 +9,47 @@ use sha2::{Digest, Sha256};
 
 use super::Actor;
 use crate::ios::crypto;
+use crate::ios::views::AssetSource;
 use crate::ios::wire::{
     AssetChunk, AssetError, AssetGet, UploadAck, UploadBegin, UploadCancel, UploadChunk,
     ASSET_CHUNK_BYTES, MAX_ASSET_BYTES, MAX_ASSET_CHUNKS_PER_GET, MAX_REPLY_ATTACHMENTS,
 };
+
+/// How many pictures of the history the gateway remembers the file of, and for how long. The time is
+/// short on purpose: a record the user deletes from the history stops being served soon after.
+const HISTORY_ASSETS_MAX: usize = 256;
+const HISTORY_ASSETS_TTL_MS: i64 = 10 * 60 * 1000;
+
+/// Pictures of the history phones asked for lately, by `assetId`, so that the windows of one download do
+/// not each go looking through the history again. The oldest ones are forgotten first. Nothing here is
+/// needed for correctness: an id that is forgotten is resolved again by the host.
+#[derive(Default)]
+pub(crate) struct HistoryAssets {
+    order: std::collections::VecDeque<String>,
+    by_id: HashMap<String, (AssetSource, i64)>,
+}
+
+impl HistoryAssets {
+    /// The file of a picture remembered at most [`HISTORY_ASSETS_TTL_MS`] before `now_ms`.
+    pub fn get(&self, asset_id: &str, now_ms: i64) -> Option<&AssetSource> {
+        self.by_id
+            .get(asset_id)
+            .filter(|(_, at)| now_ms - at <= HISTORY_ASSETS_TTL_MS)
+            .map(|(source, _)| source)
+    }
+
+    pub fn insert(&mut self, source: AssetSource, now_ms: i64) {
+        let id = source.asset_id.clone();
+        if self.by_id.insert(id.clone(), (source, now_ms)).is_none() {
+            self.order.push_back(id);
+            while self.order.len() > HISTORY_ASSETS_MAX {
+                if let Some(oldest) = self.order.pop_front() {
+                    self.by_id.remove(&oldest);
+                }
+            }
+        }
+    }
+}
 
 /// An upload nobody referenced is dropped after this long.
 const UPLOAD_IDLE_MS: i64 = 30 * 60 * 1000;
@@ -148,21 +185,54 @@ impl Actor {
     // ------------------------------------------------------------ downloads
 
     pub(super) fn on_asset_get(&mut self, phone_id: &str, get: AssetGet) {
-        let fail = |this: &mut Self, reason: &str| {
-            this.send(
-                phone_id,
-                &AssetError {
-                    asset_id: get.asset_id.clone(),
-                    reason: reason.to_string(),
-                },
-            );
-        };
-        let Some(source) = self.requests.find_asset(&get.asset_id) else {
-            fail(self, "notFound");
+        // A file of a pending request first.
+        if let Some(source) = self.requests.find_asset(&get.asset_id).cloned() {
+            self.serve_asset(phone_id, &get, &source);
             return;
-        };
+        }
+        // Then a picture of the history a phone already fetched part of.
+        let now = self.now();
+        if let Some(source) = self.history_assets.get(&get.asset_id, now).cloned() {
+            self.serve_asset(phone_id, &get, &source);
+            return;
+        }
+        // Last a picture of the history that nothing has asked for yet: its id says which record and
+        // which slot to look at, and the host finds the file there (docs/specs/ios-history-pictures.md HP7).
+        // Only ids of the shape the Mac gives out are worth asking about.
+        if !crypto::is_valid_id(&get.asset_id) {
+            self.send_asset_error(phone_id, &get.asset_id, "notFound");
+            return;
+        }
+        let host = self.host.clone();
+        let phone = phone_id.to_string();
+        let asset_id = get.asset_id.clone();
+        self.spawn_then(
+            async move { host.history_picture(&asset_id).await },
+            move |actor, found| match found {
+                Some(source) => {
+                    let now = actor.now();
+                    actor.history_assets.insert(source.clone(), now);
+                    actor.serve_asset(&phone, &get, &source);
+                }
+                None => actor.send_asset_error(&phone, &get.asset_id, "notFound"),
+            },
+        );
+    }
+
+    fn send_asset_error(&mut self, phone_id: &str, asset_id: &str, reason: &str) {
+        self.send(
+            phone_id,
+            &AssetError {
+                asset_id: asset_id.to_string(),
+                reason: reason.to_string(),
+            },
+        );
+    }
+
+    /// Sends the chunks `get` asks for of `source`'s file, or says why it cannot.
+    fn serve_asset(&mut self, phone_id: &str, get: &AssetGet, source: &AssetSource) {
         if source.size > MAX_ASSET_BYTES {
-            fail(self, "tooLarge");
+            self.send_asset_error(phone_id, &get.asset_id, "tooLarge");
             return;
         }
         // Attachments are small (<= 10 MB) and read from the local disk: a plain read keeps the
@@ -170,17 +240,17 @@ impl Actor {
         let data = match std::fs::read(&source.path) {
             Ok(data) if data.len() as u64 <= MAX_ASSET_BYTES => data,
             Ok(_) => {
-                fail(self, "tooLarge");
+                self.send_asset_error(phone_id, &get.asset_id, "tooLarge");
                 return;
             }
             Err(_) => {
-                fail(self, "notFound");
+                self.send_asset_error(phone_id, &get.asset_id, "notFound");
                 return;
             }
         };
         let total = chunk_count(data.len() as u64);
         if get.from >= total {
-            fail(self, "internal");
+            self.send_asset_error(phone_id, &get.asset_id, "internal");
             return;
         }
         let count = get.count.clamp(1, MAX_ASSET_CHUNKS_PER_GET as u64);

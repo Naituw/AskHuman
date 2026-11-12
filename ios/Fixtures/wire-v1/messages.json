@@ -280,6 +280,27 @@
       ]},
       {"id": "req-8", "at": 1792798000000, "channel": "away", "message": "", "qs": [{"text": "Continue?", "selected": ["Yes", "Later"]}]}
     ], "more": true}},
-    {"type": "history.session", "name": "end", "body": {"reqId": "h3", "agentKey": "claude:s1", "items": [], "more": false}}
+    {"type": "history.session", "name": "end", "body": {"reqId": "h3", "agentKey": "claude:s1", "items": [], "more": false}},
+    {"type": "hello.ack", "name": "history-pictures", "body": {"nonce": "q3ZkL1m0Xw4", "epoch": "0123456789abcdef", "macName": "Home Mac", "caps": {"newTask": true, "interject": true, "watch": true, "todos": true, "answerTodos": true, "away": true, "annotations": true, "sessionHistory": true, "historyPictures": true}, "slot": {"active": true, "autoActivation": true}}},
+    {"type": "history.session.get", "name": "with-pictures", "body": {"reqId": "h4", "agentKey": "claude:s1", "beforeMs": 1792900006000, "limit": 8, "pictures": true}},
+    {"type": "history.session", "name": "pictures", "body": {"reqId": "h4", "agentKey": "claude:s1", "items": [
+      {"id": "req-10", "at": 1792800000000, "channel": "ios", "markdown": true, "message": "Screens of the new flow", "attachments": 4, "pictures": [
+        {"assetId": "ab2cdef3ghijk4lmnopq5rstuv", "name": "home.png", "size": 183422, "mime": "image/png", "isImage": true, "thumb": "/9j/4AAQ"},
+        {"assetId": "bc3defg4hijkl5mnopqr6stuvw", "name": "cleaned-up.png", "size": 0, "mime": "image/png", "isImage": true, "gone": true},
+        {"assetId": "cd4efgh5ijklm6nopqrs7tuvwx", "name": "recording-frame.png", "size": 12582912, "mime": "image/png", "isImage": true, "tooLarge": true}
+      ], "qs": [
+        {"text": "Like this?", "input": "Make it look like these", "images": 2, "pictures": [
+          {"assetId": "de5fghi6jklmn7opqrst2uvwxy", "name": "mockup.png", "size": 90210, "mime": "image/png", "isImage": true, "thumb": "/9j/4AAQ"},
+          {"assetId": "ef6ghij7klmno2pqrstu3vwxyz", "name": "mockup-dark.png", "size": 0, "mime": "image/png", "isImage": true, "gone": true}
+        ]},
+        {"text": "Anything else?"}
+      ]},
+      {"id": "req-9", "at": 1792799000000, "channel": "popup", "message": "No pictures here", "attachments": 1, "qs": [{"text": "Continue?", "selected": ["Yes"]}]}
+    ], "more": false}},
+    {"type": "history.exchange.get", "name": "ask", "body": {"reqId": "x1", "id": "req-10"}},
+    {"type": "history.exchange", "name": "found", "body": {"reqId": "x1", "id": "req-10", "item": {"id": "req-10", "at": 1792800000000, "channel": "ios", "message": "Screens of the new flow", "attachments": 1, "pictures": [
+      {"assetId": "ab2cdef3ghijk4lmnopq5rstuv", "name": "home.png", "size": 183422, "mime": "image/png", "isImage": true, "thumb": "/9j/4AAQ"}
+    ], "qs": [{"text": "Like this?", "selected": ["Yes"]}]}}},
+    {"type": "history.exchange", "name": "missing", "body": {"reqId": "x2", "id": "req-gone"}}
   ]
 }

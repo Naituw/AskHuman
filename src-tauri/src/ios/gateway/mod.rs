@@ -209,6 +209,20 @@ pub trait Host: Send + Sync + 'static {
         wire::SessionHistory::empty(&get.req_id, &get.agent_key)
     }
 
+    /// One recorded exchange by its id, with its pictures (docs/specs/ios-history-pictures.md HP9); the answer
+    /// echoes `get.req_id` and `get.id`. A record the host does not have and a switched-off history give an
+    /// answer without `item`.
+    async fn history_exchange(&self, get: &wire::HistoryExchangeGet) -> wire::HistoryExchange {
+        wire::HistoryExchange::empty(&get.req_id, &get.id)
+    }
+
+    /// The file behind a picture of the history, by the `assetId` the host gave it in an exchange (docs/specs/
+    /// ios-history-pictures.md HP7), or `None` when there is no such picture or its file is gone. Asked when
+    /// `asset.get` names an asset that no pending request holds.
+    async fn history_picture(&self, _asset_id: &str) -> Option<super::views::AssetSource> {
+        None
+    }
+
     /// Seconds since the last keyboard / mouse input on this Mac; `None` when unknown. A question
     /// the phone has not looked at is pushed only once the Mac has been idle for
     /// [`Host::alert_after_secs`], and at once when this is unknown.
@@ -657,6 +671,8 @@ pub(crate) struct Actor {
     pub revs: Revs,
     pub requests: requests::Requests,
     pub uploads: Uploads,
+    /// Pictures of the history phones asked for lately (docs/specs/ios-history-pictures.md HP7).
+    pub history_assets: assets::HistoryAssets,
     /// Agent list cache, Follow bookkeeping and tasks waiting for their session.
     pub live: agents::Live,
     /// Phones watching the todos.
@@ -786,6 +802,7 @@ impl Actor {
             revs: Revs::default(),
             requests: requests::Requests::default(),
             uploads: Uploads::default(),
+            history_assets: assets::HistoryAssets::default(),
             live: agents::Live::default(),
             todos: todos::TodoLive::default(),
             last_slot: None,
@@ -1326,6 +1343,10 @@ impl Actor {
             t::HISTORY_SESSION_GET => {
                 let get = body!(wire::SessionHistoryGet);
                 self.on_session_history_get(phone_id, get);
+            }
+            t::HISTORY_EXCHANGE_GET => {
+                let get = body!(wire::HistoryExchangeGet);
+                self.on_history_exchange_get(phone_id, get);
             }
             _ => self.send_error(phone_id, &plain.i, "unknown_type", None),
         }

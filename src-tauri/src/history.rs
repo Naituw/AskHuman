@@ -198,6 +198,16 @@ pub fn sends_for_session_before(
     )
 }
 
+/// One recorded entry by its id, the id of the request it answered; `None` when the store has no such
+/// entry (it keeps the most recent few hundred). Whatever the action: a cancelled ask is an entry too.
+pub fn entry_by_id(id: &str) -> Option<HistoryEntry> {
+    entry_by_id_at(&paths::history_file(), id)
+}
+
+fn entry_by_id_at(path: &Path, id: &str) -> Option<HistoryEntry> {
+    read_all_at(path).into_iter().find(|entry| entry.id == id)
+}
+
 /// Count completed Send entries in a session with `timestamp_ms` strictly after `after_ms`.
 pub fn count_sends_for_session_after(agent_kind: &str, session_id: &str, after_ms: i64) -> usize {
     count_sends_after_at(&paths::history_file(), after_ms, |entry| {
@@ -1123,5 +1133,24 @@ mod tests {
         assert!(index.lookup(&first, "only-first").is_some());
         assert_eq!(index.lookup(&second, "only-first"), None);
         assert!(index.lookup(&second, "only-second").is_some());
+    }
+
+    #[test]
+    fn an_entry_is_found_by_its_id_whatever_its_action() {
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("history.jsonl");
+        // No file yet: nothing is found, and nothing breaks.
+        assert!(entry_by_id_at(&path, "a").is_none());
+        record_at(&path, entry("a", "/p", 1), 200);
+        let mut cancelled = entry("b", "/p", 2);
+        cancelled.action = ChannelAction::Cancel;
+        record_at(&path, cancelled, 200);
+        assert_eq!(entry_by_id_at(&path, "a").unwrap().timestamp_ms, 1);
+        assert_eq!(
+            entry_by_id_at(&path, "b").unwrap().action,
+            ChannelAction::Cancel
+        );
+        assert!(entry_by_id_at(&path, "missing").is_none());
+        assert!(entry_by_id_at(&path, "").is_none());
     }
 }

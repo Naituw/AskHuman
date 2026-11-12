@@ -31,10 +31,15 @@ public struct Caps: Codable, Equatable, Sendable {
     /// with its requests (`RequestView.agentKey`; docs/specs/ios-session-history.md). A Mac without it has no
     /// history to show, so the phone offers none for it. Left out of the wire when false, like `annotations`.
     @OmitFalse public var sessionHistory: Bool
+    /// The Mac describes the pictures of past exchanges (`pictures` of `history.session.get`, of the exchanges and of
+    /// their questions) and answers `history.exchange.get` (docs/specs/ios-history-pictures.md). A Mac without it
+    /// has none, so the phone asks for neither. Left out of the wire when false, like `sessionHistory`.
+    @OmitFalse public var historyPictures: Bool
 
     public init(
         newTask: Bool, interject: Bool, watch: Bool, todos: Bool = false, answerTodos: Bool = false,
-        away: Bool = false, annotations: Bool = false, liveUpdate: Bool = false, sessionHistory: Bool = false, trafficSync: Bool = false, trafficUsage: Bool = false
+        away: Bool = false, annotations: Bool = false, liveUpdate: Bool = false, sessionHistory: Bool = false,
+        historyPictures: Bool = false, trafficSync: Bool = false, trafficUsage: Bool = false
     ) {
         self.trafficUsage = trafficUsage
         self.trafficSync = trafficSync
@@ -47,6 +52,7 @@ public struct Caps: Codable, Equatable, Sendable {
         self.away = away
         self.annotations = annotations
         self.sessionHistory = sessionHistory
+        self.historyPictures = historyPictures
     }
 
     public init(from decoder: Decoder) throws {
@@ -62,6 +68,7 @@ public struct Caps: Codable, Equatable, Sendable {
         trafficSync = try c.decodeIfPresent(Bool.self, forKey: .trafficSync) ?? false
         liveUpdate = try c.decodeIfPresent(Bool.self, forKey: .liveUpdate) ?? false
         sessionHistory = try c.decodeIfPresent(Bool.self, forKey: .sessionHistory) ?? false
+        historyPictures = try c.decodeIfPresent(Bool.self, forKey: .historyPictures) ?? false
     }
 }
 
@@ -259,8 +266,11 @@ public struct AssetRef: Codable, Equatable, Hashable, Sendable {
     /// base64url JPEG thumbnail (≤ 24 KB) for images.
     public var thumb: String?
     @OmitFalse public var tooLarge: Bool
+    /// A picture of the history whose file is no longer on the Mac (docs/specs/ios-history-pictures.md HP8): it has
+    /// no thumbnail and cannot be fetched. Never set on the files of a request.
+    @OmitFalse public var gone: Bool
 
-    public init(assetId: String, name: String, size: UInt64, mime: String, isImage: Bool, thumb: String? = nil, tooLarge: Bool = false) {
+    public init(assetId: String, name: String, size: UInt64, mime: String, isImage: Bool, thumb: String? = nil, tooLarge: Bool = false, gone: Bool = false) {
         self.assetId = assetId
         self.name = name
         self.size = size
@@ -268,6 +278,7 @@ public struct AssetRef: Codable, Equatable, Hashable, Sendable {
         self.isImage = isImage
         self.thumb = thumb
         self.tooLarge = tooLarge
+        self.gone = gone
     }
 }
 
@@ -1516,13 +1527,17 @@ public struct SessionHistoryGet: WireMessage {
     public var beforeId: String?
     /// How many the phone would like; the Mac keeps it within `1...Wire.sessionHistoryPageMax`.
     public var limit: Int
+    /// The phone wants the pictures of the exchanges (`SessionExchange.pictures`). Only asked when the Mac announced
+    /// `Caps.historyPictures`; without it the page is what it always was.
+    @OmitFalse public var pictures: Bool
 
-    public init(reqId: String, agentKey: String, beforeMs: Int64, beforeId: String? = nil, limit: Int) {
+    public init(reqId: String, agentKey: String, beforeMs: Int64, beforeId: String? = nil, limit: Int, pictures: Bool = false) {
         self.reqId = reqId
         self.agentKey = agentKey
         self.beforeMs = beforeMs
         self.beforeId = beforeId
         self.limit = limit
+        self.pictures = pictures
     }
 }
 
@@ -1536,13 +1551,20 @@ public struct SessionQuestion: Codable, Equatable, Hashable, Sendable {
     /// How many images and files went with the answer (never their names or paths).
     @OmitZero public var images: UInt64
     @OmitZero public var files: UInt64
+    /// The images of the answer the phone can look at, at most `Wire.historyPicturesMax`, in the order they were
+    /// attached (`images` still counts them all). Only with `SessionHistoryGet.pictures` and `HistoryExchangeGet`.
+    @OmitEmpty public var pictures: [AssetRef]
 
-    public init(text: String, selected: [String] = [], input: String? = nil, images: UInt64 = 0, files: UInt64 = 0) {
+    public init(
+        text: String, selected: [String] = [], input: String? = nil, images: UInt64 = 0, files: UInt64 = 0,
+        pictures: [AssetRef] = []
+    ) {
         self.text = text
         self.selected = selected
         self.input = input
         self.images = images
         self.files = files
+        self.pictures = pictures
     }
 }
 
@@ -1559,13 +1581,17 @@ public struct SessionExchange: Codable, Equatable, Hashable, Sendable, Identifia
     public var message: String
     /// Files that went with the message (a count: no names, no paths).
     @OmitZero public var attachments: UInt64
+    /// The images among those files the phone can look at, at most `Wire.historyPicturesMax`, in the order they were
+    /// attached (`attachments` still counts every file). Only with `SessionHistoryGet.pictures` and
+    /// `HistoryExchangeGet`.
+    @OmitEmpty public var pictures: [AssetRef]
     public var qs: [SessionQuestion]
     /// Notes written on passages of the message (a count).
     @OmitZero public var notes: UInt64
 
     public init(
         id: String, at: Int64, channel: String, markdown: Bool = false, message: String, attachments: UInt64 = 0,
-        qs: [SessionQuestion], notes: UInt64 = 0
+        pictures: [AssetRef] = [], qs: [SessionQuestion], notes: UInt64 = 0
     ) {
         self.id = id
         self.at = at
@@ -1573,6 +1599,7 @@ public struct SessionExchange: Codable, Equatable, Hashable, Sendable, Identifia
         self.markdown = markdown
         self.message = message
         self.attachments = attachments
+        self.pictures = pictures
         self.qs = qs
         self.notes = notes
     }
@@ -1592,6 +1619,36 @@ public struct SessionHistory: WireMessage {
         self.agentKey = agentKey
         self.items = items
         self.more = more
+    }
+}
+
+/// Asks for one exchange of the history by its id, the id of the request it answered (docs/specs/
+/// ios-history-pictures.md HP9): the History tab's detail page uses it to show the pictures of a record.
+public struct HistoryExchangeGet: WireMessage {
+    public static let type = "history.exchange.get"
+    /// The phone's own number for this call, handed back in the answer (like `SessionHistoryGet.reqId`).
+    public var reqId: String
+    public var id: String
+
+    public init(reqId: String, id: String) {
+        self.reqId = reqId
+        self.id = id
+    }
+}
+
+/// The exchange asked for, pictures included, in answer to `history.exchange.get`.
+public struct HistoryExchange: WireMessage {
+    public static let type = "history.exchange"
+    public var reqId: String
+    public var id: String
+    /// `nil` when the Mac has no such record (it keeps the last few hundred) or its history is switched off. Not an
+    /// error.
+    public var item: SessionExchange?
+
+    public init(reqId: String, id: String, item: SessionExchange? = nil) {
+        self.reqId = reqId
+        self.id = id
+        self.item = item
     }
 }
 
@@ -1712,7 +1769,7 @@ public enum MessageRegistry {
         AwayState.self, AwaySet.self, AwaySessionSet.self,
         TodoProjectsGet.self, TodoProjects.self, TodoListGet.self, ProjectTodos.self, TodoOperation.self,
         TodoAck.self, TodoWatch.self, TodoChanged.self, SessionHistoryGet.self, SessionHistory.self,
-        AssetGet.self, AssetChunk.self, AssetError.self, UploadBegin.self, UploadChunk.self,
+        HistoryExchangeGet.self, HistoryExchange.self, AssetGet.self, AssetChunk.self, AssetError.self, UploadBegin.self, UploadChunk.self,
         UploadAck.self, UploadCancel.self,
     ]
 

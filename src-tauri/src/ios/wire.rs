@@ -69,6 +69,11 @@ pub const HISTORY_MESSAGE_MAX_CHARS: usize = 4000;
 pub const HISTORY_QUESTION_MAX_CHARS: usize = 1000;
 pub const HISTORY_OPTION_MAX_CHARS: usize = 500;
 pub const HISTORY_INPUT_MAX_CHARS: usize = 2000;
+/// Pictures in the history (docs/specs/ios-history-pictures.md §5): the most picture references the message of
+/// an exchange (and, apart, the reply to one question) carries, and the most bytes of JPEG one thumbnail of the
+/// history may take (the phone gets it as base64). The Swift `Wire` constants must match.
+pub const HISTORY_PICTURES_MAX: usize = 12;
+pub const HISTORY_THUMB_MAX_BYTES: usize = 6 * 1024;
 
 // ---------------------------------------------------------------- topics
 
@@ -194,6 +199,8 @@ pub mod t {
 
     pub const HISTORY_SESSION_GET: &str = "history.session.get";
     pub const HISTORY_SESSION: &str = "history.session";
+    pub const HISTORY_EXCHANGE_GET: &str = "history.exchange.get";
+    pub const HISTORY_EXCHANGE: &str = "history.exchange";
 
     pub const ASSET_GET: &str = "asset.get";
     pub const ASSET_CHUNK: &str = "asset.chunk";
@@ -267,6 +274,11 @@ pub struct Caps {
     /// send it, and the phone then offers no history. Left out when false, like `annotations`.
     #[serde(default, skip_serializing_if = "is_false")]
     pub session_history: bool,
+    /// The Mac describes the pictures of past exchanges (`pictures` of `history.session.get`, of the exchanges
+    /// and of their questions) and answers `history.exchange.get` (docs/specs/ios-history-pictures.md). Older
+    /// Macs do not send it, and the phone then asks for neither. Left out when false, like `session_history`.
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub history_pictures: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -450,6 +462,10 @@ pub struct AssetRef {
     pub thumb: Option<String>,
     #[serde(default, skip_serializing_if = "is_false")]
     pub too_large: bool,
+    /// A picture of the history whose file is no longer on the Mac (docs/specs/ios-history-pictures.md HP8):
+    /// it has no thumbnail and cannot be fetched. Never set on the files of a request.
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub gone: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -1439,6 +1455,10 @@ pub struct SessionHistoryGet {
     pub before_id: Option<String>,
     /// How many the phone would like; the Mac keeps it within `1..=SESSION_HISTORY_PAGE_MAX`.
     pub limit: u32,
+    /// The phone wants the pictures of the exchanges (`SessionExchange::pictures`). It only asks when the Mac
+    /// announced `Caps::history_pictures`; without it the page is what it always was.
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub pictures: bool,
 }
 msg!(SessionHistoryGet, t::HISTORY_SESSION_GET);
 
@@ -1458,6 +1478,11 @@ pub struct SessionQuestion {
     pub images: u64,
     #[serde(default, skip_serializing_if = "is_zero")]
     pub files: u64,
+    /// The images of the answer the phone can look at, at most `HISTORY_PICTURES_MAX`, in the order they were
+    /// attached (`images` still counts them all). Only with `SessionHistoryGet::pictures` and
+    /// `HistoryExchangeGet`.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub pictures: Vec<AssetRef>,
 }
 
 /// One entry of the Mac's history: an ask and how it was answered. Its `id` is the request's id.
@@ -1477,10 +1502,49 @@ pub struct SessionExchange {
     /// Files that went with the message (a count: no names, no paths).
     #[serde(default, skip_serializing_if = "is_zero")]
     pub attachments: u64,
+    /// The images among those files the phone can look at, at most `HISTORY_PICTURES_MAX`, in the order they
+    /// were attached (`attachments` still counts every file). Only with `SessionHistoryGet::pictures` and
+    /// `HistoryExchangeGet`.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub pictures: Vec<AssetRef>,
     pub qs: Vec<SessionQuestion>,
     /// Notes written on passages of the message (a count).
     #[serde(default, skip_serializing_if = "is_zero")]
     pub notes: u64,
+}
+
+impl SessionExchange {
+    /// Every picture of the exchange: those of the message, then those of each question's answer.
+    fn pictures_mut(&mut self) -> impl Iterator<Item = &mut AssetRef> {
+        self.pictures
+            .iter_mut()
+            .chain(self.qs.iter_mut().flat_map(|q| q.pictures.iter_mut()))
+    }
+
+    /// Takes the thumbnails off the pictures; the pictures stay and the phone still opens them.
+    /// Returns `false` when there was no thumbnail to take.
+    pub fn strip_thumbs(&mut self) -> bool {
+        let mut stripped = false;
+        for picture in self.pictures_mut() {
+            stripped |= picture.thumb.take().is_some();
+        }
+        stripped
+    }
+
+    /// Cuts every text of the exchange in half (see [`halve_text`]); `false` when nothing was long enough.
+    fn halve_texts(&mut self) -> bool {
+        let mut cut = halve_text(&mut self.message);
+        for question in &mut self.qs {
+            cut |= halve_text(&mut question.text);
+            for option in &mut question.selected {
+                cut |= halve_text(option);
+            }
+            if let Some(input) = question.input.as_mut() {
+                cut |= halve_text(input);
+            }
+        }
+        cut
+    }
 }
 
 /// A page of a session's earlier exchanges, newest first, in answer to `history.session.get`.
@@ -1507,29 +1571,69 @@ impl SessionHistory {
         }
     }
 
-    /// Makes the page smaller: drops the older half of the exchanges (the phone asks again from the oldest one
-    /// it got, so `more` turns true), and with one exchange left cuts every text of it in half. Returns `false`
-    /// when there is nothing left to cut.
+    /// Makes the page smaller. First the thumbnails of the oldest exchange that still has some go (the
+    /// pictures stay: the phone shows a placeholder and still opens them). Then it drops the older half of the
+    /// exchanges (the phone asks again from the oldest one it got, so `more` turns true), and with one exchange
+    /// left cuts every text of it in half. Returns `false` when there is nothing left to cut.
     pub fn shrink(&mut self) -> bool {
+        // The page is newest first, so the oldest exchange is the last.
+        for item in self.items.iter_mut().rev() {
+            if item.strip_thumbs() {
+                return true;
+            }
+        }
         if self.items.len() > 1 {
             self.items.truncate(self.items.len().div_ceil(2));
             self.more = true;
             return true;
         }
-        let Some(item) = self.items.first_mut() else {
+        self.items
+            .first_mut()
+            .is_some_and(SessionExchange::halve_texts)
+    }
+}
+
+/// Asks for one exchange of the history by its id, the id of the request it answered (docs/specs/
+/// ios-history-pictures.md HP9): the History tab's detail page uses it to show the pictures of a record.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct HistoryExchangeGet {
+    /// The phone's own number for this call, handed back in the answer (like `SessionHistoryGet::req_id`).
+    pub req_id: String,
+    pub id: String,
+}
+msg!(HistoryExchangeGet, t::HISTORY_EXCHANGE_GET);
+
+/// The exchange asked for, pictures included, in answer to `history.exchange.get`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct HistoryExchange {
+    pub req_id: String,
+    pub id: String,
+    /// `None` when the Mac has no such record (it keeps the last few hundred) or its history is switched off.
+    /// Not an error.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub item: Option<SessionExchange>,
+}
+msg!(HistoryExchange, t::HISTORY_EXCHANGE);
+
+impl HistoryExchange {
+    /// The answer when there is nothing to show.
+    pub fn empty(req_id: &str, id: &str) -> Self {
+        Self {
+            req_id: req_id.to_string(),
+            id: id.to_string(),
+            item: None,
+        }
+    }
+
+    /// Makes the answer smaller: first the thumbnails go, then half of every text. Returns `false` when
+    /// there is nothing left to cut.
+    pub fn shrink(&mut self) -> bool {
+        let Some(item) = self.item.as_mut() else {
             return false;
         };
-        let mut cut = halve_text(&mut item.message);
-        for question in &mut item.qs {
-            cut |= halve_text(&mut question.text);
-            for option in &mut question.selected {
-                cut |= halve_text(option);
-            }
-            if let Some(input) = question.input.as_mut() {
-                cut |= halve_text(input);
-            }
-        }
-        cut
+        item.strip_thumbs() || item.halve_texts()
     }
 }
 
@@ -1720,6 +1824,8 @@ registry!(
     TodoChanged,
     SessionHistoryGet,
     SessionHistory,
+    HistoryExchangeGet,
+    HistoryExchange,
     AssetGet,
     AssetChunk,
     AssetError,
@@ -1892,6 +1998,7 @@ mod tests {
             away: true,
             annotations,
             session_history: false,
+            history_pictures: false,
         };
         assert!(serde_json::to_value(caps(false))
             .unwrap()
@@ -1998,6 +2105,7 @@ mod tests {
             away: true,
             annotations: false,
             session_history,
+            history_pictures: false,
         };
         assert!(serde_json::to_value(caps(false))
             .unwrap()
@@ -2047,12 +2155,14 @@ mod tests {
             markdown: true,
             message: "m".repeat(chars),
             attachments: 0,
+            pictures: Vec::new(),
             qs: vec![SessionQuestion {
                 text: "q".repeat(chars / 10),
                 selected: vec!["s".repeat(chars / 10)],
                 input: Some("i".repeat(chars / 10)),
                 images: 0,
                 files: 0,
+                pictures: Vec::new(),
             }],
             notes: 0,
         }
@@ -2125,6 +2235,7 @@ mod tests {
             before_ms: 5,
             before_id: None,
             limit: 8,
+            pictures: false,
         };
         assert_eq!(
             get.to_value(),
@@ -2137,12 +2248,14 @@ mod tests {
             markdown: false,
             message: String::new(),
             attachments: 0,
+            pictures: Vec::new(),
             qs: vec![SessionQuestion {
                 text: "ok?".into(),
                 selected: Vec::new(),
                 input: None,
                 images: 0,
                 files: 0,
+                pictures: Vec::new(),
             }],
             notes: 0,
         };
@@ -2150,6 +2263,192 @@ mod tests {
             serde_json::to_value(&bare).unwrap(),
             serde_json::json!({"id": "r", "at": 1, "channel": "away", "message": "", "qs": [{"text": "ok?"}]})
         );
+    }
+
+    fn picture(name: &str, thumb: bool) -> AssetRef {
+        AssetRef {
+            asset_id: format!("id-{name}"),
+            name: name.into(),
+            size: 10,
+            mime: "image/png".into(),
+            is_image: true,
+            thumb: thumb.then(|| "AAAA".into()),
+            too_large: false,
+            gone: false,
+        }
+    }
+
+    /// A past exchange with one picture on the message and one on the answer of its question.
+    fn exchange_with_pictures(index: usize, thumbs: bool) -> SessionExchange {
+        let mut exchange = exchange(index, 40);
+        exchange.pictures = vec![picture(&format!("m{index}.png"), thumbs)];
+        exchange.qs[0].pictures = vec![picture(&format!("q{index}.png"), thumbs)];
+        exchange
+    }
+
+    fn thumbs_of(exchange: &SessionExchange) -> usize {
+        exchange
+            .pictures
+            .iter()
+            .chain(exchange.qs.iter().flat_map(|q| q.pictures.iter()))
+            .filter(|picture| picture.thumb.is_some())
+            .count()
+    }
+
+    /// The pictures of the history are additive (docs/specs/ios-history-pictures.md §5): every new field is left
+    /// out when there is nothing to say and read as "none" when missing.
+    #[test]
+    fn the_picture_additions_are_additive_in_both_directions() {
+        let caps = |history_pictures: bool| Caps {
+            traffic_usage: false,
+            traffic_sync: false,
+            live_update: false,
+            new_task: true,
+            interject: true,
+            watch: true,
+            todos: true,
+            answer_todos: true,
+            away: true,
+            annotations: false,
+            session_history: true,
+            history_pictures,
+        };
+        assert!(serde_json::to_value(caps(false))
+            .unwrap()
+            .get("historyPictures")
+            .is_none());
+        assert_eq!(
+            serde_json::to_value(caps(true)).unwrap()["historyPictures"],
+            true
+        );
+        let old: Caps = serde_json::from_value(serde_json::json!({
+            "newTask": true, "interject": true, "watch": true, "sessionHistory": true
+        }))
+        .unwrap();
+        assert!(!old.history_pictures);
+
+        // The page request only says so when it wants pictures.
+        let get = |pictures: bool| SessionHistoryGet {
+            req_id: "h".into(),
+            agent_key: "claude:s".into(),
+            before_ms: 5,
+            before_id: None,
+            limit: 8,
+            pictures,
+        };
+        assert!(get(false).to_value().get("pictures").is_none());
+        assert_eq!(get(true).to_value()["pictures"], true);
+        let legacy: SessionHistoryGet = serde_json::from_value(serde_json::json!({
+            "reqId": "h", "agentKey": "claude:s", "beforeMs": 5, "limit": 8
+        }))
+        .unwrap();
+        assert!(!legacy.pictures);
+
+        // A picture is an `AssetRef`; `gone` is the only new field of it.
+        let mut shown = picture("a.png", false);
+        assert!(serde_json::to_value(&shown).unwrap().get("gone").is_none());
+        shown.gone = true;
+        assert_eq!(serde_json::to_value(&shown).unwrap()["gone"], true);
+        let old: AssetRef = serde_json::from_value(serde_json::json!({
+            "assetId": "a", "name": "n", "size": 1, "mime": "image/png", "isImage": true
+        }))
+        .unwrap();
+        assert!(!old.gone);
+
+        // An exchange without pictures looks the way it always did, and an old one still reads.
+        let plain = exchange(0, 10);
+        let value = serde_json::to_value(&plain).unwrap();
+        assert!(value.get("pictures").is_none(), "{value}");
+        assert!(value["qs"][0].get("pictures").is_none(), "{value}");
+        let with = exchange_with_pictures(0, true);
+        let value = serde_json::to_value(&with).unwrap();
+        assert_eq!(value["pictures"][0]["name"], "m0.png");
+        assert_eq!(value["qs"][0]["pictures"][0]["name"], "q0.png");
+        let back: SessionExchange = serde_json::from_value(value).unwrap();
+        assert_eq!(back, with);
+        let old: SessionExchange = serde_json::from_value(serde_json::json!({
+            "id": "r", "at": 1, "channel": "popup", "message": "", "qs": [{"text": "ok?"}]
+        }))
+        .unwrap();
+        assert!(old.pictures.is_empty() && old.qs[0].pictures.is_empty());
+    }
+
+    #[test]
+    fn the_exchange_messages_are_registered_and_an_empty_answer_has_no_item() {
+        assert_eq!(HistoryExchangeGet::TYPE, "history.exchange.get");
+        assert_eq!(HistoryExchange::TYPE, "history.exchange");
+        assert!(ALL_TYPES.contains(&"history.exchange.get"));
+        assert!(ALL_TYPES.contains(&"history.exchange"));
+        let get = HistoryExchangeGet {
+            req_id: "x1".into(),
+            id: "request".into(),
+        };
+        assert_eq!(
+            get.to_value(),
+            serde_json::json!({"reqId": "x1", "id": "request"})
+        );
+        let empty = HistoryExchange::empty("x1", "request");
+        assert_eq!(
+            empty.to_value(),
+            serde_json::json!({"reqId": "x1", "id": "request"})
+        );
+        let found = HistoryExchange {
+            item: Some(exchange_with_pictures(0, true)),
+            ..empty
+        };
+        let back: HistoryExchange = serde_json::from_value(found.to_value()).unwrap();
+        assert_eq!(back, found);
+    }
+
+    #[test]
+    fn a_page_takes_the_thumbnails_off_its_oldest_exchanges_before_it_gives_up_any() {
+        let mut page = SessionHistory {
+            req_id: "h".into(),
+            agent_key: "claude:s".into(),
+            items: (0..3)
+                .map(|index| exchange_with_pictures(index, true))
+                .collect(),
+            more: false,
+        };
+        // One call strips one exchange, the oldest (the last) first; nothing is dropped meanwhile.
+        for (round, oldest_first) in [2usize, 1, 0].into_iter().enumerate() {
+            assert!(page.shrink(), "round {round}");
+            assert_eq!(page.items.len(), 3, "round {round}");
+            assert!(!page.more, "round {round}");
+            assert_eq!(thumbs_of(&page.items[oldest_first]), 0, "round {round}");
+            for newer in 0..oldest_first {
+                assert_eq!(thumbs_of(&page.items[newer]), 2, "round {round}");
+            }
+        }
+        // The pictures stayed, only the thumbnails went.
+        assert!(page
+            .items
+            .iter()
+            .all(|item| item.pictures.len() == 1 && item.qs[0].pictures.len() == 1));
+        // Nothing left to strip: the page now gives up its older half, as it always did.
+        assert!(page.shrink());
+        assert_eq!(page.items.len(), 2);
+        assert!(page.more);
+    }
+
+    #[test]
+    fn a_single_exchange_loses_its_thumbnails_and_then_half_of_its_text() {
+        let mut item = exchange_with_pictures(0, true);
+        item.message = "m".repeat(2_000);
+        let mut answer = HistoryExchange {
+            req_id: "x".into(),
+            id: "x0".into(),
+            item: Some(item),
+        };
+        assert!(answer.shrink());
+        let kept = answer.item.as_ref().unwrap();
+        assert_eq!(thumbs_of(kept), 0);
+        assert_eq!(kept.message.chars().count(), 2_000);
+        assert!(answer.shrink());
+        assert!(answer.item.as_ref().unwrap().message.ends_with('…'));
+        while answer.shrink() {}
+        assert!(!answer.shrink());
+        assert!(!HistoryExchange::empty("x", "y").shrink());
     }
 }
 
