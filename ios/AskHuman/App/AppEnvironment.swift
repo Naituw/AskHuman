@@ -96,6 +96,8 @@ struct LaunchOptions {
     var notes = 0
     /// `-AHHistoryFail 1`: the next reads of a session's history get no answer from the (mock) Mac, that many times.
     var historyFail = 0
+    /// `-AHHistoryDelay 1.5`: a read of a session's history takes this many real seconds (the pull's UI tests).
+    var historyDelay: Double?
 
     init(defaults: UserDefaults = .standard) {
         mock = defaults.bool(forKey: "AHMock")
@@ -144,6 +146,7 @@ struct LaunchOptions {
         annotate = defaults.bool(forKey: "AHAnnotate")
         notes = min(Wire.maxAnnotations, max(0, defaults.integer(forKey: "AHNotes")))
         historyFail = max(0, defaults.integer(forKey: "AHHistoryFail"))
+        if defaults.object(forKey: "AHHistoryDelay") != nil { historyDelay = max(0, defaults.double(forKey: "AHHistoryDelay")) }
     }
 }
 
@@ -171,6 +174,7 @@ final class AppEnvironment {
             mock = backend
             if launch.holdInterjects { Task { await backend.setInterjectConsumeDelay(nil) } }
             if launch.historyFail > 0 { Task { await backend.setFailNextSessionHistory(launch.historyFail) } }
+            if let delay = launch.historyDelay { Task { await backend.setSessionHistoryDelay(realSeconds: delay) } }
             if let kind = launch.followEvent {
                 Task {
                     try? await Task.sleep(for: .seconds(2))

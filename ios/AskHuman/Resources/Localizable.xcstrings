@@ -3971,6 +3971,26 @@
         }
       }
     },
+    "Pull down to load earlier records" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "下拉加载更早的记录"
+          }
+        }
+      }
+    },
+    "Pull down to see this session's history" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "下拉查看此会话的历史"
+          }
+        }
+      }
+    },
     "Projects show up here once an Agent has worked in them on a Mac." : {
       "localizations" : {
         "zh-Hans" : {
@@ -4197,6 +4217,26 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "移除附件"
+          }
+        }
+      }
+    },
+    "Release to load earlier records" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "松手加载更早的记录"
+          }
+        }
+      }
+    },
+    "Release to see this session's history" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "松手查看此会话的历史"
           }
         }
       }

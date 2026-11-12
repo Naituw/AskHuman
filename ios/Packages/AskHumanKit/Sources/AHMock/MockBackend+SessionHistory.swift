@@ -42,4 +42,10 @@ extension MockBackend {
     public func setFailNextSessionHistory(_ count: Int) {
         failNextSessionHistory = count
     }
+
+    /// Makes a read take this many real seconds, whatever the latency is set to (the pull's UI tests need a load that
+    /// lasts long enough to scroll during, and one that is over before the page has settled).
+    public func setSessionHistoryDelay(realSeconds: Double) {
+        sessionHistoryDelay = latency > 0 ? max(0, realSeconds) / latency : 0
+    }
 }

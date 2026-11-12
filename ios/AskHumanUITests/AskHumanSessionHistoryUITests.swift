@@ -1,4 +1,5 @@
 import XCTest
+import QuartzCore
 
 /// The earlier exchanges of a request's session (`docs/specs/ios-session-history.md`), through the real UI over the mock
 /// Macs' `sessionHistory` scenario, in English or Chinese (`TEST_RUNNER_AH_UI_LANG=zh-Hans`).
@@ -98,8 +99,16 @@ final class AskHumanSessionHistoryUITests: XCTestCase {
         waitFor("fewer than \(count) cards appeared (\(cards().count))", timeout: timeout, file: file, line: line) { cards().count >= count }
     }
 
+    /// A page offers its history once the Mac's abilities are known, a moment after the page is up (a good deal longer on a
+    /// busy machine). A touch before that is a touch on a short page, which does not move at all. A page that offers none (no
+    /// session, a Mac too old) never shows the element, and the wait just ends.
+    private func waitForTheHistoryToBeOffered() {
+        _ = element("session-pull-state").waitForExistence(timeout: 4)
+    }
+
     /// A slow pull from near the top, held a moment before it lets go.
     private func pull(from: CGFloat = 0.25, to: CGFloat = 0.8, inWindow: Bool = false) {
+        waitForTheHistoryToBeOffered()
         // With the keyboard up the first scroll view of the app can be the one of its suggestion bar.
         let space: XCUIElement = inWindow ? app : pageScroll()
         let start = space.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: from))
@@ -107,15 +116,24 @@ final class AskHumanSessionHistoryUITests: XCTestCase {
         start.press(forDuration: 0.05, thenDragTo: end, withVelocity: .slow, thenHoldForDuration: 0.15)
     }
 
-    /// Drags the page down until what is at its top stops changing.
-    private func dragToTop(maxSwipes: Int = 40) {
+    /// Drags the page down until the top of the thread is in view, each drag no longer than what is left to go. (A drag that
+    /// goes on past the top is a pull, and loads another page: a swipe of the length the test runner gives it would do that
+    /// every time it reaches the top.)
+    private func dragToTop(maxDrags: Int = 40) {
         let scroll = pageScroll()
-        var last = -1.0
-        for _ in 0..<maxSwipes {
-            scroll.swipeDown(velocity: .fast)
-            let top = cards().count > 0 ? cards().firstMatch.frame.minY : element("session-thread-start").frame.minY
-            if abs(top - last) < 0.5 { return }
-            last = top
+        let height = scroll.frame.height
+        for _ in 0..<maxDrags {
+            // The top of the thread is the row that says where it starts, once there is one, or else its oldest card; the page
+            // is as far down as it can be when that is a little below the navigation bar.
+            let row = element("session-thread-start")
+            guard row.exists || cards().count > 0 else { return }
+            let top = row.exists ? row.frame.minY : cards().firstMatch.frame.minY
+            let needed = (row.exists ? 130 : 108) - top
+            if needed <= 12 { return }
+            let travel = min(needed, height * 0.6)
+            let start = scroll.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.2))
+            let end = scroll.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.2 + travel / height))
+            start.press(forDuration: 0.05, thenDragTo: end, withVelocity: .default, thenHoldForDuration: 0.2)
         }
     }
 
@@ -157,12 +175,16 @@ final class AskHumanSessionHistoryUITests: XCTestCase {
         settle()
         shot("2-after-the-pull")
         XCTAssertEqual(cards().count, 8, "one page of eight")
-        XCTAssertEqual(title.frame.minY, before, accuracy: 1, "the request moved on screen")
+        // The request went one row down when the pull was let go (the row of the loading line), and did not move when the
+        // history came.
+        XCTAssertEqual(title.frame.minY, before + heldRoom, accuracy: 1, "the request moved on screen")
         XCTAssertFalse(element("session-thread-start").exists, "there is more to find")
-        // The page rests within its range, so a touch moves nothing: dragging the request up has nowhere to go.
+        // The page rests within its range: a touch can take the request back up to where it was before the pull, no further
+        // (a page that rests out of its range jumps at the first touch).
         pageScroll().swipeUp(velocity: .slow)
         Thread.sleep(forTimeInterval: 0.8)
-        XCTAssertEqual(title.frame.minY, before, accuracy: 1, "the page was out of its range and came back at the touch")
+        XCTAssertGreaterThanOrEqual(title.frame.minY, before - 1, "the page was out of its range and came back at the touch")
+        XCTAssertLessThanOrEqual(title.frame.minY, before + heldRoom + 1)
     }
 
     /// A page taller than a screen: nothing is different, the request stays exactly where it was.
@@ -175,7 +197,7 @@ final class AskHumanSessionHistoryUITests: XCTestCase {
         settle()
         shot("tall-page-after-the-pull")
         XCTAssertEqual(cards().count, 8)
-        XCTAssertEqual(title.frame.minY, before, accuracy: 1, "the request moved on screen")
+        XCTAssertEqual(title.frame.minY, before + heldRoom, accuracy: 1, "the request moved on screen")
     }
 
     func testTheThreadIsReadByDraggingDownAndNewestIsNextToTheRequest() {
@@ -226,8 +248,9 @@ final class AskHumanSessionHistoryUITests: XCTestCase {
         settle()
         XCTAssertEqual(cards().count, 3)
         XCTAssertTrue(element("session-thread-start").exists, "three exchanges are all there is")
-        XCTAssertEqual(title.frame.minY, before, accuracy: 1, "the request stayed put")
+        XCTAssertEqual(title.frame.minY, before + heldRoom, accuracy: 1, "the request moved on screen")
         XCTAssertLessThan(cards().element(boundBy: 2).frame.maxY, title.frame.minY, "the newest exchange is next to the request")
+        XCTAssertLessThanOrEqual(element("session-thread-start").frame.maxY, cards().element(boundBy: 0).frame.minY + 1, "the row that says where it starts is above the oldest exchange")
     }
 
     func testAConfirmationPageHasTheThreadToo() {
@@ -239,7 +262,7 @@ final class AskHumanSessionHistoryUITests: XCTestCase {
         settle()
         shot("confirm-after-the-pull")
         XCTAssertEqual(cards().count, 8)
-        XCTAssertEqual(title.frame.minY, before, accuracy: 1, "the confirmation stayed put")
+        XCTAssertEqual(title.frame.minY, before + heldRoom, accuracy: 1, "the confirmation moved on screen")
         XCTAssertLessThan(cards().element(boundBy: 7).frame.maxY, title.frame.minY, "the thread is above the confirmation")
         XCTAssertTrue(title.isHittable, "the confirmation is still on screen")
     }
@@ -247,14 +270,16 @@ final class AskHumanSessionHistoryUITests: XCTestCase {
     // MARK: the menu
 
     func testTheMenuLoadsTheHistoryAndScrollsToItsNewestExchange() {
-        launch()
+        launch(extra: ["-AHPullProbe", probePath("menu")])
         let before = requireElement("request-title").frame.minY
         openMenuItem()
         waitForCards(atLeast: 8)
         settle()
         shot("menu-after")
         let newest = cards().element(boundBy: cards().count - 1)
-        XCTAssertTrue(newest.frame.minY > 40 && newest.frame.minY < 420, "the newest exchange is at the top of the screen: \(newest.frame)")
+        // (The page's own record of its motion goes with a failure: where it was, and when, on the way.)
+        let motion = readProbe("menu").suffix(14).map { "\($0.time) off=\($0.values["off"] ?? "-") size=\($0.values["size"] ?? "-") req=\($0.values["req"] ?? "-") dec=\($0.values["dec"] ?? "-")" }.joined(separator: "\n")
+        XCTAssertTrue(newest.frame.minY > 40 && newest.frame.minY < 420, "the newest exchange is at the top of the screen: \(newest.frame)\n\(motion)")
         XCTAssertGreaterThan(requireElement("request-title").frame.minY, before, "the request is below it now")
     }
 
@@ -441,9 +466,6 @@ final class AskHumanSessionHistoryUITests: XCTestCase {
     }
 
     func testPullingWithTheKeyboardUpDoesNotJump() throws {
-        // A pull on a big screen has to go a long way before the control takes it, further than the room that is left above
-        // the keyboard of an iPad (also without a keyboard, a pull of the length that fits there is not taken).
-        try XCTSkipIf(UIDevice.current.userInterfaceIdiom == .pad, "The room above an iPad keyboard is shorter than a pull.")
         launch()
         let field = app.textFields.firstMatch.exists ? app.textFields.firstMatch : app.textViews.firstMatch
         guard field.waitForExistence(timeout: 3) else { throw XCTSkip("the request has no text field") }
@@ -452,7 +474,7 @@ final class AskHumanSessionHistoryUITests: XCTestCase {
         XCTAssertTrue(app.keyboards.firstMatch.waitForExistence(timeout: 5))
         var loaded = false
         for _ in 0..<10 {
-            // Far enough for the control to take it (it wants about 170 pt of the page pulled past its top), still above the keyboard.
+            // Far enough to be taken (about 145 pt of finger travel past the top), still above the keyboard.
             pull(from: 0.14, to: 0.56, inWindow: true)
             if cards().count >= 8 { loaded = true; break }
             Thread.sleep(forTimeInterval: 0.5)
@@ -481,10 +503,24 @@ final class AskHumanSessionHistoryUITests: XCTestCase {
         XCTAssertEqual(card.value as? String, localized("Expanded", "已展开"))
     }
 
-    func testWithoutLoadingTheHistoryAnEndedPageStillMovesOn() {
-        launch(extra: ["-AHEndedCountdown", "2", "-AHEndAfter", "2", "-AHEndHow", "answeredElsewhere"], autoAdvance: true)
+    /// The same by pulling: whichever way the history is asked for, the page is not moved away from it.
+    func testPullingTheHistoryOnAnEndedPageStopsItsCountdownToo() {
+        launch(extra: ["-AHEndedCountdown", "8", "-AHEndAfter", "2", "-AHEndHow", "answeredElsewhere"], autoAdvance: true)
         requireElement("finished-notice", timeout: 40)
-        waitFor("the ended page did not move on by itself", timeout: 15) { !element("finished-notice").exists }
+        pull()
+        waitForCards(atLeast: 8)
+        // Well past the countdown (8 seconds from when the strip was shown).
+        Thread.sleep(forTimeInterval: 10)
+        XCTAssertTrue(element("finished-notice").exists, "the page was not moved on")
+        XCTAssertGreaterThanOrEqual(cards().count, 8)
+        shot("ended-page-pulled")
+    }
+
+    func testWithoutLoadingTheHistoryAnEndedPageStillMovesOn() {
+        // A countdown long enough to be seen by a query that takes its time on a busy machine.
+        launch(extra: ["-AHEndedCountdown", "6", "-AHEndAfter", "2", "-AHEndHow", "answeredElsewhere"], autoAdvance: true)
+        requireElement("finished-notice", timeout: 40)
+        waitFor("the ended page did not move on by itself", timeout: 30) { !element("finished-notice").exists }
     }
 
     // MARK: looks
@@ -508,7 +544,7 @@ final class AskHumanSessionHistoryUITests: XCTestCase {
         waitForCards(atLeast: 8)
         settle()
         shot("ipad-after-the-pull")
-        XCTAssertEqual(title.frame.minY, before, accuracy: 1)
+        XCTAssertEqual(title.frame.minY, before + heldRoom, accuracy: 1)
     }
 
     func testDarkMode() {
@@ -518,5 +554,356 @@ final class AskHumanSessionHistoryUITests: XCTestCase {
         settle()
         shot("dark")
         XCTAssertEqual(cards().count, 8)
+    }
+
+    // MARK: the pull as the page draws it (R1: docs/plans/ios-session-history.md)
+
+    /// The room a pull holds open for its loading line, in points, at the default text size.
+    private let heldRoom: CGFloat = 64
+
+    /// A pull of this many points of finger travel, held a moment before it lets go. The page gives way less than the finger
+    /// moves: a travel of 70 points opens it by about 35, one of 240 by well over the threshold.
+    private func pull(travel: CGFloat, hold: TimeInterval = 0.15) {
+        waitForTheHistoryToBeOffered()
+        let scroll = pageScroll()
+        let height = scroll.frame.height
+        let start = scroll.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.2))
+        let end = scroll.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.2 + travel / height))
+        start.press(forDuration: 0.05, thenDragTo: end, withVelocity: .slow, thenHoldForDuration: hold)
+    }
+
+    private func pullState() -> String { element("session-pull-state").label }
+
+    /// Waits for the page to take a pull. When it does not, the failure says what the page saw of the touch (the last lines
+    /// of the probe) and a screenshot is kept: a pull the page never starts to follow is a different thing from one it
+    /// follows and does not load.
+    private func waitForThePullToTakeHold(probe name: String, timeout: TimeInterval = 5, file: StaticString = #filePath, line: UInt = #line) {
+        let deadline = Date().addingTimeInterval(timeout)
+        while Date() < deadline {
+            if pullState() == "loading" { return }
+            Thread.sleep(forTimeInterval: 0.1)
+        }
+        shot("pull-not-taken")
+        let seen = readProbe(name).suffix(6).map { "\($0.time) \($0.note ?? "") \($0.values.sorted { $0.key < $1.key }.map { "\($0.key)=\($0.value)" }.joined(separator: " "))" }
+        XCTFail("the pull never took hold (state \(pullState())); the page saw:\n" + seen.joined(separator: "\n"), file: file, line: line)
+    }
+
+    /// What the app wrote of the page's motion (`-AHPullProbe`): a line for every frame in which something changed.
+    private struct ProbeLine {
+        var time: Double
+        var note: String?
+        var values: [String: String] = [:]
+        var request: Double? { values["req"].flatMap(Double.init) }
+        var offset: Double? { values["off"].flatMap(Double.init) }
+    }
+
+    private func probePath(_ name: String) -> String { "/tmp/ah-pull-probe-\(name).log" }
+
+    private func readProbe(_ name: String) -> [ProbeLine] {
+        guard let text = try? String(contentsOfFile: probePath(name), encoding: .utf8) else { return [] }
+        return text.split(separator: "\n").compactMap { raw in
+            let line = raw.trimmingCharacters(in: .whitespaces)
+            guard let space = line.firstIndex(of: " "), let time = Double(line[..<space]) else { return nil }
+            let rest = line[line.index(after: space)...].trimmingCharacters(in: .whitespaces)
+            if rest.hasPrefix("#") { return ProbeLine(time: time, note: String(rest.dropFirst(2))) }
+            var values: [String: String] = [:]
+            for token in rest.split(separator: " ") {
+                let pair = token.split(separator: "=", maxSplits: 1)
+                if pair.count == 2 { values[String(pair[0])] = String(pair[1]) }
+            }
+            return ProbeLine(time: time, values: values)
+        }
+    }
+
+    /// Where the request was on screen in every frame from the note `prefix` until `seconds` later, and the last place it was
+    /// before the note.
+    private func requestAround(_ prefix: String, for seconds: Double = 1.0, in log: [ProbeLine]) -> (before: Double?, during: [Double])? {
+        guard let mark = log.first(where: { $0.note?.hasPrefix(prefix) == true }) else { return nil }
+        let before = log.last(where: { $0.time < mark.time && $0.request != nil })?.request
+        let during = log.filter { $0.time >= mark.time && $0.time <= mark.time + seconds }.compactMap(\.request)
+        return (before, during)
+    }
+
+    /// The thread came in above the request in the same layout pass as the request was put back: in no frame of the next
+    /// second was the request anywhere but where it had been.
+    private func assertTheRequestDidNotMoveWhenTheThreadCameIn(_ log: [ProbeLine], file: StaticString = #filePath, line: UInt = #line) {
+        guard let around = requestAround("thread comes in", in: log), let before = around.before else {
+            return XCTFail("the probe has no record of the thread coming in (\(log.count) lines)", file: file, line: line)
+        }
+        XCTAssertFalse(around.during.isEmpty, file: file, line: line)
+        for place in around.during {
+            XCTAssertEqual(place, before, accuracy: 1, "a frame had the request at \(place), it was at \(before)", file: file, line: line)
+        }
+    }
+
+    /// From the lift on, the request moves only the way the page springs back (up the screen, never down and never in a jump)
+    /// and ends where the room of the loading row puts it.
+    private func assertTheLoadingRowTookItsPlaceWithoutAJump(_ log: [ProbeLine], file: StaticString = #filePath, line: UInt = #line) {
+        guard let mark = log.first(where: { $0.note == "loading starts" }), let initial = log.first(where: { $0.request != nil })?.request else {
+            return XCTFail("the probe has no record of the loading starting", file: file, line: line)
+        }
+        // Where the request is once the room of the row is under it: one room below where the page began (the probe measures
+        // the top of the request's area, not its title).
+        let rest = initial + Double(heldRoom)
+        let frames = log.filter { $0.time >= mark.time && $0.time <= mark.time + 1.2 }.compactMap(\.request)
+        XCTAssertGreaterThan(frames.count, 3, "too few frames after the lift: \(frames)", file: file, line: line)
+        var last: Double?
+        var biggestStep = 0.0
+        for place in frames {
+            if let last {
+                XCTAssertLessThanOrEqual(place, last + 0.5, "the request moved down the screen (\(last) -> \(place))", file: file, line: line)
+                biggestStep = max(biggestStep, last - place)
+            }
+            last = place
+        }
+        XCTAssertLessThan(biggestStep, 45, "the request jumped by \(biggestStep) points in a frame: \(frames)", file: file, line: line)
+        XCTAssertEqual(frames.last ?? -1, rest, accuracy: 1.5, "the page did not come to rest on the room of the loading row", file: file, line: line)
+    }
+
+    /// A pull let go past its threshold holds the room of a row open at the top of the page; the loading takes as long as it
+    /// takes and the history then comes in above the request, which does not move.
+    func testAPullLetGoPastTheThresholdHoldsItsRoomAndTheHistoryComesInWithoutMovingTheRequest() {
+        launch(extra: ["-AHHistoryDelay", "6", "-AHPullProbe", probePath("armed")])
+        let title = requireElement("request-title")
+        let start = title.frame.minY
+        XCTAssertEqual(pullState(), "idle")
+        shot("pull-1-before")
+        pull(travel: 240)
+        waitFor("the pull never took hold (state \(pullState()))", timeout: 5) { pullState() == "loading" }
+        // The line is read once (the lit copy of its words that sweeps over it is not a second line).
+        let loading = requireElement("session-thread-loading", timeout: 3)
+        XCTAssertEqual(loading.label, localized("Loading history…", "正在加载历史…"))
+        // The room opens and the page settles on it.
+        Thread.sleep(forTimeInterval: 0.9)
+        // The line shimmers: a highlight sweeps over its words, so two looks at it a moment apart are not the same picture.
+        // (With Reduce Motion it stands still on purpose; `testWithReduceMotionTheIconStaysStill` covers that run.)
+        let firstLook = loading.screenshot().pngRepresentation
+        Thread.sleep(forTimeInterval: 0.45)
+        if ProcessInfo.processInfo.environment["AH_UI_REDUCE_MOTION"] != "1" {
+            XCTAssertNotEqual(firstLook, loading.screenshot().pngRepresentation, "the loading line stands still")
+        }
+        shot("pull-2-holding")
+        let held = title.frame.minY
+        XCTAssertEqual(held - start, heldRoom, accuracy: 3, "the request is one room lower than it was")
+        XCTAssertEqual(cards().count, 0, "nothing has come yet")
+        waitForCards(atLeast: 8, timeout: 10)
+        Thread.sleep(forTimeInterval: 1.2)
+        shot("pull-3-arrived")
+        XCTAssertEqual(cards().count, 8)
+        XCTAssertEqual(title.frame.minY, held, accuracy: 1, "the request moved when the history came in")
+        XCTAssertEqual(pullState(), "idle")
+
+        let log = readProbe("armed")
+        XCTAssertTrue(log.contains { $0.values["pull"] == "armed" }, "the pull was never armed")
+        assertTheRequestDidNotMoveWhenTheThreadCameIn(log)
+        assertTheLoadingRowTookItsPlaceWithoutAJump(log)
+    }
+
+    /// Let go short of the threshold, a pull loads nothing and leaves nothing behind.
+    func testAPullLetGoShortOfTheThresholdDoesNothing() {
+        launch(extra: ["-AHHistoryDelay", "0.3", "-AHPullProbe", probePath("short")])
+        let title = requireElement("request-title")
+        let start = title.frame.minY
+        pull(travel: 70)
+        Thread.sleep(forTimeInterval: 1.5)
+        XCTAssertEqual(pullState(), "idle")
+        XCTAssertEqual(cards().count, 0, "a short pull loaded the history")
+        XCTAssertEqual(title.frame.minY, start, accuracy: 1, "the page did not come back")
+        let log = readProbe("short")
+        XCTAssertTrue(log.contains { $0.values["pull"] == "pulling" }, "the header was never shown")
+        XCTAssertFalse(log.contains { $0.values["pull"] == "armed" || $0.values["pull"] == "loading" }, "the pull was armed")
+    }
+
+    /// The history comes while the person has scrolled the page down somewhere else: what is on screen does not move.
+    func testTheHistoryComingWhileTheRequestIsScrolledDoesNotMoveWhatIsOnScreen() {
+        launch("req-history-tall", extra: ["-AHHistoryDelay", "4", "-AHPullProbe", probePath("scrolled")])
+        _ = requireElement("request-title")
+        pull(travel: 240)
+        waitFor("the pull never took hold (state \(pullState()))", timeout: 5) { pullState() == "loading" }
+        Thread.sleep(forTimeInterval: 0.9)
+        // The row scrolls away with the page: it is page content, and the page is not locked.
+        pageScroll().swipeUp(velocity: .slow)
+        Thread.sleep(forTimeInterval: 0.8)
+        shot("scrolled-1-while-loading")
+        waitForCards(atLeast: 8, timeout: 10)
+        Thread.sleep(forTimeInterval: 1.2)
+        shot("scrolled-2-arrived")
+        let log = readProbe("scrolled")
+        assertTheRequestDidNotMoveWhenTheThreadCameIn(log)
+        if let before = requestAround("thread comes in", in: log)?.before {
+            XCTAssertLessThan(before, 60, "the page was scrolled well down while it loaded (the request is at \(before))")
+        }
+    }
+
+    /// "Try again" puts the same row back to the loading line, and nothing on the page moves, then or when the history comes.
+    func testTryingAgainPutsTheSameRowBackToTheLoadingLine() {
+        launch(extra: ["-AHHistoryFail", "1", "-AHHistoryDelay", "3", "-AHPullProbe", probePath("retry")])
+        let title = requireElement("request-title")
+        pull(travel: 240)
+        waitFor("the pull never took hold (state \(pullState()))", timeout: 5) { pullState() == "loading" }
+        let retry = requireElement("session-thread-retry", timeout: 12)
+        Thread.sleep(forTimeInterval: 0.8)
+        let held = title.frame.minY
+        let rowMiddle = requireElement("session-thread-error").frame.midY
+        retry.tap()
+        let loading = requireElement("session-thread-loading", timeout: 3)
+        XCTAssertFalse(element("session-thread-error").exists, "the row still says it failed")
+        XCTAssertEqual(pullState(), "loading")
+        XCTAssertEqual(title.frame.minY, held, accuracy: 1, "the request moved when the line came back")
+        XCTAssertEqual(loading.frame.midY, rowMiddle, accuracy: 2, "the loading line is not in the row that said it failed")
+        shot("retry-loading")
+        waitForCards(atLeast: 8, timeout: 12)
+        Thread.sleep(forTimeInterval: 1.2)
+        XCTAssertEqual(cards().count, 8)
+        XCTAssertEqual(title.frame.minY, held, accuracy: 1, "the request moved when the history came in")
+        XCTAssertFalse(element("session-thread-error").exists)
+        XCTAssertEqual(pullState(), "idle")
+        assertTheRequestDidNotMoveWhenTheThreadCameIn(readProbe("retry"))
+    }
+
+    /// The words of the header follow the pull: "Pull down…" on the way, "Release…" past the threshold, and the wording for
+    /// earlier records once there is a thread above the request.
+    func testTheHeaderSaysPullDownOnTheWayAndReleaseOnceItIsFarEnough() {
+        launch(extra: ["-AHHistoryDelay", "0.2", "-AHPullProbe", probePath("words")])
+        _ = requireElement("request-title")
+        pull(travel: 240)
+        waitForCards(atLeast: 8)
+        Thread.sleep(forTimeInterval: 1.2)
+        dragToTop()
+        Thread.sleep(forTimeInterval: 1)
+        if cards().count < 16 {
+            pull(travel: 240)
+            waitForCards(atLeast: 16)
+        }
+        Thread.sleep(forTimeInterval: 1.2)
+        let looks = readProbe("words").compactMap { $0.values["hdr"] }
+        for look in ["p0", "r0", "p1", "r1"] { XCTAssertTrue(looks.contains(look), "the header never showed \(look): \(Set(looks))") }
+        // On the way the words come first, and the ones for "release" only after them.
+        if let first = looks.firstIndex(of: "p0"), let release = looks.firstIndex(of: "r0") { XCTAssertLessThan(first, release) }
+        // Strong enough to read only while a finger pulls (the header is not on the page otherwise).
+        let log = readProbe("words")
+        let shown = log.filter { $0.values["hdr"].map { $0 != "-" } == true }
+        for line in shown {
+            XCTAssertTrue(line.values["drag"] == "1" || line.values["pull"] == "loading", "the header showed without a finger pulling: \(line.values)")
+        }
+        // The icon turns as the page is pulled (not when Reduce Motion is on: see the test for it).
+        if log.first(where: { $0.values["rm"] != nil })?.values["rm"] == "0" {
+            XCTAssertTrue(shown.contains { abs(Double($0.values["turn"] ?? "0") ?? 0) > 0.05 }, "the icon never turned")
+        }
+    }
+
+    /// With Reduce Motion the icon does not turn. The simulator's setting has to be on for this run (`AH_UI_REDUCE_MOTION=1`
+    /// says it is); the probe says whether the app saw it.
+    func testWithReduceMotionTheIconStaysStill() throws {
+        try XCTSkipUnless(ProcessInfo.processInfo.environment["AH_UI_REDUCE_MOTION"] == "1", "needs the simulator's Reduce Motion switched on")
+        launch(extra: ["-AHHistoryDelay", "5", "-AHPullProbe", probePath("motion")])
+        _ = requireElement("request-title")
+        pull(travel: 240)
+        waitFor("the pull never took hold (state \(pullState()))", timeout: 5) { pullState() == "loading" }
+        // The loading line has no highlight sweeping over it: two looks at it a moment apart are the same picture.
+        let loading = requireElement("session-thread-loading", timeout: 3)
+        Thread.sleep(forTimeInterval: 0.9)
+        let firstLook = loading.screenshot().pngRepresentation
+        Thread.sleep(forTimeInterval: 0.45)
+        XCTAssertEqual(firstLook, loading.screenshot().pngRepresentation, "the loading line moves with Reduce Motion on")
+        waitForCards(atLeast: 8, timeout: 12)
+        Thread.sleep(forTimeInterval: 1.2)
+        let log = readProbe("motion")
+        XCTAssertTrue(log.contains { $0.values["rm"] == "1" }, "the app did not see Reduce Motion")
+        let shown = log.filter { $0.values["hdr"].map { $0 != "-" } == true }
+        XCTAssertFalse(shown.isEmpty, "the header was never shown")
+        for line in shown { XCTAssertEqual(Double(line.values["turn"] ?? "1") ?? 1, 0, accuracy: 0.001, "the icon turned: \(line.values)") }
+        XCTAssertEqual(cards().count, 8)
+    }
+
+    /// A finger on the page when the answer comes holds the history back: it comes in once the page is let go, and the request
+    /// does not move then either.
+    func testAFingerStillOnThePageHoldsTheHistoryBackUntilItLetsGo() {
+        launch(extra: ["-AHHistoryDelay", "3", "-AHPullProbe", probePath("finger")])
+        _ = requireElement("request-title")
+        pull(travel: 240)
+        waitForThePullToTakeHold(probe: "finger")
+        // A finger that drags the page a little and then stays on it, from before the answer is there (3 s after the lift)
+        // to well after it. (A finger that only rests on the page is not tracked by it: a long press on its text is not a
+        // scroll.)
+        let scroll = pageScroll()
+        let from = scroll.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.7))
+        let to = scroll.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.55))
+        from.press(forDuration: 0.05, thenDragTo: to, withVelocity: .slow, thenHoldForDuration: 5)
+        waitForCards(atLeast: 8, timeout: 10)
+        Thread.sleep(forTimeInterval: 1.2)
+        let log = readProbe("finger")
+        guard let loadStarted = log.first(where: { $0.note == "loading starts" })?.time else { return XCTFail("the load never started") }
+        guard let came = log.first(where: { $0.note == "thread comes in" })?.time else { return XCTFail("the thread never came in") }
+        // When the page saw the finger go: the first frame without it after the last frame with it. (The test's own clock
+        // would be late: the press call returns only once the page the finger let go of has stopped moving.)
+        guard let lastTouched = log.last(where: { $0.values["trk"] == "1" && $0.time < came })?.time,
+              let leftAt = log.first(where: { $0.values["trk"] == "0" && $0.time > lastTouched })?.time
+        else { return XCTFail("the page never saw the finger go") }
+        XCTAssertGreaterThan(leftAt, loadStarted + 3.5, "the finger was gone before the answer was due: nothing was held back")
+        XCTAssertGreaterThanOrEqual(came, leftAt, "the thread came in with a finger on the page")
+        assertTheRequestDidNotMoveWhenTheThreadCameIn(log)
+    }
+
+    /// A touch of the page during the loading (the spring back from the pull, the hold) breaks nothing.
+    func testATouchOfThePageRightAfterTheLiftBreaksNothing() {
+        launch(extra: ["-AHHistoryDelay", "1.5", "-AHPullProbe", probePath("touch")])
+        _ = requireElement("request-title")
+        pull(travel: 240, hold: 0.05)
+        pageScroll().swipeUp(velocity: .slow)
+        waitForCards(atLeast: 8, timeout: 12)
+        Thread.sleep(forTimeInterval: 1.2)
+        XCTAssertEqual(pullState(), "idle")
+        XCTAssertEqual(cards().count, 8)
+        assertTheRequestDidNotMoveWhenTheThreadCameIn(readProbe("touch"))
+    }
+
+
+    /// Not a check: a slow pull held at its armed place, then a history that takes its time, so that a screenshot loop outside
+    /// can catch every stage (the plan's R3 says how). The moments are written to a file; the probe has the rest.
+    func testStoryboardForTheReport() throws {
+        try XCTSkipUnless(ProcessInfo.processInfo.environment["AH_UI_STORYBOARD"] == "1", "only for the screenshots of the report")
+        launch(extra: ["-AHHistoryDelay", "6", "-AHPullProbe", probePath("story")])
+        _ = requireElement("request-title")
+        func mark(_ label: String) {
+            let line = "\(CACurrentMediaTime()) \(Date().timeIntervalSince1970) \(label)\n"
+            let path = "/tmp/ah-story-marks.txt"
+            if let handle = FileHandle(forWritingAtPath: path) {
+                handle.seekToEndOfFile()
+                handle.write(Data(line.utf8))
+                try? handle.close()
+            } else {
+                try? line.write(toFile: path, atomically: true, encoding: .utf8)
+            }
+        }
+        try? FileManager.default.removeItem(atPath: "/tmp/ah-story-marks.txt")
+        Thread.sleep(forTimeInterval: 4)
+        mark("pull begins")
+        let scroll = pageScroll()
+        let height = scroll.frame.height
+        let start = scroll.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.2))
+        let end = scroll.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.2 + 300 / height))
+        start.press(forDuration: 0.05, thenDragTo: end, withVelocity: .slow, thenHoldForDuration: 3)
+        mark("lifted")
+        Thread.sleep(forTimeInterval: 12)
+        mark("done")
+    }
+
+    /// The Mac does not answer: the room becomes the row that says so, and the request does not move.
+    func testAPullThatGetsNoAnswerLeavesARowInTheRoomItHeld() {
+        launch(extra: ["-AHHistoryFail", "1", "-AHPullProbe", probePath("failed")])
+        let title = requireElement("request-title")
+        let start = title.frame.minY
+        pull(travel: 240)
+        waitFor("the pull never took hold (state \(pullState()))", timeout: 5) { pullState() == "loading" }
+        Thread.sleep(forTimeInterval: 0.9)
+        let held = title.frame.minY
+        XCTAssertEqual(held - start, heldRoom, accuracy: 3)
+        let row = requireElement("session-thread-error", timeout: 10)
+        Thread.sleep(forTimeInterval: 0.8)
+        shot("failed-row")
+        XCTAssertEqual(title.frame.minY, held, accuracy: 1, "the request moved when the row came")
+        XCTAssertLessThanOrEqual(row.frame.maxY, held + 1, "the row is above the request")
+        XCTAssertEqual(pullState(), "idle")
     }
 }

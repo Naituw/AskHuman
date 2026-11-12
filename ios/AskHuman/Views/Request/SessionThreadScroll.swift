@@ -2,12 +2,17 @@ import SwiftUI
 import UIKit
 import AHCore
 
-// The scroll mechanics of the earlier exchanges on a request page (docs/plans/ios-session-history.md, P1 conclusion).
+// The scroll mechanics of the earlier exchanges on a request page (docs/plans/ios-session-history.md, P1 conclusion, R1).
 //
-// A pull on the page loads a page of earlier exchanges above the request, and what the person is looking at does not
-// move: the request's top is recorded, the thread is put in, and every layout that follows puts the request's top back
-// where it was, in the same layout pass (so there is no frame in which it is out of place). The menu way in puts the
-// thread in the same way and then scrolls up to its newest exchange.
+// A pull on the page asks for a page of earlier exchanges (S18): the header above the page is drawn here. A pull let go past
+// its threshold puts a row of the loading line (S19) at the top of the page's content and keeps the request where it was on
+// screen while it does (the page then springs to rest with the row in view). When a page is in hand, the request's top is
+// recorded and the thread is put in in place of the row, and every layout that follows puts the request's top back where it
+// was, in the same layout pass (so there is no frame in which it is out of place). The menu way in puts the thread in the same
+// way and then scrolls up to its newest exchange.
+//
+// (The room for the line is content, not `contentInset`: SwiftUI owns the scroll view's inset and puts its own value back
+// within a frame of any other.)
 
 /// What the request page and its scroll view share for one request: the thread, and the way the page is scrolled.
 /// The page owns it (it is dropped with the page, S14); the scroll view's attachment registers itself in `scroller`.
@@ -16,8 +21,13 @@ final class RequestHistory {
     let thread: SessionThread
     /// The page is more than a screen above the request: "Back to the current request" is offered.
     private(set) var farAbove = false
-    /// The menu is loading the thread (a pull has the spinner of its own).
+    /// The menu is loading the thread (a pull has its own room on the page).
     private(set) var menuLoading = false
+    /// A pull is loading the thread: its row of the loading line is at the top of the page (S19). What the load brings (a row
+    /// that says why there is nothing, or that the Mac could not be reached) takes its place when the load is over.
+    private(set) var holding = false
+    /// What the pull is doing (idle, pulling, armed, loading): the UI tests read it.
+    private(set) var pullState = "idle"
     @ObservationIgnored weak var scroller: ThreadScrollCoordinator?
     @ObservationIgnored private let engaged: () -> Void
 
@@ -33,18 +43,50 @@ final class RequestHistory {
         farAbove = value
     }
 
-    /// Something is above the request: exchanges, or the row that says why there are none.
-    var showsThread: Bool {
-        if !thread.items.isEmpty || thread.reachedStart { return true }
-        if case .failed = thread.phase { return true }
-        return false
+    func setHolding(_ value: Bool) {
+        guard holding != value else { return }
+        holding = value
     }
 
-    /// The person pulled the page down: the next older page goes in above, and the page stays where it is.
+    func setPullState(_ value: String) {
+        guard pullState != value else { return }
+        pullState = value
+    }
+
+    /// The row above the thread's first exchange, when there is one.
+    enum StateRow: Equatable {
+        /// A pull's load is on its way.
+        case loading
+        /// The Mac could not be reached.
+        case failed
+        /// There is nothing earlier.
+        case start
+    }
+
+    var stateRow: StateRow? {
+        if holding { return .loading }
+        if case .failed = thread.phase { return .failed }
+        if thread.reachedStart { return .start }
+        return nil
+    }
+
+    /// Something is above the request: exchanges, or the row that says why there are none.
+    var showsThread: Bool {
+        !thread.items.isEmpty || stateRow != nil
+    }
+
+    /// The person pulled the page down and let go: the loading line has its row, and the next older page goes in above the
+    /// request when it comes.
     func pull() async {
+        await loadShowingRow()
+    }
+
+    /// Loads the next older page with the loading line in the row at the top of the page; whatever comes of it, the row
+    /// then says how it ended.
+    private func loadShowingRow() async {
         engaged()
         await loadOlder()
-        scroller?.loadFinished()
+        await scroller?.loadFinished()
     }
 
     /// The menu: the history is loaded when it was not, and the page scrolls to its newest exchange (to the top, where
@@ -57,21 +99,21 @@ final class RequestHistory {
             await thread.loadMore(beforeInsert: { scroller.prepareInsertion() })
             menuLoading = false
             // The page is laid out once more before the place to scroll to is known.
-            try? await Task.sleep(for: .milliseconds(120))
+            await scroller.waitForThreadLayout(expectingExchanges: !thread.items.isEmpty)
         } else {
             thread.asked()
             try? await Task.sleep(for: .milliseconds(60))
         }
         scroller.endCompensation()
-        scroller.loadFinished()
         let animated = !UIAccessibility.isReduceMotionEnabled
         if thread.items.isEmpty { scroller.scrollToTop(animated: animated) } else { scroller.scrollToNewest(animated: animated) }
     }
 
-    /// "Try again" on the row that says the Mac could not be reached.
+    /// "Try again" on the row that says the Mac could not be reached (S19): the same row goes back to the loading line, and
+    /// the page stays where it is.
     func retry() async {
-        engaged()
-        if thread.items.isEmpty { await reveal() } else { await loadOlder() }
+        scroller?.retryStarts()
+        await loadShowingRow()
     }
 
     /// "Back to the current request".
@@ -81,7 +123,7 @@ final class RequestHistory {
 
     private func loadOlder() async {
         guard let scroller else { return }
-        await thread.loadMore(beforeInsert: { await scroller.collapseAndPrepare() })
+        await thread.loadMore(beforeInsert: { await scroller.releaseAndPrepare() })
     }
 }
 
@@ -123,8 +165,8 @@ final class SessionThreadAnchorView: UIView {
     required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
 }
 
-/// Attaches to the scroll view of a request page: the pull-down control that loads the thread, and the compensation that
-/// keeps the request where it is when the thread grows above it.
+/// Attaches to the scroll view of a request page: the pull-down that loads the thread, and the compensation that keeps the
+/// request where it is when the thread grows above it.
 struct ThreadScrollHook: UIViewRepresentable {
     let history: RequestHistory
 
@@ -149,19 +191,34 @@ struct ThreadScrollHook: UIViewRepresentable {
 final class ThreadScrollCoordinator: NSObject {
     private let history: RequestHistory
     private weak var scroll: UIScrollView?
-    private var refresh: UIRefreshControl?
+    private weak var pan: UIPanGestureRecognizer?
     private var sizeObservation: NSKeyValueObservation?
     private var offsetObservation: NSKeyValueObservation?
     private var bounceObservation: NSKeyValueObservation?
-    private var refreshObservation: NSKeyValueObservation?
     private weak var cachedAnchor: RequestReadingAnchorView?
     private var pending: Pending?
     private var ancestorObservations: [NSKeyValueObservation] = []
+    /// Tells a timer of an earlier `prepareInsertion` from the one of the current.
+    private var generation = 0
+
+    // The pull (S18).
+    private var pull = HistoryPull()
+    private var header: PullHeaderView?
+    private var haptic: UIImpactFeedbackGenerator?
+    private var holdStart: CFTimeInterval = 0
+    /// The row of the loading line is on its way in, and the page is yet to spring to rest with it.
+    private var settlePending = false
+    /// The least time the loading line is on the page, so that an answer that is already there does not make it flicker.
+    private static let minimumHold = 0.6
 
     private struct Pending {
         /// Where the request's top was in the viewport before the thread grew.
         let anchorViewportY: CGFloat
+        /// Where the request's top was in the content before the thread grew.
+        let anchorContentY: CGFloat
         let until: CFTimeInterval
+        /// The row of a pull's loading line is being put in: once the request has been moved by it, the page springs to rest.
+        let settling: Bool
     }
 
     init(history: RequestHistory) {
@@ -180,88 +237,208 @@ final class ThreadScrollCoordinator: NSObject {
             sizeObservation = found.observe(\.contentSize, options: []) { [weak self] _, _ in
                 MainActor.assumeIsolated { self?.reconcile() }
             }
-            // Only a crossing of the threshold is written to the model, never every frame of a scroll.
+            // The pull is followed on every change of the offset; the model is only written to on a crossing.
             offsetObservation = found.observe(\.contentOffset, options: []) { [weak self] _, _ in
-                MainActor.assumeIsolated { self?.updateFarAbove() }
+                MainActor.assumeIsolated { self?.offsetChanged() }
             }
+            found.panGestureRecognizer.addTarget(self, action: #selector(panned(_:)))
+            pan = found.panGestureRecognizer
+            #if DEBUG
+            PullProbe.shared?.run { [weak self] in self?.probeLine() ?? "" }
+            #endif
         }
-        installRefresh()
+        keepBouncing()
+        layoutHeader()
     }
 
     func detach() {
         sizeObservation = nil
         offsetObservation = nil
         bounceObservation = nil
-        refreshObservation = nil
         ancestorObservations = []
-        removeRefresh()
+        pan?.removeTarget(self, action: nil)
+        pan = nil
+        header?.removeFromSuperview()
+        header = nil
+        pull.cancel()
         scroll = nil
+        pending = nil
+        settlePending = false
+        history.setHolding(false)
+        history.setPullState("idle")
         history.setFarAbove(false)
     }
 
     // MARK: pulling
 
-    /// The control is on the page while there is something older to ask for: a page that has reached its start only bounces.
-    ///
-    /// SwiftUI owns two properties of its scroll view that this control needs: it takes `refreshControl` away on its own
-    /// updates (the page has no `.refreshable`), and sets `alwaysBounceVertical` by the size of the content (a short page,
-    /// which is most of them, is then not pulled at all). Both are put back the moment they are taken away.
-    private func installRefresh() {
-        guard let scroll, !history.thread.reachedStart else { return }
-        let control: UIRefreshControl
-        if let refresh {
-            control = refresh
-        } else {
-            control = UIRefreshControl()
-            control.addTarget(self, action: #selector(pulled), for: .valueChanged)
-            refresh = control
-        }
-        if scroll.refreshControl !== control { scroll.refreshControl = control }
-        if !scroll.alwaysBounceVertical { scroll.alwaysBounceVertical = true }
-        if refreshObservation == nil {
-            refreshObservation = scroll.observe(\.refreshControl, options: []) { [weak self] scroll, _ in
-                MainActor.assumeIsolated {
-                    guard let refresh = self?.refresh, scroll.refreshControl !== refresh else { return }
-                    scroll.refreshControl = refresh
-                }
-            }
-        }
+    /// A page that has reached its start only bounces, one that is loading is not asked again, and one whose row of the
+    /// loading line is up has asked already.
+    private var pullEnabled: Bool {
+        !history.thread.reachedStart && history.thread.phase != .loading && !history.menuLoading && !history.holding
+    }
+
+    /// SwiftUI sets `alwaysBounceVertical` of its scroll view by the size of the content (a short page, which is most of
+    /// them, is then not pulled at all): it is put back the moment it is taken away.
+    private func keepBouncing() {
+        guard let scroll else { return }
+        if pullEnabled, !scroll.alwaysBounceVertical { scroll.alwaysBounceVertical = true }
         if bounceObservation == nil {
             bounceObservation = scroll.observe(\.alwaysBounceVertical, options: []) { [weak self] scroll, _ in
                 MainActor.assumeIsolated {
-                    if self?.refresh != nil, !scroll.alwaysBounceVertical { scroll.alwaysBounceVertical = true }
+                    guard let self, self.pullEnabled || self.history.holding, !scroll.alwaysBounceVertical else { return }
+                    scroll.alwaysBounceVertical = true
                 }
             }
         }
     }
 
-    private func removeRefresh() {
-        let control = refresh
-        refresh = nil
-        refreshObservation = nil
-        bounceObservation = nil
-        if let scroll, let control, scroll.refreshControl === control { scroll.refreshControl = nil }
+    private func offsetChanged() {
+        updateFarAbove()
+        trackPull()
     }
 
-    @objc private func pulled() {
+    /// Feeds the state machine how far past its top the page is and whether a finger is moving it.
+    private func trackPull() {
+        guard let scroll else { return }
+        let over = -(scroll.contentOffset.y + scroll.adjustedContentInset.top)
+        let outcome = pull.update(overscroll: over, dragging: scroll.isDragging, enabled: pullEnabled)
+        switch outcome {
+        case .armed:
+            haptic?.impactOccurred()
+            haptic?.prepare()
+        case .load:
+            startLoading()
+        case .nothing:
+            break
+        }
+        showHeader()
+    }
+
+    @objc private func panned(_ gesture: UIPanGestureRecognizer) {
+        switch gesture.state {
+        case .began:
+            // Where the threshold is depends on how tall the row that takes the header's place will be: the pull has to
+            // be let go further out than that, or the row would have to hold the page open less than it is tall.
+            pull = HistoryPull(threshold: max(HistoryPull.defaultThreshold, PullMetrics.holdHeight + 8))
+            haptic = UIImpactFeedbackGenerator(style: .light)
+            haptic?.prepare()
+        case .ended:
+            // Whichever of this and the offset's own change sees the lift first decides; the other finds nothing to do.
+            if pull.release() { startLoading() } else { showHeader() }
+        case .cancelled, .failed:
+            pull.cancel()
+            showHeader()
+        default:
+            break
+        }
+    }
+
+    /// What the header shows while a finger pulls. Once the pull is let go and the loading line has its row, the header goes.
+    private func showHeader() {
+        if pull.phase == .idle || scroll == nil {
+            // A pull that was let go loading leaves the header to the moment its row is in (see `reconcile`).
+            if !settlePending, let header, !header.isHidden { header.isHidden = true }
+            if !history.holding { history.setPullState("idle") }
+            return
+        }
+        let header = ensureHeader()
+        header.isHidden = false
+        header.show(pull, older: !history.thread.items.isEmpty)
+        history.setPullState(pull.isArmed ? "armed" : "pulling")
+    }
+
+    private func ensureHeader() -> PullHeaderView {
+        if let header { return header }
+        let made = PullHeaderView(frame: .zero)
+        made.autoresizingMask = [.flexibleWidth]
+        made.isHidden = true
+        scroll?.addSubview(made)
+        header = made
+        layoutHeader()
+        return made
+    }
+
+    /// The header is a subview of the scroll view just above its content, where the loading row will stand: it moves with
+    /// the content, frame for frame.
+    private func layoutHeader() {
+        guard let scroll, let header else { return }
+        let room = PullMetrics.holdHeight
+        header.frame = CGRect(x: 0, y: -room, width: scroll.bounds.width, height: room)
+    }
+
+    // MARK: loading
+
+    /// The pull was let go while armed: the loading line gets its row at the top of the page and the load starts. The
+    /// request's top is recorded first, so that the row coming in above it does not move it; the page, still pulled out
+    /// by the finger, then springs to rest with the row in view.
+    private func startLoading() {
+        guard scroll != nil, !history.holding else { return }
+        holdStart = CACurrentMediaTime()
+        settlePending = true
+        prepareInsertion(settling: true)
+        history.setHolding(true)
+        history.setPullState("loading")
+        #if DEBUG
+        PullProbe.shared?.note("loading starts")
+        #endif
+        UIAccessibility.post(notification: .announcement, argument: String(localized: "Loading history…"))
         let history = history
         Task { @MainActor in await history.pull() }
     }
 
-    /// A load is over, whatever came of it: the control goes back (for good once there is nothing older to pull for).
-    func loadFinished() {
-        refresh?.endRefreshing()
-        if history.thread.reachedStart { removeRefresh() }
+    /// "Try again": the row that said the Mac could not be reached goes back to the loading line. It has the room of the
+    /// loading line already (a row of each kind is as tall as the others), so nothing moves.
+    func retryStarts() {
+        holdStart = CACurrentMediaTime()
+        history.setHolding(true)
+        history.setPullState("loading")
+        UIAccessibility.post(notification: .announcement, argument: String(localized: "Loading history…"))
     }
 
-    /// The control goes back first; the thread is put in once the page is at rest again.
+    /// The row of the loading line is in, and the request is where it was: the page springs to rest, where the row is in full
+    /// view above the request.
     ///
+    /// UIKit's own spring back from the pull was stopped by putting the request right (a write of the offset that is not
+    /// an animation stops it), and an offset out of range stands until the next touch: the spring is started here.
+    private func settleLoadingRow() {
+        guard settlePending else { return }
+        settlePending = false
+        header?.isHidden = true
+        guard let scroll else { return }
+        endCompensation()
+        scroll.setContentOffset(CGPoint(x: scroll.contentOffset.x, y: -scroll.adjustedContentInset.top), animated: true)
+        #if DEBUG
+        PullProbe.shared?.note("page springs to rest")
+        #endif
+    }
+
+    /// A page is in hand (or the load failed): once the loading line has been on the page for its least time and the page is
+    /// at rest, the request's top is recorded and the thread takes the row's place.
+    func releaseAndPrepare() async {
+        if history.holding {
+            let shown = CACurrentMediaTime() - holdStart
+            if shown < Self.minimumHold { try? await Task.sleep(for: .seconds(Self.minimumHold - shown)) }
+        }
+        await waitForRest()
+        prepareInsertion()
+        #if DEBUG
+        PullProbe.shared?.note("thread comes in")
+        #endif
+        history.setHolding(false)
+        history.setPullState("idle")
+    }
+
+    /// A load is over, whatever came of it: a row that is still the loading line (the load brought nothing to put in) gives
+    /// way to whatever says how the load ended.
+    func loadFinished() async {
+        if history.holding { await releaseAndPrepare() }
+    }
+
     /// A pull takes effect while the finger is still down, and the finger may stay down a good while after that. The wait
-    /// is for the page to come to rest once the finger is up: the spring that brings it back has a long tail, and a
-    /// thread put in before the tail is over would keep the request a few points off the place it had before the pull.
-    /// How long the spring gets is counted from the lift, not from the start, so that a slow pull does not eat it.
-    func collapseAndPrepare() async {
-        refresh?.endRefreshing()
+    /// is for the page to come to rest once the finger is up: the spring that brings it back has a long tail, and a thread
+    /// put in before the tail is over would keep the request a few points off the place it had before the pull. How long
+    /// the spring gets is counted from the lift, not from the start, so that a slow pull does not eat it.
+    private func waitForRest() async {
         let start = CACurrentMediaTime()
         var lifted: CFTimeInterval?
         while let scroll, !Task.isCancelled, CACurrentMediaTime() - start < 10 {
@@ -276,17 +453,18 @@ final class ThreadScrollCoordinator: NSObject {
             }
             try? await Task.sleep(for: .milliseconds(16))
         }
-        prepareInsertion()
     }
 
     // MARK: keeping the request where it is
 
     /// Records where the request's top is on screen; the next layouts put it back there.
-    func prepareInsertion() {
+    func prepareInsertion(settling: Bool = false) {
         guard let scroll, let anchor = requestAnchor() else { return }
         let y = anchor.convert(CGPoint.zero, to: scroll).y
         let relative = y - scroll.contentOffset.y
-        pending = Pending(anchorViewportY: relative, until: CACurrentMediaTime() + 0.5)
+        generation += 1
+        let mine = generation
+        pending = Pending(anchorViewportY: relative, anchorContentY: y, until: CACurrentMediaTime() + 0.5, settling: settling)
         // SwiftUI moves the host of a representable, not the view inside it: every view between the anchor and the
         // scroll view is watched, so whichever of them it moves, the page is put right.
         ancestorObservations = []
@@ -300,7 +478,11 @@ final class ThreadScrollCoordinator: NSObject {
             })
             view = current.superview
         }
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.55) { [weak self] in self?.endCompensation() }
+        DispatchQueue.main.asyncAfter(deadline: .now() + (settling ? 0.3 : 0.55)) { [weak self] in
+            guard let self, self.generation == mine else { return }
+            // A row that did not come in the time it should have is not waited for any longer.
+            if settling { self.settleLoadingRow() } else { self.endCompensation() }
+        }
     }
 
     func reconcile() {
@@ -311,8 +493,22 @@ final class ThreadScrollCoordinator: NSObject {
         }
         let y = anchor.convert(CGPoint.zero, to: scroll).y
         let desired = y - pending.anchorViewportY
+        let moved = abs(y - pending.anchorContentY) > 0.5
         if abs(scroll.contentOffset.y - desired) > 0.25 {
-            scroll.contentOffset = CGPoint(x: scroll.contentOffset.x, y: desired)
+            if pending.settling, moved {
+                // UIKit's own spring (the page coming back from the pull) is stopped: a plain write would be overwritten by
+                // its next frame.
+                scroll.setContentOffset(CGPoint(x: scroll.contentOffset.x, y: desired), animated: false)
+            } else {
+                scroll.contentOffset = CGPoint(x: scroll.contentOffset.x, y: desired)
+            }
+        }
+        if pending.settling, moved, settlePending {
+            // The row has taken the header's place on screen (the page was moved by exactly its height to keep the request
+            // where it was): the header, now a row's height too high, goes in this very pass. The spring starts with the
+            // next turn of the run loop, once every layout that the row brought is done and put right.
+            header?.isHidden = true
+            DispatchQueue.main.async { [weak self] in self?.settleLoadingRow() }
         }
     }
 
@@ -323,6 +519,28 @@ final class ThreadScrollCoordinator: NSObject {
     }
 
     // MARK: going somewhere
+
+    /// Waits until the page has laid out what was put in above the request: the newest exchange has its view in the scroll
+    /// view and the content has stopped changing size. A fixed wait is not enough: on a busy device the frame that lays the
+    /// thread out can come later than any time chosen for it, and the place to scroll to is then not there to be found. At
+    /// most two seconds; what is not there by then is scrolled to as well as it can be.
+    func waitForThreadLayout(expectingExchanges: Bool) async {
+        var size = scroll?.contentSize.height ?? 0
+        try? await Task.sleep(for: .milliseconds(120))
+        guard expectingExchanges else { return }
+        let begin = CACurrentMediaTime()
+        // The content counts as still for the wait just over, unless it changed meanwhile.
+        var changedAt = begin - 0.1
+        while let scroll, CACurrentMediaTime() - begin < 2 {
+            let now = CACurrentMediaTime()
+            if abs(scroll.contentSize.height - size) > 0.5 {
+                size = scroll.contentSize.height
+                changedAt = now
+            }
+            if threadAnchor("thread-newest") != nil, now - changedAt >= 0.1 { return }
+            try? await Task.sleep(for: .milliseconds(30))
+        }
+    }
 
     /// Scrolls to the top of the newest exchange of the thread.
     func scrollToNewest(animated: Bool) {
@@ -384,4 +602,33 @@ final class ThreadScrollCoordinator: NSObject {
         }
         return find(scroll)
     }
+
+    // MARK: prototype probe
+
+    #if DEBUG
+    /// One line of what the page does this frame: where the page is, where the request is, what the pull is doing.
+    private func probeLine() -> String {
+        guard let scroll else { return "" }
+        let request = requestAnchor().map { String(format: "%.2f", $0.convert(CGPoint.zero, to: scroll).y - scroll.contentOffset.y) } ?? "nil"
+        // The header as it is drawn: p or r (pull down, release), 1 for the wording of an older page, and how strong it is.
+        var hdr = "-"
+        var alpha = 0.0
+        var turns = 0.0
+        if let header, !header.isHidden {
+            alpha = header.alpha
+            turns = header.iconTurns
+            switch header.look {
+            case .pull(let older): hdr = older ? "p1" : "p0"
+            case .release(let older): hdr = older ? "r1" : "r0"
+            }
+        }
+        return String(
+            format: "off=%.2f adj=%.2f size=%.1f req=%@ drag=%ld trk=%ld dec=%ld bv=%ld hold=%ld pull=%@ hdr=%@ ha=%.2f turn=%.2f rm=%ld",
+            scroll.contentOffset.y, scroll.adjustedContentInset.top, scroll.contentSize.height, request,
+            scroll.isDragging ? 1 : 0, scroll.isTracking ? 1 : 0, scroll.isDecelerating ? 1 : 0,
+            scroll.alwaysBounceVertical ? 1 : 0,
+            history.holding ? 1 : 0, history.pullState, hdr, alpha, turns, UIAccessibility.isReduceMotionEnabled ? 1 : 0
+        )
+    }
+    #endif
 }

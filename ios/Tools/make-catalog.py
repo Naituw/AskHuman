@@ -713,6 +713,10 @@ PUSH = {
 }
 
 INFO_PLIST = {
+    "Pull down to see this session's history": "下拉查看此会话的历史",
+    "Release to see this session's history": "松手查看此会话的历史",
+    "Pull down to load earlier records": "下拉加载更早的记录",
+    "Release to load earlier records": "松手加载更早的记录",
     "NSCameraUsageDescription": (
         "Scan the pairing QR code shown by AskHuman on your Mac, or take a photo to attach to a reply.",
         "扫描 Mac 上 AskHuman 显示的配对二维码，或拍照后附在回复里。",

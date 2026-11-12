@@ -17,8 +17,9 @@ struct SessionThreadView: View {
     var body: some View {
         if history.showsThread {
             let newest = thread.items.last?.id
+            let state = history.stateRow
             VStack(alignment: .leading, spacing: 12) {
-                topRow
+                if let state { SessionStateRow(kind: state) { Task { await history.retry() } } }
                 ForEach(thread.items) { exchange in
                     SessionExchangeCard(exchange: exchange)
                         .background { if exchange.id == newest { SessionThreadAnchor(name: "thread-newest") } }
@@ -26,20 +27,46 @@ struct SessionThreadView: View {
                 if !thread.items.isEmpty { CurrentRequestDivider() }
             }
             .readableWidth()
-            .padding([.horizontal, .top])
-            .padding(.bottom, 4)
+            .padding(.horizontal)
+            // The row at the top is the margin there: it stands where the room of the pull's header was, and as tall.
+            .padding(.top, state == nil ? 16 : 0)
+            // With nothing but the row, the thread is exactly the room that was held for the load.
+            .padding(.bottom, thread.items.isEmpty ? 0 : 4)
         }
+    }
+}
+
+/// What stands above the thread's first exchange (S19): the loading line while a pull's load is on its way, the row that
+/// says the Mac could not be reached, or the one that says there is nothing earlier. All are as tall as the header of the
+/// pull was, so that the line, and whatever replaces it, stay where they are.
+private struct SessionStateRow: View {
+    let kind: RequestHistory.StateRow
+    let retry: () -> Void
+    @ScaledMetric(relativeTo: .footnote) private var height: CGFloat = 64
+
+    var body: some View {
+        content
+            .frame(maxWidth: .infinity, minHeight: height)
     }
 
     @ViewBuilder
-    private var topRow: some View {
-        if case .failed = thread.phase {
-            SessionThreadErrorRow { Task { await history.retry() } }
-        } else if thread.reachedStart {
+    private var content: some View {
+        switch kind {
+        case .loading:
+            HStack(spacing: 6) {
+                Image(systemName: "clock.arrow.circlepath").accessibilityHidden(true)
+                ShimmerText("Loading history…")
+            }
+            .font(.footnote)
+            .foregroundStyle(.secondary)
+            .accessibilityElement(children: .combine)
+            .accessibilityIdentifier("session-thread-loading")
+        case .failed:
+            SessionThreadErrorRow(retry: retry)
+        case .start:
             Text("No earlier records")
                 .font(.footnote)
                 .foregroundStyle(.secondary)
-                .frame(maxWidth: .infinity)
                 .accessibilityIdentifier("session-thread-start")
         }
     }
@@ -362,6 +389,23 @@ struct SessionReturnCapsule: View {
     }
 }
 
+/// What the pull is doing, for the UI tests (mock runs only): the header is UIKit inside the scroll view, which they do not
+/// reliably see.
+struct SessionPullStateProbe: View {
+    let history: RequestHistory
+
+    var body: some View {
+        if AppEnvironment.current?.mock != nil {
+            Color.clear
+                .frame(width: 2, height: 2)
+                .accessibilityElement()
+                .accessibilityIdentifier("session-pull-state")
+                .accessibilityLabel(history.pullState)
+                .allowsHitTesting(false)
+        }
+    }
+}
+
 /// The history is being loaded from the menu: the page does not move while it comes in, so this floats over it.
 struct SessionLoadingPill: View {
     let history: RequestHistory
@@ -371,7 +415,7 @@ struct SessionLoadingPill: View {
             if history.menuLoading {
                 HStack(spacing: 8) {
                     ProgressView().controlSize(.small)
-                    Text("Loading history…").font(.subheadline)
+                    ShimmerText("Loading history…").font(.subheadline)
                 }
                 .padding(.horizontal, 14)
                 .padding(.vertical, 8)

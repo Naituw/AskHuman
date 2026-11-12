@@ -85,6 +85,7 @@ struct RequestScreen: View {
         }
         .sheet(isPresented: $addingTodo) { todoSheet }
         .overlay(alignment: .top) { if let history { SessionLoadingPill(history: history) } }
+        .overlay(alignment: .bottomLeading) { if let history { SessionPullStateProbe(history: history) } }
         .overlay(alignment: .top) {
             if let note = addedNote {
                 TodoAddedPill(project: note.project)
