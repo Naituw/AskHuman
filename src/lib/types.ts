@@ -1407,6 +1407,16 @@ export interface IosTraffic {
   msgsOut: number;
 }
 
+export interface IosTrafficRecord extends IosTraffic {
+  deviceKind?: "mac" | "phone";
+  recordedFrom?: number | null;
+  uncertain?: boolean;
+  broker: string;
+  macId: string;
+  macName?: string;
+  updatedAt: number;
+}
+
 export interface IosGatewayState {
   connected: boolean;
   /** `tls` | `wss` | `tcp` */
@@ -1417,6 +1427,10 @@ export interface IosGatewayState {
   phones: IosPhone[];
   pairing?: IosPairing;
   traffic?: IosTraffic;
+  trafficRecords?: IosTrafficRecord[];
+  usageRecords?: IosTrafficRecord[];
+  trafficStorageIssue?: boolean;
+  trafficSyncedAt?: Record<string, number>;
   pendingRequests: number;
   /** Seconds since the last keyboard / mouse input on this Mac; absent when it cannot tell. */
   macIdleSecs?: number;

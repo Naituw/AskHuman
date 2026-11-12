@@ -322,9 +322,8 @@ public struct TrafficStats: Codable, Equatable, Sendable {
     public static let freeQuotaBytes: UInt64 = 1 << 30
     public static let warningShare = 0.8
 
-    /// The broker counts a message when it is published and again when it is delivered, so a
-    /// message this phone sends or receives costs about twice its size against the quota.
-    public var brokerEstimateBytes: UInt64 { 2 * (sentBytes + receivedBytes) }
+    /// Each endpoint records its own broker-facing leg. The device ledger adds those legs.
+    public var brokerEstimateBytes: UInt64 { BrokerTraffic.add(sentBytes, receivedBytes) }
 
     public var quotaShare: Double { Double(brokerEstimateBytes) / Double(Self.freeQuotaBytes) }
 

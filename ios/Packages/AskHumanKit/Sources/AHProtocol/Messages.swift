@@ -7,6 +7,8 @@ import Foundation
 // MARK: shared shapes
 
 public struct Caps: Codable, Equatable, Sendable {
+    @OmitFalse public var trafficUsage: Bool
+    @OmitFalse public var trafficSync: Bool
     @OmitFalse public var liveUpdate: Bool
     public var newTask: Bool
     public var interject: Bool
@@ -32,8 +34,10 @@ public struct Caps: Codable, Equatable, Sendable {
 
     public init(
         newTask: Bool, interject: Bool, watch: Bool, todos: Bool = false, answerTodos: Bool = false,
-        away: Bool = false, annotations: Bool = false, liveUpdate: Bool = false, sessionHistory: Bool = false
+        away: Bool = false, annotations: Bool = false, liveUpdate: Bool = false, sessionHistory: Bool = false, trafficSync: Bool = false, trafficUsage: Bool = false
     ) {
+        self.trafficUsage = trafficUsage
+        self.trafficSync = trafficSync
         self.liveUpdate = liveUpdate
         self.newTask = newTask
         self.interject = interject
@@ -54,6 +58,8 @@ public struct Caps: Codable, Equatable, Sendable {
         answerTodos = try c.decodeIfPresent(Bool.self, forKey: .answerTodos) ?? false
         away = try c.decodeIfPresent(Bool.self, forKey: .away) ?? false
         annotations = try c.decodeIfPresent(Bool.self, forKey: .annotations) ?? false
+        trafficUsage = try c.decodeIfPresent(Bool.self, forKey: .trafficUsage) ?? false
+        trafficSync = try c.decodeIfPresent(Bool.self, forKey: .trafficSync) ?? false
         liveUpdate = try c.decodeIfPresent(Bool.self, forKey: .liveUpdate) ?? false
         sessionHistory = try c.decodeIfPresent(Bool.self, forKey: .sessionHistory) ?? false
     }
@@ -154,14 +160,18 @@ public struct Hello: WireMessage {
     public var proto: Int
     public var appVer: String
     public var deviceName: String
+    @OmitFalse public var trafficUsage: Bool
     @OmitFalse public var lifecycleResults: Bool
+    @OmitFalse public var trafficSync: Bool
 
-    public init(nonce: String, proto: Int = Wire.proto, appVer: String, deviceName: String, lifecycleResults: Bool = false) {
+    public init(nonce: String, proto: Int = Wire.proto, appVer: String, deviceName: String, lifecycleResults: Bool = false, trafficSync: Bool = false, trafficUsage: Bool = false) {
         self.nonce = nonce
         self.proto = proto
         self.appVer = appVer
         self.deviceName = deviceName
         self.lifecycleResults = lifecycleResults
+        self.trafficUsage = trafficUsage
+        self.trafficSync = trafficSync
     }
 }
 

@@ -53,7 +53,7 @@ extension PhoneEngine {
         macs[macId] = mac
         // A slow retry that was waiting is replaced by this attempt.
         cancelTimer("hello.retry." + macId)
-        let hello = Hello(nonce: nonce, appVer: config.appVersion, deviceName: config.deviceName, lifecycleResults: true)
+        let hello = Hello(nonce: nonce, appVer: config.appVersion, deviceName: config.deviceName, lifecycleResults: true, trafficUsage: true)
         await send(hello, to: macId)
         after("hello." + macId, Self.helloTimeout) { engine in await engine.helloTimedOut(macId, nonce: nonce) }
     }
@@ -99,10 +99,10 @@ extension PhoneEngine {
         mac.agents = [:]
         mac.agentsRev = nil
         mac.followRev = nil
-        if !ack.macName.isEmpty, ack.macName != mac.record.macName {
-            mac.record.macName = ack.macName
-            try? vault.savePairing(mac.record)
-        }
+        let previousRecord = mac.record
+        mac.record.caps = ack.caps
+        if !ack.macName.isEmpty { mac.record.macName = ack.macName }
+        if mac.record != previousRecord { try? vault.savePairing(mac.record) }
         macs[macId] = mac
         var meta = store.meta(macId: macId)
         meta.lastEpoch = ack.epoch
@@ -114,6 +114,11 @@ extension PhoneEngine {
         await sendPushHandle(to: macId)
         // The Mac forgets who watches its todos with the connection.
         await reopenTodoWatch(macId)
+        if ack.caps.trafficUsage {
+            trafficSentAt[macId] = nil
+            trafficPending.insert(macId)
+            await flushTraffic(macId)
+        }
     }
 
     func onMacInfo(_ macId: String, _ info: MacInfo) {
@@ -178,6 +183,9 @@ extension PhoneEngine {
         followRequests[macId] = nil
         cancelTimer("hello." + macId)
         cancelTimer("hello.retry." + macId)
+        cancelTimer("traffic." + macId)
+        trafficPending.remove(macId)
+        trafficSentAt[macId] = nil
         lastRepairAt[macId] = nil
         vault.removePairing(macId: macId)
         store.forget(macId: macId)

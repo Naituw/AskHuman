@@ -79,6 +79,7 @@ enum Out {
         topic: String,
         payload: Vec<u8>,
         retain: bool,
+        announce: bool,
     },
     Flush(oneshot::Sender<()>),
 }
@@ -105,12 +106,17 @@ impl Outbox {
                         topic,
                         payload,
                         retain,
+                        announce,
                     } => {
                         let wait = bucket.reserve();
                         if !wait.is_zero() {
                             tokio::time::sleep(wait).await;
                         }
-                        if transport.publish(&topic, payload, retain).await.is_err() {
+                        if transport
+                            .publish_with_traffic(&topic, payload, retain, announce)
+                            .await
+                            .is_err()
+                        {
                             failed_task.fetch_add(1, Ordering::Relaxed);
                         }
                         queued_task.fetch_sub(1, Ordering::Relaxed);
@@ -125,11 +131,16 @@ impl Outbox {
     }
 
     pub fn send(&self, topic: String, payload: Vec<u8>, retain: bool) {
+        self.send_with_traffic(topic, payload, retain, true);
+    }
+
+    pub fn send_with_traffic(&self, topic: String, payload: Vec<u8>, retain: bool, announce: bool) {
         self.queued.fetch_add(1, Ordering::Relaxed);
         let _ = self.tx.send(Out::Publish {
             topic,
             payload,
             retain,
+            announce,
         });
     }
 

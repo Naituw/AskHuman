@@ -87,6 +87,12 @@ public actor PhoneEngine: RemoteBackend {
     var outbox: [String: OutboxItem] = [:]
     var historyRevision = 0
     var traffic: TrafficStats?
+    var trafficBroker: String?
+    var trafficLedger = TrafficLedger()
+    var trafficStorageIssue = false
+    var trafficPending: Set<String> = []
+    var trafficSentAt: [String: Date] = [:]
+    var announcedPhoneTraffic: [String: TrafficRecord] = [:]
     var pairingFlow: PairingFlow?
     /// Latest presence of every Mac device seen on this connection (also those not paired yet).
     var presenceCache: [String: Presence] = [:]
@@ -164,7 +170,9 @@ public actor PhoneEngine: RemoteBackend {
             }
             requests[cached.id] = RequestRuntime(cached: cached, state: state)
         }
-        traffic = store.traffic(month: Self.month(clock.now()))
+        trafficLedger = store.trafficLedger()
+        trafficLedger.localPhoneId = vault.phoneId()
+        loadPhoneTraffic()
         eventLoop = Task { [weak self, broker] in
             for await event in broker.events {
                 guard let self else { return }
@@ -252,7 +260,7 @@ public actor PhoneEngine: RemoteBackend {
         if wasConnected, let settings {
             let presence = Presence(o: 0, t: clock.nowMs() / 1000, r: "phone", fg: 0)
             if let payload = try? AHJSON.encoder.encode(presence) {
-                _ = await broker.publish(topic: Wire.topicPresence(user: settings.username, deviceId: vault.phoneId()), payload: payload, retain: true)
+                _ = await publishPayload(topic: Wire.topicPresence(user: settings.username, deviceId: vault.phoneId()), payload: payload, retain: true)
             }
         }
         broker.disconnect()
@@ -271,6 +279,7 @@ public actor PhoneEngine: RemoteBackend {
         cancelTimer("settle")
         cancelTimer("probe")
         for id in macs.keys {
+            cancelTimer("traffic." + id)
             macs[id]?.resetSession()
             cancelTimer("hello.retry." + id)
         }
@@ -498,7 +507,7 @@ public actor PhoneEngine: RemoteBackend {
         foregroundPublished = true
         let presence = Presence(o: 1, t: clock.nowMs() / 1000, r: "phone", fg: 1)
         guard let payload = try? AHJSON.encoder.encode(presence) else { return }
-        _ = await broker.publish(
+        _ = await publishPayload(
             topic: Wire.topicPresence(user: active.username, deviceId: vault.phoneId()), payload: payload, retain: true
         )
     }
@@ -509,6 +518,7 @@ public actor PhoneEngine: RemoteBackend {
         guard let active = activeSettings else { return }
         count(received: payload.count)
         if let device = Wire.presenceDevice(user: active.username, topic: topic) {
+            announcePhoneTraffic()
             await onPresence(device: device, payload: payload)
             return
         }
@@ -581,6 +591,7 @@ public actor PhoneEngine: RemoteBackend {
         // The message that completes a pairing arrives with keys that are not stored yet.
         if pairingFlow != nil, await onPairAcceptCandidate(topic: topic, payload: payload) { return }
         guard let (macId, plain) = openFromMac(topic: topic, payload: payload) else { return }
+        if plain.t != TrafficSync.type { announcePhoneTraffic() }
         await dispatch(macId: macId, plain: plain)
     }
 
@@ -617,6 +628,7 @@ public actor PhoneEngine: RemoteBackend {
             case ProjectTodos.type: onTodoList(macId, try plain.body(as: ProjectTodos.self))
             case TodoAck.type: onTodoAck(macId, try plain.body(as: TodoAck.self))
             case TodoChanged.type: onTodoChanged(macId, try plain.body(as: TodoChanged.self))
+            case TrafficSync.type: onTrafficSync(macId, try plain.body(as: TrafficSync.self))
             case SessionHistory.type: onSessionHistory(macId, try plain.body(as: SessionHistory.self))
             case AssetChunk.type: await onAssetChunk(macId, try plain.body(as: AssetChunk.self))
             case AssetError.type: onAssetError(macId, try plain.body(as: AssetError.self))
@@ -645,8 +657,7 @@ public actor PhoneEngine: RemoteBackend {
         else { return false }
         let wait = bucket.take(now: clock.now().timeIntervalSince1970)
         if wait > 0 { try? await clock.sleep(seconds: wait) }
-        count(sent: bytes.count)
-        return await broker.publish(topic: topic, payload: bytes, retain: false)
+        return await publishPayload(topic: topic, payload: bytes, retain: false, announce: plain.t != TrafficSync.type)
     }
 
     // MARK: traffic
@@ -658,20 +669,9 @@ public actor PhoneEngine: RemoteBackend {
         return String(format: "%04d-%02d", parts.year ?? 0, parts.month ?? 0)
     }
 
-    func count(sent bytes: Int) {
-        var stats = traffic ?? TrafficStats(month: Self.month(clock.now()))
-        if stats.month != Self.month(clock.now()) { stats = TrafficStats(month: Self.month(clock.now())) }
-        stats.sentBytes += UInt64(bytes)
-        stats.sentMessages += 1
-        traffic = stats
-    }
-
     func count(received bytes: Int) {
-        var stats = traffic ?? TrafficStats(month: Self.month(clock.now()))
-        if stats.month != Self.month(clock.now()) { stats = TrafficStats(month: Self.month(clock.now())) }
-        stats.receivedBytes += UInt64(bytes)
-        stats.receivedMessages += 1
-        traffic = stats
+        guard let settings = activeSettings else { return }
+        recordTraffic(inbound: true, bytes: bytes, broker: TrafficRecord.brokerId(settings.host), month: Self.month(clock.now()), announce: false)
     }
 
     // MARK: state publication
@@ -715,7 +715,7 @@ public actor PhoneEngine: RemoteBackend {
         }.sorted { $0.summary.createdAt > $1.summary.createdAt }
         return EngineState(
             phase: phase, foreground: foreground, macs: list, inbox: inbox, pairing: pairingState(), clockSkew: clockSkew,
-            push: pushStatus, historyRevision: historyRevision, traffic: traffic, brokerHost: activeSettings?.host,
+            push: pushStatus, historyRevision: historyRevision, traffic: traffic, brokerTraffic: brokerTraffic(), trafficStorageIssue: trafficStorageIssue, brokerHost: activeSettings?.host,
             agents: agentItems(), watches: watches, taskOptions: taskOptions, taskTodos: taskTodos, tasks: tasks
         )
     }

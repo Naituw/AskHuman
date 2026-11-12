@@ -221,7 +221,7 @@ public actor MockBackend: RemoteBackend {
             default: inbox = MockData.inbox(now: date)
             }
             let traffic = scenario == .quota
-                ? TrafficStats(month: "2026-10", sentBytes: 230_000_000, receivedBytes: 240_000_000, sentMessages: 41_000, receivedMessages: 77_000)
+                ? TrafficStats(month: "2026-10", sentBytes: 460_000_000, receivedBytes: 480_000_000, sentMessages: 41_000, receivedMessages: 77_000)
                 : TrafficStats(month: "2026-10", sentBytes: 18_432, receivedBytes: 96_210, sentMessages: 41, receivedMessages: 77)
             initial = EngineState(
                 phase: .connected(via: "tcp"), foreground: true,

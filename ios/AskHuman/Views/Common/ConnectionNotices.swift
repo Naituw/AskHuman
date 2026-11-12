@@ -54,7 +54,7 @@ struct ConnectionNotices: View {
             break
         }
         if scope == .inbox {
-            if let traffic = store.state.traffic {
+            if let traffic = store.state.brokerTraffic?.stats ?? store.state.traffic {
                 switch traffic.level {
                 case .ok: break
                 case .warning:

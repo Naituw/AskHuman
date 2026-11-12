@@ -31,7 +31,10 @@ mod tests_requests;
 mod tests_tasks;
 #[cfg(test)]
 mod tests_todos;
+#[cfg(test)]
+mod tests_traffic;
 mod todos;
+mod traffic;
 mod watch;
 
 use std::collections::HashMap;
@@ -271,6 +274,14 @@ pub struct GatewayState {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub pairing: Option<PairingView>,
     pub traffic: Traffic,
+    #[serde(default)]
+    pub traffic_records: Vec<super::traffic::TrafficRecord>,
+    #[serde(default)]
+    pub traffic_storage_issue: bool,
+    #[serde(default)]
+    pub traffic_synced_at: std::collections::BTreeMap<String, i64>,
+    #[serde(default)]
+    pub usage_records: Vec<super::traffic::TrafficRecord>,
     pub pending_requests: usize,
     /// Seconds since the last keyboard / mouse input on this Mac (`None` when unknown): shown in
     /// the settings so it is visible whether the idle detection behind the push timing works.
@@ -569,6 +580,9 @@ pub(crate) struct PhoneRt {
     pub presence_ts: i64,
     /// Time of the last accepted `hello` of the current online session.
     pub hello_at: Option<i64>,
+    pub traffic_sync: bool,
+    pub traffic_sent_at: Option<i64>,
+    pub traffic_pending: bool,
     pub device_name: String,
     pub dedup: Dedup,
     /// Revision of this phone's `agents` stream (the stream differs per phone: `followed`).
@@ -654,7 +668,9 @@ pub(crate) struct Actor {
 
     pub dirty: bool,
     pub last_flush_ms: i64,
+    pub traffic_storage_issue: bool,
     pub last_prune_ms: i64,
+    pub traffic_measurement_started: i64,
 }
 
 fn month_of(ms: i64) -> String {
@@ -776,8 +792,11 @@ impl Actor {
             last_away: None,
             dirty: false,
             last_flush_ms: now,
+            traffic_storage_issue: false,
             last_prune_ms: now,
+            traffic_measurement_started: now,
         };
+        actor.prepare_traffic();
         let ids: Vec<String> = actor
             .store
             .state
@@ -848,25 +867,25 @@ impl Actor {
                 cmd = cmds.recv() => match cmd {
                     Some(Cmd::Suspend(done)) => {
                         let result = self.checkpoint(true);
-                        if result.is_ok() { self.shutdown().await; }
+                        if result.is_ok() { self.shutdown(&mut events).await; }
                         let stopped = result.is_ok();
                         let _ = done.send(result);
                         if stopped { break; }
                     }
                     Some(Cmd::Shutdown(done)) => {
-                        self.shutdown().await;
+                        self.shutdown(&mut events).await;
                         let _ = done.send(());
                         break;
                     }
                     Some(Cmd::Retire(done)) => {
                         self.drop_requests("iOS gateway restarted");
-                        self.shutdown().await;
+                        self.shutdown(&mut events).await;
                         let _ = done.send(());
                         break;
                     }
                     Some(cmd) => self.on_cmd(cmd).await,
                     None => {
-                        self.shutdown().await;
+                        self.shutdown(&mut events).await;
                         break;
                     }
                 },
@@ -956,7 +975,15 @@ impl Actor {
             mac_name: self.mac_name(),
             phones,
             pairing: self.pairing_view(),
-            traffic: self.store.state.traffic.clone(),
+            traffic: self.current_traffic(),
+            traffic_records: self
+                .traffic_records()
+                .into_iter()
+                .filter(|r| r.device_kind == super::traffic::DeviceKind::Mac)
+                .collect(),
+            usage_records: self.traffic_records(),
+            traffic_storage_issue: self.traffic_storage_issue,
+            traffic_synced_at: self.store.state.traffic_synced_at.clone(),
             pending_requests: self.requests.pending_count(),
             mac_idle_secs: self.host.mac_idle_secs(),
         }
@@ -966,6 +993,10 @@ impl Actor {
 
     async fn on_transport(&mut self, event: TransportEvent) {
         match event {
+            TransportEvent::Published { bytes, announce } => {
+                self.count_traffic(false, bytes, announce)
+            }
+            TransportEvent::TrafficUncertain => self.uncertain_traffic(),
             TransportEvent::Connected { via } => self.on_connected(via).await,
             TransportEvent::Disconnected {
                 reason,
@@ -1046,7 +1077,9 @@ impl Actor {
     // ------------------------------------------------------------ inbound
 
     async fn on_message(&mut self, topic: &str, payload: &[u8]) {
+        self.count_traffic(true, payload.len(), false);
         if let Some(device) = wire::presence_device(&self.user, topic) {
+            self.announce_traffic();
             self.on_presence(&device, payload);
             return;
         }
@@ -1055,6 +1088,7 @@ impl Actor {
             return;
         }
         if let Some(ticket_id) = topic.strip_prefix(&format!("ah/{}/p/", self.user)) {
+            self.announce_traffic();
             self.on_pair_topic(topic, ticket_id, payload).await;
         }
     }
@@ -1118,9 +1152,9 @@ impl Actor {
             return;
         };
         let now = self.now();
-        self.store
-            .state
-            .count_traffic(&month_of(now), true, payload.len());
+        if plain.t != "traffic.usage" {
+            self.announce_traffic();
+        }
         let phone_id = env.f.clone();
         if (plain.ts - now).abs() > CLOCK_SKEW_MS {
             self.send_error(
@@ -1168,6 +1202,10 @@ impl Actor {
             };
         }
         match plain.t.as_str() {
+            "traffic.usage" => {
+                let sync = body!(wire::TrafficSync);
+                self.on_traffic_sync(phone_id, sync);
+            }
             t::PAIR_DONE => {
                 let done = body!(wire::PairDone);
                 self.on_pair_done(phone_id, done).await;
@@ -1317,10 +1355,8 @@ impl Actor {
         if bytes.len() > wire::MAX_ENVELOPE_BYTES {
             return false;
         }
-        self.store
-            .state
-            .count_traffic(&month_of(now), false, bytes.len());
-        self.outbox.send(topic, bytes, false);
+        self.outbox
+            .send_with_traffic(topic, bytes, false, msg_type != "traffic.usage");
         true
     }
 
@@ -1369,6 +1405,8 @@ impl Actor {
         }
         if let Some(rt) = self.rt.get_mut(phone_id) {
             rt.hello_at = Some(now);
+            rt.traffic_sync = hello.traffic_usage && self.host.caps().traffic_usage;
+            rt.traffic_sent_at = None;
             rt.device_name = sanitize_name(&hello.device_name);
         }
         self.send_hello_sync(phone_id, &hello.nonce);
@@ -1384,6 +1422,7 @@ impl Actor {
         };
         self.send(phone_id, &ack);
         self.send_snapshots(phone_id);
+        self.send_traffic(phone_id);
     }
 
     /// The current state of every stream, as the phone gets it after `hello`.
@@ -1516,6 +1555,7 @@ impl Actor {
         self.tick_watch(now);
         self.tick_tasks(now);
         self.tick_todos(now);
+        self.tick_traffic(now);
         if let Some(at) = self.sync_at {
             if now >= at {
                 self.sync_at = None;
@@ -1629,13 +1669,27 @@ impl Actor {
         self.tick_away();
     }
 
-    async fn shutdown(&mut self) {
+    async fn shutdown(&mut self, events: &mut UnboundedReceiver<TransportEvent>) {
         self.publish_presence(false);
         if self.dirty {
             self.store.save_state();
         }
         self.outbox.flush().await;
         self.transport.disconnect().await;
+        while let Ok(event) = events.try_recv() {
+            match event {
+                TransportEvent::Published { bytes, announce } => {
+                    self.count_traffic(false, bytes, announce)
+                }
+                TransportEvent::Message { payload, .. } => {
+                    self.count_traffic(true, payload.len(), false)
+                }
+                TransportEvent::TrafficUncertain => self.uncertain_traffic(),
+                _ => {}
+            }
+        }
+        self.announce_traffic();
+        self.store.save_state();
         self.connected = false;
         self.refresh_status();
     }

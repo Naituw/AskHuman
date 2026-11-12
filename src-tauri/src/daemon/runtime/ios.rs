@@ -157,6 +157,8 @@ impl Host for DaemonHost {
 
     fn caps(&self) -> Caps {
         Caps {
+            traffic_usage: true,
+            traffic_sync: false,
             live_update: true,
             new_task: true,
             interject: true,

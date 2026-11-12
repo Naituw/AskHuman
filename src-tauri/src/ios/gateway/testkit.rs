@@ -209,6 +209,8 @@ impl Host for TestHost {
 
     fn caps(&self) -> Caps {
         Caps {
+            traffic_usage: true,
+            traffic_sync: false,
             live_update: false,
             new_task: true,
             interject: true,
@@ -1128,6 +1130,8 @@ impl TestPhone {
     pub async fn hello(&mut self) -> wire::HelloAck {
         let nonce = crypto::new_msg_id();
         self.send(&wire::Hello {
+            traffic_usage: false,
+            traffic_sync: false,
             nonce: nonce.clone(),
             proto: wire::PROTO,
             app_ver: "1.0".into(),

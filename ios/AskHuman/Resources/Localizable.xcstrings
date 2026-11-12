@@ -602,6 +602,16 @@
         }
       }
     },
+    "Adds each device's own sent and received messages. Earlier usage may be incomplete. Other clients, MQTT control packets and TCP/TLS overhead also consume the broker's 1 GB monthly allowance. Unpairing keeps recorded usage." : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "相加各设备自身发送和接收的消息。早期记录可能不完整，其他客户端、MQTT 控制报文和 TCP/TLS 开销也会消耗 Broker 每月 1 GB 的额度。解除配对后，已记录的用量仍会保留。"
+          }
+        }
+      }
+    },
     "After you send, the Agent is told. Later calls to AskHuman get a hint at once." : {
       "localizations" : {
         "zh-Hans" : {
@@ -1102,16 +1112,6 @@
         }
       }
     },
-    "By this phone's count the free allowance may be used up, so the broker may refuse connections. Check the usage in the EMQX console." : {
-      "localizations" : {
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "按这部手机的统计，免费额度可能已用完，Broker 可能会拒绝连接。请到 EMQX 控制台确认用量。"
-          }
-        }
-      }
-    },
     "Can't reach the Mac" : {
       "localizations" : {
         "zh-Hans" : {
@@ -1358,16 +1358,6 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "%lld 秒后关闭"
-          }
-        }
-      }
-    },
-    "Close to the broker's free allowance of 1 GB a month. The service pauses when it runs out; nothing is charged." : {
-      "localizations" : {
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "快用完 Broker 每月 1 GB 的免费额度了。用完后服务会暂停，不会产生扣费。"
           }
         }
       }
@@ -2038,16 +2028,6 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "离开模式下的升级提问"
-          }
-        }
-      }
-    },
-    "Estimated from what this phone sent and received through the broker. The broker's free allowance is 1 GB a month." : {
-      "localizations" : {
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "根据这部手机通过 Broker 收发的数据估算。Broker 每月的免费额度是 1 GB。"
           }
         }
       }
@@ -2798,6 +2778,16 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "极低"
+          }
+        }
+      }
+    },
+    "Mobile device" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "移动设备"
           }
         }
       }
@@ -3971,6 +3961,16 @@
         }
       }
     },
+    "Projects show up here once an Agent has worked in them on a Mac." : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Agent 在 Mac 上处理过的项目会显示在这里。"
+          }
+        }
+      }
+    },
     "Pull down to load earlier records" : {
       "localizations" : {
         "zh-Hans" : {
@@ -3987,16 +3987,6 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "下拉查看此会话的历史"
-          }
-        }
-      }
-    },
-    "Projects show up here once an Agent has worked in them on a Mac." : {
-      "localizations" : {
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Agent 在 Mac 上处理过的项目会显示在这里。"
           }
         }
       }
@@ -4181,6 +4171,26 @@
         }
       }
     },
+    "Recorded devices" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "已记录的设备"
+          }
+        }
+      }
+    },
+    "Recorded message traffic" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "已记录报文流量"
+          }
+        }
+      }
+    },
     "Registered on this Mac" : {
       "localizations" : {
         "zh-Hans" : {
@@ -4211,16 +4221,6 @@
         }
       }
     },
-    "Remove attachment" : {
-      "localizations" : {
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "移除附件"
-          }
-        }
-      }
-    },
     "Release to load earlier records" : {
       "localizations" : {
         "zh-Hans" : {
@@ -4237,6 +4237,16 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "松手查看此会话的历史"
+          }
+        }
+      }
+    },
+    "Remove attachment" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "移除附件"
           }
         }
       }
@@ -4907,6 +4917,16 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "未安装同步程序"
+          }
+        }
+      }
+    },
+    "Synced %@" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "同步于 %@"
           }
         }
       }
@@ -5881,6 +5901,16 @@
         }
       }
     },
+    "This month's record is incomplete." : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "本月记录不完整。"
+          }
+        }
+      }
+    },
     "This phone" : {
       "localizations" : {
         "zh-Hans" : {
@@ -5959,12 +5989,12 @@
         }
       }
     },
-    "This removes every Mac and the broker account from this phone. Your Macs are told, and you can pair again at any time." : {
+    "This removes every Mac and the broker account from this phone. Your Macs are told, and you can pair again at any time. Usage already recorded this month is kept." : {
       "localizations" : {
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "这会从这部手机移除所有 Mac 和 Broker 账号。你的 Mac 会收到通知，你随时可以重新配对。"
+            "value" : "从这部手机移除所有 Mac 和 Broker 账号，并通知各台 Mac。你随时可以重新配对。已记录的本月用量仍会保留。"
           }
         }
       }
@@ -6109,6 +6139,16 @@
         }
       }
     },
+    "Traffic could not be saved. The estimate may be incomplete after a restart." : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "流量统计保存失败，重启后的估算可能不完整。"
+          }
+        }
+      }
+    },
     "Try again" : {
       "localizations" : {
         "zh-Hans" : {
@@ -6189,6 +6229,16 @@
         }
       }
     },
+    "Update %@ to include its usage." : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "更新 %@ 后可汇总其用量。"
+          }
+        }
+      }
+    },
     "Update AskHuman and Codex on your Mac to choose a task speed." : {
       "localizations" : {
         "zh-Hans" : {
@@ -6249,6 +6299,16 @@
         }
       }
     },
+    "Updated %@" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "更新于 %@"
+          }
+        }
+      }
+    },
     "Updating…" : {
       "localizations" : {
         "zh-Hans" : {
@@ -6279,6 +6339,26 @@
         }
       }
     },
+    "Usage already recorded this month is kept in the estimate." : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "已记录的本月用量仍会计入估算。"
+          }
+        }
+      }
+    },
+    "Usage by device" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "各设备用量"
+          }
+        }
+      }
+    },
     "Version" : {
       "localizations" : {
         "zh-Hans" : {
@@ -6289,12 +6369,32 @@
         }
       }
     },
+    "View in EMQX console" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "前往 EMQX 控制台"
+          }
+        }
+      }
+    },
     "Waiting for Apple" : {
       "localizations" : {
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
             "value" : "等待 Apple"
+          }
+        }
+      }
+    },
+    "Waiting for Mac usage" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "等待 Mac 同步用量"
           }
         }
       }

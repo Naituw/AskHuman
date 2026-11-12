@@ -57,6 +57,8 @@ public final class LocalStore: @unchecked Sendable {
     private let metas: JSONDirectory<MacMeta>
     private let historyFile: JSONFile<[HistoryEntry]>
     private let trafficFile: JSONFile<TrafficStats>
+    private let trafficLedgerFile: JSONFile<TrafficLedger>
+    private let phoneTrafficFile: JSONFile<[String: TrafficStats]>
     private let lock = NSLock()
 
     public init(root: URL) {
@@ -67,6 +69,8 @@ public final class LocalStore: @unchecked Sendable {
         metas = JSONDirectory(url: root.appendingPathComponent("macs", isDirectory: true))
         historyFile = JSONFile(url: root.appendingPathComponent("history.json"))
         trafficFile = JSONFile(url: root.appendingPathComponent("traffic.json"))
+        trafficLedgerFile = JSONFile(url: root.appendingPathComponent("traffic-ledger.json"))
+        phoneTrafficFile = JSONFile(url: root.appendingPathComponent("phone-traffic.json"))
     }
 
     // MARK: request cache
@@ -153,14 +157,37 @@ public final class LocalStore: @unchecked Sendable {
 
     // MARK: traffic
 
-    public func traffic(month: String) -> TrafficStats {
+    public func traffic(month: String, broker: String? = nil, phoneId: String? = nil) -> TrafficStats {
         lock.lock(); defer { lock.unlock() }
+        if let broker {
+            let ledger = trafficLedgerFile.load()
+            if let ledger, let owner = phoneId ?? ledger.localPhoneId,
+               let record = ledger.records.first(where: { $0.broker == broker && $0.month == month && $0.kind == "phone" && $0.macId == owner }) {
+                return TrafficStats(month: month, sentBytes: record.bytesOut, receivedBytes: record.bytesIn,
+                                    sentMessages: record.msgsOut, receivedMessages: record.msgsIn)
+            }
+            if let phoneId, let previousOwner = ledger?.localPhoneId, previousOwner != phoneId {
+                return TrafficStats(month: month)
+            }
+            let saved = phoneTrafficFile.load() ?? [:]
+            if let stats = saved[broker + "|" + month] { return stats }
+            if !saved.isEmpty { return TrafficStats(month: month) }
+        }
         if let stats = trafficFile.load(), stats.month == month { return stats }
         return TrafficStats(month: month)
     }
 
-    public func saveTraffic(_ stats: TrafficStats) {
+    @discardableResult
+    public func saveTraffic(_ stats: TrafficStats, broker: String? = nil) -> Bool {
         lock.lock(); defer { lock.unlock() }
-        trafficFile.save(stats)
+        guard let broker else { return trafficFile.save(stats) }
+        var saved = phoneTrafficFile.load() ?? [:]
+        saved[broker + "|" + stats.month] = stats
+        return phoneTrafficFile.save(saved)
     }
+
+    public func trafficLedger() -> TrafficLedger { trafficLedgerFile.load() ?? TrafficLedger() }
+
+    @discardableResult
+    public func saveTrafficLedger(_ ledger: TrafficLedger) -> Bool { trafficLedgerFile.save(ledger) }
 }

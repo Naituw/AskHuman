@@ -120,6 +120,10 @@ pub struct IosState {
     pub mac_id: String,
     pub phones: Vec<PhoneRecord>,
     pub traffic: Traffic,
+    pub traffic_broker: Option<String>,
+    pub traffic_records: Vec<super::traffic::TrafficRecord>,
+    pub traffic_synced_at: BTreeMap<String, i64>,
+    pub traffic_observed_since: BTreeMap<String, i64>,
     /// `tls` or `wss`: the transport that connected last.
     pub last_transport: Option<String>,
 }
@@ -150,11 +154,11 @@ impl IosState {
             };
         }
         if inbound {
-            self.traffic.bytes_in += bytes as u64;
-            self.traffic.msgs_in += 1;
+            self.traffic.bytes_in = self.traffic.bytes_in.saturating_add(bytes as u64);
+            self.traffic.msgs_in = self.traffic.msgs_in.saturating_add(1);
         } else {
-            self.traffic.bytes_out += bytes as u64;
-            self.traffic.msgs_out += 1;
+            self.traffic.bytes_out = self.traffic.bytes_out.saturating_add(bytes as u64);
+            self.traffic.msgs_out = self.traffic.msgs_out.saturating_add(1);
         }
     }
 }
@@ -307,9 +311,14 @@ impl Store {
     }
 
     pub fn save_state(&self) {
-        if let Ok(bytes) = serde_json::to_vec_pretty(&self.state) {
-            let _ = write_private(&self.dir.join("state.json"), &bytes);
+        if let Err(error) = self.save_state_checked() {
+            eprintln!("askhuman: could not save iOS state: {error}");
         }
+    }
+
+    pub fn save_state_checked(&self) -> Result<(), String> {
+        let bytes = serde_json::to_vec_pretty(&self.state).map_err(|error| error.to_string())?;
+        write_private(&self.dir.join("state.json"), &bytes).map_err(|error| error.to_string())
     }
 
     fn save_journal(&self) {

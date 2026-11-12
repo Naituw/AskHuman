@@ -34,6 +34,24 @@ PLURAL_EN = {
 }
 
 ZH = {
+    'Recorded devices': '已记录的设备',
+    'Recorded message traffic': '已记录报文流量',
+    'Usage by device': '各设备用量',
+    "This month's record is incomplete.": '本月记录不完整。',
+    'Mobile device': '移动设备',
+    "Adds each device's own sent and received messages. Earlier usage may be incomplete. Other clients, MQTT control packets and TCP/TLS overhead also consume the broker's 1 GB monthly allowance. Unpairing keeps recorded usage.": '相加各设备自身发送和接收的消息。早期记录可能不完整，其他客户端、MQTT 控制报文和 TCP/TLS 开销也会消耗 Broker 每月 1 GB 的额度。解除配对后，已记录的用量仍会保留。',
+
+    'Updated %@': '更新于 %@',
+    'Synced %@': '同步于 %@',
+
+    'Waiting for Mac usage': '等待 Mac 同步用量',
+    'Update %@ to include its usage.': '更新 %@ 后可汇总其用量。',
+    'This phone': '这部手机',
+    'View in EMQX console': '前往 EMQX 控制台',
+    'Traffic could not be saved. The estimate may be incomplete after a restart.': '流量统计保存失败，重启后的估算可能不完整。',
+    'Usage already recorded this month is kept in the estimate.': '已记录的本月用量仍会计入估算。',
+    'This removes every Mac and the broker account from this phone. Your Macs are told, and you can pair again at any time. Usage already recorded this month is kept.': '从这部手机移除所有 Mac 和 Broker 账号，并通知各台 Mac。你随时可以重新配对。已记录的本月用量仍会保留。',
+
     "Failed: %@": "出错了：%@",
     "Finished: %@": "已完成：%@",
     "Handled elsewhere": "已在其他端处理",
@@ -332,10 +350,7 @@ ZH = {
     "Received": "已接收",
     "Messages": "消息",
     "This month": "本月",
-    "Estimated from what this phone sent and received through the broker. The broker's free allowance is 1 GB a month.": "根据这部手机通过 Broker 收发的数据估算。Broker 每月的免费额度是 1 GB。",
     "Of the free allowance": "占免费额度",
-    "Close to the broker's free allowance of 1 GB a month. The service pauses when it runs out; nothing is charged.": "快用完 Broker 每月 1 GB 的免费额度了。用完后服务会暂停，不会产生扣费。",
-    "By this phone's count the free allowance may be used up, so the broker may refuse connections. Check the usage in the EMQX console.": "按这部手机的统计，免费额度可能已用完，Broker 可能会拒绝连接。请到 EMQX 控制台确认用量。",
     "Version": "版本",
     "Broker": "Broker",
     "Forget all pairings": "忘记所有配对",
@@ -345,7 +360,6 @@ ZH = {
     "Privacy Policy": "隐私政策",
     "Beta setup guide": "内测接入指南",
     "Forget all pairings?": "忘记所有配对？",
-    "This removes every Mac and the broker account from this phone. Your Macs are told, and you can pair again at any time.": "这会从这部手机移除所有 Mac 和 Broker 账号。你的 Mac 会收到通知，你随时可以重新配对。",
     # Markdown
     "Copy": "复制",
     "Copy code": "复制代码",
@@ -699,6 +713,10 @@ ZH = {
     "Mute mode": "静音模式",
     "Back to current request": "回到当前提问",
     "Loading history…": "正在加载历史…",
+    "Pull down to see this session's history": "下拉查看此会话的历史",
+    "Release to see this session's history": "松手查看此会话的历史",
+    "Pull down to load earlier records": "下拉加载更早的记录",
+    "Release to load earlier records": "松手加载更早的记录",
 }
 
 # Shown by iOS itself when a push cannot be decrypted by the notification extension.
@@ -713,10 +731,6 @@ PUSH = {
 }
 
 INFO_PLIST = {
-    "Pull down to see this session's history": "下拉查看此会话的历史",
-    "Release to see this session's history": "松手查看此会话的历史",
-    "Pull down to load earlier records": "下拉加载更早的记录",
-    "Release to load earlier records": "松手加载更早的记录",
     "NSCameraUsageDescription": (
         "Scan the pairing QR code shown by AskHuman on your Mac, or take a photo to attach to a reply.",
         "扫描 Mac 上 AskHuman 显示的配对二维码，或拍照后附在回复里。",

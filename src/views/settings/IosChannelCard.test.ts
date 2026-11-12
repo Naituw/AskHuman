@@ -4,6 +4,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { i18n } from "../../i18n";
 import IosChannelCard from "./IosChannelCard.vue";
 
+const openPath = vi.hoisted(() => vi.fn());
 const iosOp = vi.hoisted(() => vi.fn());
 const iosPairQr = vi.hoisted(() => vi.fn());
 const iosTest = vi.hoisted(() => vi.fn());
@@ -12,6 +13,7 @@ const iosConnectionExport = vi.hoisted(() => vi.fn());
 const useSettingsContext = vi.hoisted(() => vi.fn());
 
 vi.mock("../../lib/ipc", () => ({
+  openPath,
   iosOp,
   iosPairQr,
   iosTest,
@@ -133,13 +135,13 @@ describe("IosChannelCard", () => {
     });
     const wrapper = mountCard();
     await flushPromises();
-    expect(wrapper.get(".ios-traffic").text()).toContain("sent 3.0 MB, received 2.0 MB, about <1%");
+    expect(wrapper.get(".ios-traffic").text()).toContain("5.0 MB");
     expect(wrapper.find(".ios-traffic-warning").exists()).toBe(false);
     wrapper.unmount();
 
     iosOp.mockResolvedValue({
       kind: "state",
-      state: gateway({ traffic: { month: "2026-10", bytesIn: 220 * mib, bytesOut: 220 * mib, msgsIn: 4, msgsOut: 5 } }),
+      state: gateway({ traffic: { month: "2026-10", bytesIn: 440 * mib, bytesOut: 440 * mib, msgsIn: 4, msgsOut: 5 } }),
     });
     const warned = mountCard();
     await flushPromises();
@@ -149,12 +151,38 @@ describe("IosChannelCard", () => {
 
     iosOp.mockResolvedValue({
       kind: "state",
-      state: gateway({ traffic: { month: "2026-10", bytesIn: 300 * mib, bytesOut: 300 * mib, msgsIn: 4, msgsOut: 5 } }),
+      state: gateway({ traffic: { month: "2026-10", bytesIn: 600 * mib, bytesOut: 600 * mib, msgsIn: 4, msgsOut: 5 } }),
     });
     const full = mountCard();
     await flushPromises();
     expect(full.get(".ios-traffic-warning").classes()).toContain("full");
     full.unmount();
+  });
+
+  it("shows the known Mac total, source details and storage failures", async () => {
+    const mib = 1024 ** 2;
+    const own = { month: "2026-11", bytesIn: 10 * mib, bytesOut: 20 * mib, msgsIn: 1, msgsOut: 1 };
+    iosOp.mockResolvedValue({
+      kind: "state",
+      state: gateway({
+        traffic: own,
+        usageRecords: [
+          { ...own, broker: "broker.example.com", macId: "a", macName: "Home Mac", updatedAt: 1000 },
+          { ...own, broker: "broker.example.com", macId: "b", macName: "Office Mac", bytesOut: 10 * mib, updatedAt: 2000 },
+        ],
+        trafficStorageIssue: true,
+      }),
+    });
+    const wrapper = mountCard();
+    await flushPromises();
+    expect(wrapper.get(".ios-traffic").text()).toContain("2 devices");
+    expect(wrapper.get(".ios-traffic").text()).toContain("50.0 MB");
+    expect(wrapper.get(".ios-traffic").text()).toContain("History is incomplete");
+    expect(wrapper.get(".ios-traffic-details").text()).toContain("Office Mac");
+    expect(wrapper.text()).toContain("Traffic could not be saved");
+    await wrapper.get('a[href="https://cloud.emqx.com/console/"]').trigger("click");
+    expect(openPath).toHaveBeenCalledWith("https://cloud.emqx.com/console/");
+    wrapper.unmount();
   });
 
   it("says nothing about traffic before any message was exchanged", async () => {

@@ -50,7 +50,7 @@ Agent / CLI ─► Daemon ── IosGateway（一个 actor）──► MQTT（TL
 | `cli/ios_cmd.rs` | `AskHuman channel ios status / pair / allow / devices / revoke …` 与 `channel set ios …`（密码经 stdin / 文件 / 环境变量，从不进 argv） |
 | `commands.rs` | 设置页用的 Tauri 命令：`ios_op`（经 IPC 的 `ClientMsg::Ios`）、`ios_test`、`ios_pair_qr`、`ios_connection_import` / `export` |
 
-前端：`src/views/settings/IosChannelCard.vue` + `useIosChannel.ts`（状态轮询、配对流程）、`iosTraffic.ts`（本月流量与免费额度预警）、`iosAlertTiming.ts`（「推送时机」下拉的预设与时长显示）。
+前端：`src/views/settings/IosChannelCard.vue` + `useIosChannel.ts`（状态轮询、配对流程）、`iosTraffic.ts`（多设备报文流量统计与记录完整性，见 [流量统计](specs/ios-traffic.md)）、`iosAlertTiming.ts`（「推送时机」下拉的预设与时长显示）。
 
 ## 推送中继（`relay/`）
 
@@ -179,5 +179,5 @@ GitHub Pages 工作流只允许手动触发。页面必须先上线、核实实�
 - **待办只是 Mac 的遥控与展示**（`docs/specs/ios-todos.md`）：权威状态仍是 Mac 的 `todos.json`；线上项目只有不透明 id（key 的 SHA-256 前 8 字节十六进制）与最少的上层目录名，没有路径；手机不把待办内容落盘（只在内存里缓存），也不进推送；写操作按待办 id 定位、带 `clientMsgId` 进幂等日志，应答附带该项目最新的整表，所以手机屏幕上的列表 = Mac 最后一次的回答 + 用户还没被应答的写入。「iCloud」只是一个**来源**（由一台开着同步且在线的 Mac 代答，掉线自动换），手机不直连 CloudKit（那要用户为 iOS App ID 开 iCloud 容器，见该 spec §11）。配对了多台 Mac 时，开着同步的 Mac 并进「iCloud」、不再单独出现在来源菜单里；它们各自「仅本机」的项目在 iCloud 视图里按 Mac 分段，点进去在那台 Mac 上读写。项目行上的 Agent 点不是 Mac 算的：手机拿 Agents 页已有的实时状态，按 Agent 项目信息里可选的 `repo`（仓库地址，Mac 开着同步时才带）或同一台 Mac 上的目录哈希对到行，所以跨 Mac 的点要那台 Mac 也装新版。项目列表的合并 / 分段 / 同名后缀在 Rust（`ios/todos_view.rs`）里有一份镜像桌面端 TS 的实现，改一边先看另一边的镜像用例；`todo.watch on` 会立刻回一条 `todo.changed` 作为基线。
 - **会话历史只读 Mac，手机不落盘，滚动靠「记位置、插入、每次布局校正」**（`docs/specs/ios-session-history.md`）：权威是 Mac 的 `history.jsonl`；线上只有会话键 `{kind}:{sessionId}` 与往来的文字（附件、图片、附注只给数量，没有路径）；`SessionThread` 随页面丢弃，离开再回来总是从当前提问的顶部开始。分页游标是 `(beforeMs, beforeId)`，按 `(timestamp_ms, id)` 倒序，首页以请求的 `createdAt` 为锚（之后到的往来不算「更早」）；默认一页 8 条（≤ 20），整页 ≤ 256 KiB，超了 Mac 先丢最旧的（`more` 变 true）、再截短文本。界面上有三条别改的约束：线程区不要换成 `LazyVStack`（估算高度会让前插之后的位置漂）；SwiftUI 会按内容高度把 `UIScrollView.alwaysBounceVertical` 改回 `false`，而短页（多数请求）要靠它才拉得动，所以 `ThreadScrollCoordinator` 用 KVO 把它放回去；补偿必须在同一次布局里完成，不能改成「下一个 runloop 再 `setContentOffset`」（会有一帧错位；只有松手后回弹的起头放在下一个运行循环里）；下拉的空地不能用 `contentInset`（SwiftUI 约 10 ms 内改回去），要用页面内容里的一行加补偿，而且那次补偿要用 `setContentOffset(_, animated: false)` 才停得住 UIKit 自己的回弹。线程载入时 `RequestScrollPosition` 的 `intent` 令牌递增，让「恢复上次阅读位置」不把线程的插入当作用户新滚动。
 - **回答里的指令与待办都以「这条回答赢得请求」为界**：`AnswerSubmit.directive`（离开 / 不再使用）与 `todoIds` 都在 Mac 网关里随回答一起校验，被别处抢先、被拒收（`invalid`：`todo gone` 等）的回答不应用指令、不让待办出队；`answer_hash` 只在 `todoIds` 非空、`annotations` 非空时才把它们算进去（附注是「引文 + 附注」按顺序并入），不带待办也不带附注的回答哈希与旧版逐字相同（旧发件箱里的重发不会被判成冲突）。手机把 `todo gone` 显示成可「重新选择」的提示，草稿保留。
-- **成本红线**：EMQX 消费上限保持 0（额度用尽即停，不自动付费）；不创建管理 API Key；Mac 与手机本机统计流量，80% 免费额度时预警。
+- **成本红线**：EMQX 消费上限保持 0（额度用尽即停，不自动付费）；不创建管理 API Key。Mac 与手机分别统计自身实收与获 Broker 确认的发送，月累计通过手机合并并双向复制，按实例、UTC 月份、设备类型与稳定 ID 逐项取最大值后相加；解除配对保留已知用量。两端显示已记录报文流量与历史完整性，覆盖完整时显示额度占比，80% 免费额度时预警。见 [流量统计](specs/ios-traffic.md)。
 - **保密**：broker 密码、配对码、方向密钥不得出现在日志、命令输出、文档与提交里；`E2ETests.testSecretsNeverReachTheLogsOrTheCommandOutput` 守着这条。

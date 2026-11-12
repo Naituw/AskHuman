@@ -235,6 +235,10 @@ fn is_zero(v: &u64) -> bool {
 #[serde(rename_all = "camelCase")]
 pub struct Caps {
     #[serde(default, skip_serializing_if = "is_false")]
+    pub traffic_usage: bool,
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub traffic_sync: bool,
+    #[serde(default, skip_serializing_if = "is_false")]
     pub live_update: bool,
     pub new_task: bool,
     pub interject: bool,
@@ -344,6 +348,10 @@ msg!(PairDone, t::PAIR_DONE);
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Hello {
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub traffic_usage: bool,
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub traffic_sync: bool,
     pub nonce: String,
     pub proto: u32,
     pub app_ver: String,
@@ -1873,6 +1881,8 @@ mod tests {
     #[test]
     fn the_notes_fields_are_additive_in_both_directions() {
         let caps = |annotations: bool| Caps {
+            traffic_usage: false,
+            traffic_sync: false,
             live_update: false,
             new_task: true,
             interject: true,
@@ -1977,6 +1987,8 @@ mod tests {
     #[test]
     fn the_session_history_additions_are_additive_in_both_directions() {
         let caps = |session_history: bool| Caps {
+            traffic_usage: false,
+            traffic_sync: false,
             live_update: false,
             new_task: true,
             interject: true,
@@ -2140,3 +2152,10 @@ mod tests {
         );
     }
 }
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TrafficSync {
+    pub records: Vec<super::traffic::TrafficRecord>,
+}
+msg!(TrafficSync, "traffic.usage");

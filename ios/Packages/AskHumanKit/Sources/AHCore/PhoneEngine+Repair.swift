@@ -59,12 +59,11 @@ extension PhoneEngine {
         let token = Bytes.random(16)
         probeToken = token
         after("probe", Self.probeTimeout) { engine in await engine.probeTimedOut(token) }
-        count(sent: token.count)
         let topic = Wire.topicDown(user: active.username, phoneId: vault.phoneId())
         // Publishing waits for the broker's acknowledgement, and a dead connection never gives one
         // (the call gives up after ten seconds): the timer above must not wait for it.
-        Task { [broker] in
-            if await broker.publish(topic: topic, payload: token, retain: false) == false {
+        Task {
+            if await self.publishPayload(topic: topic, payload: token, retain: false) == false {
                 await self.probeTimedOut(token)
             }
         }

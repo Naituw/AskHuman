@@ -13,12 +13,17 @@ public final class JSONFile<Value: Codable & Sendable>: @unchecked Sendable {
         return try? JSONDecoder().decode(Value.self, from: data)
     }
 
-    public func save(_ value: Value) {
+    @discardableResult
+    public func save(_ value: Value) -> Bool {
         lock.lock(); defer { lock.unlock() }
-        guard let data = try? JSONEncoder().encode(value) else { return }
-        let dir = url.deletingLastPathComponent()
-        try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
-        try? data.write(to: url, options: [.atomic, .completeFileProtectionUntilFirstUserAuthentication])
+        do {
+            let data = try JSONEncoder().encode(value)
+            try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
+            try data.write(to: url, options: [.atomic, .completeFileProtectionUntilFirstUserAuthentication])
+            return true
+        } catch {
+            return false
+        }
     }
 
     public func remove() {

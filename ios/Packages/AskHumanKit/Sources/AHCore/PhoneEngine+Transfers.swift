@@ -79,7 +79,7 @@ extension PhoneEngine {
         exportPresencePublished = true
         let presence = Presence(o: 1, t: clock.nowMs() / 1000, r: "phone", fg: 0)
         if let payload = try? AHJSON.encoder.encode(presence) {
-            _ = await broker.publish(topic: Wire.topicPresence(user: active.username, deviceId: vault.phoneId()), payload: payload, retain: true)
+            _ = await publishPayload(topic: Wire.topicPresence(user: active.username, deviceId: vault.phoneId()), payload: payload, retain: true)
         }
         // Foreground may have returned while the publication was in flight.
         if foreground {

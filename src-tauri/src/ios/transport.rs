@@ -5,7 +5,7 @@
 //! - [`LoopbackBroker`] / [`LoopbackTransport`]: an in-process broker with topic matching,
 //!   retained messages, last wills and fault injection for tests.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashMap, VecDeque};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
@@ -18,6 +18,11 @@ use super::wire::KEEPALIVE_SECS;
 /// What the transport reports to the gateway.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum TransportEvent {
+    Published {
+        bytes: usize,
+        announce: bool,
+    },
+    TrafficUncertain,
     /// Connection (re)established. The session is clean, so subscriptions must be re-issued.
     Connected {
         via: String,
@@ -48,6 +53,16 @@ pub struct Will {
 pub trait BrokerTransport: Send + Sync {
     /// QoS 1 publish.
     async fn publish(&self, topic: &str, payload: Vec<u8>, retain: bool) -> Result<(), String>;
+    /// Tags publications that only replicate accounting, to prevent feedback loops.
+    async fn publish_with_traffic(
+        &self,
+        topic: &str,
+        payload: Vec<u8>,
+        retain: bool,
+        _announce: bool,
+    ) -> Result<(), String> {
+        self.publish(topic, payload, retain).await
+    }
     /// QoS 1 subscribe.
     async fn subscribe(&self, topic: &str) -> Result<(), String>;
     async fn unsubscribe(&self, topic: &str) -> Result<(), String>;
@@ -271,6 +286,18 @@ impl LoopbackTransport {
 #[async_trait]
 impl BrokerTransport for LoopbackTransport {
     async fn publish(&self, topic: &str, payload: Vec<u8>, retain: bool) -> Result<(), String> {
+        self.publish_with_traffic(topic, payload, retain, true)
+            .await
+    }
+
+    async fn publish_with_traffic(
+        &self,
+        topic: &str,
+        payload: Vec<u8>,
+        retain: bool,
+        announce: bool,
+    ) -> Result<(), String> {
+        let bytes = payload.len();
         let mut inner = self.broker.inner.lock().unwrap();
         let Some(client) = inner.clients.get(&self.client_id) else {
             return Err("not connected".into());
@@ -278,6 +305,7 @@ impl BrokerTransport for LoopbackTransport {
         if !Self::allowed(client, topic) {
             return Err(format!("not authorized to publish {topic}"));
         }
+        let _ = self.tx.send(TransportEvent::Published { bytes, announce });
         if inner.drop_topics.iter().any(|f| topic.contains(f.as_str())) {
             return Ok(());
         }
@@ -378,8 +406,21 @@ impl Via {
     }
 }
 
+#[derive(Clone, Copy)]
+struct Publication {
+    bytes: usize,
+    announce: bool,
+}
+
+#[derive(Clone)]
+struct ConnectionClient {
+    client: rumqttc::AsyncClient,
+    publications: Arc<Mutex<VecDeque<Publication>>>,
+}
+
 struct Shared {
-    client: Mutex<Option<rumqttc::AsyncClient>>,
+    client: Mutex<Option<ConnectionClient>>,
+    enqueue: tokio::sync::Mutex<()>,
     connected: AtomicBool,
 }
 
@@ -466,6 +507,7 @@ impl RumqttcTransport {
         let (stop_tx, stop_rx) = unbounded_channel();
         let shared = Arc::new(Shared {
             client: Mutex::new(None),
+            enqueue: tokio::sync::Mutex::new(()),
             connected: AtomicBool::new(false),
         });
         tokio::spawn(supervise(params, shared.clone(), events_tx, stop_rx));
@@ -478,7 +520,7 @@ impl RumqttcTransport {
         )
     }
 
-    fn client(&self) -> Result<rumqttc::AsyncClient, String> {
+    fn client(&self) -> Result<ConnectionClient, String> {
         self.shared
             .client
             .lock()
@@ -491,14 +533,41 @@ impl RumqttcTransport {
 #[async_trait]
 impl BrokerTransport for RumqttcTransport {
     async fn publish(&self, topic: &str, payload: Vec<u8>, retain: bool) -> Result<(), String> {
-        self.client()?
+        self.publish_with_traffic(topic, payload, retain, true)
+            .await
+    }
+
+    async fn publish_with_traffic(
+        &self,
+        topic: &str,
+        payload: Vec<u8>,
+        retain: bool,
+        announce: bool,
+    ) -> Result<(), String> {
+        let _enqueue = self.shared.enqueue.lock().await;
+        let connection = self.client()?;
+        connection
+            .publications
+            .lock()
+            .unwrap()
+            .push_back(Publication {
+                bytes: payload.len(),
+                announce,
+            });
+        let result = connection
+            .client
             .publish(topic, rumqttc::QoS::AtLeastOnce, retain, payload)
             .await
-            .map_err(|e| e.to_string())
+            .map_err(|error| error.to_string());
+        if result.is_err() {
+            connection.publications.lock().unwrap().pop_back();
+        }
+        result
     }
 
     async fn subscribe(&self, topic: &str) -> Result<(), String> {
         self.client()?
+            .client
             .subscribe(topic, rumqttc::QoS::AtLeastOnce)
             .await
             .map_err(|e| e.to_string())
@@ -506,6 +575,7 @@ impl BrokerTransport for RumqttcTransport {
 
     async fn unsubscribe(&self, topic: &str) -> Result<(), String> {
         self.client()?
+            .client
             .unsubscribe(topic)
             .await
             .map_err(|e| e.to_string())
@@ -520,6 +590,30 @@ impl BrokerTransport for RumqttcTransport {
 
     fn is_connected(&self) -> bool {
         self.shared.connected.load(Ordering::SeqCst)
+    }
+}
+
+fn account_publication(
+    event: rumqttc::Event,
+    publications: &Mutex<VecDeque<Publication>>,
+    inflight: &mut HashMap<u16, Publication>,
+    events: &UnboundedSender<TransportEvent>,
+) {
+    match event {
+        rumqttc::Event::Outgoing(rumqttc::Outgoing::Publish(id)) => {
+            if let Some(publication) = publications.lock().unwrap().pop_front() {
+                inflight.insert(id, publication);
+            }
+        }
+        rumqttc::Event::Incoming(rumqttc::Packet::PubAck(ack)) => {
+            if let Some(publication) = inflight.remove(&ack.pkid) {
+                let _ = events.send(TransportEvent::Published {
+                    bytes: publication.bytes,
+                    announce: publication.announce,
+                });
+            }
+        }
+        _ => {}
     }
 }
 
@@ -563,7 +657,12 @@ async fn supervise(
         network.set_connection_timeout(5);
         network.set_tcp_nodelay(true);
         eventloop.set_network_options(network);
-        *shared.client.lock().unwrap() = Some(client.clone());
+        let publications = Arc::new(Mutex::new(VecDeque::new()));
+        let mut inflight = HashMap::new();
+        *shared.client.lock().unwrap() = Some(ConnectionClient {
+            client: client.clone(),
+            publications: publications.clone(),
+        });
 
         let mut connected_once = false;
         let (reason, auth_failed) = loop {
@@ -573,9 +672,14 @@ async fn supervise(
                     // Graceful stop: flush the queue, send DISCONNECT (the will is discarded).
                     let _ = client.disconnect().await;
                     let _ = tokio::time::timeout(Duration::from_secs(2), async {
-                        while eventloop.poll().await.is_ok() {}
+                        while let Ok(event) = eventloop.poll().await {
+                            account_publication(event, &publications, &mut inflight, &events);
+                        }
                     })
                     .await;
+                    if !inflight.is_empty() || !publications.lock().unwrap().is_empty() {
+                        let _ = events.send(TransportEvent::TrafficUncertain);
+                    }
                     shared.connected.store(false, Ordering::SeqCst);
                     *shared.client.lock().unwrap() = None;
                     if let Some(done) = done {
@@ -597,8 +701,13 @@ async fn supervise(
                             retain: p.retain,
                         });
                     }
-                    Ok(_) => {}
-                    Err(error) => break classify(&error),
+                    Ok(event) => account_publication(event, &publications, &mut inflight, &events),
+                    Err(error) => {
+                        if !inflight.is_empty() || !publications.lock().unwrap().is_empty() {
+                            let _ = events.send(TransportEvent::TrafficUncertain);
+                        }
+                        break classify(&error);
+                    },
                 }
             }
         };
@@ -690,7 +799,11 @@ pub async fn probe(mut params: ConnectParams, limit: Duration) -> Result<ProbeRe
                     elapsed_ms: started.elapsed().as_millis() as u64,
                 });
             }
-            Some(TransportEvent::Message { .. }) => {}
+            Some(
+                TransportEvent::Message { .. }
+                | TransportEvent::Published { .. }
+                | TransportEvent::TrafficUncertain,
+            ) => {}
             Some(TransportEvent::Disconnected {
                 reason,
                 auth_failed,
@@ -788,11 +901,57 @@ mod tests {
         assert!((47.0..=73.0).contains(&d));
     }
 
+    #[test]
+    fn a_queued_or_written_publication_is_counted_only_after_puback() {
+        let publications = Mutex::new(VecDeque::from([Publication {
+            bytes: 42,
+            announce: false,
+        }]));
+        let mut inflight = HashMap::new();
+        let (tx, mut rx) = unbounded_channel();
+        assert!(rx.try_recv().is_err());
+        account_publication(
+            rumqttc::Event::Outgoing(rumqttc::Outgoing::Publish(7)),
+            &publications,
+            &mut inflight,
+            &tx,
+        );
+        assert!(rx.try_recv().is_err());
+        account_publication(
+            rumqttc::Event::Incoming(rumqttc::Packet::PubAck(rumqttc::PubAck::new(7))),
+            &publications,
+            &mut inflight,
+            &tx,
+        );
+        assert_eq!(
+            rx.try_recv().unwrap(),
+            TransportEvent::Published {
+                bytes: 42,
+                announce: false
+            }
+        );
+        account_publication(
+            rumqttc::Event::Incoming(rumqttc::Packet::PubAck(rumqttc::PubAck::new(7))),
+            &publications,
+            &mut inflight,
+            &tx,
+        );
+        assert!(rx.try_recv().is_err());
+    }
+
     async fn next(rx: &mut UnboundedReceiver<TransportEvent>) -> TransportEvent {
-        tokio::time::timeout(Duration::from_secs(1), rx.recv())
-            .await
-            .expect("event in time")
-            .expect("channel open")
+        loop {
+            let event = tokio::time::timeout(Duration::from_secs(1), rx.recv())
+                .await
+                .expect("event in time")
+                .expect("channel open");
+            if !matches!(
+                event,
+                TransportEvent::Published { .. } | TransportEvent::TrafficUncertain
+            ) {
+                return event;
+            }
+        }
     }
 
     #[tokio::test]

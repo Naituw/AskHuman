@@ -3,6 +3,7 @@
 // docs/specs/ios-channel.md §3 / §7. The app's "New task" needs the Agent-task switch, which sits
 // in the card as a row of its own (AgentTasksSwitchRow).
 import { computed } from "vue";
+import { openPath } from "../../lib/ipc";
 import { useI18n } from "vue-i18n";
 import AgentTasksSwitchRow from "./AgentTasksSwitchRow.vue";
 import { useSettingsContext } from "./context";
@@ -15,7 +16,7 @@ import {
   splitDuration,
   type SplitDuration,
 } from "./iosAlertTiming";
-import { formatBytes, quotaShare, trafficLevel } from "./iosTraffic";
+import { aggregateTraffic, brokerEstimate, hasCompleteTrafficHistory, formatBytes, quotaShare, trafficLevel } from "./iosTraffic";
 
 const { t } = useI18n();
 const { persist, secretsPresent, SECRET_PLACEHOLDER, clearSecret } = useSettingsContext();
@@ -62,17 +63,25 @@ const statusText = computed(() => {
   return s.lastError ? `${base}: ${s.lastError}` : base;
 });
 
-// Monthly traffic as this Mac counted it, with a warning before the free quota runs out.
+// Known Mac counters converge through paired phones.
 const traffic = computed(() => {
-  const tr = state.value?.traffic;
+  const local = state.value?.traffic;
+  const records = state.value?.usageRecords ?? [];
+  const tr = records.length && local ? aggregateTraffic(records, local.month) : local;
   return tr && tr.msgsIn + tr.msgsOut > 0 ? tr : null;
+});
+const completeTrafficHistory = computed(() => {
+  const records = state.value?.usageRecords ?? [];
+  return records.length > 0 && !!traffic.value && hasCompleteTrafficHistory(records, traffic.value.month);
 });
 const trafficLevelNow = computed(() => (traffic.value ? trafficLevel(traffic.value) : "ok"));
 const trafficText = computed(() => {
   const tr = traffic.value;
   if (!tr) return "";
   const share = quotaShare(tr);
-  return t("settings.experimental.ios.traffic", {
+  return t(completeTrafficHistory.value ? "settings.experimental.ios.trafficAggregate" : "settings.experimental.ios.trafficPartial", {
+    total: formatBytes(brokerEstimate(tr)),
+    count: state.value?.usageRecords?.length ?? 1,
     out: formatBytes(tr.bytesOut),
     in: formatBytes(tr.bytesIn),
     percent: share < 0.01 ? "<1%" : `${Math.round(share * 100)}%`,
@@ -153,6 +162,20 @@ function pushWarning(phone: IosPhone): string {
         {{ statusText }}
       </p>
       <p v-if="trafficText" class="card-desc ios-traffic" :class="trafficLevelNow">{{ trafficText }}</p>
+      <details v-if="state?.usageRecords?.length" class="card-desc ios-traffic-details">
+        <summary>{{ t("settings.experimental.ios.trafficDetails") }}</summary>
+        <p v-for="record in state.usageRecords" :key="`${record.deviceKind ?? 'mac'}|${record.macId}`">
+          {{ record.deviceKind === 'phone' ? t("settings.experimental.ios.trafficMobile") : 'Mac' }} · {{ record.macName || record.macId.slice(0, 8) }} · {{ formatBytes(brokerEstimate(record)) }} ·
+          {{ t("settings.experimental.ios.trafficUpdated", { time: new Date(record.updatedAt).toLocaleString() }) }}
+          <template v-if="state.trafficSyncedAt?.[`${record.broker}|${record.month}|${record.deviceKind ?? 'mac'}|${record.macId}`]">
+            · {{ t("settings.experimental.ios.trafficSynced", { time: new Date(state.trafficSyncedAt[`${record.broker}|${record.month}|${record.deviceKind ?? 'mac'}|${record.macId}`]!).toLocaleString() }) }}
+          </template>
+        </p>
+        <p v-if="!completeTrafficHistory">{{ t("settings.experimental.ios.trafficIncomplete") }}</p>
+        <p>{{ t("settings.experimental.ios.trafficCoverage") }}</p>
+        <a href="https://cloud.emqx.com/console/" @click.prevent="openPath('https://cloud.emqx.com/console/')">{{ t("settings.experimental.ios.trafficConsole") }}</a>
+      </details>
+      <p v-if="state?.trafficStorageIssue" class="card-desc warn">{{ t("settings.experimental.ios.trafficStorageIssue") }}</p>
       <p v-if="trafficWarning" class="ios-traffic-warning" :class="trafficLevelNow">{{ trafficWarning }}</p>
       <!-- The app's "New task" needs the Agent-task switch on this Mac: it is right here, where the phone is set up. -->
       <hr class="divider" />

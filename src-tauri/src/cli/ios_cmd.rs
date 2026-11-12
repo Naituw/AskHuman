@@ -574,6 +574,10 @@ mod tests {
             phones,
             pairing: None,
             traffic: Traffic::default(),
+            traffic_records: Vec::new(),
+            traffic_storage_issue: false,
+            traffic_synced_at: Default::default(),
+            usage_records: Vec::new(),
             pending_requests: 0,
             mac_idle_secs: None,
         }

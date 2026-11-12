@@ -206,17 +206,17 @@ final class LocalStoreTests: XCTestCase {
         XCTAssertEqual(store.traffic(month: "2026-11").receivedBytes, 0, "a new month starts at zero")
     }
 
-    func testTheFreeQuotaWarnsFromEightyPercentAndCountsEachMessageTwice() {
+    func testTheFreeQuotaWarnsFromEightyPercentOfRecordedBytes() {
         let quota = TrafficStats.freeQuotaBytes
         func stats(_ bytes: UInt64) -> TrafficStats {
             TrafficStats(month: "2026-10", sentBytes: bytes / 2, receivedBytes: bytes - bytes / 2)
         }
-        XCTAssertEqual(stats(1000).brokerEstimateBytes, 2000, "published once, delivered once")
-        XCTAssertEqual(stats(quota / 4).quotaShare, 0.5, accuracy: 0.0001)
+        XCTAssertEqual(stats(1000).brokerEstimateBytes, 1000, "each endpoint contributes its own leg")
+        XCTAssertEqual(stats(quota / 4).quotaShare, 0.25, accuracy: 0.0001)
         XCTAssertEqual(stats(quota * 39 / 100).level, .ok)
         // Rounded up: plain integer division would land one byte short of the 80% edge.
-        XCTAssertEqual(stats((quota * 40 + 99) / 100).level, .warning)
-        XCTAssertEqual(stats(quota * 49 / 100).level, .warning)
-        XCTAssertEqual(stats(quota / 2).level, .exhausted)
+        XCTAssertEqual(stats((quota * 80 + 99) / 100).level, .warning)
+        XCTAssertEqual(stats(quota * 99 / 100).level, .warning)
+        XCTAssertEqual(stats(quota).level, .exhausted)
     }
 }

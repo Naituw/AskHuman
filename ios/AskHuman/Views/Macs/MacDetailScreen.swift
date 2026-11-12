@@ -100,6 +100,8 @@ struct MacDetailScreen: View {
                     }
                 }
                 Button("Cancel", role: .cancel) {}
+            } message: {
+                Text("Usage already recorded this month is kept in the estimate.")
             }
         } else {
             ContentUnavailableView("This Mac is no longer paired", systemImage: "desktopcomputer.slash")

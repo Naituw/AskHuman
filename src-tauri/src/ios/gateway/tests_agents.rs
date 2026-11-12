@@ -995,6 +995,8 @@ async fn an_old_phone_never_receives_an_unknown_incomplete_push_key() {
     let (fx, mut phone) = away_follower().await;
     phone
         .send(&wire::Hello {
+            traffic_usage: false,
+            traffic_sync: false,
             nonce: "old-phone".into(),
             proto: wire::PROTO,
             app_ver: "old".into(),

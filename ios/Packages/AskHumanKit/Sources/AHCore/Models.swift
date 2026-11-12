@@ -236,6 +236,8 @@ public struct EngineState: Sendable, Equatable {
     /// Bumps whenever the local history changed.
     public var historyRevision: Int
     public var traffic: TrafficStats?
+    public var brokerTraffic: BrokerTraffic?
+    public var trafficStorageIssue: Bool
     /// `host` of the broker (for the Mac screen); `nil` before the first pairing.
     public var brokerHost: String?
     /// Agent sessions of every Mac that is online (active ones first).
@@ -252,7 +254,7 @@ public struct EngineState: Sendable, Equatable {
     public init(
         phase: ConnectionPhase = .idle, foreground: Bool = false, macs: [MacState] = [], inbox: [InboxItem] = [],
         pairing: PairingState? = nil, clockSkew: Bool = false, push: PushStatus = .noToken, historyRevision: Int = 0,
-        traffic: TrafficStats? = nil, brokerHost: String? = nil, agents: [AgentItem] = [], watches: [String: WatchState] = [:],
+        traffic: TrafficStats? = nil, brokerTraffic: BrokerTraffic? = nil, trafficStorageIssue: Bool = false, brokerHost: String? = nil, agents: [AgentItem] = [], watches: [String: WatchState] = [:],
         taskOptions: [String: TaskOptionsState] = [:], taskTodos: [String: [TodoOption]] = [:], tasks: [TaskProgress] = []
     ) {
         self.phase = phase
@@ -264,6 +266,8 @@ public struct EngineState: Sendable, Equatable {
         self.push = push
         self.historyRevision = historyRevision
         self.traffic = traffic
+        self.brokerTraffic = brokerTraffic
+        self.trafficStorageIssue = trafficStorageIssue
         self.brokerHost = brokerHost
         self.agents = agents
         self.watches = watches

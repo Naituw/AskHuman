@@ -116,8 +116,7 @@ extension PhoneEngine {
         else {
             return failPairing(.failed("Could not build the pairing request."))
         }
-        count(sent: bytes.count)
-        let sent = await broker.publish(topic: flow.pairTopic, payload: bytes, retain: false)
+        let sent = await publishPayload(topic: flow.pairTopic, payload: bytes, retain: false)
         if !sent { failPairing(.failed("Could not reach the broker.")) }
     }
 

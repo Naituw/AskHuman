@@ -118,25 +118,7 @@ private struct MacsList: View {
                 Text("Puts a button above every screen. Press and hold it, then slide to a shortcut and let go. Drag it to move it.")
             }
 
-            if let traffic = store.state.traffic {
-                Section {
-                    LabeledContent("Sent", value: Int(traffic.sentBytes).formatted(.file))
-                    LabeledContent("Received", value: Int(traffic.receivedBytes).formatted(.file))
-                    LabeledContent("Messages", value: "\(traffic.sentMessages + traffic.receivedMessages)")
-                    LabeledContent("Of the free allowance", value: Self.share(of: traffic))
-                } header: {
-                    Text("This month")
-                } footer: {
-                    switch traffic.level {
-                    case .ok:
-                        Text("Estimated from what this phone sent and received through the broker. The broker's free allowance is 1 GB a month.")
-                    case .warning:
-                        Text("Close to the broker's free allowance of 1 GB a month. The service pauses when it runs out; nothing is charged.")
-                    case .exhausted:
-                        Text("By this phone's count the free allowance may be used up, so the broker may refuse connections. Check the usage in the EMQX console.")
-                    }
-                }
-            }
+            TrafficSection()
 
             Section {
                 LabeledContent("Version", value: Self.version)
@@ -161,7 +143,7 @@ private struct MacsList: View {
             Button("Forget all pairings", role: .destructive) { Task { await store.forgetAll() } }
             Button("Cancel", role: .cancel) {}
         } message: {
-            Text("This removes every Mac and the broker account from this phone. Your Macs are told, and you can pair again at any time.")
+            Text("This removes every Mac and the broker account from this phone. Your Macs are told, and you can pair again at any time. Usage already recorded this month is kept.")
         }
         .onChange(of: deviceName) { _, _ in }
         .onDisappear { saveDeviceName() }
@@ -182,11 +164,7 @@ private struct MacsList: View {
         Task { await store.setDeviceName(DeviceName.current) }
     }
 
-    /// "<1%", "37%": what the traffic is likely to have used of the broker's free allowance.
-    private static func share(of traffic: TrafficStats) -> String {
-        let share = traffic.quotaShare
-        return share < 0.01 ? "<1%" : share.formatted(.percent.precision(.fractionLength(0)))
-    }
+
 
     private static var version: String {
         let info = Bundle.main.infoDictionary
