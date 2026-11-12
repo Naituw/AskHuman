@@ -171,6 +171,30 @@ final class AskHumanHistoryPicturesUITests: XCTestCase {
         XCTAssertEqual(head.value as? String, localized("Collapsed", "已折叠"), "the card did not open")
     }
 
+    /// `onboarding-2.png` is a phone screenshot, taller than the viewer's sheet. Laid out over the whole sheet its top is behind
+    /// the bar (the close and share buttons, the heading) and, on a phone, near the island; it has to start below them.
+    func testATallPictureStartsBelowTheBarOfTheViewer() {
+        launch()
+        openThread()
+        card(4).buttons["session-picture-1"].tap()
+        requireElement("image-gallery")
+        XCTAssertEqual(element("gallery-name").label, "onboarding-2.png")
+        let picture = app.descendants(matching: .any)
+            .matching(NSPredicate(format: "identifier BEGINSWITH 'viewer-picture-hpic-2-'")).firstMatch
+        XCTAssertTrue(picture.waitForExistence(timeout: 20), "the picture did not arrive")
+        waitFor("the picture is not in place") { picture.frame.height > 100 }
+        settle()
+        let bar = max(element("gallery-close").frame.maxY, element("gallery-name").frame.maxY)
+        let window = app.windows.firstMatch.frame
+        let frame = picture.frame
+        XCTAssertGreaterThanOrEqual(frame.minY, bar - 0.5, "the picture \(frame) starts above the bottom of the bar (\(bar))")
+        XCTAssertLessThanOrEqual(frame.maxY, window.maxY + 0.5, "the picture \(frame) is within the screen \(window)")
+        XCTAssertGreaterThanOrEqual(frame.minX, window.minX - 0.5)
+        XCTAssertLessThanOrEqual(frame.maxX, window.maxX + 0.5)
+        shot("viewer-tall")
+        closeViewer()
+    }
+
     func testTheViewerPagesThroughThePicturesOfTheExchange() {
         launch()
         openThread()

@@ -259,6 +259,7 @@ private struct AssetContent: View {
     var body: some View {
         if asset.kind == .image {
             PictureContent(url: url) { AttachmentDrag.provider(store: store, macId: macId, asset: asset) }
+                .accessibilityIdentifier("viewer-picture-\(asset.assetId)")
         } else {
             fileContent.contentShape(.rect).attachmentDrag(macId: macId, asset: asset)
                 .accessibilityIdentifier("asset-file-preview")

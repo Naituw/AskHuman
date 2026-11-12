@@ -52,12 +52,13 @@ extension MockData {
 
     /// The pictures session, newest first: seven pictures (and a file that is not one), a single one, two of which one is
     /// gone, two that are both gone, and the answer to a question that carries two pictures. Every kind of shape is
-    /// among them.
+    /// among them, a phone screenshot too (`onboarding-2.png`): it is as tall as the viewer's sheet allows, so its top
+    /// reaches the bar at the top of the sheet unless the viewer keeps it clear.
     public static func picturesSessionExchanges(now: Date = Date()) -> [SessionExchange] {
         func at(_ index: Int) -> Int64 { ms(now) - 300_000 - Int64(index) * 3_600_000 }
         let onboarding: [AssetRef] = [
             historyPicture(1, name: "onboarding-1.png", width: 1200, height: 800, hue: 0.58),
-            historyPicture(2, name: "onboarding-2.png", width: 800, height: 1200, hue: 0.08),
+            historyPicture(2, name: "onboarding-2.png", width: 1170, height: 2532, hue: 0.08),
             historyPicture(3, name: "onboarding-3.png", width: 1000, height: 1000, hue: 0.33),
             historyPicture(4, name: "onboarding-4.png", width: 2400, height: 600, hue: 0.80),
             historyPicture(5, name: "onboarding-5.png", width: 1200, height: 800, hue: 0.15),

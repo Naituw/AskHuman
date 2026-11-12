@@ -39,29 +39,45 @@ struct ImageGalleryViewer: View {
             // container (`containerRelativeFrame`): a keyboard that comes up over the sheet from another
             // window (the quick-add page) keeps resizing that container, the paging never settles, and the
             // app stops answering.
-            GeometryReader { viewport in
-                ScrollViewReader { proxy in
-                    ScrollView(.horizontal) {
-                        HStack(spacing: 0) {
-                            ForEach(Array(images.enumerated()), id: \.element.assetId) { index, asset in
-                                AssetPage(macId: macId, asset: asset, near: abs(index - position) <= 1) { arrived[asset.assetId] = $0 }
-                                    .frame(width: viewport.size.width, height: viewport.size.height)
-                                    .id(asset.assetId)
+            //
+            // The picture itself is laid out clear of what lies over the sheet, so that its top is not behind the bar
+            // (or the status bar and the island, where the sheet runs up to them): a tall picture would otherwise
+            // reach them. The insets are read from the outer reader, which stays inside the safe area; the inner
+            // one ignores it (and so is told there is none), and it is the one that sizes the pages. Only the top
+            // and the sides are read: the bottom is where a keyboard from another window shows up, and a page must
+            // not follow it, so the outer reader ignores the bottom altogether (nothing in the size of a page
+            // depends on the keyboard).
+            GeometryReader { edges in
+                let clear = EdgeInsets(
+                    top: edges.safeAreaInsets.top, leading: edges.safeAreaInsets.leading,
+                    bottom: 0, trailing: edges.safeAreaInsets.trailing
+                )
+                GeometryReader { viewport in
+                    ScrollViewReader { proxy in
+                        ScrollView(.horizontal) {
+                            HStack(spacing: 0) {
+                                ForEach(Array(images.enumerated()), id: \.element.assetId) { index, asset in
+                                    AssetPage(macId: macId, asset: asset, near: abs(index - position) <= 1) { arrived[asset.assetId] = $0 }
+                                        .padding(clear)
+                                        .frame(width: viewport.size.width, height: viewport.size.height)
+                                        .id(asset.assetId)
+                                }
                             }
+                            .scrollTargetLayout()
                         }
-                        .scrollTargetLayout()
+                        .scrollTargetBehavior(.paging)
+                        .scrollPosition(id: page)
+                        .scrollIndicators(.hidden)
+                        .scrollBounceBehavior(.basedOnSize, axes: .horizontal)
+                        // The binding alone does not move a stack that is not lazy to its first value.
+                        .onAppear { proxy.scrollTo(start, anchor: .leading) }
                     }
-                    .scrollTargetBehavior(.paging)
-                    .scrollPosition(id: page)
-                    .scrollIndicators(.hidden)
-                    .scrollBounceBehavior(.basedOnSize, axes: .horizontal)
-                    // The binding alone does not move a stack that is not lazy to its first value.
-                    .onAppear { proxy.scrollTo(start, anchor: .leading) }
                 }
+                // The whole sheet, under the bars and under a keyboard alike, so nothing over it moves a page.
+                .ignoresSafeArea()
+                .accessibilityIdentifier("image-gallery")
             }
-            // The whole sheet, under the bars and under a keyboard alike, so nothing over it moves a page.
-            .ignoresSafeArea()
-            .accessibilityIdentifier("image-gallery")
+            .ignoresSafeArea(edges: .bottom)
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
