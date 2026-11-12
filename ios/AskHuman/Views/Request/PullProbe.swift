@@ -16,6 +16,9 @@ final class PullProbe {
     private var observer: CFRunLoopObserver?
     private var sample: (() -> String)?
     private var last = ""
+    /// `-AHPullStall <seconds>`: the main thread is held up this long, once, right after the page has been made ready for
+    /// a thread and before the thread is put in, as a starved one would be: the layout the insertion brings comes late.
+    private var stall = UserDefaults.standard.double(forKey: "AHPullStall")
 
     private init?(path: String) {
         FileManager.default.createFile(atPath: path, contents: nil)
@@ -39,6 +42,16 @@ final class PullProbe {
     /// A line of its own, for what happens between frames (the hold begins, the hold is let go).
     func note(_ text: String) {
         write("# " + text)
+    }
+
+    /// Holds the main thread up, if asked to (once), right here: what the caller does next, and the layout that follows,
+    /// come after the wait. (Queued for later it would run after that layout and test nothing.)
+    func stallIfAsked() {
+        guard stall > 0 else { return }
+        let seconds = stall
+        stall = 0
+        write("# main thread held up for \(seconds) s")
+        Thread.sleep(forTimeInterval: seconds)
     }
 
     private func tick() {

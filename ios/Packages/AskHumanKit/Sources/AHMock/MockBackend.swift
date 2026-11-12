@@ -175,6 +175,8 @@ public actor MockBackend: RemoteBackend {
     public var failNextSessionHistory = 0
     /// Seconds a read takes before the latency scales it.
     public var sessionHistoryDelay = 0.3
+    /// A file a UI test makes to let the reads finish: until it exists a read waits (at most a minute).
+    public var sessionHistoryGate: String?
 
     public private(set) var submissions: [Submission] = []
     public private(set) var uploads: [UploadSource] = []

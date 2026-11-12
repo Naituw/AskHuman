@@ -98,6 +98,8 @@ struct LaunchOptions {
     var historyFail = 0
     /// `-AHHistoryDelay 1.5`: a read of a session's history takes this many real seconds (the pull's UI tests).
     var historyDelay: Double?
+    /// `-AHHistoryGate <path>`: a read of a session's history is held back until that file exists.
+    var historyGate: String?
 
     init(defaults: UserDefaults = .standard) {
         mock = defaults.bool(forKey: "AHMock")
@@ -147,6 +149,7 @@ struct LaunchOptions {
         notes = min(Wire.maxAnnotations, max(0, defaults.integer(forKey: "AHNotes")))
         historyFail = max(0, defaults.integer(forKey: "AHHistoryFail"))
         if defaults.object(forKey: "AHHistoryDelay") != nil { historyDelay = max(0, defaults.double(forKey: "AHHistoryDelay")) }
+        historyGate = defaults.string(forKey: "AHHistoryGate")
     }
 }
 
@@ -175,6 +178,7 @@ final class AppEnvironment {
             if launch.holdInterjects { Task { await backend.setInterjectConsumeDelay(nil) } }
             if launch.historyFail > 0 { Task { await backend.setFailNextSessionHistory(launch.historyFail) } }
             if let delay = launch.historyDelay { Task { await backend.setSessionHistoryDelay(realSeconds: delay) } }
+            if let gate = launch.historyGate { Task { await backend.setSessionHistoryGate(path: gate) } }
             if let kind = launch.followEvent {
                 Task {
                     try? await Task.sleep(for: .seconds(2))

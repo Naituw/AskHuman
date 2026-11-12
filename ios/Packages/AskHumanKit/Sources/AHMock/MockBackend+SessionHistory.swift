@@ -20,6 +20,14 @@ extension MockBackend {
             SessionHistoryCall(macId: macId, agentKey: agentKey, beforeMs: beforeMs, beforeId: beforeId, limit: limit)
         )
         await pause(sessionHistoryDelay)
+        if let gate = sessionHistoryGate {
+            // A test that has to do something while the load is in flight decides when the answer is ready, instead of
+            // racing a timer against a test runner that can be seconds late on a busy machine.
+            let giveUp = Date().addingTimeInterval(60)
+            while !FileManager.default.fileExists(atPath: gate), Date() < giveUp {
+                try? await Task.sleep(nanoseconds: 50_000_000)
+            }
+        }
         try requireSessionHistoryMac(macId)
         if failNextSessionHistory > 0 {
             failNextSessionHistory -= 1
@@ -47,5 +55,10 @@ extension MockBackend {
     /// lasts long enough to scroll during, and one that is over before the page has settled).
     public func setSessionHistoryDelay(realSeconds: Double) {
         sessionHistoryDelay = latency > 0 ? max(0, realSeconds) / latency : 0
+    }
+
+    /// Holds every read back until the file at `path` exists (the delay counts first).
+    public func setSessionHistoryGate(path: String) {
+        sessionHistoryGate = path
     }
 }

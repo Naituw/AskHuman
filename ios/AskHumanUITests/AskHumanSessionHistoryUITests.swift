@@ -617,7 +617,7 @@ final class AskHumanSessionHistoryUITests: XCTestCase {
 
     /// Where the request was on screen in every frame from the note `prefix` until `seconds` later, and the last place it was
     /// before the note.
-    private func requestAround(_ prefix: String, for seconds: Double = 1.0, in log: [ProbeLine]) -> (before: Double?, during: [Double])? {
+    private func requestAround(_ prefix: String, for seconds: Double = 4.0, in log: [ProbeLine]) -> (before: Double?, during: [Double])? {
         guard let mark = log.first(where: { $0.note?.hasPrefix(prefix) == true }) else { return nil }
         let before = log.last(where: { $0.time < mark.time && $0.request != nil })?.request
         let during = log.filter { $0.time >= mark.time && $0.time <= mark.time + seconds }.compactMap(\.request)
@@ -625,9 +625,12 @@ final class AskHumanSessionHistoryUITests: XCTestCase {
     }
 
     /// The thread came in above the request in the same layout pass as the request was put back: in no frame of the next
-    /// second was the request anywhere but where it had been.
-    private func assertTheRequestDidNotMoveWhenTheThreadCameIn(_ log: [ProbeLine], file: StaticString = #filePath, line: UInt = #line) {
-        guard let around = requestAround("thread comes in", in: log), let before = around.before else {
+    /// seconds was the request anywhere but where it had been. (A main thread that is starved lays the thread out a second
+    /// late, and the first frame the probe writes after it comes then: the window has to reach that far.)
+    private func assertTheRequestDidNotMoveWhenTheThreadCameIn(
+        _ log: [ProbeLine], within seconds: Double = 4.0, file: StaticString = #filePath, line: UInt = #line
+    ) {
+        guard let around = requestAround("thread comes in", for: seconds, in: log), let before = around.before else {
             return XCTFail("the probe has no record of the thread coming in (\(log.count) lines)", file: file, line: line)
         }
         XCTAssertFalse(around.during.isEmpty, file: file, line: line)
@@ -697,6 +700,28 @@ final class AskHumanSessionHistoryUITests: XCTestCase {
         XCTAssertTrue(log.contains { $0.values["pull"] == "armed" }, "the pull was never armed")
         assertTheRequestDidNotMoveWhenTheThreadCameIn(log)
         assertTheLoadingRowTookItsPlaceWithoutAJump(log)
+    }
+
+    /// A main thread that is starved lays the thread out late (here the app is held up for 1.4 s between the page getting
+    /// ready for the thread and the thread going in): the request does not move for that, because the page keeps putting
+    /// it right until the layout has come, however late. With a compensation window counted from the request to put the
+    /// thread in (0.5 s) this test fails: the request ends up a thread's height lower.
+    func testAThreadThatIsLaidOutLateStillDoesNotMoveTheRequest() {
+        // The answer comes late (5 s) so that the page has come to rest by then, whatever the speed of the simulator: a page
+        // that is still springing back when the main thread is held up goes on springing, and that is not what is tested.
+        launch(extra: ["-AHHistoryDelay", "5", "-AHPullStall", "1.4", "-AHPullProbe", probePath("stall")])
+        _ = requireElement("request-title")
+        pull(travel: 240)
+        waitForThePullToTakeHold(probe: "stall")
+        waitForCards(atLeast: 8, timeout: 15)
+        Thread.sleep(forTimeInterval: 1.2)
+        let log = readProbe("stall")
+        guard let came = log.first(where: { $0.note == "thread comes in" })?.time,
+              let next = log.first(where: { $0.time > came && $0.request != nil })?.time
+        else { return XCTFail("the probe has no frame after the thread came in") }
+        XCTAssertGreaterThan(next - came, 1.2, "the main thread was not held up, so this run proves nothing")
+        assertTheRequestDidNotMoveWhenTheThreadCameIn(log)
+        XCTAssertEqual(cards().count, 8)
     }
 
     /// Let go short of the threshold, a pull loads nothing and leaves nothing behind.
@@ -819,13 +844,18 @@ final class AskHumanSessionHistoryUITests: XCTestCase {
     /// A finger on the page when the answer comes holds the history back: it comes in once the page is let go, and the request
     /// does not move then either.
     func testAFingerStillOnThePageHoldsTheHistoryBackUntilItLetsGo() {
-        launch(extra: ["-AHHistoryDelay", "3", "-AHPullProbe", probePath("finger")])
+        let gate = "/tmp/ah-history-gate-finger"
+        try? FileManager.default.removeItem(atPath: gate)
+        addTeardownBlock { try? FileManager.default.removeItem(atPath: gate) }
+        launch(extra: ["-AHHistoryDelay", "0", "-AHHistoryGate", gate, "-AHPullProbe", probePath("finger")])
         _ = requireElement("request-title")
         pull(travel: 240)
         waitForThePullToTakeHold(probe: "finger")
-        // A finger that drags the page a little and then stays on it, from before the answer is there (3 s after the lift)
-        // to well after it. (A finger that only rests on the page is not tracked by it: a long press on its text is not a
-        // scroll.)
+        // The answer is held at the (mock) Mac until the page has seen a finger on it, so the finger is certainly there
+        // when the answer is ready, however late the test runner puts it on.
+        let answerReady = openTheGateOnceAFingerIsOnThePage(probe: "finger", gate: gate)
+        // A finger that drags the page a little and then stays on it, well past the moment the answer is ready. (A finger
+        // that only rests on the page is not tracked by it: a long press on its text is not a scroll.)
         let scroll = pageScroll()
         let from = scroll.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.7))
         let to = scroll.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.55))
@@ -833,16 +863,50 @@ final class AskHumanSessionHistoryUITests: XCTestCase {
         waitForCards(atLeast: 8, timeout: 10)
         Thread.sleep(forTimeInterval: 1.2)
         let log = readProbe("finger")
-        guard let loadStarted = log.first(where: { $0.note == "loading starts" })?.time else { return XCTFail("the load never started") }
+        guard let readyAt = answerReady.time else { return XCTFail("the page never saw the finger, so the answer was never let through") }
         guard let came = log.first(where: { $0.note == "thread comes in" })?.time else { return XCTFail("the thread never came in") }
         // When the page saw the finger go: the first frame without it after the last frame with it. (The test's own clock
         // would be late: the press call returns only once the page the finger let go of has stopped moving.)
         guard let lastTouched = log.last(where: { $0.values["trk"] == "1" && $0.time < came })?.time,
               let leftAt = log.first(where: { $0.values["trk"] == "0" && $0.time > lastTouched })?.time
         else { return XCTFail("the page never saw the finger go") }
-        XCTAssertGreaterThan(leftAt, loadStarted + 3.5, "the finger was gone before the answer was due: nothing was held back")
+        XCTAssertGreaterThan(leftAt, readyAt + 1, "the finger was gone before the answer was ready: nothing was held back")
         XCTAssertGreaterThanOrEqual(came, leftAt, "the thread came in with a finger on the page")
         assertTheRequestDidNotMoveWhenTheThreadCameIn(log)
+    }
+
+    /// When the gate was opened (a clock the app's probe shares), once it has been.
+    private final class GateOpened: @unchecked Sendable {
+        private let lock = NSLock()
+        private var stamp: Double?
+        var time: Double? { lock.lock(); defer { lock.unlock() }; return stamp }
+        func set(_ value: Double) { lock.lock(); stamp = value; lock.unlock() }
+    }
+
+    /// Lets the (mock) Mac's answer through a second after the page has seen a finger on it while the load was in flight.
+    /// The call that puts the finger on blocks this thread, so a background queue watches the probe the page writes.
+    private func openTheGateOnceAFingerIsOnThePage(probe name: String, gate: String) -> GateOpened {
+        let opened = GateOpened()
+        let path = probePath(name)
+        DispatchQueue.global().async {
+            let begin = CACurrentMediaTime()
+            while CACurrentMediaTime() - begin < 90 {
+                if Self.aFingerIsOnThePageWhileLoading(probe: path) {
+                    Thread.sleep(forTimeInterval: 1)
+                    opened.set(CACurrentMediaTime())
+                    FileManager.default.createFile(atPath: gate, contents: Data())
+                    return
+                }
+                Thread.sleep(forTimeInterval: 0.1)
+            }
+        }
+        return opened
+    }
+
+    /// A frame of the probe after the load began in which the page tracks a finger while it holds the room of the loading row.
+    nonisolated private static func aFingerIsOnThePageWhileLoading(probe path: String) -> Bool {
+        guard let text = try? String(contentsOfFile: path, encoding: .utf8), let began = text.range(of: "# loading starts") else { return false }
+        return text[began.upperBound...].split(separator: "\n").contains { $0.contains(" trk=1 ") && $0.contains(" hold=1 ") }
     }
 
     /// A touch of the page during the loading (the spring back from the pull, the hold) breaks nothing.

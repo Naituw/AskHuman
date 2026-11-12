@@ -210,13 +210,23 @@ final class ThreadScrollCoordinator: NSObject {
     private var settlePending = false
     /// The least time the loading line is on the page, so that an answer that is already there does not make it flicker.
     private static let minimumHold = 0.6
+    /// How long the layout of what was put in above the request is waited for, at most. A main thread that is starved
+    /// (a device short of memory, a machine that is swapping) can be a second late with it, and a window counted from the
+    /// moment the insertion was asked for would be over by then.
+    private static let layoutPatience = 4.0
+    /// How long the passes that follow the first layout of the insertion (a card measuring itself again) are made up for.
+    private static let followUp = 0.5
 
     private struct Pending {
         /// Where the request's top was in the viewport before the thread grew.
         let anchorViewportY: CGFloat
         /// Where the request's top was in the content before the thread grew.
         let anchorContentY: CGFloat
-        let until: CFTimeInterval
+        /// Layouts up to this time are made up for. For a thread coming in it starts far off, and is brought to a short
+        /// while ahead once the layout of the insertion has come (`applied`).
+        var until: CFTimeInterval
+        /// The insertion has been laid out: the request has been moved by it.
+        var applied = false
         /// The row of a pull's loading line is being put in: once the request has been moved by it, the page springs to rest.
         let settling: Bool
     }
@@ -423,6 +433,7 @@ final class ThreadScrollCoordinator: NSObject {
         prepareInsertion()
         #if DEBUG
         PullProbe.shared?.note("thread comes in")
+        PullProbe.shared?.stallIfAsked()
         #endif
         history.setHolding(false)
         history.setPullState("idle")
@@ -464,7 +475,10 @@ final class ThreadScrollCoordinator: NSObject {
         let relative = y - scroll.contentOffset.y
         generation += 1
         let mine = generation
-        pending = Pending(anchorViewportY: relative, anchorContentY: y, until: CACurrentMediaTime() + 0.5, settling: settling)
+        pending = Pending(
+            anchorViewportY: relative, anchorContentY: y,
+            until: CACurrentMediaTime() + (settling ? Self.followUp : Self.layoutPatience), settling: settling
+        )
         // SwiftUI moves the host of a representable, not the view inside it: every view between the anchor and the
         // scroll view is watched, so whichever of them it moves, the page is put right.
         ancestorObservations = []
@@ -478,23 +492,50 @@ final class ThreadScrollCoordinator: NSObject {
             })
             view = current.superview
         }
-        DispatchQueue.main.asyncAfter(deadline: .now() + (settling ? 0.3 : 0.55)) { [weak self] in
+        watchInsertion(generation: mine, settling: settling, after: settling ? 0.3 : 0.55)
+    }
+
+    /// Ends what an insertion asked of the page once its time is up. A row of a pull that did not come in the time it should
+    /// have is not waited for any longer, and the page springs to rest. A thread's window is as long as `until` says: far
+    /// off while its layout is yet to come, a short while once it has (checked every tenth of a second).
+    private func watchInsertion(generation mine: Int, settling: Bool, after delay: TimeInterval) {
+        DispatchQueue.main.asyncAfter(deadline: .now() + delay) { [weak self] in
             guard let self, self.generation == mine else { return }
-            // A row that did not come in the time it should have is not waited for any longer.
-            if settling { self.settleLoadingRow() } else { self.endCompensation() }
+            if settling { self.settleLoadingRow(); return }
+            if let pending = self.pending, pending.until > CACurrentMediaTime() {
+                self.watchInsertion(generation: mine, settling: false, after: 0.1)
+                return
+            }
+            self.endCompensation()
         }
     }
 
     func reconcile() {
-        guard let scroll, let pending else { return }
+        guard let scroll, var pending else { return }
         guard CACurrentMediaTime() < pending.until, let anchor = requestAnchor() else {
+            #if DEBUG
+            PullProbe.shared?.note("compensation window over")
+            #endif
             self.pending = nil
             return
         }
         let y = anchor.convert(CGPoint.zero, to: scroll).y
         let desired = y - pending.anchorViewportY
         let moved = abs(y - pending.anchorContentY) > 0.5
+        if !pending.settling {
+            // Until the layout of the insertion has come there is nothing to put right. Once it has, the request goes back to
+            // where it was in the viewport when the insertion was asked for.
+            if !moved, !pending.applied { return }
+            if !pending.applied {
+                pending.applied = true
+                pending.until = CACurrentMediaTime() + Self.followUp
+                self.pending = pending
+            }
+        }
         if abs(scroll.contentOffset.y - desired) > 0.25 {
+            #if DEBUG
+            PullProbe.shared?.note(String(format: "request put right by %.1f", desired - scroll.contentOffset.y))
+            #endif
             if pending.settling, moved {
                 // UIKit's own spring (the page coming back from the pull) is stopped: a plain write would be overwritten by
                 // its next frame.
