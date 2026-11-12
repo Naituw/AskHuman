@@ -547,6 +547,34 @@ final class AskHumanSessionHistoryUITests: XCTestCase {
         XCTAssertEqual(title.frame.minY, before + heldRoom, accuracy: 1)
     }
 
+    /// With the two columns side by side the pull's words are centred where the page's content is, which is where the loading
+    /// line that takes their place is. From iOS 26 the sidebar is a panel over the detail's scroll view, which spans the whole
+    /// window and has the sidebar's width as its leading safe area: a header laid across the scroll view is centred on the
+    /// window, partly under the sidebar, and the words jump sideways when the row replaces them.
+    func testWithTwoColumnsThePullHeaderIsCenteredWhereTheLoadingLineIs() throws {
+        launch(extra: ["-AHHistoryDelay", "3", "-AHPullProbe", probePath("columns")])
+        let window = app.windows.firstMatch.frame
+        try XCTSkipIf(window.width < 700, "The columns sit side by side only in a wide window.")
+        _ = requireElement("request-title")
+        pull(travel: 300, hold: 1.0)
+        waitForThePullToTakeHold(probe: "columns")
+        let row = requireElement("session-thread-loading", timeout: 3)
+        let rowCenter = row.frame.midX
+        shot("columns-loading")
+        // The strips of the window the header lay across (left edge, width), one for each frame in which it was on show.
+        let strips = readProbe("columns").compactMap { line -> (left: Double, width: Double)? in
+            guard let strip = line.values["hx"], strip != "-" else { return nil }
+            let numbers = strip.split(separator: ",").compactMap { Double($0) }
+            return numbers.count == 2 ? (numbers[0], numbers[1]) : nil
+        }
+        XCTAssertFalse(strips.isEmpty, "the probe never saw the header")
+        for strip in strips {
+            XCTAssertEqual(
+                strip.left + strip.width / 2, rowCenter, accuracy: 2,
+                "the header lay across \(strip.left)…\(strip.left + strip.width) of a window \(window.width) wide; the loading line is centred on \(rowCenter)")
+        }
+    }
+
     func testDarkMode() {
         launch(dark: true)
         openMenuItem()

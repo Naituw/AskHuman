@@ -355,6 +355,8 @@ final class ThreadScrollCoordinator: NSObject {
             return
         }
         let header = ensureHeader()
+        // The safe area can change between pulls (the sidebar was opened or put away): the place is taken again each time.
+        layoutHeader()
         header.isHidden = false
         header.show(pull, older: !history.thread.items.isEmpty)
         history.setPullState(pull.isArmed ? "armed" : "pulling")
@@ -363,7 +365,6 @@ final class ThreadScrollCoordinator: NSObject {
     private func ensureHeader() -> PullHeaderView {
         if let header { return header }
         let made = PullHeaderView(frame: .zero)
-        made.autoresizingMask = [.flexibleWidth]
         made.isHidden = true
         scroll?.addSubview(made)
         header = made
@@ -372,11 +373,16 @@ final class ThreadScrollCoordinator: NSObject {
     }
 
     /// The header is a subview of the scroll view just above its content, where the loading row will stand: it moves with
-    /// the content, frame for frame.
+    /// the content, frame for frame. Across, it keeps to the strip the content is laid out in, which is the scroll view's
+    /// safe area: from iOS 26 the sidebar of two columns side by side is a panel over the detail, whose scroll view spans
+    /// the whole window and has the sidebar's width as its leading inset. A header across the whole scroll view would be
+    /// centred on the window, partly under the sidebar, and the words would jump sideways when the row replaces them.
     private func layoutHeader() {
         guard let scroll, let header else { return }
         let room = PullMetrics.holdHeight
-        header.frame = CGRect(x: 0, y: -room, width: scroll.bounds.width, height: room)
+        let inset = scroll.safeAreaInsets
+        let frame = CGRect(x: inset.left, y: -room, width: max(0, scroll.bounds.width - inset.left - inset.right), height: room)
+        if header.frame != frame { header.frame = frame }
     }
 
     // MARK: loading
@@ -655,23 +661,27 @@ final class ThreadScrollCoordinator: NSObject {
         guard let scroll else { return "" }
         let request = requestAnchor().map { String(format: "%.2f", $0.convert(CGPoint.zero, to: scroll).y - scroll.contentOffset.y) } ?? "nil"
         // The header as it is drawn: p or r (pull down, release), 1 for the wording of an older page, and how strong it is.
+        // `hx` is the strip of the window it lies across: its left edge and its width, in points.
         var hdr = "-"
+        var hx = "-"
         var alpha = 0.0
         var turns = 0.0
         if let header, !header.isHidden {
             alpha = header.alpha
             turns = header.iconTurns
+            let strip = header.convert(header.bounds, to: nil)
+            hx = String(format: "%.1f,%.1f", strip.minX, strip.width)
             switch header.look {
             case .pull(let older): hdr = older ? "p1" : "p0"
             case .release(let older): hdr = older ? "r1" : "r0"
             }
         }
         return String(
-            format: "off=%.2f adj=%.2f size=%.1f req=%@ drag=%ld trk=%ld dec=%ld bv=%ld hold=%ld pull=%@ hdr=%@ ha=%.2f turn=%.2f rm=%ld",
+            format: "off=%.2f adj=%.2f size=%.1f req=%@ drag=%ld trk=%ld dec=%ld bv=%ld hold=%ld pull=%@ hdr=%@ ha=%.2f turn=%.2f rm=%ld hx=%@",
             scroll.contentOffset.y, scroll.adjustedContentInset.top, scroll.contentSize.height, request,
             scroll.isDragging ? 1 : 0, scroll.isTracking ? 1 : 0, scroll.isDecelerating ? 1 : 0,
             scroll.alwaysBounceVertical ? 1 : 0,
-            history.holding ? 1 : 0, history.pullState, hdr, alpha, turns, UIAccessibility.isReduceMotionEnabled ? 1 : 0
+            history.holding ? 1 : 0, history.pullState, hdr, alpha, turns, UIAccessibility.isReduceMotionEnabled ? 1 : 0, hx
         )
     }
     #endif
