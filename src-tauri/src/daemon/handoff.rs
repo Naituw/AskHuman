@@ -10,6 +10,8 @@ pub(super) enum Intent {
     Exit,
     YieldToClient,
     ReplaceOwnBinary,
+    #[cfg(target_os = "macos")]
+    MoveToGui,
     Stop,
 }
 

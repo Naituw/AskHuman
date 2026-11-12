@@ -159,14 +159,14 @@ async fn ensure_running_inner() -> std::io::Result<()> {
         Some(HelloStatus::Restarting) => wait_until_down(Duration::from_secs(5)).await,
         None => {}
     }
-    spawn::spawn_detached(spawn::SpawnPolicy::ReuseAlive)?;
+    spawn::spawn_detached(spawn::SpawnPolicy::ReuseAlive).await?;
     if wait_ready(Duration::from_secs(5)).await {
         return Ok(());
     }
     // A daemon process may be alive yet never answer (wedged, stale socket path). `ReuseAlive`
     // left it untouched; fall back to the replacing spawn so `restart --force` and plain asks can
     // still recover, exactly as before serialization existed.
-    spawn::spawn_detached(spawn::SpawnPolicy::Replace)?;
+    spawn::spawn_detached(spawn::SpawnPolicy::Replace).await?;
     if wait_ready(Duration::from_secs(5)).await {
         return Ok(());
     }
@@ -189,11 +189,12 @@ async fn wait_ready(max: Duration) -> bool {
 }
 
 /// Take the cross-process spawn lock, waiting for a sibling starter to finish (it holds the lock
-/// for at most the ready timeouts above). Best-effort: if the lock cannot be taken in time or
-/// the filesystem refuses, proceed unlocked rather than fail the ask.
+/// through the platform launch retries and the ready timeouts above). Best-effort: if the lock
+/// cannot be taken in time or the filesystem refuses, proceed unlocked rather than fail the ask.
 async fn acquire_spawn_lock() -> Option<crate::file_lock::FileLock> {
     let path = lifecycle::spawn_lock_path();
-    let deadline = Instant::now() + Duration::from_secs(12);
+    let wait_secs = if cfg!(target_os = "macos") { 25 } else { 12 };
+    let deadline = Instant::now() + Duration::from_secs(wait_secs);
     loop {
         match crate::file_lock::FileLock::try_exclusive(&path) {
             Ok(Some(lock)) => return Some(lock),

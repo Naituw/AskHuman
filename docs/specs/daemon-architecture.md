@@ -101,7 +101,7 @@ GUI Host 负责设置、历史、Agent、Interject 窗口与托盘，不进入�
 | A10 | 临时文件清理 | Daemon 常驻，**启动时 + 定期**清理过期的 `temp/askhuman/<request_id>/` 目录（修历史「从不清理」的小泄漏）。 |
 | A11 | 请求上下文（D-B） | `-f` 解析留在 CLI（输出绝对路径 → **不传 cwd**，并保留「文件不存在即退 1」）；**硬性上送 source name**（来自调用方环境变量 `ASKHUMAN_ENV_SOURCE_NAME`）；上送 CLI 解析好的 `lang`（使 `auto` 跟随调用方而非 Daemon）；`request_id` 由 **Daemon 分配**（权威，用于临时目录）。 |
 | A12 | 配置实时生效（D-F） | Daemon **监听 `~/.askhuman/config.json`**（`notify`，去抖、处理原子写/rename）：变更即重载 + 比对差异重连/增删 IM 连接 + 刷新缓存；并经 Daemon↔GUI IPC 向活动 GUI Helper 下发 `configChanged` → 弹窗实时切主题/语言。独立设置窗口仍在自身进程内更新自己。 |
-| P1 | 自启 + 单实例 | CLI 连不上 endpoint → 拉起 `daemon run`，轮询等可连再连。「拉起 + 等就绪」跨进程经 `spawn.lock` 串行化：排队者拿锁后先重新握手，已有人拉起就直接复用。macOS 优先 bootstrap 到当前 `gui/<uid>` launchd domain；launchd 仍报该任务进程存活时**不 bootout**（bootout = SIGTERM，会杀掉别人刚拉起的实例），只有等就绪超时后才以替换模式重拉；无 GUI domain 的 headless 环境回退 `setsid`。Daemon 收到 SIGTERM 等同 graceful `daemon stop`（有在途请求则 drain，否则立即退出，均记日志）。Linux detach；Windows 用禁止 handle inheritance 的 `CreateProcessW` + `CREATE_NO_WINDOW` / 新进程组后台启动，避免脚本捕获输出时后台子进程持有调用者 pipe。`daemon run` 先抢跨进程 `daemon.lock`：抢不到=已有活 Daemon → 退出（`start` 幂等）；Unix 抢锁后清理 stale socket，Windows named pipe 无残留文件。`keepalive` 分别使用 launchd、autostart desktop；Windows HKCU Run 指向受管 UTF-16 VBScript，由 `wscript.exe //B //NoLogo` 以 hidden window style 启动 console-subsystem EXE。 |
+| P1 | 自启 + 单实例 | CLI 连不上 endpoint → 拉起 `daemon run`，轮询等可连再连。「拉起 + 等就绪」跨进程经 `spawn.lock` 串行化：排队者拿锁后先重新握手，已有人拉起就直接复用。macOS 的 Aqua 启动与无桌面接班见 §5.2.1。Daemon 收到 SIGTERM 等同 graceful `daemon stop`（有在途请求则 drain，否则立即退出，均记日志）。Linux detach；Windows 用禁止 handle inheritance 的 `CreateProcessW` + `CREATE_NO_WINDOW` / 新进程组后台启动，避免脚本捕获输出时后台子进程持有调用者 pipe。`daemon run` 先抢跨进程 `daemon.lock`：抢不到=已有活 Daemon → 退出（`start` 幂等）；Unix 抢锁后清理 stale socket，Windows named pipe 无残留文件。`keepalive` 分别使用 launchd、autostart desktop；Windows HKCU Run 指向受管 UTF-16 VBScript，由 `wscript.exe //B //NoLogo` 以 hidden window style 启动 console-subsystem EXE。 |
 | P2 | 版本治理 | 两层并存：`protocol_version`（管 IPC 不兼容）+ **二进制内容指纹**（内容哈希，按路径/mtime/size 缓存，路径或时间变化不等于内容变化）。指纹/协议不一致 → Daemon graceful drain 后退出，CLI 用新二进制重新拉起。开关 `ASKHUMAN_DAEMON_AUTORESTART=0` 可关闭自动换新。例外：两份内容不同的二进制在短时间内互相顶替时，Daemon 不再为协议号相同的那一份让位（hold，见 `docs/specs/daemon-graceful-drain.md` D10）。 |
 | P3 | 空闲退出 | 默认 `general.daemonLifecycle=activity`：无在途请求、无工作中 Agent、无活跃 watch/需保活窗口连接时按空闲策略退出；人在环里的题不会被空闲计时杀掉。`keepalive` 模式跳过空闲退出并安装登录项。 |
 | P4 | 崩溃中途 | Daemon 在请求中途意外死亡 → CLI 连接断开 → 该请求判失败，CLI **退出码 3 + 明确报错**（不静默重试交互题）。 |
@@ -126,6 +126,25 @@ GUI Host 负责设置、历史、Agent、Interject 窗口与托盘，不进入�
 - `emit_result`：集中落盘 + 渲染结果文本，回传发起该请求的 CLI。
 - Config watch：见 A12。
 - 生命周期：见 P1–P4；日志写 `~/.askhuman/daemon.log`。
+
+#### 5.2.1 macOS 登录切换与无桌面启动
+
+自动启动优先将 daemon 交给当前用户的 `gui/<uid>`（Aqua）launchd 域，GUI 子进程从 daemon
+继承该会话。普通启动复用已运行或已调度的同实例任务，就绪超时后才进入替换模式。
+首次查询 GUI 域或启动任务失败时，在约 6 秒内重试。只有最后一次查询明确报告 GUI 域不存在时才
+回退 `setsid`。如果 GUI 域存在但启动失败，CLI 返回错误，保留 launchctl 的退出状态和错误输出。
+
+daemon 根据进程的会话和 launchd 所登记的 PID 识别无桌面启动，兼容仍在运行的旧 CLI 或 MCP
+用 `setsid` 拉起新版。无桌面 daemon 继续处理可用的远程渠道，并跳过弹窗和托盘。它定期检查
+GUI 域。当 Aqua 可用且
+没有等待作答的调用时，先关住请求提交，再清理旧实例。由 Aqua launchd 启动的后继等待同一把
+`daemon.lock`，随后在新会话中建立渠道并恢复本地弹窗。如果 launchctl 拒绝启动后继，原实例
+持锁恢复无桌面服务并在之后重试。接班按实例使用原有 label，显式停止仍按普通停止处理。
+
+2026-11-13 的故障发生在旧 Aqua 域移除、新 Aqua 域建立的约 5 秒间隙。旧实现立即回退
+`setsid`，留下一个能够回应 IPC 的 daemon。其弹窗宿主收到 `hiservices-xpcservice` 连接失效，
+WebKit 未报告窗口就绪。稍后启动的登录项抢不到单实例锁。正常重启使 daemon 回到 Aqua launchd，
+同一安装随即能收到 Mac 弹窗的回答。
 
 ### 5.3 GUI Helper（`askhuman --popup`）
 

@@ -1,11 +1,10 @@
 //! 后台拉起 Daemon：macOS 优先交给当前用户的 GUI launchd domain 管理，其它 Unix 则 detach
 //! （新会话）并把 stdio 重定向到 daemon.log；Windows 使用无控制台的新进程组并写同一日志。
 //!
-//! macOS 不能在 Aqua 会话里直接 `setsid` 后长期运行：那样的 daemon 会跨用户登出残留，却仍持有
-//! 已销毁 GUI 会话的 bootstrap namespace。用户重新登录后，它虽然还能通过 Unix socket 接收请求，
-//! 但新拉起的 popup helper 无法向新 WindowServer / pasteboard 服务 check-in，最终表现为“进程存在但
-//! 永远不弹窗”。因此只要 `gui/<uid>` 可用，就统一 bootstrap 到该 domain：既能静默读取登录钥匙串，
-//! 也会在登出时随 GUI domain 一起退出。纯 headless 环境无法 bootstrap 时才回退 setsid。
+//! On macOS the daemon and its children need the current Aqua bootstrap namespace. A daemon
+//! started between GUI sessions may still answer on its socket while AppKit and the login
+//! keychain are unavailable. Retry through short login transitions and promote a genuinely
+//! headless daemon once the GUI domain becomes available.
 
 /// How to treat a daemon process that the platform service manager still reports as alive.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -18,21 +17,20 @@ pub enum SpawnPolicy {
     Replace,
 }
 
-pub fn spawn_detached(policy: SpawnPolicy) -> std::io::Result<()> {
+pub async fn spawn_detached(policy: SpawnPolicy) -> std::io::Result<()> {
     crate::development::routing::guard_fixture_program(
         crate::executable::launch_path()?.as_os_str(),
     )?;
     #[cfg(target_os = "macos")]
     {
-        if spawn_via_gui_launchd(policy).is_ok() {
-            return Ok(());
-        }
-        // GUI 域不可用（纯 headless）→ 回退原 setsid 拉起。
+        tokio::task::spawn_blocking(move || start_macos_daemon(policy))
+            .await
+            .map_err(std::io::Error::other)?
     }
     #[cfg(not(target_os = "macos"))]
     let _ = policy; // Other platforms have no service manager to consult; a duplicate daemon
                     // loses the single-instance `daemon.lock` and exits on its own.
-    #[cfg(unix)]
+    #[cfg(all(unix, not(target_os = "macos")))]
     {
         spawn_plain_detached()
     }
@@ -229,6 +227,110 @@ fn spawn_plain_detached() -> std::io::Result<()> {
 #[cfg(target_os = "macos")]
 const DAEMON_LAUNCHD_LABEL: &str = "com.naituw.humaninloop.daemon";
 
+#[cfg(target_os = "macos")]
+pub(super) fn is_macos_headless() -> bool {
+    static HEADLESS: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *HEADLESS.get_or_init(|| {
+        // The fallback calls setsid and disconnects stdin. Check the running process so a
+        // surviving older CLI or MCP can start this binary without passing a new flag.
+        let pid = std::process::id();
+        if unsafe { libc::getsid(0) } != pid as libc::pid_t
+            || unsafe { libc::isatty(libc::STDIN_FILENO) } == 1
+        {
+            return false;
+        }
+        let label = instance_launchd_label(&crate::paths::config_dir());
+        launchd_job(&gui_domain(), &label)
+            .as_deref()
+            .and_then(launchd_print_pid)
+            != Some(pid)
+    })
+}
+
+#[cfg(target_os = "macos")]
+fn gui_domain() -> String {
+    format!("gui/{}", unsafe { libc::getuid() })
+}
+
+#[cfg(target_os = "macos")]
+pub(super) fn macos_gui_available() -> std::io::Result<bool> {
+    gui_domain_exists(&gui_domain())
+}
+
+#[cfg(target_os = "macos")]
+fn gui_domain_exists(domain: &str) -> std::io::Result<bool> {
+    let output = std::process::Command::new("/bin/launchctl")
+        .args(["print", domain])
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::null())
+        .output()?;
+    match output.status.code() {
+        Some(0) => Ok(true),
+        // launchctl's "Could not find specified domain" status.
+        Some(112) => Ok(false),
+        _ => Err(launchctl_error("print GUI domain", &output)),
+    }
+}
+
+#[cfg(target_os = "macos")]
+fn launchctl_error(action: &str, output: &std::process::Output) -> std::io::Error {
+    let stderr = String::from_utf8_lossy(&output.stderr[..output.stderr.len().min(1024)]);
+    std::io::Error::other(format!(
+        "launchctl {action} failed ({}): {}",
+        output.status,
+        stderr.trim().replace('\n', " ")
+    ))
+}
+
+#[cfg(target_os = "macos")]
+fn start_macos_daemon(policy: SpawnPolicy) -> std::io::Result<()> {
+    use std::time::{Duration, Instant};
+
+    let domain = gui_domain();
+    let deadline = Instant::now() + Duration::from_secs(6);
+    let started = retry_gui_launch(
+        || {
+            if !gui_domain_exists(&domain)? {
+                return Ok(false);
+            }
+            spawn_via_gui_launchd(&domain, policy, false).map(|()| true)
+        },
+        || {
+            if Instant::now() >= deadline {
+                return false;
+            }
+            std::thread::sleep(Duration::from_millis(250));
+            true
+        },
+    )?;
+    if started {
+        Ok(())
+    } else {
+        spawn_plain_detached()
+    }
+}
+
+#[cfg(target_os = "macos")]
+fn retry_gui_launch(
+    mut attempt: impl FnMut() -> std::io::Result<bool>,
+    mut retry: impl FnMut() -> bool,
+) -> std::io::Result<bool> {
+    loop {
+        let result = attempt();
+        if matches!(result, Ok(true)) || !retry() {
+            return result;
+        }
+    }
+}
+
+#[cfg(target_os = "macos")]
+pub(super) fn start_macos_gui_successor() -> std::io::Result<()> {
+    crate::development::routing::guard_fixture_program(
+        crate::executable::launch_path()?.as_os_str(),
+    )?;
+    spawn_via_gui_launchd(&gui_domain(), SpawnPolicy::Replace, true)
+}
+
 /// The account's home directory from the user database. Unlike `$HOME` it cannot be overridden
 /// by a caller that wants a throwaway profile.
 #[cfg(target_os = "macos")]
@@ -287,12 +389,27 @@ fn launchd_label(config_dir: &std::path::Path, isolated: bool) -> String {
     format!("{DAEMON_LAUNCHD_LABEL}.instance.{suffix}")
 }
 
+#[cfg(target_os = "macos")]
+fn instance_launchd_label(config_dir: &std::path::Path) -> String {
+    let isolated = needs_isolated_label(
+        crate::dev_instance::is_dev_instance()
+            || crate::development::routing::shared_writes_blocked(),
+        config_dir,
+        account_home().as_deref(),
+    );
+    launchd_label(config_dir, isolated)
+}
+
 /// 经 `gui/<uid>` launchd 域 bootstrap 一个跑 `daemon run` 的任务，使 daemon 落在 Aqua 会话。
 ///
 /// 透传 HOME / TMPDIR / PATH 及全部 `ASKHUMAN_*` 环境变量，保住 perf/隔离调用方（隔离 HOME、
 /// `ASKHUMAN_NO_KEYCHAIN`、mock API base 等）的语义。成功返回 `Ok(())`，否则 `Err`（调用方回退）。
 #[cfg(target_os = "macos")]
-fn spawn_via_gui_launchd(policy: SpawnPolicy) -> std::io::Result<()> {
+fn spawn_via_gui_launchd(
+    domain: &str,
+    policy: SpawnPolicy,
+    wait_for_handoff: bool,
+) -> std::io::Result<()> {
     use super::lifecycle;
     use std::process::{Command, Stdio};
 
@@ -302,23 +419,15 @@ fn spawn_via_gui_launchd(policy: SpawnPolicy) -> std::io::Result<()> {
         std::fs::create_dir_all(dir)?;
     }
 
-    let uid = unsafe { libc::getuid() };
-    let domain = format!("gui/{uid}");
     let config_dir = crate::paths::config_dir();
-    let isolated = needs_isolated_label(
-        crate::dev_instance::is_dev_instance()
-            || crate::development::routing::shared_writes_blocked(),
-        &config_dir,
-        account_home().as_deref(),
-    );
-    let label = launchd_label(&config_dir, isolated);
+    let label = instance_launchd_label(&config_dir);
     let plist_path = config_dir.join("daemon-launchd.plist");
 
     // `bootout` below is a SIGTERM (then SIGKILL after the job's 5s exit timeout) for a job whose
     // process is still alive, and the daemon it would hit is almost always one a sibling client
     // started a moment ago. Never tear an alive job down on the reuse path; the caller keeps
     // polling the socket and picks that instance up as it becomes ready.
-    if policy == SpawnPolicy::ReuseAlive && launchd_job_alive(&domain, &label) {
+    if policy == SpawnPolicy::ReuseAlive && launchd_job_alive(domain, &label) {
         return Ok(());
     }
 
@@ -342,35 +451,46 @@ fn spawn_via_gui_launchd(policy: SpawnPolicy) -> std::io::Result<()> {
         &log.display().to_string(),
         &label,
         &env_xml,
+        wait_for_handoff,
     );
     std::fs::write(&plist_path, plist)?;
 
     // 自清理：先 bootout 上次残留的任务（正常已退出；`Replace` 时可能仍在跑，SIGTERM 由 daemon 的
     // 信号处理走 graceful 退出），再 bootstrap 新的（RunAtLoad 立即启动）。
-    let plist_str = plist_path.display().to_string();
     let _ = Command::new("/bin/launchctl")
-        .args(["bootout", &domain, &plist_str])
+        .args(["bootout", &format!("{domain}/{label}")])
         .stdin(Stdio::null())
         .stdout(Stdio::null())
         .stderr(Stdio::null())
         .status();
-    let status = Command::new("/bin/launchctl")
-        .args(["bootstrap", &domain, &plist_str])
+    let output = Command::new("/bin/launchctl")
+        .args(["bootstrap", domain])
+        .arg(&plist_path)
         .stdin(Stdio::null())
         .stdout(Stdio::null())
-        .stderr(Stdio::null())
-        .status()?;
-    if status.success() {
+        .output()?;
+    if output.status.success()
+        || (policy == SpawnPolicy::ReuseAlive && launchd_job_alive(domain, &label))
+    {
         Ok(())
     } else {
-        Err(std::io::Error::other(
-            "launchctl bootstrap gui domain failed",
-        ))
+        Err(launchctl_error("bootstrap GUI domain", &output))
     }
 }
 
 #[cfg(target_os = "macos")]
-fn launchd_plist_contents(exe: &str, log: &str, label: &str, env_xml: &str) -> String {
+fn launchd_plist_contents(
+    exe: &str,
+    log: &str,
+    label: &str,
+    env_xml: &str,
+    wait_for_handoff: bool,
+) -> String {
+    let handoff_arg = if wait_for_handoff {
+        "\n        <string>--wait-for-gui-handoff</string>"
+    } else {
+        ""
+    };
     format!(
         r#"<?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
@@ -382,7 +502,7 @@ fn launchd_plist_contents(exe: &str, log: &str, label: &str, env_xml: &str) -> S
     <array>
         <string>{exe}</string>
         <string>daemon</string>
-        <string>run</string>
+        <string>run</string>{handoff_arg}
     </array>
     <key>RunAtLoad</key>
     <true/>
@@ -446,17 +566,30 @@ fn xml_escape(s: &str) -> String {
 /// treated as "not alive" so the caller falls through to the regular bootstrap path.
 #[cfg(target_os = "macos")]
 fn launchd_job_alive(domain: &str, label: &str) -> bool {
+    launchd_job(domain, label)
+        .as_deref()
+        .is_some_and(launchd_print_reports_alive)
+}
+
+#[cfg(target_os = "macos")]
+fn launchd_job(domain: &str, label: &str) -> Option<String> {
     use std::process::{Command, Stdio};
 
-    let Ok(out) = Command::new("/bin/launchctl")
+    let out = Command::new("/bin/launchctl")
         .args(["print", &format!("{domain}/{label}")])
         .stdin(Stdio::null())
         .stderr(Stdio::null())
         .output()
-    else {
-        return false;
-    };
-    out.status.success() && launchd_print_reports_alive(&String::from_utf8_lossy(&out.stdout))
+        .ok()?;
+    out.status
+        .success()
+        .then(|| String::from_utf8_lossy(&out.stdout).into_owned())
+}
+
+#[cfg(target_os = "macos")]
+fn launchd_print_pid(text: &str) -> Option<u32> {
+    text.lines()
+        .find_map(|line| line.strip_prefix("\tpid = ")?.trim().parse().ok())
 }
 
 /// Parse `launchctl print <service>` output. Only the service's own top-level `state = …` line
@@ -464,12 +597,12 @@ fn launchd_job_alive(domain: &str, label: &str) -> bool {
 /// strongest signal and appears only while the process exists.
 #[cfg(target_os = "macos")]
 fn launchd_print_reports_alive(text: &str) -> bool {
+    if launchd_print_pid(text).is_some() {
+        return true;
+    }
     let mut top_level_state: Option<&str> = None;
     for line in text.lines() {
         let trimmed = line.trim_start();
-        if trimmed.starts_with("pid = ") {
-            return true;
-        }
         // Top-level keys are indented by exactly one tab; nested blocks use two or more.
         if top_level_state.is_none() && line.starts_with('\t') && !line.starts_with("\t\t") {
             if let Some(value) = trimmed.strip_prefix("state = ") {
@@ -605,6 +738,7 @@ mod tests {
             "/Users/test/log<1>",
             DAEMON_LAUNCHD_LABEL,
             "        <key>ASKHUMAN_HOME</key>\n        <string>/tmp/dev</string>\n",
+            false,
         );
 
         assert!(plist.contains(&format!("<string>{DAEMON_LAUNCHD_LABEL}</string>")));
@@ -616,12 +750,47 @@ mod tests {
         assert!(plist.contains("/Users/test/log&lt;1&gt;"));
         assert!(plist.contains("<key>ASKHUMAN_HOME</key>"));
         assert!(!plist.contains("<key>KeepAlive</key>"));
+        assert!(!plist.contains("--wait-for-gui-handoff"));
+        let successor = launchd_plist_contents("/test/AskHuman", "/test/log", "test", "", true);
+        assert!(successor.contains("<string>--wait-for-gui-handoff</string>"));
+    }
+
+    #[test]
+    fn gui_launch_waits_through_the_login_gap() {
+        let mut results = [
+            Ok(false),
+            Err(std::io::Error::other("login bootstrap in progress")),
+            Ok(true),
+        ]
+        .into_iter();
+        let result = retry_gui_launch(|| results.next().unwrap(), || true);
+        assert!(result.unwrap());
+        assert!(results.next().is_none());
+    }
+
+    #[test]
+    fn gui_launch_only_allows_headless_when_the_domain_is_missing() {
+        let mut retries = 2;
+        let result = retry_gui_launch(
+            || Err(std::io::Error::other("launchd refused the GUI job")),
+            || {
+                retries -= 1;
+                retries > 0
+            },
+        );
+        assert_eq!(
+            result.unwrap_err().to_string(),
+            "launchd refused the GUI job"
+        );
+        assert_eq!(retries, 0);
+        assert!(!retry_gui_launch(|| Ok(false), || false).unwrap());
     }
 
     #[test]
     fn launchd_print_running_job_is_alive() {
         let text = "com.naituw.humaninloop.daemon = {\n\tactive count = 1\n\tpath = /x.plist\n\tstate = running\n\n\tprogram = /x/AskHuman\n\tpid = 81380\n\tlast exit code = (never exited)\n\tendpoints = {\n\t\t\"a\" = {\n\t\t\tstate = active\n\t\t}\n\t}\n}\n";
         assert!(launchd_print_reports_alive(text));
+        assert_eq!(launchd_print_pid(text), Some(81380));
     }
 
     #[test]

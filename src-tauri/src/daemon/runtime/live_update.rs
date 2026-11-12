@@ -221,6 +221,30 @@ impl Runtime {
         self.admission.clone().write_owned().await
     }
 
+    #[cfg(target_os = "macos")]
+    pub(super) async fn prepare_gui_handoff(&self, state: &ServerState) -> bool {
+        use crate::daemon::handoff::Intent;
+
+        // A recoverable submit owns this mutex until its worker starts. Close both admission
+        // paths in the same order, so a request cannot be persisted while the daemon exits.
+        let _submitting = self.submissions.lock().await;
+        let _admission = self.close_admission().await;
+        let mut intent = state.exit_intent.lock().unwrap();
+        if *intent != Intent::Exit
+            || self.is_restoring()
+            || state.closing.load(Ordering::SeqCst)
+            || state.draining.load(Ordering::SeqCst)
+            || state.registry.active_count() != 0
+            || lifecycle::launch_fingerprint() != state.startup_fp
+        {
+            return false;
+        }
+        *intent = Intent::MoveToGui;
+        self.suspending.store(true, Ordering::SeqCst);
+        state.draining.store(true, Ordering::SeqCst);
+        true
+    }
+
     pub async fn restore(self: &Arc<Self>, state: &Arc<ServerState>) -> Result<()> {
         if !self.initialized.load(Ordering::SeqCst) {
             self.store.discard_unowned()?;

@@ -457,7 +457,8 @@ pub(super) fn recover_inbox(state: &Arc<ServerState>, generation: u64) {
         return;
     }
     prune_inbox(state);
-    let prewarm = warm_mode_enabled(state, crate::config::PopupWindowMode::Merged)
+    let prewarm = has_display()
+        && warm_mode_enabled(state, crate::config::PopupWindowMode::Merged)
         && !state.draining.load(Ordering::SeqCst);
     let recovery =
         state

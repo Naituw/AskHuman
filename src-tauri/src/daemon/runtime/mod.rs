@@ -50,6 +50,8 @@ mod ios_history;
 mod ios_tasks;
 mod ios_todos;
 mod live_update;
+#[cfg(target_os = "macos")]
+mod macos_gui;
 mod select;
 mod subs;
 mod task_launch;
@@ -147,16 +149,22 @@ pub fn dispatch(args: &[String]) -> i32 {
     let background = cfg!(windows)
         && args.first().is_some_and(|arg| arg == "run")
         && args.iter().skip(1).any(|arg| arg == "--background");
-    // 子命令后仅允许 `--force`，以及 Windows 内部 detached run 的 `--background`。
+    let wait_for_gui_handoff = cfg!(target_os = "macos")
+        && args.first().is_some_and(|arg| arg == "run")
+        && args
+            .iter()
+            .skip(1)
+            .any(|arg| arg == "--wait-for-gui-handoff");
     if let Some(extra) = args.iter().skip(1).find(|arg| {
-        arg.as_str() != "--force"
-            && !(background && matches!(arg.as_str(), "--background" | "--wait-for-handoff"))
+        !(arg.as_str() == "--force"
+            || background && matches!(arg.as_str(), "--background" | "--wait-for-handoff")
+            || wait_for_gui_handoff && arg.as_str() == "--wait-for-gui-handoff")
     }) {
         eprintln!("unknown daemon argument: {}", extra);
         return 1;
     }
     match args.first().map(|s| s.as_str()).unwrap_or("") {
-        "run" => run_cmd(background),
+        "run" => run_cmd(background, wait_for_gui_handoff),
         "start" => start_cmd(),
         "stop" => stop_cmd(force),
         "restart" => restart_cmd(force),
@@ -178,7 +186,7 @@ pub fn dispatch(args: &[String]) -> i32 {
 
 // —— run：前台运行 Daemon 主体 ——
 
-fn run_cmd(background: bool) -> i32 {
+fn run_cmd(background: bool, wait_for_gui_handoff: bool) -> i32 {
     #[cfg(unix)]
     if let Err(error) = lifecycle::restore_background_logging() {
         eprintln!("askhuman: could not restore daemon logging: {error}");
@@ -187,12 +195,14 @@ fn run_cmd(background: bool) -> i32 {
     BACKGROUND_LOG_TO_FILE.store(background, Ordering::Relaxed);
     #[cfg(not(windows))]
     let _ = background;
-    let wait_for_handoff = cfg!(windows) && std::env::args().any(|arg| arg == "--wait-for-handoff");
+    let wait_for_handoff = wait_for_gui_handoff
+        || cfg!(windows) && std::env::args().any(|arg| arg == "--wait-for-handoff");
     let deadline = Instant::now() + Duration::from_secs(30);
     let lock = loop {
         match lifecycle::acquire_lock() {
             Ok(Some(lock)) => break lock,
             Ok(None) if wait_for_handoff && Instant::now() < deadline => {
+                #[cfg(windows)]
                 if block_on(async {
                     tokio::time::timeout(Duration::from_millis(250), client::request_status())
                         .await
@@ -210,7 +220,9 @@ fn run_cmd(background: bool) -> i32 {
                 std::thread::sleep(Duration::from_millis(50));
             }
             Ok(None) => {
-                log(if wait_for_handoff {
+                log(if wait_for_gui_handoff {
+                    "GUI launchd successor timed out waiting for the daemon lock"
+                } else if wait_for_handoff {
                     "update handoff lock wait timed out"
                 } else {
                     "another daemon is already running; exiting"
@@ -240,7 +252,26 @@ fn run_cmd(background: bool) -> i32 {
         super::recovery::set_handoff(false);
         let intent = Arc::new(Mutex::new(super::handoff::Intent::default()));
         let code = tauri::async_runtime::block_on(serve(&lock, intent.clone(), startup_fp));
-        if *intent.lock().unwrap() != super::handoff::Intent::ReplaceOwnBinary {
+        let intent = *intent.lock().unwrap();
+        #[cfg(target_os = "macos")]
+        if intent == super::handoff::Intent::MoveToGui {
+            // The new job waits for the lock. If launchd rejects it, resume this daemon while
+            // still owning the lock, so an intervening GUI error does not strand remote callers.
+            match super::spawn::start_macos_gui_successor() {
+                Ok(()) => {
+                    log("Aqua launchd successor scheduled");
+                    return code;
+                }
+                Err(error) => {
+                    log(&format!(
+                        "could not start Aqua successor; resuming headless daemon: {error}"
+                    ));
+                    std::thread::sleep(Duration::from_secs(1));
+                    continue;
+                }
+            }
+        }
+        if intent != super::handoff::Intent::ReplaceOwnBinary {
             return code;
         }
         let replacement = super::handoff::replace(&lock, background);
@@ -1012,6 +1043,10 @@ async fn serve(
         exe_path,
         startup_fp.short(),
     ));
+    #[cfg(target_os = "macos")]
+    if super::spawn::is_macos_headless() {
+        log("running headless outside the Aqua launchd job");
+    }
 
     // Ensure the user hooks directory exists and includes a sample script.
     crate::hooks::ensure_sample();
@@ -1112,6 +1147,10 @@ async fn serve(
     });
 
     let mut background_tasks = Vec::new();
+    #[cfg(target_os = "macos")]
+    if super::spawn::is_macos_headless() {
+        background_tasks.push(tokio::spawn(macos_gui::watch(state.clone())));
+    }
     if let Some(recovery) = state.recovery.clone() {
         let state = state.clone();
         background_tasks.push(tokio::spawn(async move {
@@ -3964,23 +4003,6 @@ async fn handle_gui_warm_supported(
     maybe_topup_warm(state);
 }
 
-/// 菜单栏图标是否在当前平台被支持（用于 daemon 决定是否兜底拉起宿主）。
-/// macOS 恒真；Linux 仅在存在图形会话时（保守门控，headless 不拉宿主）。
-fn tray_supported() -> bool {
-    #[cfg(target_os = "macos")]
-    {
-        true
-    }
-    #[cfg(all(unix, not(target_os = "macos")))]
-    {
-        std::env::var_os("DISPLAY").is_some() || std::env::var_os("WAYLAND_DISPLAY").is_some()
-    }
-    #[cfg(windows)]
-    {
-        has_display()
-    }
-}
-
 /// 按配置兜底拉起 GUI 宿主（spec D14）：`menu_bar_icon != off` 且托盘可用时尝试 spawn。
 /// 单实例由宿主自身 flock 去重；always 主要靠登录项，此处为兜底。失败静默。
 fn maybe_spawn_gui_host(config: &AppConfig) {
@@ -3988,7 +4010,7 @@ fn maybe_spawn_gui_host(config: &AppConfig) {
     if config.general.menu_bar_icon == MenuBarIconMode::Off {
         return;
     }
-    if !tray_supported() {
+    if !has_display() {
         return;
     }
     if let Err(e) = crate::gui_host::spawn_detached() {
@@ -5111,12 +5133,12 @@ fn warm_enabled(state: &Arc<ServerState>) -> bool {
         .unwrap_or(false)
 }
 
-/// Whether an interactive display is available (§D-M3). macOS is always a GUI session,
+/// Whether this daemon can spawn desktop children in its own session.
 /// Linux checks DISPLAY/WAYLAND_DISPLAY, and Windows rejects the Services session.
 fn has_display() -> bool {
     #[cfg(target_os = "macos")]
     {
-        true
+        !super::spawn::is_macos_headless()
     }
     #[cfg(all(unix, not(target_os = "macos")))]
     {

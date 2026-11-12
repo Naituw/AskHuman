@@ -97,7 +97,7 @@ pub(crate) async fn start_if_missing() {
     }
     let _guard = acquire_spawn_lock().await;
     if matches!(request_status_result().await, Ok(None)) {
-        if let Err(error) = spawn::spawn_detached(spawn::SpawnPolicy::ReuseAlive) {
+        if let Err(error) = spawn::spawn_detached(spawn::SpawnPolicy::ReuseAlive).await {
             eprintln!("askhuman: waiting to restore the daemon: {error}");
         }
     }
