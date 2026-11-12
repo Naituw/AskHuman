@@ -1,6 +1,6 @@
 # 计划：iOS 历史里的图
 
-> 需求：`docs/specs/ios-history-pictures.md`（决策编号 HP1–HP12 均指其 §3）。状态：2026-11-12 用户批准需求（AskHuman 三问全选推荐项），开工；提交、偏差与验证见文末「实施记录」（做完后补）。下文各阶段的文件名是起草时的设想，**实际以「实施记录」为准**。
+> 需求：`docs/specs/ios-history-pictures.md`（决策编号 HP1–HP12 均指其 §3）。状态：2026-11-12 用户批准需求（AskHuman 三问全选推荐项），开工并已实现；提交、偏差与验证见文末「实施记录」。下文各阶段的文件名是起草时的设想，**实际以「实施记录」为准**。
 > 工作方式：**在主工作树开发**（用户沿用今天会话里已选的位置，不再问）。主工作树里有别的会话**未提交**的改动（开工时是 iOS 页面容器 `Views/Common/AppTabs.swift`、`ListDetail.swift`、`RootView.swift` 等与一份新的 `AskHumanPersistentTabsUITests.swift`，及几份 iOS 规格 / overview 的段落）：本功能只提交自己的文件与自己的段落，不碰它们；要改同一份文档时只用精确替换，提交前逐个 hunk 核对。
 
 ## 阶段
@@ -82,4 +82,41 @@
 
 ## 实施记录
 
-（做完后补：实际提交、与起草时的偏差、验证结果与未验证项。）
+### 与起草时的偏差
+
+1. **提交粒度**：起草时 P1（线协议）与 P2（Mac）分两个提交，实际合成一个。Rust crate 一旦给 `AssetRef` 加了 `gone`、给 `Caps` 加了 `history_pictures`，所有字面构造（`views.rs`、`history_view.rs`、`testkit.rs` 等）都得同时改，P1 单独提交编译不过；AGENTS.md 又要求 Rust 与 Swift 线类型同一提交，所以「线协议 + 夹具 + Mac 逻辑」是一个提交，手机引擎一个，手机界面一个。
+2. **网关的历史图缓存有 10 分钟过期**（起草只写了 ≤ 256 条）：缓存的只是「id → 路径」的解析结果，每个窗口仍重新读文件，所以期间文件被清掉照样回 `notFound`、被换成同名新图则按新内容发（块数与 SHA-256 以实际读到的字节为准）；过期只是让很久以后的取图重新解析一遍历史。规格 HP7 已补。
+3. **折叠一排把回答里贴的图也算进去**（消息图在前、回复图在后，与查看器翻页的顺序一致），而不只是消息的图；规格 HP3 的括号已补。
+4. **读屏做成分段而不是「合并元素 + 读屏动作」**：没有图的卡片仍是一个合并元素；有图的卡片是容器，头部与每题各一个合并停靠点，每张图是单独的按钮。合并元素上的自定义动作藏在转子里不好发现，而图可能有几张，逐张聚焦更直接。规格 §7、§12 已改。
+5. **Mock 场景**：没有改 `sessionHistory` 场景（它的数据与大量既有测试按原样依赖），而是新增独立的 `historyPictures` 场景（`MockData+HistoryPictures.swift`）；图 id 里编着尺寸与色相，`MockBackend.download` 据此生成图。`PictureCell` 没有另起组件：`ImageThumbnail` 提成可复用（圆角、紧凑形态两个参数），占位与「+N」蒙层在新文件 `HistoryPictureViews.swift` 里。
+6. **文案**比起草时少一条：没有「查看图片」读屏动作，也没有「{n} 张图未显示」。新增的是「已不在 Mac 上」、弹窗说明、两条读屏标签（「名字，已不在 Mac 上」「名字，后面还有 N 张」）。
+
+### 提交（2026-11-12，主工作树，未推送）
+
+| 提交 | 内容 |
+|---|---|
+| `a10f546b` | `docs(ios): spec and plan for pictures in the history` |
+| `09862243` | `feat(ios): describe and serve the pictures of a session's history`：线协议（Rust + Swift + 夹具）与 Mac 一起，`Release-Note: skip` |
+| `e7dde0de` | `feat(ios): read the pictures of a session's history in the phone engine`：引擎、Mock、单测与真实 daemon 端到端测试，`Release-Note: skip` |
+| `2256fab9` | `feat(ios): show the pictures of past exchanges in session history and the History tab`：界面、本地化、UI 测试；唯一带用户可见 `Release-Note:` 的一条 |
+| 文档同步提交 | `docs(ios): sync overview and specs with history pictures`（`docs/overview-ios.md`、规格、本计划、`docs/PROGRESS.md`；主 `docs/overview.md` 没改） |
+
+### 验证结果
+
+机器一直偏紧（交换区 11–18 GiB，期间磁盘到过 99%，删掉了可再生的 `src-tauri/target/debug/incremental` 腾出空间），长任务都放后台、短间隔轮询。
+
+- **Rust**：`cargo clippy --all-targets -- -D warnings` 与 `cargo fmt --check` 干净；`ios::`、`daemon::runtime` 的定向测试通过；全量 `cargo test`：3005 通过、0 失败、11 个忽略（在机器换页最厉害的时候跑完，214 秒）。
+- **Swift 包**（`ios/Packages/AskHumanKit`，`swift test`）：542 个测试、0 失败，含新增的 `HistoryPicturesWireTests`、`HistoryPicturesEngineTests`、`HistoryPicturesStoreTests`。
+- **真实 daemon 端到端**（`AHE2ETests`，用刚 `./scripts/install.sh` 装好的 0.17.1）：10 个测试、0 失败，其中 5 个是新增的 `HistoryPicturesE2ETests`：页里的图没有路径、缩略图 ≤ 6 KiB、600×500 的噪点 PNG 多窗口下载与原文件逐字节一致、回复图可下载；页取到之后文件被删 → `notFound`；11 MB 的文件 → `tooLarge` 且不发下载请求；`sessionExchange` 与页内同一条相等、未知 id 回空；`daemon restart --force` 之后同一 `assetId` 仍可下载。
+- **模拟器 UI**（`xcodebuild test`）：
+    - iPhone 16 / iOS 18.5：`AskHumanHistoryPicturesUITests` 12/12（英文）与 12/12（`zh-Hans`）；请求页附件与查看器的回归 8 个通过；`AskHumanSessionHistoryUITests` 35 个通过（其中 `testPullingTheHistoryOnAnEndedPageStopsItsCountdownToo` 在忙碌的机器上失败过一次、单独重跑通过，是时序抖动，与本功能无关）、3 个按设计跳过。
+    - iPad Pro 11 英寸（M4）/ iOS 18.5：新用例 11 个通过、1 个按设计跳过，加既有的 `AskHumanLargeScreenUITests/testTheHistoryOpensAnEntryBesideTheList` 通过；详情页在列表右侧显示 7 张图的网格与「checklist.md」文件行。iPad 上第一次跑暴露了两处**测试**的假设（不是产品问题）：iPad 的顶部标签栏不在 `tabBars` 里（按钮是普通 `Button`），所以「历史」标签改用启动参数 `-AHTab history` 进入；最大字号下 iPad 的工具栏把请求菜单折进系统的「更多」按钮、没有标识，所以那条「最大字号一排不出卡片」的用例在 iPad 上跳过（iPhone 上更窄、一排会折行，是更严的场景，那里通过）。改完在 iPad 与 iPhone 上各重跑通过。
+- **本地化**：`make-catalog.py` 重新生成 667 条，没有缺中文；新增的只有 4 条（见偏差 6）。
+
+### 没有验证的
+
+1. **真机与 TestFlight**：没出包，手感、手指好不好点、真实 VoiceOver 的朗读（现在只有 XCUITest 对标签与停靠点的断言）都没在真机上看过。
+2. **带签名的 App 连真实服务**（`SimulatorLiveTests` 需要真实服务与钥匙串重置）没跑；引擎到真实 daemon 这一段有端到端测试，界面这一段只在 Mock Mac 上验过。
+3. **附件拖出的 UI 测试**（`AskHumanAttachmentDragUITests`）需要宿主端的接收器，在这台机器上按设计跳过；`ImageThumbnail` 的改动（圆角、紧凑形态两个参数）由请求页的其它附件 / 查看器用例覆盖，拖出本身没跑。
+4. **iOS 26.2 / 27.2 模拟器与折叠屏（Duo）**没跑，只在 iOS 18.5 的 iPhone 16 与 iPad Pro 上验过。
+5. `AgentE2ETests` 等与本功能无关的端到端套件没有跑基线。
