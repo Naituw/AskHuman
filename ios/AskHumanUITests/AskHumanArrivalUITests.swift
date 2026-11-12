@@ -74,6 +74,14 @@ final class AskHumanArrivalUITests: XCTestCase {
         status("touch=pass")
     }
 
+    /// A bubble is not on the screen before the first frame that paints it. A view that is new sits at the corner of its
+    /// window until something places it, and the bubble showed there for a frame or two before it jumped to the middle.
+    func testABubbleIsNotSeenBeforeItsFirstFrameIsPainted() {
+        launch(extra: ["-AHTab", "inbox"], count: 3)
+        status("active=3")
+        status("stray=0")
+    }
+
     func testALiveRequestStillBouncesWhileTheInboxIsFrontmost() {
         launch(extra: ["-AHTab", "inbox"])
         if !isWide {

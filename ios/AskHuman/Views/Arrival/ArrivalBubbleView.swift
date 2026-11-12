@@ -12,6 +12,8 @@ final class ArrivalBubbleView: UIView {
 
     init() {
         super.init(frame: CGRect(x: 0, y: 0, width: 88, height: 88))
+        // Nothing of a bubble is seen before the frame that paints it: a view that is new sits at the corner of its window.
+        alpha = 0
         isUserInteractionEnabled = false
         isAccessibilityElement = false
         backgroundColor = .clear

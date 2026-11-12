@@ -52,6 +52,8 @@ final class ArrivalSceneController: NSObject {
         var target: CGPoint
         var offset: CGFloat
         var bubble: ArrivalBubbleView
+        /// Whether a frame has painted the bubble yet.
+        var painted = false
         /// The glow of the dot the bubble lands on in the list (`ArrivalDots`). Every row has its own; the tab's is shared
         /// by the bubbles that land there.
         var rowGlow: UIView?
@@ -68,6 +70,10 @@ final class ArrivalSceneController: NSObject {
     private var runs: [String: Run] = [:]
     private var arrivals: [RequestArrival] = []
     private var finished = Set<String>()
+    /// Bubbles that were already visible when the first frame came to paint them. Whatever the screen showed of such a bubble
+    /// before that was not a frame of the motion (a view that is new sits at the corner of its window). The diagnostics
+    /// report the count for the tests.
+    private var strays = 0
     private var pendingCount = 0
     private var reduceMotion = false
     private var diagnostics = false
@@ -182,6 +188,10 @@ final class ArrivalSceneController: NSObject {
 
     private func startReadyRuns() {
         guard let source, source.windowScene?.activationState == .foregroundActive, let canvas else { return }
+        // The window shows at the place and size of the source now, not as when it was made: the source may have turned or
+        // been resized since.
+        decoration?.frame = source.frame
+        canvas.frame = source.bounds
         let layout = ArrivalLayout.measure(in: source, keyboard: keyboard)
         cachedLayout = layout
         layoutAt = CACurrentMediaTime()
@@ -190,10 +200,13 @@ final class ArrivalSceneController: NSObject {
             bubble.isAccessibilityElement = diagnostics
             bubble.accessibilityIdentifier = "arrival-bubble-" + request.requestId
             bubble.accessibilityLabel = "Incoming request"
-            canvas.addSubview(bubble)
             let offsets: [CGFloat] = [0, 53, -53, 26, -26]
             let offset = offsets[runs.count % offsets.count]
             let origin = CGPoint(x: min(source.bounds.maxX - 48, max(48, layout.origin.x + offset)), y: layout.origin.y)
+            // The bubble waits at its first frame, where it will appear, and is not seen until the frames paint it.
+            bubble.paint(ArrivalMotion.frame(at: 0, origin: .init(x: origin.x, y: origin.y),
+                                             target: .init(x: layout.target.x, y: layout.target.y)), opacity: 0)
+            canvas.addSubview(bubble)
             runs[request.id] = Run(request: request, began: CACurrentMediaTime(), origin: origin,
                                   target: layout.target, offset: offset, bubble: bubble)
         }
@@ -219,6 +232,15 @@ final class ArrivalSceneController: NSObject {
             layoutAt = now
         }
         guard let layout = cachedLayout else { return }
+        for id in Array(runs.keys) {
+            guard var run = runs[id], !run.painted else { continue }
+            if run.bubble.alpha > 0.01 { strays += 1 }
+            // The motion runs from the first frame that paints the bubble, not from when the bubble was made: a first frame
+            // that comes late (the main thread was busy) must not take the bubble past its appearing.
+            run.began = now
+            run.painted = true
+            runs[id] = run
+        }
         // A bubble whose request has its row on screen, in a list that is a column of the window, flies to the unread dot of
         // that row, as the Mac's flies to its sidebar's. It is looked up every frame: the list can scroll while the bubble is
         // in the air, and the row is not there yet in the first frames. The others fly to the tab, or land at the title.
@@ -292,7 +314,7 @@ final class ArrivalSceneController: NSObject {
             let destination = rows.isEmpty ? (layout.destination == .inbox ? "inbox" : "title") : "row"
             // Where the oldest bubble is heading, for the tests to compare with the screen.
             let aim = runs.values.min { $0.began < $1.began }?.target ?? .zero
-            diagnostic.accessibilityValue = "active=\(runs.count);destination=\(destination);key=\(source.isKeyWindow ? "source" : "other");touch=pass;phase=\(phase);target=\(Int(aim.x)),\(Int(aim.y))"
+            diagnostic.accessibilityValue = "active=\(runs.count);destination=\(destination);key=\(source.isKeyWindow ? "source" : "other");touch=pass;phase=\(phase);target=\(Int(aim.x)),\(Int(aim.y));stray=\(strays)"
             #if DEBUG
             if compositionFixture {
                 diagnostic.accessibilityValue = (diagnostic.accessibilityValue ?? "") + ";composition=" + compositionProbe.inspect(in: source)
@@ -327,6 +349,7 @@ final class ArrivalSceneController: NSObject {
         receiver.alpha = 0
         glow.alpha = 0
         cachedLayout = nil
+        strays = 0
     }
 
     private func removeWindow() {
