@@ -84,9 +84,9 @@ final class AskHumanAwayUITests: XCTestCase {
     /// After a send the app goes back to the list by itself. When the finish event overtakes the "sending" state (a race
     /// of the mock, whose answers come back at once) the page stays on its "ended" banner, and the way back is the button.
     private func leaveTheSentRequest() {
-        if app.tabBars.firstMatch.waitForExistence(timeout: 6) { return }
+        if element("filter-menu").waitForExistence(timeout: 6) { return }
         back()
-        XCTAssertTrue(app.tabBars.firstMatch.waitForExistence(timeout: 10), "back at the list")
+        XCTAssertTrue(element("filter-menu").waitForExistence(timeout: 10), "back at the list")
     }
 
     /// Swipes until a row is clear of the top bar and the bottom bar. On older systems the automatic scrolling of a tap does
@@ -178,7 +178,7 @@ final class AskHumanAwayUITests: XCTestCase {
         requireElement("away-strip")
         openRequest("req-migration")
         requireElement("escalation-notice")
-        XCTAssertFalse(element("away-strip").exists, "the page covers the tab bar, and the notice has its own way to end it")
+        XCTAssertFalse(element("away-strip").exists, "the strip belongs to the root list, and the notice has its own way to end it")
     }
 
     // MARK: escalations

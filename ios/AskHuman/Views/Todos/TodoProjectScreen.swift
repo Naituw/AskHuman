@@ -57,7 +57,6 @@ struct TodoProjectScreen: View {
         .accessibilityIdentifier("todo-project-screen")
         .navigationTitle(target.row.name)
         .navigationBarTitleDisplayMode(.inline)
-        .hidesTabBarWhenCompact()
         .toolbar {
             if let list, list.pending.count > 1, todos.canWrite {
                 ToolbarItem(placement: .topBarTrailing) { ReorderToolbarButton().accessibilityIdentifier("todo-reorder") }

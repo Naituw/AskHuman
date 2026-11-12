@@ -237,7 +237,7 @@ final class AskHumanLiveUITests: XCTestCase {
         }
 
         try step("the answered requests are in the history") {
-            // The page of the Agent covers the tab bar: go back to the list first.
+            // Return to the list before checking the next part of the flow.
             app.navigationBars.buttons.firstMatch.tap()
             app.tabBars.buttons["History"].tap()
             _ = requireRow("history-row-", timeout: 40)

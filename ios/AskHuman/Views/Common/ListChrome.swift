@@ -29,10 +29,8 @@ extension View {
 extension View {
     /// Puts what a list says when it has nothing to list in its middle, and keeps it there.
     ///
-    /// The middle of a list moves when the tab bar comes and goes. A request page hides the bar, and
-    /// the bar only returns (and takes its room from the list) a moment after the page was popped, so a
-    /// message that simply sat in the middle jumped up by half the bar's height right after the list
-    /// had come back. Here the middle is the one with the bar up, whether the bar is there yet or not.
+    /// Keeps the centre stable while the system updates the bottom safe area. The app keeps its tab
+    /// bar visible on detail pages too; transient safe-area changes must not move a list's message.
     func emptyState<Content: View>(@ViewBuilder _ content: () -> Content) -> some View {
         overlay { SteadyCenter(content: content()) }
     }

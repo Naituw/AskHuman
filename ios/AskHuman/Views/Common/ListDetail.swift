@@ -290,24 +290,6 @@ struct ColumnsOrStack<Wide: View, Narrow: View>: View {
     }
 }
 
-// MARK: the tab bar
-
-extension View {
-    /// A page that is open gets the room of the tab bar on a phone: the bar is hidden. A window in
-    /// columns keeps it: the bar is the only way to another tab while a page is open, and an iPad has it
-    /// at the top, out of the page's way.
-    func hidesTabBarWhenCompact() -> some View { modifier(HidesTabBarWhenCompact()) }
-}
-
-private struct HidesTabBarWhenCompact: ViewModifier {
-    @Environment(\.horizontalSizeClass) private var sizeClass
-    @Environment(\.dynamicTypeSize) private var typeSize
-
-    func body(content: Content) -> some View {
-        content.toolbar(Columns.applies(sizeClass: sizeClass, typeSize: typeSize) ? .automatic : .hidden, for: .tabBar)
-    }
-}
-
 // MARK: the list of a window in columns
 
 /// The card a list that is a column gives its rows, which a row that can be picked has to paint for

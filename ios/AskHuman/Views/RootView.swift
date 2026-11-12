@@ -116,7 +116,7 @@ struct RootView: View {
     private var tabs: some View {
         if #available(iOS 27.1, *) {
             AppTabs(selection: tabSelection, pendingCount: store.pendingCount,
-                    hidesTabBarWhenCompact: hidesTabBarWhenCompact, isOverlayInteractive: store.banner != nil) { tab in
+                    isOverlayInteractive: store.banner != nil) { tab in
                 TabPage(tab: tab, presentation: presentation)
                     .environment(store)
                     .environment(push)
@@ -136,15 +136,6 @@ struct RootView: View {
                         .badge(tab == .inbox ? store.pendingCount : 0)
                 }
             }
-        }
-    }
-
-    private var hidesTabBarWhenCompact: Bool {
-        switch store.tab {
-        case .inbox: return !store.inboxPath.isEmpty
-        case .agents: return !store.agentPath.isEmpty
-        case .todos: return store.todos.opened != nil
-        case .history, .macs: return false
         }
     }
 }

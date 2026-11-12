@@ -73,7 +73,6 @@ private struct AgentDetailContent: View {
         })
         .navigationTitle(item.displayTitle)
         .navigationBarTitleDisplayMode(.inline)
-        .hidesTabBarWhenCompact()
         .actionBar {
             bottomBar(live: live)
         }

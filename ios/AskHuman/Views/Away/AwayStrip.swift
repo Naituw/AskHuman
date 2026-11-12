@@ -8,7 +8,7 @@ import AHCore
 
 extension View {
     /// Shows the away strip at the foot of a tab's root page, above the tab bar. A page pushed over the root has no
-    /// tab bar and no strip (the escalated question carries its own way to end away mode).
+    /// strip (the escalated question carries its own way to end away mode).
     func awayStrip() -> some View {
         safeAreaInset(edge: .bottom, spacing: 0) { AwayStrip() }
     }

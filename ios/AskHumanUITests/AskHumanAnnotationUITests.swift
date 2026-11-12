@@ -366,8 +366,8 @@ final class AskHumanAnnotationUITests: XCTestCase {
         send.tap()
         // After a send the app goes back to the list by itself (when the finish overtakes the "sending" state of the mock the
         // page stays on its banner, and the way back is the button).
-        if !app.tabBars.firstMatch.waitForExistence(timeout: 8) { back() }
-        XCTAssertTrue(app.tabBars.firstMatch.waitForExistence(timeout: 10), "back at the list")
+        if !element("filter-menu").waitForExistence(timeout: 8) { back() }
+        XCTAssertTrue(element("filter-menu").waitForExistence(timeout: 10), "back at the list")
 
         app.tabBars.buttons["History"].tap()
         requireElement("history-row-req-notes").tap()

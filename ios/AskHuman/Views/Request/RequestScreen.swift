@@ -50,7 +50,6 @@ struct RequestScreen: View {
         // read of it) is left on this one.
         .id(id)
         .navigationBarTitleDisplayMode(.inline)
-        .hidesTabBarWhenCompact()
         .toolbar {
             if hasNeighbors { navigationButtons }
             if hasMore {

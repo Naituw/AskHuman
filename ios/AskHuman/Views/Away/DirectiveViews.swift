@@ -152,7 +152,7 @@ struct DirectivePanel: View {
 }
 
 /// The card at the top of a question that came as an escalation (D36): the Agent asked although the user is away. The
-/// page covers the tab bar, so the strip is not in sight; this card has its own way to end away mode.
+/// page does not show the root list's away strip; this card has its own way to end away mode.
 struct EscalationNotice: View {
     let item: InboxItem
     @Environment(AppStore.self) private var store

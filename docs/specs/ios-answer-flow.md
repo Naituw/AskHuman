@@ -207,6 +207,12 @@ iOS 26.2 英文／中文各通过三项原生连接检查（作答、确认、�
 | E14 | 无障碍 | 句子（「无需回复」+ 原因）仍是一个元素（标识 `finished-notice`，读法不变）；两枚按钮是它旁边各自的元素：「下一条消息 / 关闭」（标识 `finished-action`；倒计时期间加提示「几秒后会自动执行。想留在这个页面，请选『停留』」）与「停留在此页」（`finished-stay`）。倒计时的数字不进读屏标签，逐秒变会反复打断。按钮与句子的排法按**剩余宽度**自动选（`EndedStripLayout`，一个自定义 `Layout`）：按钮靠右、与句子并排，只要句子（连图标）还能留下约 120 pt 的字宽（随字号放大，`@ScaledMetric`）——句子在旁边按需折行；留不下（窄屏、大字号、「停留」与倒计时钮同时在）就把按钮挪到句子下面一行、靠右，句子得到整行宽度。原先只在辅助功能字号起才挪，iPhone SE（375 pt）上最大的非辅助字号下句子被挤成几个字宽、单词断在中间、条占去半个屏幕（`testTheStripHoldsAtLargeTextSizes` 当时失败）。按钮胶囊周围留了点按空间，点按区约 44 pt 高 |
 | E15 | 实现 | `AHCore/EndedCountdown.swift`：`EndedAction`（`.next(id)` / `.close`）、`EndedCountdown`（id、开始时间、秒数）、`AppStore.endedAction(for:)`、`performEndedAction(for:)`、`stayOnEnded(_:)`；状态在 `AppStore`（`endedCountdown`、`endedCountdownLength`，取消点在 `tab`、`inboxPath`、`autoAdvance` 的 `didSet`）；`.requestFinished` 里页面开着、又不是自己发出的回答时 `prepareEndedCountdown`；前台正在编辑／被弹层盖住仍保留原保护。`EndedStrip` 挂载后在 App 可见、没有遮挡时调用 `endedNoticeDisplayed` 才启动，重复显示不重启；`AppEnvironment` 接入 `PageEditing.isVisible` / `isCovered`。`Views/Request/EndedState.swift` 的 `EndedStrip` 画按钮（排法由 `EndedStripLayout` 定，见 E14），等待显示与倒计时期间每 0.15 秒检查可见性与遮挡（`PageEditing.swift`）；后台不触发遮挡取消。`RequestPageTransition` 为手动与计时完成的下一页提供旧页快照，与发送后的 `Arrival` 共用曲线和位移。UI 测试用 `-AHEndedCountdown <秒>` 改时长、`-AHAutoAdvance YES` 打开（原有用例都带 `NO`，不受影响） |
 
+### 3.9 详情页保留标签栏（2026-11-12）
+
+用户确认取消请求（含确认、已结束）、Agent 与项目待办详情的主动隐藏规则：所有窗口、字号与导航深度都保留系统标签栏，方便直接切换 Tab。系统仍管理键盘与模态呈现时的栏行为。
+
+底部发送／下一题、插话与添加待办操作栏继续使用 `.actionBar` 的系统安全区布局，避让标签栏和键盘；小屏与辅助功能字号下也不能遮住按钮或使最后一条内容无法滚到。切换 Tab 保留已有请求与插话草稿。离开模式常驻条仍只在各 Tab 的列表首页显示，升级请求继续使用页内的结束入口。
+
 ## 4. 验收标准
 
 1. 三题表单：不作答，依次滑到底（看过全部）再滑回顶部，点「下一题」（若可见）或每次点都去紧邻的下一题，不跳题。

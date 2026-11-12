@@ -7,7 +7,6 @@ import AHCore
 struct AppTabs<Content: View, Overlay: View>: UIViewControllerRepresentable {
     @Binding var selection: AppTab
     let pendingCount: Int
-    let hidesTabBarWhenCompact: Bool
     let isOverlayInteractive: Bool
     let content: (AppTab) -> Content
     let overlay: () -> Overlay
@@ -51,9 +50,7 @@ struct AppTabs<Content: View, Overlay: View>: UIViewControllerRepresentable {
         if controller.selectedTab?.identifier != selection.rawValue {
             controller.selectedTab = coordinator.tabs[selection]
         }
-        host.hidesTabBarWhenCompact = hidesTabBarWhenCompact
         host.isOverlayInteractive = isOverlayInteractive
-        host.updateTabBarVisibility(animated: context.transaction.animation != nil && !context.transaction.disablesAnimations)
     }
 
     final class Coordinator: NSObject, UITabBarControllerDelegate {
@@ -81,7 +78,6 @@ struct AppTabs<Content: View, Overlay: View>: UIViewControllerRepresentable {
 final class AppTabContainerController: UIViewController {
     let tabs = UITabBarController()
     var overlay: UIViewController?
-    var hidesTabBarWhenCompact = false
     var isOverlayInteractive = false {
         didSet { overlay?.viewIfLoaded?.isUserInteractionEnabled = isOverlayInteractive }
     }
@@ -113,23 +109,6 @@ final class AppTabContainerController: UIViewController {
             ])
             overlay.didMove(toParent: self)
         }
-        // Adapt the native bar in UIKit's trait transition, alongside its navigation containers.
-        registerForTraitChanges([UITraitHorizontalSizeClass.self, UITraitPreferredContentSizeCategory.self]) {
-            (controller: AppTabContainerController, _: UITraitCollection) in
-            controller.updateTabBarVisibility(animated: false)
-        }
-    }
-
-    override func viewIsAppearing(_ animated: Bool) {
-        super.viewIsAppearing(animated)
-        updateTabBarVisibility(animated: false)
-    }
-
-    func updateTabBarVisibility(animated: Bool) {
-        guard isViewLoaded else { return }
-        let compact = traitCollection.horizontalSizeClass != .regular || traitCollection.preferredContentSizeCategory.isAccessibilityCategory
-        let hidden = compact && hidesTabBarWhenCompact
-        if tabs.isTabBarHidden != hidden { tabs.setTabBarHidden(hidden, animated: animated) }
     }
 
     override var childForPreferredVerticalBarBehavior: UIViewController? { tabs }
