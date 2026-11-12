@@ -90,6 +90,7 @@ Macs 的列表栏仍是整页设置（已配对的 Mac、通知、通用、开�
 - `ios/project.yml`：两个 target 的设备族改为 `1,2`，并为 iPad 单独声明四向方向。
 - `Views/Common/ListDetail.swift`：`ListDetailColumns`（容器、窄浮层的可见性状态机、窗口宽度测量）、`ColumnsOrStack`（分栏还是手机的栈：`Columns.applies` 看水平尺寸类与字号）、`Columns` 宽度常量、`readableWidth()`、`DetailPlaceholder`，以及列表栏里的行：`pickable` / `pickButton` / `pickedBackground` / `pickedRow`（按钮 ＋ 淡强调色 ＋ `isSelected` 特征）与 `RowCard`（没选中的行自己画的卡片底色）。
 - 卡片底色（`RowCard`）照系统在侧栏里给的量出来：iOS 26 起列表栏是一块玻璃，卡片是盖在上面的一层标签色薄纱（浅色约黑 6%，深色约白 6.5%），与系统的差不超过 2 级，挨着系统自己画的行（如设置里的「添加 Mac」）看不出接缝；iOS 17–25 就是 `secondarySystemGroupedBackground`；`.plain` 的列表（历史）没有卡片，用透明（`RowCard.plain`）。量过的有 iOS 18.5 的 iPad mini、iOS 26.2 的 iPad、iOS 27.1 的 Duo（浮层与并排；浅色与深色）；其余系统版本没量，系统以后改了卡片颜色会出现细微色差，到时对一下 `RowCard` 里的数。
+- 详情栏里挂在滚动视图上的 UIKit 视图要自己躲开侧栏：iOS 26 起两栏并排时，详情栏的 `UIScrollView` 铺满整个窗口，侧栏的宽度是它的左安全区（`safeAreaInsets.left`；`adjustedContentInset` 里没有，SwiftUI 的 `ScrollView` 自己处理）；SwiftUI 内容会躲开，UIKit 子视图不会。量过的：iPad Pro 11" / iOS 26.2 上窗口 834 pt、滚动视图 0…834、左安全区 330；iOS 18.5 上滚动视图就是右栏 320…834、安全区 0。请求页的下拉头（`PullHeaderView`）因此按安全区摆，见 `ios-session-history.md` S18。
 - `AppStore.openFromList(_:)`：从仍在屏幕上的列表里选一条，等同手机端「回列表再选」。
 - 收件箱：`InboxScreen` 经 `ColumnsOrStack` 走 `InboxColumns`（选中与 `inboxPath` 最后一项双向对应）或原栈。
 - Agents：`AgentsScreen` 同样经 `ColumnsOrStack`；`AgentsColumns` 的选中与 `agentPath.last` 双向对应；标题与按钮抽成 `AgentsBar`，两种容器共用；新建任务的表单与进度页仍是 sheet，挂在 `ColumnsOrStack` 外面。
