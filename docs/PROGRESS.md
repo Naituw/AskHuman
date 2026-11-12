@@ -3,6 +3,18 @@
 记录需要跨会话保留的未完成 / 延期事项和明确下一步。任务 / 需求完成后删除其 section
 （历史留在 git）。
 
+## 待日常观察：Codex 空闲消息的成功回执
+
+2026-11-12 用户反馈手机给空闲 Codex 会话发消息后，Agent 正常回复却每次提示可能失败。
+本机 4 条原生操作均为 `accepted`，AskHuman 对应回执均误留 `unknown`；只读真实快照证实
+操作 UUID 在 `turn.params.clientUserMessageId`／`userMessage.clientId`，旧代码查的是别的字段。
+已在主工作树修复精确关联，运行中与快速完成的回合都能确认送达，并保留会话隔离及防重发规则。
+脱敏真实结构的回归在原代码下失败，修复后消息控制 24 项通过、生产目标 Clippy 与安装通过；
+装机后两条真实历史错误回执已自动变成 `started`，回合 ID 与原生快照完全相同，没有发送新模型请求。
+规格见 [Codex 桌面接入](specs/codex-desktop-session-integration.md)。证据在
+`/tmp/askhuman-codex-receipt-regression-before-run.log`、`/tmp/askhuman-codex-receipt-tests.log`。
+这项修复只需更新 Mac；下一步在手机日常给空闲 Codex 会话发一条消息，确认不再误报，完成后删除本节。
+
 ## 待真机验收：iOS 标签栏常驻
 
 2026-11-12 用户确认在主工作树取消请求／确认、Agent、项目待办详情的主动隐藏规则；列表与详情都保留系统标签栏，不再由尺寸类、字号或导航深度控制显隐。键盘与模态呈现仍由系统管理。约定见 [作答流程 §3.9](specs/ios-answer-flow.md#39-详情页保留标签栏2026-11-12) 与 [大屏规格](specs/ios-large-screen.md)。

@@ -674,11 +674,23 @@ pub(super) fn observe_desktop(
     let turns = crate::codex_desktop::protocol::turns(&session.state);
     if let Some(turn) = turns.last() {
         if let Some((event, mut observation)) = desktop_observation(turn) {
-            let ids: Vec<&str> = crate::codex_desktop::protocol::entities(&turn["items"])
+            // The App preserves our UUID separately from the server-generated message id.
+            let ids: Vec<&str> = turn["params"]["clientUserMessageId"]
+                .as_str()
                 .into_iter()
-                .filter(|item| item["type"] == "userMessage")
-                .flat_map(|item| [item["id"].as_str(), item["clientUserMessageId"].as_str()])
-                .flatten()
+                .chain(
+                    crate::codex_desktop::protocol::entities(&turn["items"])
+                        .into_iter()
+                        .filter(|item| item["type"] == "userMessage")
+                        .flat_map(|item| {
+                            [
+                                item["id"].as_str(),
+                                item["clientId"].as_str(),
+                                item["clientUserMessageId"].as_str(),
+                            ]
+                        })
+                        .flatten(),
+                )
                 .collect();
             observation.control_operation_id =
                 state
@@ -1257,6 +1269,70 @@ mod tests {
             let en = message_refusal(reason, Lang::En);
             assert!(!zh.is_empty() && !en.is_empty(), "{reason}");
             assert_ne!(zh, en, "{reason}");
+        }
+    }
+
+    #[test]
+    fn desktop_turns_confirm_the_native_client_message_identity() {
+        // Captured Desktop snapshots keep the submitted UUID in params.clientUserMessageId
+        // and userMessage.clientId; the item's id is a different, server-generated UUID.
+        for status in ["inProgress", "completed"] {
+            for identity_in_params in [false, true] {
+                let directory = tempfile::tempdir().unwrap();
+                let state = state(directory.path());
+                let id = uuid::Uuid::new_v4().to_string();
+                state
+                    .agent_controls
+                    .begin(Operation {
+                        id: id.clone(),
+                        kind: AgentKind::Codex,
+                        session_id: "desktop".into(),
+                        phone_id: "phone".into(),
+                        generation: None,
+                        text: "hello".into(),
+                        files: vec![],
+                        expected_result_id: None,
+                        status: "queued".into(),
+                        reason: None,
+                        turn_id: None,
+                    })
+                    .unwrap();
+                state.agent_controls.finish(&id, "accepted", None).unwrap();
+                let mut turn = json!({"turnId":"native-turn", "status":status,
+                    "items":[{"type":"userMessage", "id":"server-message", "text":"hello"}]});
+                if identity_in_params {
+                    turn["params"] = json!({"clientUserMessageId":id});
+                } else {
+                    turn["items"][0]["clientId"] = json!(id);
+                }
+                let session = crate::codex_desktop::Session {
+                    connected: true,
+                    meta: Some(crate::codex_desktop::SessionMeta {
+                        id: "desktop".into(),
+                        title: "Chat".into(),
+                        cwd: "/tmp/project".into(),
+                    }),
+                    state: Arc::new(json!({"turnHistory":{"kind":"canonical", "history":{
+                        "islands":[{"entries":[{"value":"tail"}]}], "entitiesByKey":{"tail":turn}
+                    }}})),
+                    ..Default::default()
+                };
+                // A matching message UUID in a different session cannot acknowledge this send.
+                observe_desktop(&state, "other-session", &session);
+                assert_eq!(
+                    state.agent_controls.existing(&id).unwrap().unwrap().status,
+                    "accepted"
+                );
+                observe_desktop(&state, "desktop", &session);
+                let operation = state.agent_controls.existing(&id).unwrap().unwrap();
+                assert_eq!(
+                    operation.status, "started",
+                    "{status}, params={identity_in_params}"
+                );
+                assert_eq!(receipt(&operation).status, "delivered");
+                assert_eq!(operation.turn_id.as_deref(), Some("native-turn"));
+                assert!(!state.agent_controls.pending(AgentKind::Codex, "desktop"));
+            }
         }
     }
 
