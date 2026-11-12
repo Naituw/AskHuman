@@ -1,6 +1,6 @@
 # 计划：iOS 请求页查看「此会话的历史问答」
 
-> 需求：`docs/specs/ios-session-history.md`（决策编号 S1–S17 均指其 §3）。状态：2026-11-11 用户批准需求与本计划，2026-11-12 实施完成（待真机验收），提交、偏差与验证见文末「实施记录」。下文各阶段的文件名是起草时的设想，**实际以「实施记录」为准**。
+> 需求：`docs/specs/ios-session-history.md`（决策编号 S1–S19 均指其 §3）。状态：2026-11-11 用户批准需求与本计划，2026-11-12 实施完成（待真机验收），提交、偏差与验证见文末「实施记录」。下文各阶段的文件名是起草时的设想，**实际以「实施记录」为准**。**2026-11-12 追加「下拉的重新设计」（R0–R4，见文末），用户评审中、代码还没动**：它取代下面 P1 结论里「触发」一项（`UIRefreshControl`）与 P5 里与之相关的描述，前插补偿等其余结论仍然有效。
 > 工作方式：**在主工作树开发**（用户 2026-11-11 定，要求一次做完、次日早上查收）；P1 原型不过关就停下来问用户，不自行改方案。主工作树里还有别人未提交的改动，本功能只提交自己的文件，不碰别的。
 
 ## 阶段
@@ -49,6 +49,8 @@ S2 与 S12 成不成，只取决于一件事：**在 SwiftUI `ScrollView` 的上
 **产出**：本节末尾写结论（选 A 或 B，补偿的具体做法与踩到的坑）；原型代码留作 P5 的起点（去掉启动参数）。**两种都不过关**：停下来用 AskHuman 问用户（会动 S2 / S12，不自行改方案）。两种都过，选代码更少的那个，不必问。
 
 ### P1 结论（2026-11-12，iPhone 16 / iOS 18.5 模拟器）
+
+> 2026-11-12 追记：下面「触发」用的 `UIRefreshControl` 已被文末「追加：下拉的重新设计」取代（用户觉得系统转圈像在刷新消息）；「补偿」「踩到的坑」里与前插有关的部分仍是后续做法的基础。
 
 **选 B**（`UIRefreshControl` 挂到 SwiftUI 的 `UIScrollView`）。判据 1–5 全部满足，没有动 S2 / S12。
 
@@ -193,3 +195,87 @@ P1 的原型不单独提交，结论写进本计划，代码并入第 4 条。
 - **最大字号**（`AccessibilityXXXL`，同一次截图里看的）：卡片铺满宽度、文字清楚，断言通过；但「回到当前提问」胶囊也跟着放大，折成三行，盖住卡片的一块。没有给它限定字号，要不要限定是个小的设计选择，留给用户看过截图再定。
 
 **没做 / 留给真机**：iOS 27 上普通 iPhone 的手感（只在 Duo 外屏的模拟器上验过）、真机一轮、真实 Mac 加手机界面的一轮（需要真实服务与签名，只有引擎一层有真实 daemon 的端到端）、TestFlight 出包（用户没要）。页面过渡的快照（`RequestPageCapture`）会带上已加载的线程，只是过渡动画里的内存快照，没有专门的视觉断言。
+
+## 追加：下拉的重新设计（R0–R4，2026-11-12）
+
+> 需求：规格的 **S18、S19**，以及改写过的 S2、S4、S12 与 §4、§7.3、§12–§14。原因：用户用过第一版后说系统的下拉控件「让人以为是刷新消息」，要求重新设计并与他讨论；讨论结果（自绘、安静款、松手留一行空地、文字 shimmer、请求不动）已写进规格，图稿在 `docs/assets/ios-session-history/`。
+> 状态：规格与本节在评审中，**代码还没动**。只改手机界面：不碰线协议、Mac 端、`SessionThread` 的取数逻辑；`PROTO` 与 `PROTOCOL_VERSION` 都不动。
+
+### 阶段
+
+| 阶段 | 内容 | 验证 |
+|---|---|---|
+| R0 | 规格与本节（含两张图稿） | 用户评审通过后提交 |
+| R1 | **原型关卡（决定性）**：只在手机界面里、用 Mock 场景，验证「自绘下拉头 + 松手持住一行空地 + 历史到达时请求不动」，选定做法 | 原型的 UI 测试（含逐帧采样）+ 模拟器上手看；结论写进下面的「R1 结论」 |
+| R2 | 实现：下拉状态机（纯类型）、下拉头与持住、顶端状态行、`ShimmerText`（含菜单胶囊）、去掉 `UIRefreshControl`、本地化 | `swift test`；`xcodebuild build` → `make-catalog.py` |
+| R3 | UI 测试改写与验证：会话历史类在 iPhone iOS 18.5（en + zh-Hans）、iOS 26.2、iPad、Duo 外屏；相关既有类回归；给用户看的真实截图序列 | `xcodebuild test`（模拟器，前台跑） |
+| R4 | 文档同步：总览、使用说明（中英）、`PROGRESS.md`、本节的实施记录 | 提交 |
+
+R1 不过关不进 R2。
+
+### R1 细节（原型）
+
+要验证的只有一件事：**在 SwiftUI 的 `ScrollView` 上自绘下拉、持住一行空地，历史到达时请求纹丝不动。** 方案先试 A；A 不过再试 B；都不过关就停下来问用户。
+
+- **A：用 `contentInset.top` 持住**（自绘下拉刷新的经典做法，回弹交给系统的弹簧，不用自己做动画）。
+  - **手势**：给滚动视图自己的 `panGestureRecognizer` 加一个 target（开始 / 变化 / 结束），再加已有的 `contentOffset` KVO；越界量 = `-(contentOffset.y + adjustedContentInset.top)`，只在 `isTracking` 时计。
+  - **下拉头**：UIKit 子视图（图标 + 标签），位置在内容原点上方 `[-H, 0]`，随内容一起动，不比内容晚一帧；静止时透明度为 0（否则会从半透明的导航栏后面透出来）；颜色用动态色（`secondaryLabel` / `label`）。
+  - **松手已过阈值**：在手势结束的回调里用 `UIView.animate` 把 `contentInset.top` 加上 H，页面弹到「空地」处停住；下拉头换成「正在加载历史…」（shimmer 用 `CAGradientLayer` 做遮罩动画，或承载 SwiftUI 的 `ShimmerText`，原型里选省事的）。
+  - **到达**：沿用现在的等待（页面停住，手指抬起后至多 1.5 秒，手指不放最多 10 秒）→ `prepareInsertion()` → 去掉下拉头、`contentInset.top` 还原 → 线程插入；补偿沿用 `reconcile()`（锚点是 `request-top`）。顶端状态行的最小高度 = H，所以失败 / 读到头时偏移刚好落在静止位置，不需要动画。
+  - **要最先验证**：SwiftUI 会不会把 `contentInset` 改回去（会，就和 `alwaysBounceVertical` 一样用 KVO，被改掉的那一刻放回去）。
+- **B：松手即把空地做成页面内容**：松手已过阈值的同一帧里，顶端状态行以 H 高度进入内容，`contentOffset` 同时补偿 H（屏幕上不跳）；用 `setContentOffset(_, animated: false)` 停住系统的回弹，再自己用弹簧把页面送到静止位置。比 A 更「SwiftUI」，但要接管回弹的手感，排第二。
+
+**判据**（全部满足才算过；逐帧采样沿用 P1 的做法，运行循环 observer 挂在 CA 提交之后，采样请求锚点相对视口的位置，用完拿掉）：
+
+1. 松手已过阈值：页面停在「留出一行」的位置，`request-title` 比拉之前低 H（±1 pt），停住前后没有闪动或回跳；停住之后手指拖动页面，空地与请求一起动，滚走再滚回来都正常，页面不被锁住；
+2. 到达（页面静止在顶部）：采样的每一帧里请求锚点相对视口的位置都不变，最新一条往来的下沿与「当前提问」分隔线出现在空地里；
+3. 到达时页面不在顶部（用户已经往下滚了）：屏幕上看到的东西一点没变；到达时手指按着或页面还在滑动：等停下再换，之后同 2；
+4. 失败与读到头：那一行与空地等高、请求不动；点「重试」，同一行回到加载状态；
+5. 没过阈值松手：不加载、没有空地、页面照常弹回；下拉头只在手指按着时出现，惯性冲出去的越界与程序滚动都没有；
+6. 短页、长页、键盘弹起、iPad、折叠屏外屏都能拉起并持住；SwiftUI 的更新（`@Observable` 变化、键盘出入、「下一题」）不会把 `contentInset` 或持住的位置冲掉；
+7. 与阅读位置还原（`RequestScrollPosition`，含 `intent`）、「下一题」、已结束页的「停留」（S13）、「回到当前提问」胶囊互不干扰；
+8. 「减弱动态效果」开 / 关各一遍。
+
+**产出**：在本节末尾写「R1 结论」（选 A 还是 B、踩到的坑、定下来的数字）；原型代码留作 R2 的起点（去掉临时插桩）。**A、B 都不过关**：停下来用 AskHuman 问用户（会动 S19，不自行改方案）。已知的备选是「松手后页面完全回弹、空地再以动画展开」：文字会先消失再出现，与用户要的「文字留在那」不一致，所以只能由用户来定。
+
+### R2 细节（实现）
+
+1. `AHCore/HistoryPull.swift`（新，纯值类型，不依赖 UIKit）：输入 `update(overscroll:tracking:enabled:)` 与 `released()`；输出阶段（`idle / pulling(progress) / armed / holding`）、下拉头的透明度与图标旋转量、「刚从下往上越过阈值」事件（轻震）、松手时是否触发。阈值、死区、淡入距离是常量，原型里调定后写回规格 S18。单元测试 `AHCoreTests/HistoryPullTests.swift`。
+2. `Views/Request/PullHeader.swift`（新）：下拉头的 UIKit 视图（图标 + 标签，动态字体、动态色），对 VoiceOver 隐藏。
+3. `Views/Request/ShimmerText.swift`（新，SwiftUI）：灰字加一道主文字色高光循环扫过；「减弱动态效果」时是静态的灰字。`SessionLoadingPill`（菜单入口的胶囊）的字改用它。
+4. `SessionThreadView` 的顶端：`SessionStateRow`（加载中 / 错误 / 没有更早的记录，三态同一个最小高度，`@ScaledMetric`）取代现在的 `topRow`；点「重试」时同一行回到加载中。（读代码看，第一版里重试一开始错误行就收起、下面的内容会跟着动，没有实测；三态同高就不存在这个问题。）
+5. `ThreadScrollCoordinator`：去掉 `UIRefreshControl` 与它的 `refreshControl` KVO（`alwaysBounceVertical` 的 KVO 保留）；接上手势、状态机、轻震（`UIImpactFeedbackGenerator(style: .light)`）、持住与放开；`RequestHistory.pull()` 改成松手触发，`loadFinished()` 改为放开持住。`farAbove`、菜单入口、`retry()`、`returnToCurrent()` 不变。**不动 `RequestScrollPosition`**。
+6. 无障碍与测试挂钩：下拉头对 VoiceOver 隐藏；加载开始时 `UIAccessibility.post(.announcement, …)` 读出「正在加载历史」；留一个只在状态变化时更新的无障碍元素（`session-pull-state`，值是 `idle / pulling / armed / loading`），UI 测试靠它读状态，不依赖 UIKit 子视图是否出现在 SwiftUI 的无障碍树里。
+7. 文案（英文为源语言，补 zh-Hans）：「Pull down to see this session's history」「Release to see this session's history」「Pull down to load earlier records」「Release to load earlier records」；既有的「Loading history…」「No earlier records」「Can't reach the Mac」「Try again」不变。`ios/Tools/make-catalog.py` 缺中文会失败。新增 Swift 文件后在 `ios/` 下 `xcodegen generate`。
+
+### R3 细节（验证）
+
+- **UI 测试**（`AskHumanSessionHistoryUITests`）：`pull(from:to:inWindow:)` 留着；断言改成：松手后请求比拉之前低一行空地（±2 pt），历史到达前后请求位置不变（±1 pt）；没拉到阈值松手不加载、不留空地；空地里是「正在加载历史…」（`session-pull-state` 为 `loading`）。Mock 的延迟用新增的启动参数 `-AHHistoryDelay <秒>` 拉长（只给会话历史用），好让「持住」的那段能被看到。键盘弹起的那条在 iPad 上不再跳过（阈值是我们自己的）；iPad、最大字号、深色各一条照旧。
+- **验证矩阵**：iPhone 16 / iOS 18.5（en + zh-Hans）、iPhone 17 / iOS 26.2（临时建，跑完删）、iPad Pro 11 / iOS 18.5、Duo 外屏 / iOS 27.2（只看下拉相关的几条，其余是已知的外屏假设）。回归只跑与线程和页面滚动相关的类：`AskHumanSessionHistoryUITests`、`AskHumanEndedUITests`、`AskHumanRequestNavigationUITests`、`AskHumanLargeScreenUITests`（这次不动共享的 `RequestScrollPosition`，范围比第一版小）。`swift test` 全跑。
+- **给用户看的东西**：UI 测试里在三个时刻截图（拉过阈值、持住加载中、到达），拼成一条序列用 AskHuman 发给用户；轻震和真实手感只能在真机上验，模拟器没有触觉。
+- 构建与测试前先 `node scripts/machine-health.mjs`；用独立的 `-derivedDataPath`（`build/DerivedDataPull`），不与同一棵树里别的会话互相覆盖。
+
+### R4 细节（文档同步）
+
+`docs/overview-ios.md`「请求页的会话历史」一条（现在写着 `UIRefreshControl` 与它的两处 KVO）、`docs/wiki/ios-setup.md` 与英文版（下拉的样子）、`docs/PROGRESS.md`（真机那一条里与系统控件触发距离、转圈时长有关的话改成新的验收点：阈值与空地的手感、轻震、shimmer）、本节的实施记录。
+
+### 提交（Conventional Commits）
+
+1. `docs(ios): redesign the session history pull in spec and plan`（R0，含图稿）
+2. `feat(ios): draw the session history pull ourselves instead of the refresh spinner`（R1–R3，代码与测试；`Release-Note: skip`——第一版没发布过，用户看不到转圈版，更新说明里已有「加载会话更早的回答」那一条）
+3. `docs(ios): sync overview, wiki and progress with the history pull redesign`（R4）
+
+### 风险
+
+1. **SwiftUI 与 `contentInset`**（R1 第一件事）：SwiftUI 管理滚动视图的内边距，持住用的 `contentInset.top` 可能被改回去；用 KVO 放回，不行就走方案 B，再不行问用户。
+2. **自己跟踪手势**：iOS 18.5 / 26.2 / 27 上 `panGestureRecognizer` 的状态与 `isTracking` 的时序可能略有差异；状态机是纯类型、单测覆盖，手势这层的接线靠各个运行时上的 UI 测试。
+3. **UIKit 下拉头不一定出现在 SwiftUI 的无障碍树里**：UI 测试不依赖它，读 `session-pull-state`（R2 第 6 条）。
+4. **下拉头从导航栏后面透出来 / 静止时露出一条边**：静止时透明度为 0，随拉出的距离淡入，R1 的判据 5 守着。
+5. **轻震与「手感」只能在真机上验**：阈值（约 72 pt）、空地（约 64 pt）都是初值；真机一轮由用户来看，不满意就改常量，不动结构。
+6. **主工作树里还有别的会话在改 iOS 的「流量统计」**（`Messages.swift`、`Localizable.xcstrings`、`PROGRESS.md` 等已有未提交的改动，仍在变）：只提交本功能的文件；与它共用的文件（字符串目录、`PROGRESS.md`）用 `git apply --cached` 只暂存自己的那几处，不夹带对方的改动；编译前看有没有别的 `xcodebuild` 在跑，没有再 `xcodegen generate`，也不与对方的模拟器抢同一台设备。
+
+### 开工前定下的事
+
+- **执行位置**：沿用用户 2026-11-11 选的主工作树（见上文「开工前定下的事」），不再问。
+- **TestFlight**：不主动出（用户要时按 `ios-testflight` skill，默认同时发 Internal 与 Friends）。
+- **R1 没过关就不进 R2**；A、B 都不过关就问用户。
