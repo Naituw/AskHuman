@@ -1,14 +1,12 @@
 <script setup lang="ts">
 // 顶部导航栏：来源头部（agent/workspace 胶囊 + 相对时间）+ 右侧动作（自更新入口/置顶/待办/
-// 历史/设置）。多根组件：navbar 之外还含自更新浮层背板、待办浮层背板与「更新待生效」横条（保持
-// .popup 的 flex 子级顺序）。待办按钮：请求有项目时展开「添加待办」浮层（docs/specs/todo-quick-add.md），
-// 否则直接打开待办窗口。
+// 历史/设置）。多根组件：navbar 之外还含自更新浮层背板与「更新待生效」横条（保持 .popup 的
+// flex 子级顺序）。待办按钮直接打开待办窗口（预选当前项目）；在页内清单里添加待办见
+// docs/specs/todo-list-actions.md。
 import { computed } from "vue";
 import SessionIcon from "../../components/SessionIcon.vue";
 import SourcePopover from "./SourcePopover.vue";
-import TodoPopover from "./TodoPopover.vue";
 import { useI18n } from "vue-i18n";
-import { primaryShortcutLabel } from "../../lib/platform";
 import { usePopupContext } from "./context";
 import { usePopupWindowTitle } from "./usePopupWindowTitle";
 
@@ -50,15 +48,10 @@ const {
   shrinkWindow,
   agentConsoleAvailable,
   openAgentConsoleWindow,
-  todoPopoverOpen,
-  todoPopoverAvailable,
-  onTodoButtonClick,
-  closeTodoPopover,
+  openTodosWindow,
   openHistoryWindow,
   openSettingsWindow,
 } = usePopupContext();
-
-const todoShortcut = primaryShortcutLabel("t");
 
 // The Agent session title: drawn in the title strip on macOS, written into the native window title elsewhere.
 const sessionTitle = computed(() => {
@@ -234,16 +227,11 @@ usePopupWindowTitle(sessionTitle, popupActive);
             <path d="M7 13h2l2-4 3 7 2-4h2" />
           </svg>
         </button>
-        <!-- mousedown.prevent keeps the focus where it is, so closing the popover can hand it back. -->
         <button
           class="nav-btn"
-          :class="{ active: todoPopoverOpen }"
           type="button"
-          :title="todoPopoverAvailable ? t('popup.nav.todosPopover', { shortcut: todoShortcut }) : t('popup.nav.todos')"
-          :aria-haspopup="todoPopoverAvailable ? 'dialog' : undefined"
-          :aria-expanded="todoPopoverAvailable ? !!todoPopoverOpen : undefined"
-          @mousedown.prevent
-          @click.stop="onTodoButtonClick"
+          :title="t('popup.nav.todos')"
+          @click="openTodosWindow"
         >
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">
             <rect x="3" y="4" width="18" height="16" rx="3" />
@@ -274,8 +262,6 @@ usePopupWindowTitle(sessionTitle, popupActive);
             <path d="M19.4 15a1.6 1.6 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.6 1.6 0 0 0-1.8-.3 1.6 1.6 0 0 0-1 1.5V21a2 2 0 0 1-4 0v-.1a1.6 1.6 0 0 0-1-1.5 1.6 1.6 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.6 1.6 0 0 0 .3-1.8 1.6 1.6 0 0 0-1.5-1H3a2 2 0 0 1 0-4h.1a1.6 1.6 0 0 0 1.5-1 1.6 1.6 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.6 1.6 0 0 0 1.8.3H9a1.6 1.6 0 0 0 1-1.5V3a2 2 0 0 1 4 0v.1a1.6 1.6 0 0 0 1 1.5 1.6 1.6 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.6 1.6 0 0 0-.3 1.8V9a1.6 1.6 0 0 0 1.5 1H21a2 2 0 0 1 0 4h-.1a1.6 1.6 0 0 0-1.5 1z" />
           </svg>
         </button>
-        <!-- Positioned against .nav-actions (the buttons row is static), below the buttons like the update popover. -->
-        <TodoPopover v-if="todoPopoverOpen" />
       </span>
     </span>
   </header>
@@ -283,13 +269,6 @@ usePopupWindowTitle(sessionTitle, popupActive);
     v-if="updatePopoverOpen"
     class="update-backdrop"
     @click="updatePopoverOpen = false"
-  ></div>
-  <!-- A click outside the todo popover closes it; mousedown.prevent keeps the focus for the hand-back. -->
-  <div
-    v-if="todoPopoverOpen"
-    class="todo-backdrop"
-    @mousedown.prevent
-    @click="closeTodoPopover()"
   ></div>
   <div v-if="updatePending" class="update-pending-banner">
     {{ t("popup.update.pendingBanner") }}

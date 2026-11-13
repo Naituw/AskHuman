@@ -764,202 +764,6 @@
   display: flex;
   justify-content: flex-end;
 }
-/* 顶栏「添加待办」浮层（docs/specs/todo-quick-add.md）：定位参照 .nav-actions（按钮行本身是 static），
-   紧贴按钮行下方、右对齐，与更新浮层同一套层级（背板 40 / 浮层 50）。 */
-.todo-backdrop {
-  position: fixed;
-  inset: 0;
-  z-index: 40;
-}
-.todo-popover {
-  position: absolute;
-  top: 34px;
-  right: 0;
-  z-index: 50;
-  box-sizing: border-box;
-  width: min(340px, calc(100vw - 24px));
-  max-height: min(70vh, 460px);
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-  padding: 12px;
-  background: var(--surface-overlay);
-  border: 1px solid var(--border, rgba(127, 127, 127, 0.2));
-  border-radius: 10px;
-  box-shadow: 0 8px 28px rgba(0, 0, 0, 0.28);
-  text-align: left;
-  /* .nav-actions lets pointer events through to the draggable navbar; the popover takes them back. */
-  pointer-events: auto;
-}
-/* Only the list gives way when the popover hits its maximum height. */
-.todo-popover > * {
-  flex: 0 0 auto;
-}
-.todo-popover > .tp-list {
-  flex: 0 1 auto;
-}
-.tp-title {
-  margin: 0;
-  font-size: 13px;
-  font-weight: 600;
-  color: var(--text-primary);
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-.tp-input {
-  display: block;
-  box-sizing: border-box;
-  width: 100%;
-  min-height: 32px;
-  max-height: 96px;
-  padding: 6px 8px;
-  resize: none;
-  border: 1px solid var(--border, rgba(127, 127, 127, 0.3));
-  border-radius: var(--radius-md);
-  background: var(--bg-elevated);
-  color: var(--text-primary);
-  font: inherit;
-  font-size: 13px;
-  line-height: 1.4;
-  outline: none;
-}
-.tp-input:focus {
-  border-color: var(--accent);
-  box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent) 22%, transparent);
-}
-.tp-error {
-  margin: 0;
-  font-size: 11px;
-  color: #ff453a;
-  white-space: pre-wrap;
-}
-.tp-compose {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 8px;
-}
-.tp-hint {
-  font-size: 11px;
-  color: var(--text-secondary);
-}
-.tp-list {
-  min-height: 0;
-  overflow-y: auto;
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-  /* A hairline separates the form from the queue. */
-  padding-top: 6px;
-  border-top: var(--hairline) solid var(--border);
-}
-.tp-row {
-  display: flex;
-  align-items: flex-start;
-  gap: 6px;
-  padding: 4px 6px;
-  border-radius: 6px;
-}
-.tp-row:hover {
-  background: var(--control-hover-bg);
-}
-.tp-row.added {
-  animation: tp-added 1.2s ease-out;
-}
-@keyframes tp-added {
-  from {
-    background: color-mix(in srgb, var(--accent) 26%, transparent);
-  }
-  to {
-    background: transparent;
-  }
-}
-@media (prefers-reduced-motion: reduce) {
-  .tp-row.added {
-    animation: none;
-    background: color-mix(in srgb, var(--accent) 14%, transparent);
-  }
-}
-.tp-text {
-  flex: 1 1 auto;
-  min-width: 0;
-  font-size: 12px;
-  line-height: 1.45;
-  color: var(--text-primary);
-  overflow-wrap: anywhere;
-  display: -webkit-box;
-  -webkit-box-orient: vertical;
-  -webkit-line-clamp: 2;
-  overflow: hidden;
-}
-.tp-badge {
-  margin-left: 6px;
-  color: var(--text-secondary);
-  white-space: nowrap;
-}
-.tp-del {
-  flex: 0 0 auto;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  width: 18px;
-  height: 18px;
-  margin-top: 1px;
-  border: none;
-  border-radius: 50%;
-  background: transparent;
-  color: var(--text-muted, #8e8e93);
-  opacity: 0;
-  cursor: default;
-}
-.tp-row:hover .tp-del,
-.tp-del:focus-visible {
-  opacity: 1;
-}
-.tp-del:hover {
-  background: rgba(128, 128, 128, 0.2);
-  color: var(--text-secondary);
-}
-.tp-del-confirm {
-  flex: 0 0 auto;
-  margin-top: 1px;
-  padding: 1px 8px;
-  border: 1px solid color-mix(in srgb, #ff453a 45%, transparent);
-  border-radius: 6px;
-  background: color-mix(in srgb, #ff453a 12%, transparent);
-  color: #ff453a;
-  font-size: 11px;
-  font-weight: 600;
-  white-space: nowrap;
-  cursor: default;
-}
-.tp-del-confirm:hover {
-  background: color-mix(in srgb, #ff453a 22%, transparent);
-}
-.tp-empty {
-  margin: 0;
-  padding: 6px 0 2px;
-  border-top: var(--hairline) solid var(--border);
-  font-size: 12px;
-  color: var(--text-secondary);
-}
-.tp-open {
-  align-self: flex-start;
-  display: inline-flex;
-  align-items: center;
-  gap: 4px;
-  padding: 2px 4px;
-  border: none;
-  border-radius: 5px;
-  background: transparent;
-  color: var(--accent);
-  font-size: 12px;
-  cursor: default;
-}
-.tp-open:hover {
-  background: color-mix(in srgb, var(--accent) 12%, transparent);
-}
 .update-pending-banner {
   flex: 0 0 auto;
   font-size: 12px;
@@ -2067,7 +1871,7 @@ mark.popup-find-hit-current,
 .qr-banner-action:disabled { opacity: 0.5; }
 .qr-banner-error { flex: 0 0 auto; margin: 6px var(--space-4) 0; }
 /* 待办下拉区（spec todo-whats-next D7 第 11 轮改版）：内容区里、最后一个问题之后。
-   收起＝一行「▸ 待办 N」；展开＝复用 .options/.option（与预选答案同构）+ 行内删除。 */
+   收起＝一行「▸ 待办 N」；展开＝复用 .options/.option（与预选答案同构）+ 行内完成/删除 + 末尾添加行。 */
 .todo-section {
   display: flex;
   flex-direction: column;
@@ -2117,18 +1921,30 @@ mark.popup-find-hit-current,
   color: var(--accent, #0a84ff);
   font-size: 11px;
 }
-/* 不可选（严格选择）：无勾选框，正文淡显，仅保留删除。 */
+/* 不可选（严格选择）：无勾选框，正文淡显，动作照常。 */
 .todo-option.static .label {
   color: var(--text-secondary);
 }
-.todo-option .todo-del {
+
+/* ---- 待办清单的行内动作与添加行（docs/specs/todo-list-actions.md） ----
+   折叠区、What's next、Stop 确认共用：✓ 完成 / ✕ 删除在指针移入或键盘焦点进入该行时出现；
+   ✓ 先划线、留 1 秒「撤销」；✕ 要再点一次「确认删除」。 */
+.todo-acts {
+  flex: 0 0 auto;
+  align-self: flex-start;
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  margin-left: 2px;
+}
+.todo-act {
   flex: 0 0 auto;
   display: flex;
   align-items: center;
   justify-content: center;
-  width: 18px;
-  height: 18px;
-  margin-top: 1px;
+  width: 20px;
+  height: 20px;
+  padding: 0;
   border: none;
   border-radius: 50%;
   background: transparent;
@@ -2136,29 +1952,221 @@ mark.popup-find-hit-current,
   opacity: 0;
   cursor: default;
 }
-.todo-option:hover .todo-del {
+.option:hover .todo-act,
+.option:focus-within .todo-act,
+.todo-act:focus-visible {
   opacity: 1;
 }
-.todo-option .todo-del:hover {
+.todo-act:hover:not(:disabled) {
   background: rgba(128, 128, 128, 0.2);
   color: var(--text-secondary);
 }
-/* 删除二次确认态：✕ 变红色文字按钮，再点才真正删除（常显，不随 hover 隐藏）。 */
-.todo-option .todo-del-confirm {
+.todo-act-done:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--accent-green) 20%, transparent);
+  color: color-mix(in srgb, var(--accent-green) 80%, var(--text-primary));
+}
+.todo-act:disabled {
+  cursor: default;
+}
+/* 完成：整行立刻划线、保留位置约 1 秒，「撤销」是唯一还可用的动作。 */
+.option.todo-completing {
+  background: var(--control-bg);
+  border-color: var(--control-border);
+}
+.option.todo-completing .label {
+  color: var(--text-tertiary);
+  text-decoration: line-through;
+  text-decoration-thickness: 1px;
+}
+.option.todo-completing .todo-option-badge,
+.option.todo-completing .todo-attachment-badge,
+.option.todo-completing .todo-file-count,
+.option.todo-completing .opt-sc {
+  opacity: 0.45;
+}
+.option.todo-completing .check {
+  border-radius: 50%;
+  border-color: var(--accent-green);
+  background: var(--accent-green);
+  color: #fff;
+}
+.todo-undo {
   flex: 0 0 auto;
-  margin-top: 1px;
-  padding: 1px 8px;
+  height: 20px;
+  padding: 0 7px;
+  border: none;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--accent);
+  font: inherit;
+  font-size: 12px;
+  font-weight: 500;
+  cursor: default;
+}
+.todo-undo:hover {
+  background: color-mix(in srgb, var(--accent) 12%, transparent);
+}
+/* 删除二次确认态：✕ 变红色文字按钮，再点才真正删除（常显，点别处放弃）。 */
+.todo-del-confirm {
+  flex: 0 0 auto;
+  height: 20px;
+  padding: 0 8px;
   border: 1px solid color-mix(in srgb, #ff453a 45%, transparent);
   border-radius: 6px;
   background: color-mix(in srgb, #ff453a 12%, transparent);
   color: #ff453a;
+  font: inherit;
   font-size: 11px;
   font-weight: 600;
   white-space: nowrap;
   cursor: default;
 }
-.todo-option .todo-del-confirm:hover {
+.todo-del-confirm:hover:not(:disabled) {
   background: color-mix(in srgb, #ff453a 22%, transparent);
+}
+/* 刚添加的待办：行底色淡淡点亮约 1.2 秒再褪去（不自动选中）。 */
+.option.todo-added {
+  animation: todo-added 1.2s ease-out;
+}
+@keyframes todo-added {
+  from {
+    background: color-mix(in srgb, var(--accent) 24%, var(--control-bg));
+  }
+  to {
+    background: var(--control-bg);
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .option.todo-added {
+    animation: none;
+    background: color-mix(in srgb, var(--accent) 14%, var(--control-bg));
+  }
+}
+
+/* 清单末尾的添加行：虚线「＋ 添加待办」，点开后原地变成多行输入。 */
+.todo-add-wrap {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.todo-add {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 9px 12px;
+  border: 1px dashed color-mix(in srgb, var(--text-primary) 24%, transparent);
+  border-radius: var(--radius-md);
+  background: transparent;
+  color: var(--text-secondary);
+  font: inherit;
+  font-size: 14px;
+  line-height: 20px;
+  text-align: left;
+  cursor: default;
+}
+button.todo-add {
+  box-sizing: border-box;
+  width: 100%;
+}
+button.todo-add:hover:not(:disabled) {
+  background: var(--control-hover-bg);
+  color: var(--text-primary);
+}
+button.todo-add:disabled {
+  opacity: 0.5;
+}
+.todo-add-ico {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 20px;
+}
+.todo-add-label {
+  flex: 1 1 auto;
+}
+.todo-add.editing {
+  border: 1px solid color-mix(in srgb, var(--accent) 55%, var(--control-border));
+  background: var(--control-bg);
+  box-shadow: var(--focus-ring), var(--clickable-shadow);
+  color: var(--text-primary);
+}
+.todo-add.editing .todo-add-ico {
+  color: var(--accent);
+}
+.todo-add-field {
+  flex: 1 1 auto;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+}
+.todo-add-input {
+  display: block;
+  box-sizing: border-box;
+  width: 100%;
+  min-height: 20px;
+  max-height: 112px;
+  margin: 0;
+  padding: 0;
+  resize: none;
+  border: none;
+  outline: none;
+  background: transparent;
+  color: var(--text-primary);
+  font: inherit;
+  font-size: 14px;
+  line-height: 20px;
+}
+/* The editing row around the field already shows the focus ring; the global :focus-visible ring would draw a second box. */
+.todo-add-input:focus,
+.todo-add-input:focus-visible {
+  box-shadow: none;
+}
+.todo-add-input::placeholder {
+  color: var(--text-tertiary);
+}
+.todo-add-hint {
+  flex: 0 0 auto;
+  align-self: center;
+  font-size: 11px;
+  line-height: 1;
+  color: var(--text-secondary);
+  white-space: nowrap;
+}
+.todo-add-hint kbd {
+  margin-right: 3px;
+  padding: 3px 5px;
+  border: var(--hairline) solid var(--border);
+  border-radius: 5px;
+  background: var(--bg-elevated);
+  font-family: inherit;
+  font-size: 11px;
+}
+.todo-add-error,
+.todo-add-note {
+  margin: 0;
+  padding: 0 2px;
+  font-size: 11px;
+  line-height: 1.4;
+  white-space: pre-wrap;
+}
+.todo-add-error {
+  color: #ff453a;
+}
+.todo-add-note {
+  color: var(--text-secondary);
+}
+/* 项目还没有待办：折叠标题的位置只放一个强调色的「＋ 添加待办」。 */
+.todo-toggle.todo-entry {
+  padding-left: 7px;
+  color: var(--accent);
+}
+.todo-toggle.todo-entry:hover:not(:disabled) {
+  color: var(--accent);
+}
+.todo-toggle.todo-entry:disabled {
+  opacity: 0.5;
 }
 /* 选项末尾的快捷键标注（⌘1…⌘9） */
 .option .opt-sc {

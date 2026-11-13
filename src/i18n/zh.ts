@@ -184,8 +184,6 @@ export default {
       agentConsole: "在 Agent 窗口中查看",
       pin: "窗口置顶",
       todos: "项目待办",
-      // 请求有项目时，待办按钮展开「添加待办」浮层。
-      todosPopover: "添加项目待办（{shortcut}）",
       settings: "设置",
       history: "历史记录",
       update: "有可用更新",
@@ -239,22 +237,19 @@ export default {
       optionPrefix: "执行待办：",
       picked: "已选 {n} 条",
       chipHint: "选中后随本次回复送达（agent 开始执行即从列表移除）",
+      // 待办行上的完成 / 删除与清单末尾的添加行（docs/specs/todo-list-actions.md）。
+      complete: "标记完成",
+      undo: "撤销",
       delete: "删除",
       deleteConfirm: "确认删除",
+      add: "添加待办",
+      addPlaceholder: "添加一条待办…",
+      addHint: "添加",
+      addFailed: "没能添加待办：{reason}",
+      addedHidden: "已添加，排在第 {n} 位（未显示）",
       more: "……还有 {n} 条待办未列出（可在待办窗口或 /todo 查看调序）。",
       // 每条选中的待办并入回答时的整行文案（与手输文本空行分隔）。
       mergeLine: "另外看一下这个待办任务：{text}",
-    },
-    // 顶栏待办按钮的浮层（docs/specs/todo-quick-add.md）。
-    todoPopover: {
-      title: "添加到 {project}",
-      placeholder: "添加一条待办…",
-      submitHint: "{key} 添加",
-      add: "添加",
-      adding: "正在添加…",
-      empty: "这个项目还没有待办",
-      openWindow: "打开待办窗口",
-      addFailed: "没能添加待办：{reason}",
     },
     // 对 Agent 正文的附注：选区旁的按钮、输入浮层、页脚「附注」按钮及其清单（docs/specs/message-annotations.md D10–D16）。
     annotations: {

@@ -52,6 +52,18 @@ function mountPane(whatsNext: boolean, markdown = false) {
     selectOnly: ref(true),
     optionHotkey: vi.fn(() => null),
     toggle: vi.fn(),
+    // The todo rows of a live queue carry the complete / delete actions and an add row.
+    liveTodoOptions: ref(whatsNext),
+    isTodoCompleting: vi.fn(() => false),
+    addedTodoId: ref<string | null>(null),
+    todoAddRowIndex: vi.fn(() => -1),
+    completingTodoIds: ref(new Set<string>()),
+    confirmDeleteTodoId: ref<string | null>(null),
+    submitting: ref(false),
+    completeTodo: vi.fn(),
+    undoCompleteTodo: vi.fn(),
+    askDeleteTodo: vi.fn(),
+    removeTodo: vi.fn(),
   } as unknown as PopupContext;
 
   return mount(SequentialPane, {
@@ -81,11 +93,15 @@ describe("SequentialPane todo badge", () => {
     );
     expect(rows[0].text()).not.toContain("Run todo:");
     expect(rows[1].find(".todo-option-badge").exists()).toBe(false);
+    // Only the todo row carries the complete / delete actions.
+    expect(rows[0].findAll(".todo-acts button")).toHaveLength(2);
+    expect(rows[1].find(".todo-acts").exists()).toBe(false);
   });
 
   it("does not mark todo-id options outside whats-next", () => {
     const wrapper = mountPane(false);
     expect(wrapper.find(".todo-option-badge").exists()).toBe(false);
+    expect(wrapper.find(".todo-acts").exists()).toBe(false);
     expect(wrapper.text()).toContain("Run todo: ship the fix");
   });
 

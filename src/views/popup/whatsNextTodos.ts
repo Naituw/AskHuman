@@ -1,6 +1,15 @@
 import type { OptionItem, TodoEntry } from "../../lib/types";
 
 const MAX_WHATS_NEXT_OPTIONS = 10;
+/** The most todos a Stop confirmation lists (the Mac's `MAX_OPTION_TODOS`); the rest go in the question text. */
+const MAX_STOP_TODOS = 10;
+
+/**
+ * How the options of a live todo queue are laid out (docs/specs/todo-list-actions.md D9–D10).
+ * What's next: the suggestions, the todos, then the final end option. Stop confirmation: the todos, then its two
+ * fixed options ("continue" and "end").
+ */
+export type LiveTodoLayout = "whatsNext" | "stop";
 
 export interface RefreshedWhatsNextTodos {
   options: OptionItem[];
@@ -8,7 +17,10 @@ export interface RefreshedWhatsNextTodos {
   hiddenTodos: number;
 }
 
-/** Rebuild the local whats-next TODO slice while keeping suggestions and the final end option. */
+/**
+ * Rebuild the local TODO slice of a live todo queue while keeping the question's own options (`staticOptions`:
+ * the options without a todo, as the Mac made them). Serves What's next and, with `layout: "stop"`, Stop confirmations.
+ */
 export function refreshWhatsNextTodos(
   currentOptions: OptionItem[],
   staticOptions: OptionItem[],
@@ -16,15 +28,26 @@ export function refreshWhatsNextTodos(
   selectedOptions: string[],
   todoPrefix: string,
   attachmentBadge: (count: number) => string,
+  layout: LiveTodoLayout = "whatsNext",
 ): RefreshedWhatsNextTodos {
   const endOption = staticOptions[staticOptions.length - 1];
   if (!endOption) {
     return { options: currentOptions, selectedOptions, hiddenTodos: 0 };
   }
 
-  const taskSlots = MAX_WHATS_NEXT_OPTIONS - 1;
-  const suggestions = staticOptions.slice(0, -1).slice(0, taskSlots);
-  const todoSlots = taskSlots - suggestions.length;
+  let leading: OptionItem[];
+  let trailing: OptionItem[];
+  let todoSlots: number;
+  if (layout === "stop") {
+    leading = [];
+    trailing = staticOptions;
+    todoSlots = MAX_STOP_TODOS;
+  } else {
+    const taskSlots = MAX_WHATS_NEXT_OPTIONS - 1;
+    leading = staticOptions.slice(0, -1).slice(0, taskSlots);
+    trailing = [endOption];
+    todoSlots = taskSlots - leading.length;
+  }
   const visibleTodos = latestTodos.slice(0, todoSlots);
   const todoOptions: OptionItem[] = visibleTodos.map((todo) => {
     const frozen = currentOptions.find(
@@ -49,7 +72,7 @@ export function refreshWhatsNextTodos(
       })),
     };
   });
-  const options = [...suggestions, ...todoOptions, endOption];
+  const options = [...leading, ...todoOptions, ...trailing];
 
   const selectedTodoIds = new Set(
     currentOptions
@@ -77,6 +100,16 @@ export function refreshWhatsNextTodos(
         ? Math.max(0, latestTodos.length - visibleTodos.length)
         : 0,
   };
+}
+
+/**
+ * Where the add row sits among the options of a live todo queue: right after the last todo, before the options that
+ * follow the queue (What's next: the end option; Stop: "continue" and "end"). It is also the index to draw the row
+ * before when the queue is empty, so a project without todos still has its add row.
+ */
+export function addRowPosition(options: OptionItem[], layout: LiveTodoLayout = "whatsNext"): number {
+  if (layout === "stop") return options.filter((option) => option.todoId).length;
+  return Math.max(0, options.length - 1);
 }
 
 export interface SelectedWhatsNextTodo {

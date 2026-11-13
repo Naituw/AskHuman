@@ -566,6 +566,10 @@ impl RequestRegistry {
         request.single = task.single;
         request.output_format = task.output_format;
         request.whats_next = task.whats_next;
+        // A Stop confirmation of a project lists the project's live todo queue like What's next does
+        // (docs/specs/todo-list-actions.md D10); with no project there is no queue to list or add to.
+        request.todo_queue =
+            popup_kind == crate::ipc::PopupRequestKind::Stop && !task.project.trim().is_empty();
         request.escalated = escalated;
         request.quick_reply = quick_reply;
         // Notes on the message go with an Agent's own questions (spec `message-annotations`
@@ -1493,6 +1497,58 @@ mod tests {
             let (entry, _rx) = registry.create(task, None);
             assert_eq!(entry.show.kind, expected);
         }
+    }
+
+    #[test]
+    fn only_a_stop_confirmation_of_a_project_lists_the_live_todo_queue() {
+        let registry = RequestRegistry::new();
+        // (stop_confirmation, project, whats_next) → the request's `todo_queue`.
+        for (stop_confirmation, project, whats_next, expected) in [
+            (true, "/tmp/project", false, true),
+            (true, "  ", false, false),
+            (true, "", false, false),
+            (false, "/tmp/project", false, false),
+            (false, "/tmp/project", true, false),
+        ] {
+            let mut task = ask_task(Some("s1"), "continue?");
+            task.stop_confirmation = stop_confirmation;
+            task.project = project.into();
+            task.whats_next = whats_next;
+            let (entry, _rx) = registry.create(task, None);
+            let request = entry.request();
+            assert_eq!(
+                request.todo_queue, expected,
+                "stop={stop_confirmation} project={project:?} whats_next={whats_next}"
+            );
+            // What's next is a live queue by its own flag; the helper covers both.
+            assert_eq!(request.lists_todo_queue(), expected || whats_next);
+        }
+        // A client that predates `stop_confirmation` marks a Stop card by turning history off.
+        let mut legacy = ask_task(Some("s1"), "continue?");
+        legacy.record_history = false;
+        let (entry, _rx) = registry.create(legacy, None);
+        assert!(entry.request().todo_queue);
+    }
+
+    #[test]
+    fn the_live_queue_mark_is_additive_on_the_wire() {
+        let mut task = ask_task(Some("s1"), "continue?");
+        task.stop_confirmation = true;
+        let registry = RequestRegistry::new();
+        let (entry, _rx) = registry.create(task, None);
+        let live = serde_json::to_value(entry.request()).unwrap();
+        assert_eq!(live["todoQueue"], true);
+        // Omitted when false, so a peer that predates the field sees the same JSON as before.
+        let (plain, _rx) = registry.create(ask_task(Some("s2"), "continue?"), None);
+        assert!(serde_json::to_value(plain.request())
+            .unwrap()
+            .get("todoQueue")
+            .is_none());
+        // And a request from a sender that predates it reads as not live.
+        let mut old = serde_json::to_value(plain.request()).unwrap();
+        old.as_object_mut().unwrap().remove("todoQueue");
+        let parsed: crate::models::AskRequest = serde_json::from_value(old).unwrap();
+        assert!(!parsed.todo_queue);
     }
 
     fn setup_probe_task(target: crate::onboarding::probe::ProbeTarget) -> TaskRequest {

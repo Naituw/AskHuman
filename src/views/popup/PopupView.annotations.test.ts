@@ -373,7 +373,9 @@ describe("notes on the Agent's text", () => {
       press(editorInput(w).element, { key: "t", code: "KeyT", ...PRIMARY });
       await flushPromises();
       expect(w.find(".qr-menu").exists()).toBe(false);
-      expect(w.find(".todo-popover").exists()).toBe(false);
+      // ⌘/Ctrl+T would put the caret in a todo list's add row (or open the Todos window): neither happens.
+      expect(w.find(".todo-add-input").exists()).toBe(false);
+      expect(calls("open_todos")).toEqual([]);
       expect(editor(w).exists()).toBe(true);
     });
 

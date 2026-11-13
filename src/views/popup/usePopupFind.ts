@@ -53,7 +53,8 @@ export function usePopupFind(deps: {
   viewSource: Ref<boolean>;
   attachments: Ref<FileAttachment[]>;
   questions: Ref<Question[]>;
-  whatsNext: Ref<boolean>;
+  /** The todo options are the project's live queue (What's next, a Stop confirmation): drawn without the display prefix. */
+  liveTodoOptions: Ref<boolean>;
   todoPrefix: Ref<string>;
   /** Confirm choice rows as currently displayed (label + description). */
   confirmChoiceTexts: Ref<string[]>;
@@ -147,14 +148,14 @@ export function usePopupFind(deps: {
       if (a.name) segs.push({ id: `att-${i}`, text: a.name, qIndex: null });
     });
 
-    const wn = deps.whatsNext.value;
+    const live = deps.liveTodoOptions.value;
     const prefix = deps.todoPrefix.value;
     deps.questions.value.forEach((q, qi) => {
       if (q.message) {
         segs.push({ id: `q-${qi}-msg`, text: q.message, qIndex: qi });
       }
       q.predefinedOptions.forEach((opt: OptionItem, oi: number) => {
-        const text = optionDisplayText(opt, wn, prefix);
+        const text = optionDisplayText(opt, live, prefix);
         if (text) {
           segs.push({ id: `q-${qi}-opt-${oi}`, text, qIndex: qi });
         }

@@ -74,7 +74,7 @@ function setup(opts: { vertical: boolean; tops: Record<string, number> }) {
     viewSource: ref(false),
     attachments: ref([]),
     questions: ref([question("alpha q-0-msg alpha"), question("alpha q-1-msg alpha")]),
-    whatsNext: ref(false),
+    liveTodoOptions: ref(false),
     todoPrefix: ref(""),
     confirmChoiceTexts: ref([]),
     confirmTitle: ref(""),

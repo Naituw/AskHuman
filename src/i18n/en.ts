@@ -188,8 +188,6 @@ export default {
       agentConsole: "View in Agent Window",
       pin: "Keep on top",
       todos: "Project todos",
-      // The todo button opens the add-a-todo popover when the request has a project.
-      todosPopover: "Add a project todo ({shortcut})",
       settings: "Settings",
       history: "History",
       update: "Update available",
@@ -248,22 +246,19 @@ export default {
       optionPrefix: "Run todo: ",
       picked: "{n} selected",
       chipHint: "Select to send with your reply (removed from the list once picked up)",
+      // Complete / delete on a todo row and the add row at the end of a list (docs/specs/todo-list-actions.md).
+      complete: "Mark done",
+      undo: "Undo",
       delete: "Delete",
       deleteConfirm: "Confirm delete",
+      add: "Add a todo",
+      addPlaceholder: "Add a todo…",
+      addHint: "to add",
+      addFailed: "Could not add the todo: {reason}",
+      addedHidden: "Added at position {n} (not shown here)",
       more: "…{n} more todo(s) not listed (view or reorder in the Todos window or /todo).",
       // Line merged into the answer for each selected todo (blank-line separated).
       mergeLine: "Also look into this todo task: {text}",
-    },
-    // The navbar todo button's popover (docs/specs/todo-quick-add.md).
-    todoPopover: {
-      title: "Add to {project}",
-      placeholder: "Add a todo…",
-      submitHint: "{key} to add",
-      add: "Add",
-      adding: "Adding…",
-      empty: "No todos in this project yet",
-      openWindow: "Open the Todos window",
-      addFailed: "Could not add the todo: {reason}",
     },
     // Notes on passages of the Agent's text: the button beside a selection, the editor, the footer chip and its list
     // (docs/specs/message-annotations.md D10–D16).

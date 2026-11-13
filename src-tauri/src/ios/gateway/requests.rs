@@ -443,8 +443,9 @@ fn answer_hash(submit: &AnswerSubmit) -> String {
 /// ids and attachment snapshots the Coordinator dequeues and delivers from.
 ///
 /// A question: the todos go into the last one, after what the person wrote, each on a line of its
-/// own. What's next: the todos are the next tasks themselves, so their text leads and what the person wrote
-/// follows (the popup's handling of a todo of the refreshed queue).
+/// own. What's next and a Stop confirmation of a project (`todo_queue`): the todos are the next
+/// tasks themselves, so their text leads and what the person wrote follows (the popup's handling of
+/// a todo of the refreshed queue).
 fn merge_todo_picks(
     ask: &AskRequest,
     answers: &mut [QuestionAnswer],
@@ -457,10 +458,11 @@ fn merge_todo_picks(
     let Some(last) = answers.len().checked_sub(1) else {
         return;
     };
-    let index = if ask.whats_next { 0 } else { last };
+    let live_queue = ask.lists_todo_queue();
+    let index = if live_queue { 0 } else { last };
     let answer = &mut answers[index];
     let typed = answer.user_input.take();
-    let parts: Vec<String> = if ask.whats_next {
+    let parts: Vec<String> = if live_queue {
         picks
             .iter()
             .map(|pick| pick.text.clone())
@@ -1226,8 +1228,9 @@ impl Actor {
         if !ids.iter().all(|id| seen.insert(id.as_str())) {
             return Err("duplicate todo".into());
         }
-        if ask.whats_next && ask.single {
-            // Older single-choice requests still accept only one task.
+        if ask.lists_todo_queue() && ask.single {
+            // Older single-choice requests still accept only one task (and a Stop confirmation,
+            // which is always single-choice, continues with one).
             let chosen = answers.first().map_or(0, |a| a.selected_options.len());
             if ids.len() > 1 || chosen > 0 {
                 return Err("choose one next task".into());

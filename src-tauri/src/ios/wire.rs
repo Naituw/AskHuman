@@ -500,6 +500,12 @@ pub struct AskView {
     pub single: bool,
     #[serde(default, skip_serializing_if = "is_false")]
     pub whats_next: bool,
+    /// The options that carry a todo are the project's live queue, which the phone lists itself with
+    /// its complete / delete / add actions (docs/specs/todo-list-actions.md D10): a Stop confirmation
+    /// of a project. What's next is a live queue too and says so with `whatsNext`. Additive: older
+    /// phones ignore it and show the options as they are, older Macs never send it.
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub todo_queue: bool,
     /// The quick replies the answer screen's menu offers, in the order they are shown (the Mac's own list
     /// when the question was created; docs/specs/special-replies.md D27, N8). Empty for what takes no reply
     /// of the kind. Additive: older phones ignore it, older Macs never send it.

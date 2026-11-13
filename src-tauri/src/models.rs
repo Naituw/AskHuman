@@ -87,6 +87,14 @@ pub struct AskRequest {
     /// 固定结束句），弹窗折叠待办区不重复渲染 chip。普通提问恒 false（序列化省略）。
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub whats_next: bool,
+    /// The question's todo options are the project's live queue, not a snapshot taken when the
+    /// request was made (`docs/specs/todo-list-actions.md` D10). What's next questions are live
+    /// queues too and say so with `whats_next`; this marks a Stop confirmation that has a project.
+    /// The popup and the phone then list the queue themselves, with its complete / delete / add
+    /// actions, and send a picked todo as its text plus id. Sent only when true, so a peer that
+    /// predates the field keeps showing the snapshot options.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub todo_queue: bool,
     /// Set by the daemon when the question reached the user although away mode is on (see
     /// `docs/specs/special-replies.md`); the popup and phone say why it came through.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -153,12 +161,19 @@ impl AskRequest {
             single: false,
             output_format: OutputFormat::Text,
             whats_next: false,
+            todo_queue: false,
             escalated: None,
             quick_reply: true,
             quick_replies: Vec::new(),
             annotatable: false,
             setup_probe: false,
         }
+    }
+
+    /// Whether the todo options of this question are the project's live queue (What's next and
+    /// Stop confirmations with a project) rather than a snapshot.
+    pub fn lists_todo_queue(&self) -> bool {
+        self.whats_next || self.todo_queue
     }
 }
 

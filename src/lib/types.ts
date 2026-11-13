@@ -15,6 +15,12 @@ export interface AskRequest {
   outputFormat: OutputFormat;
   /** whats-next 提问（spec todo-whats-next D2/D7）：待办已是问题选项，折叠待办区只留增删。 */
   whatsNext?: boolean;
+  /**
+   * The todo options of this question are the project's live queue, not a snapshot: a Stop confirmation of a project
+   * (What's next says so with `whatsNext`). The popup lists the queue itself, with the complete / delete / add actions,
+   * and submits a picked todo as its text plus id (docs/specs/todo-list-actions.md D10). Absent = a snapshot.
+   */
+  todoQueue?: boolean;
   /** Set when the question reached the user although away mode is on (docs/specs/special-replies.md D21). */
   escalated?: EscalationReason;
   /** False for Stop confirmations, failure cards, native Codex questions and development relays (N10); absent = true. */

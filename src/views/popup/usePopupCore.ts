@@ -30,7 +30,6 @@ import {
   popupSetupHintDismiss,
   openSetup,
   todosList,
-  todosRemove,
 } from "../../lib/ipc";
 import { isFocusableTerminal } from "../../lib/terminals";
 import {
@@ -80,7 +79,7 @@ import { useSpeech } from "./useSpeech";
 import { useAttachments } from "./useAttachments";
 import { useUpdateState } from "./useUpdateState";
 import { usePopupFind } from "./usePopupFind";
-import { useTodoPopover } from "./useTodoPopover";
+import { useTodoActions } from "./useTodoActions";
 import { useQuickReply, type ArmedDirective } from "./useQuickReply";
 import { useAnnotations, type AnnotationTarget } from "./useAnnotations";
 import {
@@ -97,8 +96,10 @@ import {
   type ComposerDockGeometry,
 } from "./composerDock";
 import {
+  addRowPosition,
   refreshWhatsNextTodos,
   selectedWhatsNextTodos,
+  type LiveTodoLayout,
 } from "./whatsNextTodos";
 import {
   inputMayShrinkTextarea,
@@ -844,27 +845,48 @@ export function usePopupCore(scope?: PopupScope) {
   const single = computed(() => request.value?.single ?? false);
   // whats-next 提问（spec todo-whats-next D2/D7）：待办已是问题选项本体，折叠区不重复渲染 chip。
   const whatsNext = computed(() => request.value?.whatsNext ?? false);
-  let whatsNextStaticOptions: Question["predefinedOptions"] = [];
-  let whatsNextBaseMessage = "";
+  // The todo options of this question are the project's live queue (docs/specs/todo-list-actions.md D9–D10):
+  // What's next, and a Stop confirmation of a project. The todos are rows of the question itself, so the folded
+  // "Todos" section is not drawn for it, and the rows carry the complete / delete / add actions.
+  const liveTodoOptions = computed(() => !!(request.value?.whatsNext || request.value?.todoQueue));
+  const liveTodoLayout = computed<LiveTodoLayout>(() => (request.value?.whatsNext ? "whatsNext" : "stop"));
+  // What the daemon made of a live queue's question: its options that carry no todo (the live todos go before or
+  // between them) and the first paragraph of its text (the rest is the overflow note, redone on every refresh).
+  let liveStaticOptions: Question["predefinedOptions"] = [];
+  let liveBaseMessage = "";
 
   // ===== 待办下拉区（spec todo-whats-next D7，第 11 轮改版）=====
   // 该提问项目的待办列表；直读 todos.json（经后端命令），渲染后异步加载不阻塞首屏。
   const todos = ref<TodoEntry[]>([]);
+  // The queue has been read once. Until then the section (or the add row of a live queue) stays out, so it does not
+  // flash in as an empty entry and then jump when the rows arrive.
+  const todosLoaded = ref(false);
   const todosOpen = ref(false);
   // 选中的待办条目 id（提交时文本并入回答、id 送后端出队）。
   const todoChosenIds = ref<string[]>([]);
   const todoChosenSnapshots = ref<Record<string, TodoEntry>>({});
   // 点选作答在严格选择（禁自由文本）之外都启用；选中文本恒并入**最后一题**的回答。
   const todoChipsEnabled = computed(() => !selectOnly.value);
-  // 跟在最后一个问题后面、仅在有待办时显示：whats-next 弹窗不显示（待办已是选项本体）；
-  // 无项目 key（未知 workspace）时无法归属，隐藏；sequential 多题模式只在最后一题的面板显示。
+  // 跟在最后一个问题后面：折叠的「待办 N」区，项目没有待办时是一个「＋ 添加待办」入口（docs/specs/todo-list-actions.md D7）。
+  // 实时队列选项（whats-next / Stop）不显示（待办已是选项本体）；无项目 key（未知 workspace）时无法归属，隐藏；
+  // sequential 多题模式只在最后一题的面板显示；开发验证请求（非测试 profile）没有。
   const todoSectionVisible = computed(
     () =>
+      todosLoaded.value &&
       !!projectPath.value &&
       !!request.value &&
-      !whatsNext.value &&
-      todos.value.length > 0 &&
+      !liveTodoOptions.value &&
+      (!request.value.message.development || !!request.value.message.development.testProfile) &&
       (verticalMode.value || current.value === total.value - 1)
+  );
+  // The pane being shown has a todo list with an add row for the request's project: ⌘T goes there instead of the Todos window.
+  const hasTodoList = computed(
+    () =>
+      todosLoaded.value &&
+      !!projectPath.value &&
+      !!request.value &&
+      !isConfirm.value &&
+      (liveTodoOptions.value || todoSectionVisible.value)
   );
   const selectedTodos = computed(() =>
     todoChosenIds.value
@@ -872,48 +894,73 @@ export function usePopupCore(scope?: PopupScope) {
       .filter((todo): todo is TodoEntry => !!todo)
   );
 
+  /** Where the add row of a live queue is drawn among the options of question `qIndex`; -1 where there is none. */
+  function todoAddRowIndex(qIndex: number): number {
+    if (!todosLoaded.value || !projectPath.value || !liveTodoOptions.value || qIndex !== 0) return -1;
+    const options = questions.value[0]?.predefinedOptions;
+    return options ? addRowPosition(options, liveTodoLayout.value) : -1;
+  }
+
+  /** Forget the local pick of a todo (it is being completed or deleted): the section's, or the live option's. */
+  function unpickTodo(id: string) {
+    todoChosenIds.value = todoChosenIds.value.filter((x) => x !== id);
+    delete todoChosenSnapshots.value[id];
+    if (!liveTodoOptions.value) return;
+    const option = questions.value[0]?.predefinedOptions.find((candidate) => candidate.todoId === id);
+    if (option) chosenByQ.value[0] = (chosenByQ.value[0] ?? []).filter((text) => text !== option.text);
+  }
+
+  /**
+   * Show the project's queue: the section's rows, or the live options of the question. Picks of todos that are gone
+   * (completed, deleted, here or anywhere else) go with them.
+   */
+  function applyTodos(latest: TodoEntry[]) {
+    todos.value = latest;
+    const asked = request.value;
+    if (liveTodoOptions.value && asked) {
+      const question = asked.questions[0];
+      if (!question) return;
+      const refreshed = refreshWhatsNextTodos(
+        question.predefinedOptions,
+        liveStaticOptions,
+        latest,
+        chosenByQ.value[0] ?? [],
+        t("popup.todos.optionPrefix"),
+        (count) => t("common.attachmentBadge", { n: count }),
+        liveTodoLayout.value,
+      );
+      question.predefinedOptions = refreshed.options;
+      question.message = refreshed.hiddenTodos
+        ? `${liveBaseMessage}\n\n${t("popup.todos.more", { n: refreshed.hiddenTodos })}`
+        : liveBaseMessage;
+      chosenByQ.value[0] = refreshed.selectedOptions;
+      return;
+    }
+    // External deletes/completions must also clear stale local selections.
+    const liveIds = new Set(latest.map((todo) => todo.id));
+    todoChosenIds.value = todoChosenIds.value.filter((id) => liveIds.has(id));
+    for (const id of Object.keys(todoChosenSnapshots.value)) {
+      if (!liveIds.has(id)) delete todoChosenSnapshots.value[id];
+    }
+  }
+
   let todoLoadGeneration = 0;
   async function loadTodos() {
-    // A confirmation card has no `request`, but its todo popover lists the project's todos too
-    // (docs/specs/todo-quick-add.md D9); the body todo section stays ask-only (`todoSectionVisible`).
-    if (!projectPath.value || (!request.value && !confirmRequest.value)) return;
+    if (!projectPath.value || !request.value) return;
     const generation = ++todoLoadGeneration;
     try {
       const latest = await todosList(projectPath.value);
       if (generation !== todoLoadGeneration) return;
-      const liveIds = new Set(latest.map((todo) => todo.id));
-      todos.value = latest;
-      const asked = request.value;
-      if (whatsNext.value && asked) {
-        const question = asked.questions[0];
-        if (!question) return;
-        const refreshed = refreshWhatsNextTodos(
-          question.predefinedOptions,
-          whatsNextStaticOptions,
-          latest,
-          chosenByQ.value[0] ?? [],
-          t("popup.todos.optionPrefix"),
-          (count) => t("common.attachmentBadge", { n: count }),
-        );
-        question.predefinedOptions = refreshed.options;
-        question.message = refreshed.hiddenTodos
-          ? `${whatsNextBaseMessage}\n\n${t("popup.todos.more", { n: refreshed.hiddenTodos })}`
-          : whatsNextBaseMessage;
-        chosenByQ.value[0] = refreshed.selectedOptions;
-        return;
-      }
-      // External deletes/completions must also clear stale local selections.
-      todoChosenIds.value = todoChosenIds.value.filter((id) => liveIds.has(id));
-      for (const id of Object.keys(todoChosenSnapshots.value)) {
-        if (!liveIds.has(id)) delete todoChosenSnapshots.value[id];
-      }
+      applyTodos(latest);
+      todosLoaded.value = true;
     } catch {
       /* 旧后端无此命令：待办区保持空 */
     }
   }
 
   function toggleTodo(id: string) {
-    if (!todoChipsEnabled.value) return;
+    // A todo that is being completed is no choice any more.
+    if (!todoChipsEnabled.value || todoActions.isTodoCompleting(id)) return;
     const i = todoChosenIds.value.indexOf(id);
     if (i >= 0) {
       todoChosenIds.value.splice(i, 1);
@@ -929,16 +976,6 @@ export function usePopupCore(scope?: PopupScope) {
     }
   }
 
-  async function removeTodo(id: string) {
-    todos.value = todos.value.filter((td) => td.id !== id);
-    todoChosenIds.value = todoChosenIds.value.filter((x) => x !== id);
-    delete todoChosenSnapshots.value[id];
-    try {
-      await todosRemove(projectPath.value, id);
-    } catch {
-      /* best-effort：条目已不在文件中也无妨（spec D11） */
-    }
-  }
   const currentQuestion = computed<Question | null>(
     () => questions.value[current.value] ?? null
   );
@@ -1214,6 +1251,9 @@ export function usePopupCore(scope?: PopupScope) {
   function toggle(qIndex: number, option: string) {
     const arr = chosenByQ.value[qIndex];
     if (!arr) return;
+    // A todo that is being completed is no choice any more.
+    const optionTodoId = questions.value[qIndex]?.predefinedOptions.find((candidate) => candidate.text === option)?.todoId;
+    if (todoActions.isTodoCompleting(optionTodoId)) return;
     if (
       (focusedQ.value !== null && focusedQ.value !== qIndex) ||
       (composerOwnerQ.value !== null && composerOwnerQ.value !== qIndex)
@@ -1768,10 +1808,10 @@ export function usePopupCore(scope?: PopupScope) {
         images: imagesByQ.value[i] ?? [],
         files: (replyFilesByQ.value[i] ?? []).map((f) => f.path),
       };
-      // Local whats-next TODO options refresh after the daemon snapshots its request. Submit a
-      // refreshed TODO as raw task text + stable id so output and dequeue semantics stay exact.
+      // The TODO options of a live queue (What's next, a Stop confirmation) refresh after the daemon snapshots its
+      // request. Submit a refreshed TODO as raw task text + stable id so output and dequeue semantics stay exact.
       const whatsNextTodos =
-        i === 0 && whatsNext.value
+        i === 0 && liveTodoOptions.value
           ? selectedWhatsNextTodos(
               q.predefinedOptions,
               chosenByQ.value[i] ?? [],
@@ -1832,6 +1872,8 @@ export function usePopupCore(scope?: PopupScope) {
     scope?.sending?.();
     submissionError.value = null;
     try {
+      // A todo marked done a moment ago is completed now rather than when its second is up: the window may close first.
+      todoActions.flushTodoCompletes();
       // A note still being typed goes out with the answer rather than being lost (Send was clicked, not Enter).
       annotations.commitAnnotationDraft();
       const notes = annotations.annotationPayload();
@@ -2025,7 +2067,7 @@ export function usePopupCore(scope?: PopupScope) {
     viewSource,
     attachments,
     questions,
-    whatsNext,
+    liveTodoOptions,
     todoPrefix: computed(() => t("popup.todos.optionPrefix")),
     confirmChoiceTexts,
     confirmTitle,
@@ -2045,15 +2087,24 @@ export function usePopupCore(scope?: PopupScope) {
     find.noteFindInteraction(event);
   }
 
-  // The annotation editor and list are modal: the todo popover and the quick-reply menu stay shut while one is open.
+  // The annotation editor and list are modal: the quick-reply menu stays shut while one is open.
   const annotationModalOpen = ref(false);
 
-  // ===== Adding a todo to this request's project from the navbar button (docs/specs/todo-quick-add.md) =====
-  const todoPopover = useTodoPopover({
+  // ===== Complete, delete and add on every todo list of the page (docs/specs/todo-list-actions.md) =====
+  const todoActions = useTodoActions({
     projectPath,
     todos,
+    applyTodos,
     loadTodos,
-    removeTodo,
+    unpick: unpickTodo,
+    hasTodoList,
+    isTodoShown: (id) =>
+      !liveTodoOptions.value || !!questions.value[0]?.predefinedOptions.some((option) => option.todoId === id),
+    expandList: () => {
+      todosOpen.value = true;
+    },
+    contentEl: contentRef,
+    openTodosWindow,
     submitWithBareEnter,
     findActive: find.findActive,
     speechTaken: (e) =>
@@ -2061,8 +2112,7 @@ export function usePopupCore(scope?: PopupScope) {
       !!speech.speechShortcut.value &&
       matchShortcut(e, speech.speechShortcut.value),
     insertNewline: insertNewlineInFocusedTextarea,
-    suspended: () =>
-      !acceptsInput() || showCancelConfirm.value || showConfirmCloseWarning.value || annotationModalOpen.value,
+    submitting,
   });
 
   // ===== Quick-reply menu in the footer (docs/specs/special-replies.md D19–D21) =====
@@ -2079,7 +2129,6 @@ export function usePopupCore(scope?: PopupScope) {
       !acceptsInput() ||
       showCancelConfirm.value ||
       showConfirmCloseWarning.value ||
-      todoPopover.todoPopoverOpen.value ||
       annotationModalOpen.value,
     presetTargets,
     sendPreset: (text) => submitWith(text),
@@ -2107,7 +2156,6 @@ export function usePopupCore(scope?: PopupScope) {
       !acceptsInput() ||
       showCancelConfirm.value ||
       showConfirmCloseWarning.value ||
-      todoPopover.todoPopoverOpen.value ||
       quickReply.quickReplyOpen.value,
     modalOpen: annotationModalOpen,
   });
@@ -2121,18 +2169,6 @@ export function usePopupCore(scope?: PopupScope) {
   }
   // The source view swaps the text under the notes; they look for their passages in the new one.
   watch(viewSource, () => void nextTick(annotations.reapplyAnnotations));
-
-  /** The navbar todo button: the popover, or the todos window when the request has no project. */
-  function onTodoButtonClick() {
-    if (todoPopover.todoPopoverAvailable.value) todoPopover.toggleTodoPopover();
-    else openTodosWindow();
-  }
-
-  /** The popover's "open the todos window" link. */
-  function openTodosWindowFromPopover() {
-    todoPopover.closeTodoPopover(false);
-    openTodosWindow();
-  }
 
   function startPermissionDiffEnrichment() {
     const edit = permissionEdit.value;
@@ -2208,6 +2244,7 @@ export function usePopupCore(scope?: PopupScope) {
     submissionError.value = null;
     showCancelConfirm.value = false;
     try {
+      todoActions.flushTodoCompletes();
       await cancelPopup(scope?.requestId);
     } catch (error) {
       submissionError.value = String(error);
@@ -2267,15 +2304,13 @@ export function usePopupCore(scope?: PopupScope) {
     const mod = primaryModifierPressed(e);
     cmdHeld.value = onlyCmdHeld(e);
     if (!isConfirm.value && (e.isComposing || e.keyCode === 229)) return;
-    // The todo popover (⌘T) is keyboard-modal: while it is open it takes every key (except ⌘W), so
-    // it goes before find and every business shortcut — an Enter meant for its input must never
-    // submit an answer or approve a permission card.
-    // The quick-reply menu (⌘K) is modal in the same way and goes first: while it is open the todo
-    // shortcut must not open the popover on top of it (it stays closed while the popover is open).
+    // The todo list's keys (⌘T = add a todo; Enter / Esc typed into the add row) go before find and every business
+    // shortcut — an Enter meant for the add row must never send an answer or approve a permission card.
+    // The quick-reply menu (⌘K) is modal and goes before it: while it is open ⌘T must not reach past it.
     // An annotation list or editor (focus inside it) is modal too, and goes before both: neither may open on top of it.
     if (!showCancelConfirm.value && !showConfirmCloseWarning.value && annotations.handleAnnotationKeydown(e)) return;
     if (!showCancelConfirm.value && !showConfirmCloseWarning.value && quickReply.handleQuickReplyKeydown(e)) return;
-    if (!showCancelConfirm.value && !showConfirmCloseWarning.value && todoPopover.handleTodoPopoverKeydown(e)) return;
+    if (!showCancelConfirm.value && !showConfirmCloseWarning.value && todoActions.handleTodoKeydown(e)) return;
     // In-page find (⌘/Ctrl+F, Esc while open, ⌘G, …) — before business shortcuts.
     if (!showCancelConfirm.value && !showConfirmCloseWarning.value && find.handleFindKeydown(e)) return;
     if (isConfirm.value) {
@@ -2455,11 +2490,11 @@ export function usePopupCore(scope?: PopupScope) {
     verticalEnabled.value = init.verticalQuestions ?? true;
     const req = interaction.type === "ask" ? interaction.request : null;
     request.value = req;
-    const whatsNextQuestion = req?.whatsNext ? req.questions[0] : null;
-    whatsNextStaticOptions = whatsNextQuestion
-      ? whatsNextQuestion.predefinedOptions.filter((option) => !option.todoId)
+    const liveQuestion = req?.whatsNext || req?.todoQueue ? req.questions[0] : null;
+    liveStaticOptions = liveQuestion
+      ? liveQuestion.predefinedOptions.filter((option) => !option.todoId)
       : [];
-    whatsNextBaseMessage = whatsNextQuestion?.message.split("\n\n", 1)[0] ?? "";
+    liveBaseMessage = liveQuestion?.message.split("\n\n", 1)[0] ?? "";
     confirmRequest.value = interaction.type === "confirm" ? interaction.request : null;
     permissionEdit.value = interaction.type === "confirm" ? init.popupEdit ?? null : null;
     permissionDiff.value = permissionEdit.value?.initialDiff
@@ -2501,8 +2536,9 @@ export function usePopupCore(scope?: PopupScope) {
     focusedQ.value = null;
     current.value = 0;
     todos.value = [];
+    todosLoaded.value = false;
     todosOpen.value = false;
-    todoPopover.resetTodoPopover();
+    todoActions.resetTodoActions();
     quickReply.resetQuickReply();
     annotations.resetAnnotations();
     todoChosenIds.value = [];
@@ -2863,8 +2899,7 @@ export function usePopupCore(scope?: PopupScope) {
     hasDraft,
     // Native preview uses the same submit policy and temporarily yields to root overlays.
     submitWithBareEnter,
-    // The native preview sits above the page, so it must also give way to the todo popover.
-    nativePreviewBlocked: computed(() => !popupActive.value || !!(scope?.nativePreviewBlocked ?? scope?.blocked)?.value || showCancelConfirm.value || showConfirmCloseWarning.value || submitting.value || todoPopover.todoPopoverOpen.value),
+    nativePreviewBlocked: computed(() => !popupActive.value || !!(scope?.nativePreviewBlocked ?? scope?.blocked)?.value || showCancelConfirm.value || showConfirmCloseWarning.value || submitting.value),
     registerNativePreviewSync: scope?.nativePreviewSync,
     // In-page find
     findActive: find.findActive,
@@ -3036,19 +3071,6 @@ export function usePopupCore(scope?: PopupScope) {
     openSettingsWindow,
     openTodosWindow,
     openHistoryWindow,
-    // Add-a-todo popover on the navbar todo button (docs/specs/todo-quick-add.md)
-    onTodoButtonClick,
-    openTodosWindowFromPopover,
-    todoPopoverOpen: todoPopover.todoPopoverOpen,
-    todoPopoverAvailable: todoPopover.todoPopoverAvailable,
-    todoDraft: todoPopover.todoDraft,
-    todoAdding: todoPopover.todoAdding,
-    todoAddError: todoPopover.todoAddError,
-    todoJustAddedId: todoPopover.todoJustAddedId,
-    todoInputEl: todoPopover.todoInputEl,
-    closeTodoPopover: todoPopover.closeTodoPopover,
-    addTodoFromPopover: todoPopover.addTodoFromPopover,
-    removeTodoFromPopover: todoPopover.removeTodoFromPopover,
     // Quick-reply menu, the directive armed from it, and the escalation banner
     armedDirective,
     ...quickReply,
@@ -3066,7 +3088,27 @@ export function usePopupCore(scope?: PopupScope) {
     todoChipsEnabled,
     todoSectionVisible,
     toggleTodo,
-    removeTodo,
+    // The todo lists of the page and their actions (docs/specs/todo-list-actions.md): the options of What's next and
+    // of a Stop confirmation are the live queue, the section is the ordinary question's.
+    liveTodoOptions,
+    todoAddRowIndex,
+    completingTodoIds: todoActions.completingTodoIds,
+    confirmDeleteTodoId: todoActions.confirmDeleteTodoId,
+    addedTodoId: todoActions.addedTodoId,
+    isTodoCompleting: todoActions.isTodoCompleting,
+    completeTodo: todoActions.completeTodo,
+    undoCompleteTodo: todoActions.undoCompleteTodo,
+    askDeleteTodo: todoActions.askDeleteTodo,
+    removeTodo: todoActions.removeTodo,
+    todoAddOpen: todoActions.todoAddOpen,
+    todoDraft: todoActions.todoDraft,
+    todoAdding: todoActions.todoAdding,
+    todoAddError: todoActions.todoAddError,
+    todoAddNote: todoActions.todoAddNote,
+    todoAddInputEl: todoActions.todoAddInputEl,
+    openTodoAdd: todoActions.openTodoAdd,
+    closeTodoAdd: todoActions.closeTodoAdd,
+    submitTodoAdd: todoActions.submitTodoAdd,
     // 子域
     ...speech,
     ...attach,

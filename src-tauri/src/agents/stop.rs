@@ -466,6 +466,26 @@ fn parse_ask_decision(stdout: &str, todos: &[crate::todos::TodoEntry]) -> StopDe
         .filter_map(Value::as_str)
         .map(str::to_string)
         .collect();
+    // A todo picked from the live queue (`todo_queue`, docs/specs/todo-list-actions.md D10) comes as
+    // its text in `user_input` plus its id, with no snapshot index. It is a todo like a chip, not a
+    // typed instruction: the text goes in full (spec D11, no `MAX_INSTRUCTION_CHARS` cut) and the
+    // todo's attachments (already in `files`) go with it.
+    let picked_from_queue = answer
+        .get("todo_ids")
+        .and_then(Value::as_array)
+        .is_some_and(|ids| !ids.is_empty());
+    if picked_from_queue {
+        let prompt = answer
+            .get("user_input")
+            .and_then(Value::as_str)
+            .map(str::trim)
+            .filter(|text| !text.is_empty());
+        if let Some(prompt) = prompt {
+            return StopDecision::Continue(Some(
+                crate::integrations::agent_launch::task_with_attachments(prompt, &files, &[]),
+            ));
+        }
+    }
     if let Some(todo) = indices
         .iter()
         .filter_map(Value::as_u64)
@@ -819,6 +839,64 @@ mod tests {
                 &todos
             ),
             StopDecision::Continue(Some("先跑测试".into()))
+        );
+    }
+
+    #[test]
+    fn a_todo_picked_from_the_live_queue_is_delivered_like_a_chip() {
+        // The live queue sends the todo's text in `user_input` and its id in `todo_ids`, with no
+        // snapshot index; a todo added after the card was made is picked this way too.
+        let todos = two_todos();
+        let live = |text: &str, files: &str| {
+            format!(
+                r#"{{"action":"answer","answers":[{{"user_input":{},"files":{files},"todo_ids":["id-9"]}}]}}"#,
+                serde_json::to_string(text).unwrap()
+            )
+        };
+        assert_eq!(
+            parse_ask_decision(&live("新加的待办", "[]"), &todos),
+            StopDecision::Continue(Some("新加的待办".into()))
+        );
+        // Todo text goes in full (spec D11): the cut that keeps a typed instruction short does not apply.
+        let long = "长".repeat(MAX_INSTRUCTION_CHARS + 500);
+        assert_eq!(
+            parse_ask_decision(&live(&long, "[]"), &todos),
+            StopDecision::Continue(Some(long.clone()))
+        );
+        // The same cut still applies to what was only typed.
+        let typed = format!(
+            r#"{{"action":"answer","answers":[{{"user_input":{}}}]}}"#,
+            serde_json::to_string(&long).unwrap()
+        );
+        match parse_ask_decision(&typed, &todos) {
+            StopDecision::Continue(Some(text)) => assert!(text.ends_with("… [truncated]")),
+            other => panic!("unexpected decision: {other:?}"),
+        }
+        // The todo's attachments travel with it, the way a chip's do.
+        let file =
+            std::env::temp_dir().join(format!("askhuman-stop-live-{}.txt", std::process::id()));
+        std::fs::write(&file, "attachment").unwrap();
+        let path = file.to_string_lossy().to_string();
+        let with_file = live(
+            "看一下附件",
+            &serde_json::to_string(std::slice::from_ref(&path)).unwrap(),
+        );
+        let decision = parse_ask_decision(&with_file, &todos);
+        let _ = std::fs::remove_file(&file);
+        match decision {
+            StopDecision::Continue(Some(text)) => {
+                assert!(text.starts_with("看一下附件\n\nAttachments (local file paths):"));
+                assert!(text.contains(&serde_json::to_string(&path).unwrap()));
+            }
+            other => panic!("unexpected decision: {other:?}"),
+        }
+        // Choosing "End conversation" still wins over anything else on the card.
+        assert_eq!(
+            parse_ask_decision(
+                r#"{"action":"answer","answers":[{"selected_indices":[3],"user_input":"x","todo_ids":["id-9"]}]}"#,
+                &todos
+            ),
+            StopDecision::End
         );
     }
 
