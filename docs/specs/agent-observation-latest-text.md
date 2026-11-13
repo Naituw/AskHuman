@@ -178,7 +178,8 @@ generation 也随普通写入变化。它是写入版本，来源记录身份仍
   iOS 帧预算收缩同时处理新文字，并保留内容修订与截断提示。
 - Mac 的 `LatestAgentText.vue` / `useLatestAgentText.ts` 与 iPhone 的 `WatchText.swift` / `WatchTextPresentation.swift`
   分别实现固定节流窗口、整段替换和阅读锁。Mac 按选字与真实阅读输入暂停，布局自身引起的滚动不会误锁。
-  iPhone 按展开、长按选字和滚动手势暂停。两端均区分旧 Mac 缺字段与新 Mac 的空候选。
+  iPhone 按展开，以及手指停在文字上或在其上移动（长按选字、滚动）暂停，触点由 `ReadingTouch.swift` 旁观（见文末 2026-11-13 记录）。
+  两端均区分旧 Mac 缺字段与新 Mac 的空候选。
 
 验证与安装记录如下。
 
@@ -196,3 +197,18 @@ generation 也随普通写入变化。它是写入版本，来源记录身份仍
 
 2026-11-08 用户明确要求先提交，TestFlight 分发延后。手机实际体验仍待新版本分发后确认，
 延期任务记录在 `docs/PROGRESS.md` 与项目待办中。
+
+### 7.1 2026-11-13：手指落在最新文字上无法滚动页面
+
+用户在 iOS 27 真机上发现，手指先落在「工作中」卡片的最新文字上，页面就没法上下滚动，与请求页的待办行是同一类问题
+（[todo-list-actions §6.1](todo-list-actions.md)）。原先在文字上挂 `LongPressGesture(0.15 秒)` 与 `DragGesture(1 pt)`
+判断「正在阅读」，`.simultaneousGesture` 在 iOS 27 上仍会让页面的滚动失效；探针只在手指落在这段文字上时卡住，卡片其他区域都能滚。
+
+改为 `Views/Agents/ReadingTouch.swift`：一个只旁观的 UIKit 识别器，挂在文字所在的 `UIScrollView` 上（找不到就挂窗口），
+只认起点落在这段文字内的触点，永不识别、不取消、不延迟触点、与其他识别器同时工作；手指停留超过 150 ms 或移动超过 1 pt 就进入阅读锁，
+规则与 §4 不变。选字仍由系统的文字选择处理。
+
+`AskHumanAgentPageUITests` 覆盖：手指落在文字上直接滚、先停一下再滚、整张「工作中」卡片各处（含滚到页尾后）扫过都能滚，
+以及手指停在文字上时「有新内容」出现、不被 10 秒换文替换。iOS 27.2 的 Duo（en 与 zh-Hans）与 iOS 18.5 的 iPhone 16（en）通过；
+换回旧手势后两条滚动测试在 iOS 27.2 上失败（连从文字旁边的页边距起手都滚不动）。
+这几条测试里的按钮按名字找：文字区容器的 `watch-text` 标识会盖住里面按钮自己的标识。

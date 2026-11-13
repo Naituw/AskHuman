@@ -20,9 +20,10 @@ struct WatchText: View {
                 if displayed.kind == "thinking" {
                     Text("Thinking").font(.caption.weight(.medium)).foregroundStyle(.secondary)
                 }
+                // A finger that stays on the text or moves over it (to scroll, or to select) is reading it. It is watched, not
+                // taken: a `DragGesture` here would stop the page from scrolling under such a finger (iOS 27).
                 paragraph(displayed)
-                    .simultaneousGesture(LongPressGesture(minimumDuration: 0.15).onEnded { _ in presentation.lockReading() })
-                    .simultaneousGesture(DragGesture(minimumDistance: 1).onChanged { _ in presentation.lockReading() })
+                    .background { ReadingTouch { presentation.lockReading() } }
                 HStack(spacing: 10) {
                     Button {
                         presentation.toggleExpanded(now: .now)
