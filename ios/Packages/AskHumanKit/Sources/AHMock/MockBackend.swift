@@ -192,6 +192,9 @@ public actor MockBackend: RemoteBackend {
     public var sessionHistoryDelay = 0.3
     /// A file a UI test makes to let the reads finish: until it exists a read waits (at most a minute).
     public var sessionHistoryGate: String?
+    /// What the working Agent's live view says as its latest text (`MockData.watchLatest`): `thinking` or `answer`, both
+    /// long, or `short`. Unset keeps the text of a Mac from before the latest text.
+    public var watchText: String?
 
     public private(set) var submissions: [Submission] = []
     public private(set) var uploads: [UploadSource] = []

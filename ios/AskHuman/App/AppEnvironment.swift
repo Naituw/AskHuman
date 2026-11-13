@@ -100,6 +100,9 @@ struct LaunchOptions {
     var historyDelay: Double?
     /// `-AHHistoryGate <path>`: a read of a session's history is held back until that file exists.
     var historyGate: String?
+    /// `-AHWatchText thinking|answer|long|short`: the working Agent's live view has a latest text of that kind (the page's
+    /// expand and collapse need one that does not fit the preview, and one that does).
+    var watchText: String?
 
     init(defaults: UserDefaults = .standard) {
         mock = defaults.bool(forKey: "AHMock")
@@ -150,6 +153,7 @@ struct LaunchOptions {
         historyFail = max(0, defaults.integer(forKey: "AHHistoryFail"))
         if defaults.object(forKey: "AHHistoryDelay") != nil { historyDelay = max(0, defaults.double(forKey: "AHHistoryDelay")) }
         historyGate = defaults.string(forKey: "AHHistoryGate")
+        watchText = defaults.string(forKey: "AHWatchText")
     }
 }
 
@@ -179,6 +183,7 @@ final class AppEnvironment {
             if launch.historyFail > 0 { Task { await backend.setFailNextSessionHistory(launch.historyFail) } }
             if let delay = launch.historyDelay { Task { await backend.setSessionHistoryDelay(realSeconds: delay) } }
             if let gate = launch.historyGate { Task { await backend.setSessionHistoryGate(path: gate) } }
+            if let kind = launch.watchText { Task { await backend.setWatchText(kind) } }
             if let kind = launch.followEvent {
                 Task {
                     try? await Task.sleep(for: .seconds(2))

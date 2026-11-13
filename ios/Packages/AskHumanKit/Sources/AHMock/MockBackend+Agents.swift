@@ -83,7 +83,16 @@ extension MockBackend {
             frame.model = draft.modelLabel
             frame.reasoning = draft.effort
         }
+        if item.view.state == "working", let kind = watchText, let latest = MockData.watchLatest(kind) {
+            frame.latestText = latest
+            frame.supportsLatestText = true
+        }
         return frame
+    }
+
+    /// Gives the working Agent a latest text, as a Mac with the latest text sends (`-AHWatchText thinking|answer|short`).
+    public func setWatchText(_ kind: String?) {
+        watchText = kind
     }
 
     func advanceWatch(_ id: String, tick: Int) {
