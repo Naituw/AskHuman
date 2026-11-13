@@ -1,0 +1,157 @@
+/* Prototype-only styles for the "complete / delete / add on every todo list" design (docs/specs/todo-list-actions.md).
+   They are written with the popup's own tokens and the row vocabulary of controls.css / popup.css (`.option`, `.check`,
+   `.todo-del`), so a screenshot looks like what the product would draw. Nothing here ships. State is read from
+   `data-ta-state` on a row (hover | completing | confirm | added) because Vue rewrites a row's class on every change. */
+
+/* ---- Row actions: ✓ complete, ✕ delete -------------------------------------------------------------------------- */
+.option[data-ta] { position: relative; }
+.ta-acts {
+  flex: 0 0 auto;
+  align-self: flex-start;
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  margin-left: 2px;
+}
+.ta-btn {
+  position: relative;
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  padding: 0;
+  border: none;
+  border-radius: 50%;
+  background: transparent;
+  color: var(--text-muted, #8e8e93);
+  opacity: 0;
+  cursor: default;
+}
+.option:hover .ta-btn,
+.option[data-ta-state="hover"] .ta-btn,
+.ta-btn:focus-visible { opacity: 1; }
+.ta-btn:hover,
+.ta-btn[data-hot="true"] { background: rgba(128, 128, 128, 0.2); color: var(--text-secondary); }
+.ta-done:hover,
+.ta-done[data-hot="true"] {
+  background: color-mix(in srgb, var(--accent-green) 20%, transparent);
+  color: color-mix(in srgb, var(--accent-green) 80%, var(--text-primary));
+}
+/* A row the pointer is on, for stills (the real :hover is not available in a screenshot). */
+.option[data-ta-state="hover"] { background: var(--control-hover-bg); }
+
+/* The hint a native `title` would show, drawn for stills. */
+.ta-tip {
+  position: absolute;
+  bottom: calc(100% + 6px);
+  left: 50%;
+  transform: translateX(-50%);
+  padding: 3px 8px;
+  border-radius: 6px;
+  background: color-mix(in srgb, var(--text-primary) 86%, transparent);
+  color: var(--bg);
+  font-size: 11px;
+  line-height: 1.3;
+  white-space: nowrap;
+  pointer-events: none;
+}
+
+/* Complete: the row is struck through at once and keeps its place for a moment; "Undo" is the only action left. */
+.option[data-ta-state="completing"] { background: var(--control-bg); border-color: var(--control-border); }
+.option[data-ta-state="completing"] .label { color: var(--text-tertiary); text-decoration: line-through; text-decoration-thickness: 1px; }
+.option[data-ta-state="completing"] .todo-option-badge,
+.option[data-ta-state="completing"] .todo-attachment-badge,
+.option[data-ta-state="completing"] .todo-file-count,
+.option[data-ta-state="completing"] .opt-sc { opacity: 0.45; }
+.option[data-ta-state="completing"] .check {
+  border-radius: 50%;
+  border-color: var(--accent-green);
+  background: var(--accent-green);
+  color: #fff;
+}
+.ta-undo {
+  flex: 0 0 auto;
+  padding: 0 7px;
+  height: 20px;
+  border: none;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--accent);
+  font: inherit;
+  font-size: 12px;
+  font-weight: 500;
+  cursor: default;
+}
+.ta-undo:hover { background: color-mix(in srgb, var(--accent) 12%, transparent); }
+
+/* Delete: ✕ becomes a red "Confirm delete" and stays until the next click elsewhere (same as the todos window). */
+.ta-confirm {
+  flex: 0 0 auto;
+  height: 20px;
+  padding: 0 8px;
+  border: 1px solid color-mix(in srgb, #ff453a 45%, transparent);
+  border-radius: 6px;
+  background: color-mix(in srgb, #ff453a 12%, transparent);
+  color: #ff453a;
+  font: inherit;
+  font-size: 11px;
+  font-weight: 600;
+  white-space: nowrap;
+  cursor: default;
+}
+
+/* A todo that has just been added: the row is lit in the accent colour for about a second and a half, then fades back.
+   Drawn here at its brightest, as a still. */
+.option[data-ta-state="added"] { background: color-mix(in srgb, var(--accent) 17%, var(--control-bg)); }
+
+/* ---- The add row at the end of a list ---------------------------------------------------------------------------- */
+.ta-add {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 9px 12px;
+  border: 1px dashed color-mix(in srgb, var(--text-primary) 24%, transparent);
+  border-radius: var(--radius-md);
+  color: var(--text-secondary);
+  font-size: 14px;
+  line-height: 20px;
+  cursor: default;
+}
+.ta-add:hover { background: var(--control-hover-bg); color: var(--text-primary); }
+.ta-add-ico {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 20px;
+}
+.ta-add-label { flex: 1 1 auto; }
+.ta-add.editing {
+  border: 1px solid color-mix(in srgb, var(--accent) 55%, var(--control-border));
+  background: var(--control-bg);
+  box-shadow: var(--focus-ring), var(--clickable-shadow);
+  color: var(--text-primary);
+}
+.ta-add.editing .ta-add-ico { color: var(--accent); }
+.ta-add-field { flex: 1 1 auto; min-width: 0; display: flex; align-items: center; }
+.ta-typed { overflow-wrap: anywhere; }
+.ta-caret { display: inline-block; width: 1.5px; height: 17px; margin-left: 1px; background: var(--accent); }
+.ta-add-hint { flex: 0 0 auto; align-self: center; font-size: 11px; line-height: 1; color: var(--text-secondary); white-space: nowrap; }
+.ta-add-hint kbd {
+  margin-right: 3px;
+  padding: 3px 5px;
+  border: var(--hairline) solid var(--border);
+  border-radius: 5px;
+  background: var(--bg-elevated);
+  font-family: inherit;
+  font-size: 11px;
+}
+
+/* ---- Entry points of the todo section ------------------------------------------------------------------------------ */
+/* A project with no todo yet: the folded header is the way in, in the accent colour so it reads as an action. */
+.ta-empty .todo-toggle { color: var(--accent); padding-left: 7px; }
+.ta-empty .todo-toggle .todo-title { font-weight: 500; }
+.ta-pill-ico { display: flex; align-items: center; }

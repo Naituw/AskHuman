@@ -1,0 +1,295 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>AskHuman · iOS 待办列表操作（静态示意）</title>
+<!-- A static mock of "complete / delete / add on every todo list" on the iPhone answer page (docs/specs/todo-list-actions.md):
+     not product code, only drawn to be looked at. It borrows the phone, cards and option rows of ios-annotations.html and
+     matches the look of docs/assets/special-replies/ios-todo-ask.jpg (the real screens it extends).
+     ?board=ask    the folded-open Todos card of an ask: rest, swipe right (Done), done + Undo, swipe left (Delete)
+     ?board=more   long-press menu, adding in place with the keyboard, What's next with the same rows
+     ?board=entry  a project without todos, and the Stop card
+     `cells=1,2` limits a board to some of its cells. -->
+<style>
+:root {
+  --bg: #f2f2f7; --card: #fff; --label: #000; --label2: rgba(60, 60, 67, .62); --label3: rgba(60, 60, 67, .32);
+  --fill: rgba(120, 120, 128, .12); --fill2: rgba(120, 120, 128, .2); --sep: rgba(60, 60, 67, .16);
+  --blue: #007aff; --purple: #af52de; --orange: #ff9500; --green: #34c759; --red: #ff3b30;
+}
+* { box-sizing: border-box; }
+html, body { margin: 0; background: #d9dadf; color: var(--label); font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", "PingFang SC", "Helvetica Neue", sans-serif; -webkit-font-smoothing: antialiased; }
+.board { display: flex; gap: 44px; padding: 26px 30px 40px; align-items: flex-start; width: max-content; }
+.cell { width: 393px; display: flex; flex-direction: column; gap: 16px; }
+.cap { min-height: 112px; padding: 0 6px; font-size: 15px; line-height: 1.45; color: #3a3a3c; }
+.cap b { display: block; margin-bottom: 2px; font-size: 18px; color: #111; }
+
+.phone { position: relative; width: 393px; height: 852px; border-radius: 52px; overflow: hidden; background: var(--bg); box-shadow: 0 0 0 7px #1d1d1f, 0 0 0 8px #4a4a4c, 0 24px 60px rgba(0, 0, 0, .3); }
+.island { position: absolute; z-index: 40; top: 11px; left: 50%; width: 124px; height: 36px; margin-left: -62px; border-radius: 18px; background: #000; }
+.status { position: absolute; z-index: 39; top: 0; left: 0; right: 0; height: 56px; padding: 19px 36px 0 48px; display: flex; justify-content: space-between; font-size: 17px; font-weight: 600; }
+.status .sys { display: flex; gap: 6px; align-items: center; }
+.fade { position: absolute; z-index: 28; top: 0; left: 0; right: 0; height: 128px; background: linear-gradient(var(--bg) 58%, rgba(242, 242, 247, 0)); pointer-events: none; }
+.nav { position: absolute; z-index: 30; top: 64px; left: 16px; right: 16px; display: flex; justify-content: space-between; }
+.circle { position: relative; width: 46px; height: 46px; border-radius: 50%; background: rgba(255, 255, 255, .92); box-shadow: 0 1px 8px rgba(0, 0, 0, .1), 0 0 0 .5px rgba(0, 0, 0, .04); display: grid; place-items: center; }
+.scroll { position: absolute; top: 122px; left: 16px; right: 16px; }
+.head { display: flex; gap: 12px; align-items: center; padding: 0 2px; }
+.appicon { flex: none; width: 50px; height: 50px; border-radius: 13px; background: linear-gradient(160deg, #5b9bff, #2f6bf2); display: grid; place-items: center; color: #fff; font: 700 15px ui-monospace, "SF Mono", Menlo, monospace; }
+.head .t { font-size: 17px; font-weight: 700; line-height: 1.25; }
+.head .m { margin-top: 2px; font-size: 12.5px; color: var(--label2); }
+.head .d { font-size: 12px; color: var(--label3); }
+.card { position: relative; margin-top: 14px; padding: 16px; border-radius: 20px; background: var(--card); overflow: hidden; }
+.md { font-size: 17px; line-height: 25px; letter-spacing: -.2px; }
+.qtitle { font-size: 17px; line-height: 24px; font-weight: 600; letter-spacing: -.2px; }
+.opts { margin-top: 12px; display: flex; flex-direction: column; gap: 8px; }
+.opt { display: flex; align-items: center; gap: 12px; min-height: 46px; padding: 0 12px; border-radius: 12px; background: var(--fill); font-size: 17px; border: 2px solid transparent; }
+.opt.on { background: rgba(0, 122, 255, .14); border-color: var(--blue); }
+.radio { flex: none; width: 22px; height: 22px; border-radius: 50%; border: 1.5px solid var(--label3); }
+.opt.on .radio { border: 7px solid var(--blue); background: #fff; }
+.rec { margin-left: auto; padding: 3px 8px; border-radius: 9px; background: rgba(255, 149, 0, .16); color: #e08a00; font-size: 12px; font-weight: 600; white-space: nowrap; }
+.field { margin-top: 10px; padding: 12px; border-radius: 12px; background: var(--fill); color: var(--label3); font-size: 17px; }
+.attach { margin-top: 10px; display: flex; align-items: center; gap: 6px; color: var(--blue); font-size: 15px; }
+
+/* ---- The Todos card (TodoPickCard) and the rows in it ---- */
+.thead { display: flex; align-items: center; gap: 10px; min-height: 28px; }
+.thead .ic { color: var(--label2); display: grid; }
+.thead .tt { font-size: 17px; font-weight: 600; }
+.chip { display: inline-flex; align-items: center; gap: 3px; height: 20px; padding: 0 7px; border-radius: 10px; background: var(--fill); color: var(--label2); font-size: 12px; font-weight: 600; }
+.thead .sel { margin-left: auto; color: var(--blue); font-size: 15px; }
+.thead .chev { color: var(--label2); display: grid; }
+.trows { margin-top: 12px; display: flex; flex-direction: column; gap: 8px; }
+.trow { position: relative; }
+.row { position: relative; z-index: 1; display: flex; align-items: flex-start; gap: 12px; min-height: 46px; padding: 10px 12px; border-radius: 12px; background: var(--fill); font-size: 17px; line-height: 24px; border: 2px solid transparent; transition: none; }
+.row.on { background: rgba(0, 122, 255, .14); border-color: var(--blue); }
+.row .tx { flex: 1; min-width: 0; padding-top: 0; }
+.box { flex: none; width: 22px; height: 22px; margin-top: 1px; border-radius: 6px; border: 1.5px solid var(--label3); display: grid; place-items: center; }
+.row.on .box { background: var(--blue); border-color: var(--blue); color: #fff; }
+.row .chip { margin-top: 2px; }
+.row.fresh { background: rgba(0, 122, 255, .13); }
+.row .radio { margin-top: 1px; }
+.row.on .radio { border: 7px solid var(--blue); background: #fff; }
+.card.slim { display: flex; align-items: center; gap: 12px; min-height: 56px; padding: 0 16px; color: var(--blue); font-size: 17px; font-weight: 600; }
+.card.slim .plus { flex: none; width: 24px; height: 24px; display: grid; place-items: center; }
+.row.sw-r { transform: translateX(104px); }
+.row.sw-l { transform: translateX(-104px); }
+.well { position: absolute; z-index: 0; top: 0; bottom: 0; width: 112px; border-radius: 12px; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 3px; color: #fff; font-size: 13px; font-weight: 600; }
+.well.lead { left: 0; background: var(--green); padding-right: 14px; }
+.well.trail { right: 0; background: var(--red); padding-left: 14px; }
+.addrow { display: flex; align-items: center; gap: 12px; min-height: 46px; padding: 0 12px; border-radius: 12px; border: 1.5px dashed rgba(60, 60, 67, .3); color: var(--label2); font-size: 17px; }
+.addrow .plus { flex: none; width: 22px; height: 22px; display: grid; place-items: center; color: var(--blue); }
+.addrow.editing { border: 2px solid var(--blue); background: rgba(0, 122, 255, .06); color: var(--label); padding-right: 8px; }
+.addrow .typed { flex: 1; min-width: 0; line-height: 24px; padding: 10px 0; }
+.addrow .caret { display: inline-block; width: 2px; height: 21px; margin-left: 1px; vertical-align: -4px; background: var(--blue); }
+.addrow .up { flex: none; width: 32px; height: 32px; border-radius: 50%; background: var(--blue); color: #fff; display: grid; place-items: center; }
+.addrow .up.off { background: var(--fill2); color: var(--label3); }
+.foot { margin-top: 12px; font-size: 12.5px; line-height: 17px; color: var(--label2); }
+.foot b { font-weight: 600; color: #48484a; }
+.more { margin-top: 2px; height: 44px; display: flex; align-items: center; justify-content: center; gap: 4px; color: var(--blue); font-size: 15px; }
+
+.toast { position: absolute; z-index: 25; left: 16px; right: 16px; bottom: 100px; height: 48px; padding: 0 8px 0 18px; display: flex; align-items: center; gap: 10px; border-radius: 24px; background: rgba(44, 44, 48, .94); color: #fff; font-size: 15px; box-shadow: 0 8px 24px rgba(0, 0, 0, .28); }
+.toast span { flex: 1; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.toast b { flex: none; height: 34px; padding: 0 14px; display: grid; place-items: center; border-radius: 17px; background: rgba(255, 255, 255, .16); color: #7fb8ff; font-weight: 600; }
+
+.bar { position: absolute; z-index: 10; left: 16px; right: 16px; bottom: 34px; display: flex; gap: 8px; align-items: center; }
+.pill { height: 52px; padding: 0 18px; display: flex; align-items: center; border-radius: 26px; background: rgba(255, 255, 255, .95); box-shadow: 0 1px 8px rgba(0, 0, 0, .1); font-size: 16px; font-weight: 600; }
+.send { flex: 0 0 132px; height: 52px; display: grid; place-items: center; border-radius: 26px; background: var(--blue); color: #fff; font-size: 17px; font-weight: 600; box-shadow: 0 2px 10px rgba(0, 122, 255, .3); }
+.home { position: absolute; z-index: 45; bottom: 8px; left: 50%; width: 138px; height: 5px; margin-left: -69px; border-radius: 3px; background: #000; }
+
+/* long press: the rest of the page steps back, the row lifts, a system menu opens under it */
+.ctxdim { position: absolute; z-index: 50; inset: 0; background: rgba(242, 242, 247, .5); backdrop-filter: blur(10px); -webkit-backdrop-filter: blur(10px); }
+.lift { position: absolute; z-index: 55; border-radius: 12px; box-shadow: 0 12px 34px rgba(0, 0, 0, .22); transform: scale(1.03); transform-origin: 50% 50%; }
+.lift .row { margin: 0; }
+.ctx { position: absolute; z-index: 56; width: 250px; padding: 6px 0; border-radius: 26px; background: rgba(250, 250, 252, .94); box-shadow: 0 10px 40px rgba(0, 0, 0, .22), 0 0 0 .5px rgba(0, 0, 0, .06); font-size: 17px; }
+.ctx .it { height: 46px; padding: 0 18px; display: flex; align-items: center; justify-content: space-between; }
+.ctx .it.del { color: var(--red); }
+.ctx i { display: block; height: 6px; margin: 3px 0; background: rgba(60, 60, 67, .1); }
+
+.kb { position: absolute; z-index: 70; left: 0; right: 0; bottom: 0; height: 302px; padding: 10px 4px 0; background: #d1d4da; }
+.kb .row2 { display: flex; justify-content: center; gap: 5.5px; margin-bottom: 11px; }
+.kb .k { flex: none; width: 33px; height: 44px; border-radius: 6px; background: #fff; box-shadow: 0 1px 0 rgba(0, 0, 0, .3); display: grid; place-items: center; font-size: 22px; }
+.kb .k.w { width: 46px; background: #aeb3bd; font-size: 15px; } .kb .k.sp { width: 188px; font-size: 16px; } .kb .k.go { width: 82px; background: #aeb3bd; font-size: 16px; }
+.kb .k.m { width: 46px; background: #aeb3bd; font-size: 15px; }
+</style>
+</head>
+<body>
+<div class="board" id="board"></div>
+<script>
+const I = (path, { w = 20, stroke = "currentColor", sw = 1.8, fill = "none" } = {}) =>
+  `<svg width="${w}" height="${w}" viewBox="0 0 24 24" fill="${fill}" stroke="${stroke}" stroke-width="${sw}" stroke-linecap="round" stroke-linejoin="round">${path}</svg>`;
+const ICON = {
+  back: '<svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="#000" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M15 5l-7 7 7 7"/></svg>',
+  dots: '<svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="#000" stroke-width="1.8"><circle cx="12" cy="12" r="9.5"/><circle cx="7.6" cy="12" r="1.15" fill="#000"/><circle cx="12" cy="12" r="1.15" fill="#000"/><circle cx="16.4" cy="12" r="1.15" fill="#000"/></svg>',
+  wifi: '<svg width="20" height="14" viewBox="0 0 20 14"><path d="M10 12.2l1.7-1.9a2.5 2.5 0 0 0-3.4 0zM5.6 7.4a6.4 6.4 0 0 1 8.8 0l1.2-1.4a8.2 8.2 0 0 0-11.2 0zM2 3.4a11.4 11.4 0 0 1 16 0l1.2-1.4a13.2 13.2 0 0 0-18.4 0z" fill="#000"/></svg>',
+  batt: '<svg width="30" height="14" viewBox="0 0 30 14"><rect x=".5" y=".5" width="25" height="13" rx="4" fill="none" stroke="#000" opacity=".4"/><rect x="2" y="2" width="22" height="10" rx="2.6" fill="#000"/><rect x="27" y="4.6" width="2" height="4.8" rx="1" fill="#000" opacity=".4"/></svg>',
+  check: I('<path d="M5 12.5l4.5 4.5L19 7"/>', { w: 15, sw: 3.2 }),
+  done: I('<circle cx="12" cy="12" r="9.5"/><path d="M7.8 12.4l3 3 5.4-6"/>', { w: 24, sw: 1.9 }),
+  trash: I('<path d="M4 7h16M9.5 7V4.8h5V7M6.5 7l.8 12.2a1.6 1.6 0 0 0 1.6 1.5h6.2a1.6 1.6 0 0 0 1.6-1.5L17.5 7M10 11v6M14 11v6"/>', { w: 22, sw: 1.8 }),
+  copy: I('<rect x="8.5" y="8.5" width="11" height="11" rx="2.4"/><path d="M15.5 8.5V6.4a2 2 0 0 0-2-2H6.4a2 2 0 0 0-2 2v7.1a2 2 0 0 0 2 2h2.1"/>', { w: 21 }),
+  plus: I('<path d="M12 5v14M5 12h14"/>', { w: 20, sw: 2.2 }),
+  up: I('<path d="M12 19V6M6.5 11.5L12 6l5.5 5.5"/>', { w: 19, sw: 2.6 }),
+  checklist: I('<path d="M4 6.5l1.6 1.6L8.4 5M4 12.5l1.6 1.6 2.8-3.1M4 18.5l1.6 1.6 2.8-3.1M12 7h8M12 13h8M12 19h8"/>', { w: 21, sw: 1.7 }),
+  down: I('<path d="M6 9l6 6 6-6"/>', { w: 16, sw: 2.6 }),
+  upc: I('<path d="M6 15l6-6 6 6"/>', { w: 16, sw: 2.6 }),
+  clip: I('<path d="M20 11.2l-8.1 8.1a5 5 0 0 1-7.1-7.1l8.5-8.5a3.3 3.3 0 0 1 4.7 4.7l-8.5 8.5a1.7 1.7 0 0 1-2.4-2.4l7.8-7.8"/>', { w: 14, sw: 1.9 }),
+  clipb: I('<path d="M20 11.2l-8.1 8.1a5 5 0 0 1-7.1-7.1l8.5-8.5a3.3 3.3 0 0 1 4.7 4.7l-8.5 8.5a1.7 1.7 0 0 1-2.4-2.4l7.8-7.8"/>', { w: 18, sw: 1.8 }),
+};
+
+const TODOS = [
+  { t: "补全 Agents 列表的空态" },
+  { t: "实现通知扩展的解密" },
+  { t: "整理 Markdown 渲染的快照测试" },
+  { t: "把弹窗里的待办面板同步到手机，选中后随回答一起发送", att: 1 },
+  { t: "设置页增加离开模式的说明文案" },
+];
+
+function shell(inner, { bar = true, extra = "", anchor = null, answered = "已回答 1/1" } = {}) {
+  return `<div class="phone">
+    <div class="island"></div>
+    <div class="fade"></div>
+    <div class="status"><span>14:32</span><span class="sys">${ICON.wifi}${ICON.batt}</span></div>
+    <div class="nav"><div class="circle">${ICON.back}</div><div class="circle">${ICON.dots}</div></div>
+    <div class="scroll"${anchor === null ? "" : ` data-anchor="${anchor}"`}>${inner}</div>
+    ${bar ? `<div class="bar"><div class="pill">${answered}</div><div style="flex:1"></div><div class="send">发送</div></div>` : ""}
+    ${extra}
+    <div class="home"></div>
+  </div>`;
+}
+
+/** One todo of the card, as a row. `mode`: "" | "r" (swiped right: Done shows) | "l" (swiped left: Delete shows). */
+function todoRow(todo, { on = false, mode = "", ctx = false, fresh = false } = {}) {
+  const well = mode === "r" ? `<div class="well lead">${ICON.done}<span>完成</span></div>` : mode === "l" ? `<div class="well trail">${ICON.trash}<span>删除</span></div>` : "";
+  const chip = todo.att ? `<span class="chip">${ICON.clip}${todo.att}</span>` : "";
+  return `<div class="trow"${ctx ? ' data-ctx="1"' : ""}>${well}<div class="row${on ? " on" : ""}${fresh ? " fresh" : ""}${mode ? " sw-" + mode : ""}"><span class="box">${on ? ICON.check : ""}</span><span class="tx">${todo.t}</span>${chip}</div></div>`;
+}
+
+/** A single-select row (What's next and the Stop card ask for one answer): a radio instead of the card's checkbox. */
+function radioRow(text, { on = false, rec = false, att = 0 } = {}) {
+  const tail = rec ? `<span class="rec">★ 推荐</span>` : att ? `<span class="chip">${ICON.clip}${att}</span>` : "";
+  return `<div class="trow"><div class="row${on ? " on" : ""}"><span class="radio"></span><span class="tx">${text}</span>${tail}</div></div>`;
+}
+
+function addRow({ editing = false, typed = "" } = {}) {
+  if (!editing) return `<div class="addrow"><span class="plus">${ICON.plus}</span><span>添加待办</span></div>`;
+  return `<div class="addrow editing"><span class="plus">${ICON.plus}</span><span class="typed">${typed}<i class="caret"></i></span><span class="up">${ICON.up}</span></div>`;
+}
+
+function todoCard({ rows, picked = 0, add = "ghost", typed = "", count = 5, foot = true }) {
+  return `<div class="card" data-todo-card="1">
+    <div class="thead"><span class="ic">${ICON.checklist}</span><span class="tt">待办</span><span class="chip">${count}</span>
+      ${picked ? `<span class="sel">已选 ${picked}</span>` : ""}<span class="chev"${picked ? "" : ' style="margin-left:auto"'}>${ICON.upc}</span></div>
+    <div class="trows">${rows.join("")}${add ? addRow({ editing: add === "editing", typed }) : ""}</div>
+    ${foot ? `<div class="foot">选中的待办会和你的回答一起发给 Agent，并从待办里移除。<b>右滑完成，左滑删除。</b></div>` : ""}
+  </div>`;
+}
+
+const toast = (text) => `<div class="toast"><span>${text}</span><b>撤销</b></div>`;
+
+const keyboard = () => {
+  const row = (letters) => `<div class="row2">${[...letters].map((c) => `<div class="k">${c}</div>`).join("")}</div>`;
+  return `<div class="kb">
+    ${row("qwertyuiop")}${row("asdfghjkl")}
+    <div class="row2"><div class="k w">⇧</div>${[..."zxcvbnm"].map((c) => `<div class="k">${c}</div>`).join("")}<div class="k w">⌫</div></div>
+    <div class="row2"><div class="k m">123</div><div class="k m">🌐</div><div class="k sp">空格</div><div class="k go">换行</div></div>
+  </div>`;
+};
+
+/** The part of an ask above the Todos card (the page is scrolled past it in most cells). */
+const above = `
+  <div class="head"><div class="appicon">&gt;_</div><div><div class="t">${"重构配对接口的超时处理"}</div><div class="m">Codex · HumanInLoop · Home MacBook Pro</div><div class="d">11月4日 14:32</div></div></div>
+  <div class="card"><div class="md">接口层的重构已经完成，单测全部通过。上线前有一处行为需要你定一下。</div></div>
+  <div class="card"><div class="qtitle">请求超时之后要怎么处理？</div>
+    <div class="opts"><div class="opt"><span class="radio"></span>自动重试一次</div><div class="opt on"><span class="radio"></span><span>直接报错，并告诉用户可以重试</span><span class="rec">★ 推荐</span></div><div class="opt"><span class="radio"></span>改成可配置，默认不重试</div></div>
+    <div class="field">补充说明（可选）</div><div class="attach">${ICON.clipb}添加附件</div></div>`;
+// Scrolled so that the Todos card sits at the top, under the round buttons.
+const ANCHOR = 116;
+const R = (i, o) => todoRow(TODOS[i], o);
+
+const boards = {
+  ask: () => [
+    cell("<b>A · 展开的待办卡：整行点按仍是选中</b>行尾不加按钮，不挤文字。列表末尾多了一行「＋ 添加待办」；脚注顺带告诉人手势。",
+      shell(above + todoCard({ rows: [R(0), R(1, { on: true }), R(2), R(3), R(4)], picked: 1 }), { anchor: ANCHOR })),
+    cell("<b>B · 右滑一行：露出绿色「完成」</b>和待办页同一手势：滑出一点会停住，点绿色按钮完成；一路滑到头松手，直接完成（一下轻触觉）。",
+      shell(above + todoCard({ rows: [R(0), R(1, { on: true }), R(2, { mode: "r" }), R(3), R(4)], picked: 1 }), { anchor: ANCHOR })),
+    cell("<b>C · 松手后：行收起，底部出「已完成 · 撤销」</b>撤销在 4 秒内，行回到原来的位置；被选中的待办若被完成，选择同时撤掉。",
+      shell(above + todoCard({ rows: [R(0), R(1, { on: true }), R(3), R(4)], picked: 1, count: 4 }), { anchor: ANCHOR, extra: toast("已完成「整理 Markdown 渲染的快照测试」") })),
+    cell("<b>D · 左滑一行：露出红色「删除」</b>只露出、不整滑；点它才删除，「滑开再点」就是二次确认。删除是真删，没有撤销。",
+      shell(above + todoCard({ rows: [R(0), R(1, { on: true }), R(2), R(3, { mode: "l" }), R(4)], picked: 1 }), { anchor: ANCHOR })),
+  ],
+  entry: () => [
+    cell("<b>H · 项目还没有待办：只有一行「＋ 添加待办」</b>没有待办时不放空清单，这一行就是入口；点它变成输入行。加了第一条之后，它就变回「待办 1」的折叠卡。",
+      shell(above + `<div class="card slim" data-todo-card="1"><span class="plus">${ICON.plus}</span><span>添加待办</span></div>`)),
+    cell("<b>I · Stop 确认卡：和 What's next 一样</b>待办就是选项行（滑动 / 长按 / 添加都有），只留这一份实时清单，不再另外出现一张「待办」卡；「继续对话」「结束对话」在清单之后。",
+      shell(`<div class="head"><div class="appicon">&gt;_</div><div><div class="t">重构配对接口的超时处理</div><div class="m">Codex · HumanInLoop · Home MacBook Pro</div><div class="d">11月4日 14:32</div></div></div>
+        <div class="card"><div class="md">配对接口的超时处理已经改完，单测全部通过。</div></div>
+        <div class="card"><div class="qtitle">Agent 准备结束本轮对话，接下来怎么做？</div>
+          <div class="trows" style="margin-top:12px">
+            ${radioRow("补全 Agents 列表的空态")}
+            ${radioRow("实现通知扩展的解密", { on: true })}
+            ${radioRow("整理 Markdown 渲染的快照测试", { att: 1 })}
+          </div>
+          <div class="more">显示全部 12 条待办 ${ICON.down}</div>
+          <div class="trows" style="margin-top:0">${addRow()}${radioRow("继续对话", { rec: true })}${radioRow("结束对话")}</div>
+        </div>`, { answered: "已回答 1/1" })),
+  ],
+  more: () => [
+    cell("<b>E · 长按一行：系统菜单</b>「完成 / 复制 / 删除」，给不熟悉滑动手势的人；VoiceOver 的「自定义操作」里是同样三项。",
+      shell(above + todoCard({ rows: [R(0), R(1, { on: true }), R(2, { ctx: true }), R(3), R(4)], picked: 1 }), { anchor: ANCHOR, extra: "<!--CTX-->" })),
+    cell("<b>F · 点「＋ 添加待办」：原地变输入行</b>键盘弹出，点 ↑ 添加；新行出现并高亮，输入行留着，可以接着加。收起键盘或点别处就变回一行。",
+      shell(above + todoCard({ rows: [R(1, { on: true }), R(2), R(3), R(4, { fresh: true })], picked: 1, add: "editing", typed: "给 CLI 增加 --escalate 参数的文档", foot: false }), { anchor: -70, bar: false, extra: `<div class="bar" style="bottom:312px"><div class="pill">已回答 1/1</div><div style="flex:1"></div><div class="send">发送</div></div>${keyboard()}` })),
+    cell("<b>G · What's next 里是同一套</b>待办行就是选项行，所以滑动 / 长按一样；「＋ 添加待办」在这一组待办的末尾（「显示全部」之后），「结束本轮」之前。",
+      shell(`<div class="head"><div class="appicon">&gt;_</div><div><div class="t">收尾 iOS 通知与分组的细节</div><div class="m">Codex · HumanInLoop · Home MacBook Pro</div><div class="d">11月4日 14:32</div></div></div>
+        <div class="card"><div class="md">已完成：配对流程的单元测试。</div></div>
+        <div class="card"><div class="qtitle">接下来做什么？</div>
+          <div class="trows" style="margin-top:12px">
+            ${radioRow("收尾 iOS 通知与分组的细节", { rec: true })}
+            ${radioRow("补全 Agents 列表的空态")}
+            ${radioRow("实现通知扩展的解密", { on: true })}
+            ${radioRow("把弹窗里的待办面板同步到手机，选中后随回答一起发送", { att: 1 })}
+          </div>
+          <div class="more">显示全部 12 条待办 ${ICON.down}</div>
+          <div class="trows" style="margin-top:0">${addRow()}${radioRow("结束本轮")}</div>
+        </div>`, { answered: "已回答 1/1" })),
+  ],
+};
+
+function cell(caption, phone) {
+  return `<div class="cell"><div class="cap">${caption}</div>${phone}</div>`;
+}
+
+const query = new URLSearchParams(location.search);
+const board = boards[query.get("board") || "ask"] || boards.ask;
+const only = (query.get("cells") || "").split(",").map(Number).filter((n) => n > 0);
+const html = board().filter((_, i) => !only.length || only.includes(i + 1)).join("");
+document.getElementById("board").innerHTML = html;
+
+// Scroll each page so that its Todos card starts where the cell wants it (a real page is scrolled there by the reader).
+document.querySelectorAll(".scroll[data-anchor]").forEach((scroll) => {
+  const phone = scroll.closest(".phone");
+  const card = scroll.querySelector("[data-todo-card]");
+  if (!phone || !card) return;
+  const delta = card.getBoundingClientRect().top - phone.getBoundingClientRect().top - Number(scroll.dataset.anchor);
+  scroll.style.top = `${122 - delta}px`;
+});
+
+// The long-press cell: measure the lifted row and hang the menu under it.
+document.querySelectorAll(".phone").forEach((phone) => {
+  const marker = phone.innerHTML.includes("<!--CTX-->");
+  const target = phone.querySelector('[data-ctx="1"]');
+  if (!marker || !target) return;
+  const p = phone.getBoundingClientRect();
+  const r = target.getBoundingClientRect();
+  const top = r.top - p.top, left = r.left - p.left;
+  const dim = document.createElement("div");
+  dim.className = "ctxdim";
+  const lift = document.createElement("div");
+  lift.className = "lift";
+  lift.style.cssText = `top:${top}px;left:${left}px;width:${r.width}px;height:${r.height}px;background:var(--bg)`;
+  lift.innerHTML = target.innerHTML;
+  const menu = document.createElement("div");
+  menu.className = "ctx";
+  menu.style.cssText = `top:${top + r.height + 14}px;left:${left}px`;
+  menu.innerHTML = `<div class="it"><span>完成</span>${ICON.done}</div><div class="it"><span>复制</span>${ICON.copy}</div><i></i><div class="it del"><span>删除</span>${ICON.trash}</div>`;
+  phone.append(dim, lift, menu);
+});
+</script>
+</body>
+</html>
