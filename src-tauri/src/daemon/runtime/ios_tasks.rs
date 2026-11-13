@@ -696,7 +696,7 @@ mod tests {
             text: text.into(),
             created_at_ms: index as u64,
             agent_kind: None,
-            auto: index % 2 == 0,
+            auto: index.is_multiple_of(2),
             attachments: Vec::new(),
         }
     }
