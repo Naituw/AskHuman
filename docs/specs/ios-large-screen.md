@@ -167,12 +167,21 @@ UIHostingController，按 [.intrinsicContentSize](https://developer.apple.com/do
 一个按钮，点一下展开成带文字的完整标签栏、选定后收回；页面的按钮一个不少。高度够时（Agent、待办、历史、Mac 详情只有一两个按钮）
 标签栏仍是完整的五个。
 
-- **位置有讲究**：挂在栈的根内容上、`navigationDestination` 之后，压栈的页面跟着生效；挂在 `NavigationStack` 外面或
-  `TabPage` 上无效（外屏逐处实测，只有根内容和页面自己有效）。新增带栈的标签要照做。
+- **位置有讲究**：栈的根内容和每个 `navigationDestination` 产出的页面**两处都要挂**。根上的只管之后手动压栈的页面；
+  折叠时分栏换成一个新建的栈，打开的那一页一出生就在路径上（不是压进去的），拿不到根上的，系统就回到默认的「标签栏优先」。
+  2026-11-14 在 Duo 模拟器上实测：内屏分栏里选中请求再折叠，外屏竖条是「‹ ‹ …」加完整五个标签，连折三次都一样；
+  直接在外屏启动或自己压栈打开则正常，所以只用 `-AHOpen` 的回归抓不到。挂在 `NavigationStack` 外面或 `TabPage` 上无效
+  （外屏逐处实测）。新增带栈的标签、新增被压栈的页面要照做。
 - **分栏（`ListDetailColumns`，Duo 内屏、iPad）没改**：内屏横屏（669 pt 高）最多的请求页也只有「上一条 / 下一条」「更多」三个按钮，
   连五个标签放得下，键盘弹起时键盘浮在栏上，两种设置的截图一样，没有可复现的溢出；有了再加。
-- **回归**：`AskHumanPersistentTabsUITests.testRequestKeepsEveryToolbarButtonBesideTheTabs`——外屏上没有这条偏好时红
-  （缺 `next-request`），有时绿；窄窗口之外自动跳过。
+- **回归**：`AskHumanPersistentTabsUITests.testRequestKeepsEveryToolbarButtonBesideTheTabs`（外屏直接打开）与
+  `AskHumanFoldNavigationUITests.testFoldingAnOpenRequestKeepsEveryButtonBesideTheTabs`（内屏分栏里打开、折叠展开三轮，
+  不带草稿和键盘）。两条在没有这条偏好时都红（缺 `next-request`），有时绿；前一条窄窗口之外自动跳过，后一条由
+  `ios/Tools/test-fold-navigation.py` 驱动真实开合。
+- **这不是整组按钮消失的修复**：2026-11-14 用户在 build 24 真机（iOS 27.3 Beta）上仍遇到「内屏横屏打开一条提问、折叠到外屏，
+  竖条上一个按钮都没有（返回键也没了），只剩五个标签」。Duo 模拟器（27.1 / 27.2，没有 27.3 运行时）上折叠后的最坏情形是
+  上一条所述的默认布局，三个按钮还在；WebMarkdown、折叠放慢到 3 秒、先切到别的 App 再回来、打开开发者模式都复现不出「整组为空」。
+  本条修复了模拟器上能复现的那一档，真机那一档要靠真机的诊断报告，见[排查记录](../investigations/ios-duo-fold-navigation.md)。
 
 独立程序在保留原 split → stack 模型时完成十次有效开合；产品验证状态见
 [排查记录](../investigations/ios-duo-fold-navigation.md)，不把独立程序通过当成产品回归通过。

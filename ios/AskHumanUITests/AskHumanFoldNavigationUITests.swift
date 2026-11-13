@@ -114,6 +114,23 @@ final class AskHumanFoldNavigationUITests: XCTestCase {
         XCTAssertFalse(element("request-title").exists)
     }
 
+    /// The outer screen puts the tab bar and the buttons of the page in one strip. A request that was open in the
+    /// columns is in the new stack from its first frame, which is not how a request is pushed over the list, and it
+    /// has to keep every button just the same (the tab bar gives way). Left to the system's own choice, "next" and
+    /// the menu fold into an overflow button and all five tabs stay. No draft here: a keyboard moves things around.
+    func testFoldingAnOpenRequestKeepsEveryButtonBesideTheTabs() {
+        launch()
+        require("inbox-row-req-migration").tap()
+        _ = require("request-title")
+        for cycle in 0..<3 {
+            resize(open: false)
+            for id in ["BackButton", "previous-request", "next-request", "request-menu"] { _ = require(id) }
+            XCTAssertFalse(element("BottomOverflowBarButtonItem").exists, "the buttons are folded into the system's overflow menu")
+            screenshot("folded-buttons-\(cycle)")
+            if cycle < 2 { resize(open: true) }
+        }
+    }
+
     func testFoldingAPickedAgentKeepsTheBackButton() {
         checkFoldedSelection(tab: "agents", row: "agent-row-claude:cc-flaky", detail: "watch-card")
     }

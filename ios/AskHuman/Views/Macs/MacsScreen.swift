@@ -17,7 +17,9 @@ struct MacsScreen: View {
             NavigationStack(path: Binding(get: { opened.map { [$0] } ?? [] }, set: { opened = $0.last })) {
                 MacsList(showPairing: $showPairing)
                     .awayStrip()
-                    .navigationDestination(for: String.self) { id in MacDetailScreen(macId: id) }
+                    .navigationDestination(for: String.self) { id in
+                        MacDetailScreen(macId: id).prefersToolbarItemsOverTabBar()
+                    }
                     .prefersToolbarItemsOverTabBar()
             }
         }
