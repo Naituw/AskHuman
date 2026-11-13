@@ -861,6 +861,7 @@ public final class AppStore {
         cancelAdvance()
         inboxPath = []
         agentPath = []
+        taskComposer?.discard()
         taskComposer = nil
         await backend.forgetAll()
     }

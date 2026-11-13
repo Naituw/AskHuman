@@ -115,6 +115,16 @@ final class AnswerComposerTests: XCTestCase {
         }
     }
 
+    func testPhotosAddedLaterDoNotRepeatANameOfTheSameReply() throws {
+        let form = composer(ask([question("1"), question("2")]))
+        let first = try form.addAttachment(name: "Photo.jpg", mime: "image/jpeg", data: Data([1]), isImage: true, question: 0)
+        let second = try form.addAttachment(name: "Photo.jpg", mime: "image/jpeg", data: Data([2]), isImage: true, question: 0)
+        // The files of all the questions go out as one reply.
+        let third = try form.addAttachment(name: "Photo.jpg", mime: "image/jpeg", data: Data([3]), isImage: true, question: 1)
+        XCTAssertEqual([first, second, third].map(\.name), ["Photo.jpg", "Photo-2.jpg", "Photo-3.jpg"])
+        XCTAssertEqual(try [first, second, third].map { try Data(contentsOf: form.url(of: $0)) }, [Data([1]), Data([2]), Data([3])])
+    }
+
     func testRemovingAnAttachmentDeletesItsFile() throws {
         let form = composer(ask([question("1")]))
         let attachment = try form.addAttachment(name: "a/b:c.txt", mime: "text/plain", data: Data([1]), isImage: false, question: 0)

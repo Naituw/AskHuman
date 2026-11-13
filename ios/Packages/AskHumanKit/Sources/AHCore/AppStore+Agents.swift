@@ -236,6 +236,7 @@ extension AppStore {
 
     /// Closes the new task sheet. A task that was sent keeps going.
     public func dismissNewTask() {
+        taskComposer?.discard()
         taskComposer = nil
         viewingTask = nil
     }

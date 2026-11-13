@@ -321,6 +321,26 @@ final class AgentStoreTests: XCTestCase {
         XCTAssertEqual(store.taskComposer?.macId, MockData.homeMacId)
     }
 
+    func testClosingTheNewTaskSheetStopsTheFilesStillBeingPrepared() async throws {
+        await make()
+        store.presentNewTask()
+        let composer = try XCTUnwrap(store.taskComposer)
+        let operation = Task<Void, Never> { try? await Task.sleep(for: .seconds(60)) }
+        composer.attachmentPreparation.operation = operation
+        store.dismissNewTask()
+        XCTAssertTrue(operation.isCancelled)
+        XCTAssertNil(store.taskComposer)
+    }
+
+    func testPhotosForAnAgentAreToldApartByName() async throws {
+        await make()
+        let composer = store.interjectComposer(for: working)
+        let first = try composer.addAttachment(name: "Photo.jpg", mime: "image/jpeg", data: Data([1]), isImage: true)
+        let second = try composer.addAttachment(name: "Photo.jpg", mime: "image/jpeg", data: Data([2]), isImage: true)
+        XCTAssertEqual([first, second].map(\.name), ["Photo.jpg", "Photo-2.jpg"])
+        XCTAssertEqual(try composer.sources().map(\.data), [Data([1]), Data([2])])
+    }
+
     func testTheSelectedTaskMacSurvivesCancellationAndReopeningTheApp() async {
         let suite = "ah-task-mac-" + UUID().uuidString
         defer { UserDefaults().removePersistentDomain(forName: suite) }

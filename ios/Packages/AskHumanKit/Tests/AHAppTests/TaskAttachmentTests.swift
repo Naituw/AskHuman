@@ -60,6 +60,38 @@ final class TaskAttachmentTests: XCTestCase {
         XCTAssertFalse(FileManager.default.fileExists(atPath: url.path))
     }
 
+    func testFilesWithTheSameNameAreToldApartAndNothingIsOverwritten() throws {
+        let form = composer()
+        let first = try form.addAttachment(name: "Photo.jpg", mime: "image/jpeg", data: Data([1]), isImage: true)
+        let second = try form.addAttachment(name: "Photo.jpg", mime: "image/jpeg", data: Data([2]), isImage: true)
+        // Letter case does not make a name another one: the Mac's disk would not tell them apart.
+        let third = try form.addAttachment(name: "photo.JPG", mime: "image/jpeg", data: Data([3]), isImage: true)
+        XCTAssertEqual(form.attachments.map(\.name), ["Photo.jpg", "Photo-2.jpg", "photo-3.JPG"])
+        XCTAssertEqual(Set([first, second, third].map { form.url(of: $0) }).count, 3, "each has a file of its own")
+        // What goes up is what was picked, in the order it was picked, under the names the list shows.
+        XCTAssertEqual(try form.sources().map(\.name), ["Photo.jpg", "Photo-2.jpg", "photo-3.JPG"])
+        XCTAssertEqual(try form.sources().map(\.data), [Data([1]), Data([2]), Data([3])])
+    }
+
+    func testANameThatWasFreedIsGivenOutAgainAndOddNamesStayTheirOwn() throws {
+        let form = composer()
+        try form.addAttachment(name: "notes", mime: "text/plain", data: Data([1]), isImage: false)
+        let second = try form.addAttachment(name: "notes", mime: "text/plain", data: Data([2]), isImage: false)
+        XCTAssertEqual(second.name, "notes-2", "a name without an extension")
+        form.removeAttachment(id: second.id)
+        XCTAssertEqual(try form.addAttachment(name: "notes", mime: "text/plain", data: Data([3]), isImage: false).name, "notes-2")
+        try form.addAttachment(name: "archive.tar.gz", mime: "application/gzip", data: Data([4]), isImage: false)
+        XCTAssertEqual(try form.addAttachment(name: "archive.tar.gz", mime: "application/gzip", data: Data([5]), isImage: false).name, "archive.tar-2.gz")
+    }
+
+    func testClosingTheFormStopsWhatIsStillBeingPrepared() {
+        let form = composer()
+        let operation = Task<Void, Never> { try? await Task.sleep(for: .seconds(60)) }
+        form.attachmentPreparation.operation = operation
+        form.discard()
+        XCTAssertTrue(operation.isCancelled)
+    }
+
     func testFileLimitsAndRemovalAreEnforcedLocally() throws {
         let form = composer()
         XCTAssertThrowsError(try form.addAttachment(name: "big", mime: "application/octet-stream", data: Data(count: Wire.maxAssetBytes + 1), isImage: false))

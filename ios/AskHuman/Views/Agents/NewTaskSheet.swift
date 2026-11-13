@@ -222,7 +222,8 @@ private struct NewTaskForm: View {
                 }
                 if options.attachmentsSupported == true {
                     AttachmentMenu(remaining: Wire.maxReplyAttachments - composer.attachments.count,
-                        identifier: "task-attach", fillsRow: true, preparationChanged: { id, active in
+                        identifier: "task-attach", fillsRow: true, retainedPreparation: composer.attachmentPreparation,
+                        preparationChanged: { id, active in
                             composer.setAttachmentPreparation(id, active: active)
                         }) { name, mime, data, isImage in
                             try composer.addAttachment(name: name, mime: mime, data: data, isImage: isImage)

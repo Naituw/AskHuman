@@ -79,6 +79,16 @@ public final class TaskComposer {
         if active { attachmentPreparations.insert(id) } else { attachmentPreparations.remove(id) }
     }
 
+    /// What the attachment menu is doing (photos loading, a video compressing). It belongs to the form, not to the
+    /// row of the form that shows it: the list grows with every file added, and a row that scrolls out of sight must
+    /// not stop the files that are still on their way.
+    public let attachmentPreparation = AttachmentPreparationState()
+
+    /// The form is closed: whatever was still being prepared for it stops.
+    public func discard() {
+        attachmentPreparation.cancel()
+    }
+
     @discardableResult
     public func addAttachment(name: String, mime: String, data: Data, isImage: Bool) throws -> DraftAttachment {
         guard data.count <= Wire.maxAssetBytes else { throw BackendError.tooLarge }
@@ -88,6 +98,7 @@ public final class TaskComposer {
         let localName = id + "-" + safe
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
         try data.write(to: directory.appendingPathComponent(localName), options: .atomic)
+        let name = AttachmentNames.unique(name, among: attachments.map(\.name))
         let file = DraftAttachment(id: id, name: name, mime: mime, size: data.count, isImage: isImage, localName: localName)
         attachments.append(file)
         return file

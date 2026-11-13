@@ -62,6 +62,7 @@ public final class InterjectComposer {
         let localName = id + "-" + Self.safeFileName(name)
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
         try data.write(to: directory.appendingPathComponent(localName), options: .atomic)
+        let name = AttachmentNames.unique(name, among: attachments.map(\.name))
         let attachment = DraftAttachment(id: id, name: name, mime: mime, size: data.count, isImage: isImage, localName: localName)
         attachments.append(attachment)
         return attachment

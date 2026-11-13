@@ -260,6 +260,8 @@ public final class AnswerComposer {
         let directory = drafts.filesDirectory(key: key)
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
         try data.write(to: directory.appendingPathComponent(localName), options: .atomic)
+        // One reply: the files of all its questions go out together, so their names are told apart across them.
+        let name = AttachmentNames.unique(name, among: answers.flatMap { $0.attachments.map(\.name) })
         let attachment = DraftAttachment(id: id, name: name, mime: mime, size: data.count, isImage: isImage, localName: localName)
         answers[question].attachments.append(attachment)
         changed()
