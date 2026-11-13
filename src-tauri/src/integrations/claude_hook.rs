@@ -95,7 +95,11 @@ exit 0
 pub const SCRIPT_CONTENT_WINDOWS: &str = r#"# Managed by AskHuman. Do not edit.
 $ErrorActionPreference = 'Stop'
 try {
-  $inputJson = [Console]::In.ReadToEnd()
+  # Claude Code exchanges UTF-8, while Windows PowerShell 5.1 console streams use the
+  # system code page (e.g. 936/GBK), which corrupts non-ASCII text in updatedInput.command.
+  $buffer = New-Object System.IO.MemoryStream
+  [Console]::OpenStandardInput().CopyTo($buffer)
+  $inputJson = (New-Object System.Text.UTF8Encoding $false).GetString($buffer.ToArray())
   $data = $inputJson | ConvertFrom-Json
   $command = [string]$data.tool_input.command
   if ($command -match '(^|[\s;&|()`"''\\/])AskHuman(?=\s|$|["''\\])') {
@@ -107,7 +111,9 @@ try {
       permissionDecision = 'allow'
       updatedInput = $toolInput
     }}
-    $result | ConvertTo-Json -Compress -Depth 100
+    $json = $result | ConvertTo-Json -Compress -Depth 100
+    # Pure-ASCII output does not depend on the console output code page.
+    [regex]::Replace($json, '[^\x00-\x7F]', { param($m) '\u{0:x4}' -f [int][char]$m.Value })
   } else { '{}' }
 } catch { '{}' }
 "#;
@@ -577,5 +583,15 @@ mod tests {
         assert!(SCRIPT_CONTENT.contains("AskHuman"));
         assert!(SCRIPT_CONTENT.contains("86400000"));
         assert!(SCRIPT_CONTENT.contains("permissionDecision"));
+    }
+
+    /// Windows PowerShell 5.1 reads a BOM-less script as ANSI and uses the console code page
+    /// for stdio, so the script must stay ASCII and must not round-trip text through it.
+    #[test]
+    fn windows_script_is_code_page_neutral() {
+        assert!(SCRIPT_CONTENT_WINDOWS.is_ascii());
+        assert!(!SCRIPT_CONTENT_WINDOWS.contains("[Console]::In"));
+        assert!(SCRIPT_CONTENT_WINDOWS.contains("OpenStandardInput"));
+        assert!(SCRIPT_CONTENT_WINDOWS.contains("[^\\x00-\\x7F]"));
     }
 }
