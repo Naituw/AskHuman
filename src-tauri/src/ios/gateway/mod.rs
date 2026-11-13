@@ -597,6 +597,8 @@ pub(crate) struct PhoneRt {
     pub traffic_sync: bool,
     pub traffic_sent_at: Option<i64>,
     pub traffic_pending: bool,
+    /// The phone said in its last `hello` that it merges lean watch frames (`wire::Hello::lean_watch`).
+    pub lean_watch: bool,
     pub device_name: String,
     pub dedup: Dedup,
     /// Revision of this phone's `agents` stream (the stream differs per phone: `followed`).
@@ -1428,6 +1430,7 @@ impl Actor {
             rt.hello_at = Some(now);
             rt.traffic_sync = hello.traffic_usage && self.host.caps().traffic_usage;
             rt.traffic_sent_at = None;
+            rt.lean_watch = hello.lean_watch;
             rt.device_name = sanitize_name(&hello.device_name);
         }
         self.send_hello_sync(phone_id, &hello.nonce);

@@ -370,6 +370,10 @@ pub struct Hello {
     pub device_name: String,
     #[serde(default, skip_serializing_if = "is_false")]
     pub lifecycle_results: bool,
+    /// The phone merges lean watch frames: a latest text it already holds is sent as a reference
+    /// instead of in full, and a frame that carries `latestText` leaves out the legacy `text`.
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub lean_watch: bool,
 }
 msg!(Hello, t::HELLO);
 
@@ -1986,6 +1990,38 @@ mod tests {
             serde_json::json!({"clientMsgId": "c", "requestId": "r", "status": "accepted"})
         );
         assert_eq!(AnswerAck::TYPE, "answer.ack");
+    }
+
+    /// A phone that merges lean watch frames says so in its hello; one that does not leaves the
+    /// field out, and a Mac that does not know it reads the hello as before.
+    #[test]
+    fn the_lean_watch_bit_of_a_hello_is_additive_in_both_directions() {
+        let hello = |lean_watch: bool| Hello {
+            traffic_usage: false,
+            traffic_sync: false,
+            nonce: "n".into(),
+            proto: PROTO,
+            app_ver: "1".into(),
+            device_name: "phone".into(),
+            lifecycle_results: true,
+            lean_watch,
+        };
+        assert!(serde_json::to_value(hello(false))
+            .unwrap()
+            .get("leanWatch")
+            .is_none());
+        assert_eq!(
+            serde_json::to_value(hello(true)).unwrap()["leanWatch"],
+            true
+        );
+        let old: Hello = serde_json::from_value(serde_json::json!({
+            "nonce": "n", "proto": PROTO, "appVer": "1", "deviceName": "phone", "lifecycleResults": true
+        }))
+        .unwrap();
+        assert!(!old.lean_watch);
+        let new: Hello =
+            serde_json::from_value(serde_json::to_value(hello(true)).unwrap()).unwrap();
+        assert!(new.lean_watch);
     }
 
     /// Notes on the message are additive (docs/specs/message-annotations.md E1): absent from

@@ -887,6 +887,211 @@ async fn opening_a_watch_again_resends_the_frame() {
     assert_eq!(again.seq, 2);
 }
 
+fn thought(revision: &str, text: &str) -> serde_json::Value {
+    serde_json::json!({
+        "id": "stable", "revision": revision, "kind": "thinking", "text": text,
+        "truncated": false, "at": 7,
+    })
+}
+
+/// A fixture with one working agent and a live phone that says it merges lean watch frames.
+async fn with_lean_agent() -> (Fixture, TestPhone) {
+    let fx = Fixture::new().await;
+    fx.host
+        .set_agents(vec![sample_agent("claude:s1", "working")]);
+    let mut phone = fx.pair_phone().await;
+    phone.lean_watch = true;
+    phone.set_presence(true, true).await;
+    phone.hello().await;
+    snapshot(&mut phone).await;
+    (fx, phone)
+}
+
+fn frame_bytes(frame: &wire::WatchFrame) -> usize {
+    serde_json::to_vec(&frame.frame).unwrap().len()
+}
+
+/// A lean phone is sent the words once; the frames that follow for the steps and the plan only
+/// say which words they go with.
+#[tokio::test(start_paused = true)]
+async fn a_lean_phone_is_sent_a_latest_text_once_and_then_a_reference_to_it() {
+    let (fx, mut phone) = with_lean_agent().await;
+    let long = "思考".repeat(1_200);
+    fx.host
+        .set_latest_frame("claude:s1", "a", "legacy words", thought("r1", &long));
+    phone.send(&watch("claude:s1")).await;
+    let first: wire::WatchFrame = phone.recv_body(t::WATCH_FRAME).await;
+    assert!(
+        first.frame.get("text").is_none(),
+        "the legacy text is left out"
+    );
+    assert_eq!(first.frame["latestText"]["text"], long);
+    assert_eq!(first.frame["latestText"]["revision"], "r1");
+    assert!(first.frame["latestText"].get("same").is_none());
+
+    // Something else in the frame changes (the signature stands for a step), the words do not.
+    fx.host
+        .set_latest_frame("claude:s1", "b", "legacy words", thought("r1", &long));
+    let second: wire::WatchFrame = phone.recv_body(t::WATCH_FRAME).await;
+    assert_eq!(second.seq, 2);
+    assert_eq!(
+        second.frame["latestText"],
+        serde_json::json!({"id": "stable", "kind": "thinking", "revision": "r1", "same": true})
+    );
+    assert!(second.frame.get("text").is_none());
+    assert_eq!(second.frame["phase"], "working");
+    assert_eq!(second.frame["title"], "Refactor");
+    assert!(
+        frame_bytes(&second) * 10 < frame_bytes(&first),
+        "{} bytes, then {}",
+        frame_bytes(&first),
+        frame_bytes(&second)
+    );
+
+    // New words are sent in full again, and are the ones the next references are to.
+    fx.host.set_latest_frame(
+        "claude:s1",
+        "c",
+        "legacy words",
+        thought("r2", "Second thought"),
+    );
+    let third: wire::WatchFrame = phone.recv_body(t::WATCH_FRAME).await;
+    assert_eq!(third.frame["latestText"]["text"], "Second thought");
+    fx.host.set_latest_frame(
+        "claude:s1",
+        "d",
+        "legacy words",
+        thought("r2", "Second thought"),
+    );
+    let fourth: wire::WatchFrame = phone.recv_body(t::WATCH_FRAME).await;
+    assert_eq!(fourth.frame["latestText"]["same"], true);
+    assert_eq!(fourth.frame["latestText"]["revision"], "r2");
+
+    // Opened again, the phone may have lost what it held: the words come in full.
+    phone.send(&watch("claude:s1")).await;
+    let again: wire::WatchFrame = phone.recv_body(t::WATCH_FRAME).await;
+    assert_eq!(again.frame["latestText"]["text"], "Second thought");
+    assert!(again.frame["latestText"].get("same").is_none());
+}
+
+/// The same words with another kind are other words: a thought and an answer never stand in for
+/// each other, even when their revisions are alike.
+#[tokio::test(start_paused = true)]
+async fn a_reference_is_only_for_the_kind_and_revision_the_phone_holds() {
+    let (fx, mut phone) = with_lean_agent().await;
+    fx.host
+        .set_latest_frame("claude:s1", "a", "", thought("r1", "Same words"));
+    phone.send(&watch("claude:s1")).await;
+    phone.recv(t::WATCH_FRAME).await;
+
+    let mut answer = thought("r1", "Same words");
+    answer["kind"] = "assistant".into();
+    fx.host.set_latest_frame("claude:s1", "b", "", answer);
+    let frame: wire::WatchFrame = phone.recv_body(t::WATCH_FRAME).await;
+    assert_eq!(frame.frame["latestText"]["text"], "Same words");
+    assert_eq!(frame.frame["latestText"]["kind"], "assistant");
+}
+
+/// A Mac that is still buffering its first paragraph says so with a null; what the phone holds
+/// is still what a later reference is to.
+#[tokio::test(start_paused = true)]
+async fn a_buffering_frame_does_not_make_a_lean_phone_forget_its_text() {
+    let (fx, mut phone) = with_lean_agent().await;
+    fx.host
+        .set_latest_frame("claude:s1", "a", "", thought("r1", "Held words"));
+    phone.send(&watch("claude:s1")).await;
+    phone.recv(t::WATCH_FRAME).await;
+
+    fx.host
+        .set_latest_frame("claude:s1", "b", "growing", serde_json::Value::Null);
+    let buffering: wire::WatchFrame = phone.recv_body(t::WATCH_FRAME).await;
+    assert!(buffering.frame["latestText"].is_null(), "null stays a null");
+    assert!(buffering.frame.get("text").is_none());
+
+    fx.host
+        .set_latest_frame("claude:s1", "c", "", thought("r1", "Held words"));
+    let back: wire::WatchFrame = phone.recv_body(t::WATCH_FRAME).await;
+    assert_eq!(back.frame["latestText"]["same"], true);
+}
+
+/// A phone that does not say it is lean is sent every frame whole, as before.
+#[tokio::test(start_paused = true)]
+async fn a_phone_that_is_not_lean_gets_every_frame_whole() {
+    let (fx, mut phone) = with_agent().await;
+    fx.host.set_latest_frame(
+        "claude:s1",
+        "a",
+        "legacy words",
+        thought("r1", "First thought"),
+    );
+    phone.send(&watch("claude:s1")).await;
+    let first: wire::WatchFrame = phone.recv_body(t::WATCH_FRAME).await;
+    fx.host.set_latest_frame(
+        "claude:s1",
+        "b",
+        "legacy words",
+        thought("r1", "First thought"),
+    );
+    let second: wire::WatchFrame = phone.recv_body(t::WATCH_FRAME).await;
+    for frame in [first, second] {
+        assert_eq!(frame.frame["text"], "legacy words");
+        assert_eq!(frame.frame["latestText"]["text"], "First thought");
+        assert!(frame.frame["latestText"].get("same").is_none());
+    }
+}
+
+/// A host that has no latest text has only the `text` to tell the words with, lean phone or not.
+#[tokio::test(start_paused = true)]
+async fn a_lean_phone_keeps_the_text_of_a_frame_that_has_no_latest_text() {
+    let (fx, mut phone) = with_lean_agent().await;
+    fx.host.set_frame("claude:s1", "a", "Only words", false);
+    phone.send(&watch("claude:s1")).await;
+    let frame: wire::WatchFrame = phone.recv_body(t::WATCH_FRAME).await;
+    assert_eq!(frame.frame["text"], "Only words");
+    assert!(frame.frame.get("latestText").is_none());
+}
+
+#[test]
+fn lean_frames_leave_out_what_the_phone_already_has() {
+    use super::watch::lean_frame;
+    let mut sent = None;
+    let mut frame = serde_json::json!({"text": "legacy", "steps": []});
+    lean_frame(&mut frame, &mut sent);
+    assert_eq!(
+        frame["text"], "legacy",
+        "no latestText: nothing is left out"
+    );
+    assert_eq!(sent, None);
+
+    let mut frame = serde_json::json!({"text": "legacy", "latestText": null});
+    lean_frame(&mut frame, &mut sent);
+    assert!(frame.get("text").is_none());
+    assert_eq!(sent, None, "a null refers to nothing");
+
+    let first = serde_json::json!({"text": "legacy", "latestText": thought("r1", "words")});
+    let mut frame = first.clone();
+    lean_frame(&mut frame, &mut sent);
+    assert_eq!(frame["latestText"], first["latestText"]);
+    assert_eq!(sent, Some(("thinking".into(), "r1".into())));
+
+    let mut frame = first.clone();
+    lean_frame(&mut frame, &mut sent);
+    assert_eq!(
+        frame["latestText"],
+        serde_json::json!({"id": "stable", "kind": "thinking", "revision": "r1", "same": true})
+    );
+
+    let mut frame = serde_json::json!({"latestText": thought("r2", "other words")});
+    lean_frame(&mut frame, &mut sent);
+    assert_eq!(frame["latestText"]["text"], "other words");
+    assert_eq!(sent, Some(("thinking".into(), "r2".into())));
+
+    let mut frame = serde_json::json!({"latestText": {"text": "no kind or revision"}});
+    lean_frame(&mut frame, &mut sent);
+    assert_eq!(frame["latestText"]["text"], "no kind or revision");
+    assert_eq!(sent, Some(("thinking".into(), "r2".into())));
+}
+
 #[tokio::test(start_paused = true)]
 async fn failed_turns_show_in_the_frame() {
     let (fx, mut phone) = with_agent().await;
@@ -1002,6 +1207,7 @@ async fn an_old_phone_never_receives_an_unknown_incomplete_push_key() {
             app_ver: "old".into(),
             device_name: "Old phone".into(),
             lifecycle_results: false,
+            lean_watch: false,
         })
         .await;
     let _: wire::HelloAck = phone.recv_body(t::HELLO_ACK).await;

@@ -19,6 +19,46 @@ pub(crate) struct WatchRt {
     pub last_sig: String,
     /// When the host was asked last (frames are polled, not pushed).
     pub last_polled_ms: i64,
+    /// The `(kind, revision)` of the latest text this phone was last sent in full. Only kept for a
+    /// phone that merges lean frames: a text it already holds goes as a reference to it.
+    pub sent_latest: Option<(String, String)>,
+}
+
+/// The frame as a phone that merges lean frames takes it (`wire::Hello::lean_watch`): without the
+/// legacy `text` projection of the latest words, which only phones that do not read `latestText`
+/// need, and with a latest text the phone already holds in full as a reference to it
+/// (`"same": true`) instead of the text again.
+///
+/// The text is most of a frame, and it only changes with a new paragraph, while the frame is sent
+/// for every tool step, so this is most of what the phone is sent.
+pub(super) fn lean_frame(frame: &mut Value, sent: &mut Option<(String, String)>) {
+    let Some(object) = frame.as_object_mut() else {
+        return;
+    };
+    // A frame without `latestText` comes from a host that does not know it: its `text` is all
+    // there is of the words.
+    if !object.contains_key("latestText") {
+        return;
+    }
+    object.remove("text");
+    // A null is the Mac buffering its first paragraph: nothing to refer to, and the phone keeps
+    // what it holds.
+    let Some(latest) = object.get_mut("latestText").and_then(Value::as_object_mut) else {
+        return;
+    };
+    let key = match (
+        latest.get("kind").and_then(Value::as_str),
+        latest.get("revision").and_then(Value::as_str),
+    ) {
+        (Some(kind), Some(revision)) => (kind.to_string(), revision.to_string()),
+        _ => return,
+    };
+    if sent.as_ref() == Some(&key) {
+        latest.retain(|name, _| matches!(name.as_str(), "id" | "kind" | "revision"));
+        latest.insert("same".into(), Value::Bool(true));
+    } else {
+        *sent = Some(key);
+    }
 }
 
 /// Shrinks a frame until it fits the size budget: the assistant text first, then the oldest
@@ -101,9 +141,11 @@ impl Actor {
             return;
         };
         if let Some(existing) = rt.watches.iter_mut().find(|w| w.agent_key == agent_key) {
-            // Opened again (the phone lost its state): start over with a fresh frame.
+            // Opened again (the phone lost its state): start over with a fresh frame, and with
+            // the latest text in full, which the phone may no longer hold.
             existing.last_sig.clear();
             existing.last_polled_ms = 0;
+            existing.sent_latest = None;
         } else if rt.watches.len() >= MAX_LIVE_WATCH_PER_PHONE {
             self.send(
                 phone_id,
@@ -119,6 +161,7 @@ impl Actor {
                 seq: 0,
                 last_sig: String::new(),
                 last_polled_ms: 0,
+                sent_latest: None,
             });
         }
         self.refresh_status();
@@ -159,6 +202,7 @@ impl Actor {
         let Some(rt) = self.rt.get_mut(phone_id) else {
             return;
         };
+        let lean = rt.lean_watch;
         let Some(watch) = rt.watches.iter_mut().find(|w| w.agent_key == key) else {
             return;
         };
@@ -179,7 +223,11 @@ impl Actor {
         if data.sig != watch.last_sig {
             watch.seq += 1;
             watch.last_sig = data.sig.clone();
-            frame_to_send = Some((watch.seq, data.frame.clone()));
+            let mut frame = data.frame.clone();
+            if lean {
+                lean_frame(&mut frame, &mut watch.sent_latest);
+            }
+            frame_to_send = Some((watch.seq, frame));
         }
         if data.ended {
             rt.watches.retain(|w| w.agent_key != key);

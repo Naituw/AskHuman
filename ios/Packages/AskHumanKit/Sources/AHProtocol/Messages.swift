@@ -170,8 +170,14 @@ public struct Hello: WireMessage {
     @OmitFalse public var trafficUsage: Bool
     @OmitFalse public var lifecycleResults: Bool
     @OmitFalse public var trafficSync: Bool
+    /// The phone merges lean watch frames: a latest text it already holds comes as a reference to it, and a frame that has
+    /// `latestText` has no legacy `text`.
+    @OmitFalse public var leanWatch: Bool
 
-    public init(nonce: String, proto: Int = Wire.proto, appVer: String, deviceName: String, lifecycleResults: Bool = false, trafficSync: Bool = false, trafficUsage: Bool = false) {
+    public init(
+        nonce: String, proto: Int = Wire.proto, appVer: String, deviceName: String, lifecycleResults: Bool = false,
+        trafficSync: Bool = false, trafficUsage: Bool = false, leanWatch: Bool = false
+    ) {
         self.nonce = nonce
         self.proto = proto
         self.appVer = appVer
@@ -179,6 +185,7 @@ public struct Hello: WireMessage {
         self.lifecycleResults = lifecycleResults
         self.trafficUsage = trafficUsage
         self.trafficSync = trafficSync
+        self.leanWatch = leanWatch
     }
 }
 

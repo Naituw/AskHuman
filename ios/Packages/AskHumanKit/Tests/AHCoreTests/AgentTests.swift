@@ -236,6 +236,93 @@ final class AgentTests: XCTestCase {
         XCTAssertNotNil(kept, "the last frame stays on screen")
     }
 
+    // MARK: lean frames
+
+    func testTheHelloSaysThatThePhoneMergesLeanWatchFrames() async throws {
+        let h = Harness()
+        await h.pair()
+        let hello = try h.mac.received(Wire.T.hello)[0].body(as: Hello.self)
+        XCTAssertTrue(hello.leanWatch)
+    }
+
+    func testALeanFrameTakesItsWordsFromTheFrameThatCarriedThem() async throws {
+        let h = Harness()
+        h.mac.agents = ["claude:s1": sampleAgent("claude:s1")]
+        await h.pair()
+        await eventually("the Agent list") { await h.state().agents.count == 1 }
+        let id = agentId(h, "claude:s1")
+        await h.engine.watch(macId: h.mac.macId, agentKey: "claude:s1", open: true)
+        await eventually("the first frame") { await h.state().watches[id]?.frame != nil }
+
+        await h.mac.sendLeanWatchFrame(agentKey: "claude:s1", seq: 2, latest: TestMac.words("r1", "Words one"))
+        await eventually("the words") { await h.state().watches[id]?.frame?.latestText?.text == "Words one" }
+        var frame = try unwrap(await h.state().watches[id]?.frame)
+        XCTAssertNil(frame.text, "a lean frame has no legacy text")
+        XCTAssertTrue(frame.supportsLatestText)
+
+        await h.mac.sendLeanWatchFrame(agentKey: "claude:s1", seq: 3, latest: TestMac.sameWords("r1"), todo: "Fix the test")
+        await eventually("the plan of the second frame") { await h.state().watches[id]?.frame?.todos.first?.content == "Fix the test" }
+        frame = try unwrap(await h.state().watches[id]?.frame)
+        XCTAssertEqual(frame.latestText?.text, "Words one", "the words of the frame before")
+        XCTAssertEqual(frame.latestText?.revision, "r1")
+        XCTAssertNil(frame.latestReference, "the reference is resolved before anything else sees the frame")
+        XCTAssertEqual(h.mac.watchOpens.count, 1, "nothing was missing")
+    }
+
+    func testWordsThatAreNotHeldAreAskedForWhileTheRestOfTheFrameIsShown() async throws {
+        let h = Harness()
+        h.mac.agents = ["claude:s1": sampleAgent("claude:s1")]
+        await h.pair()
+        await eventually("the Agent list") { await h.state().agents.count == 1 }
+        let id = agentId(h, "claude:s1")
+        await h.engine.watch(macId: h.mac.macId, agentKey: "claude:s1", open: true)
+        await eventually("the first frame") { await h.state().watches[id]?.frame != nil }
+        h.mac.ignoreWatchOpen = true
+        await h.mac.sendLeanWatchFrame(agentKey: "claude:s1", seq: 2, latest: TestMac.words("r1", "Words one"))
+        await eventually("the words") { await h.state().watches[id]?.frame?.latestText?.text == "Words one" }
+
+        // The frame that carried r2 was lost on the way.
+        await h.mac.sendLeanWatchFrame(agentKey: "claude:s1", seq: 4, latest: TestMac.sameWords("r2"), title: "Renamed")
+        await eventually("the rest of the frame") { await h.state().watches[id]?.frame?.title == "Renamed" }
+        await eventually("the words are asked for") { h.mac.watchOpens.count == 2 }
+        var frame = try unwrap(await h.state().watches[id]?.frame)
+        XCTAssertNil(frame.latestText, "words that are not held are not guessed")
+        XCTAssertTrue(frame.supportsLatestText, "and it is still a Mac that has them: the view keeps what it shows")
+
+        // The Mac answers with the words in full, and later frames refer to them.
+        await h.mac.sendLeanWatchFrame(agentKey: "claude:s1", seq: 5, latest: TestMac.words("r2", "Words two"), title: "Renamed")
+        await eventually("the words in full") { await h.state().watches[id]?.frame?.latestText?.text == "Words two" }
+        await h.mac.sendLeanWatchFrame(agentKey: "claude:s1", seq: 6, latest: TestMac.sameWords("r2"), title: "Again")
+        await eventually("a reference to them") { await h.state().watches[id]?.frame?.title == "Again" }
+        frame = try unwrap(await h.state().watches[id]?.frame)
+        XCTAssertEqual(frame.latestText?.text, "Words two")
+        XCTAssertEqual(h.mac.watchOpens.count, 2, "asked for once")
+    }
+
+    func testWordsAreHeldAcrossAFrameThatHasNone() async throws {
+        let h = Harness()
+        h.mac.agents = ["claude:s1": sampleAgent("claude:s1")]
+        await h.pair()
+        await eventually("the Agent list") { await h.state().agents.count == 1 }
+        let id = agentId(h, "claude:s1")
+        await h.engine.watch(macId: h.mac.macId, agentKey: "claude:s1", open: true)
+        await eventually("the first frame") { await h.state().watches[id]?.frame != nil }
+        await h.mac.sendLeanWatchFrame(agentKey: "claude:s1", seq: 2, latest: TestMac.words("r1", "Words one"))
+        await eventually("the words") { await h.state().watches[id]?.frame?.latestText?.text == "Words one" }
+
+        await h.mac.sendLeanWatchFrame(agentKey: "claude:s1", seq: 3, latest: .null, title: "Buffering")
+        await eventually("the frame without words") { await h.state().watches[id]?.frame?.title == "Buffering" }
+        let empty = try unwrap(await h.state().watches[id]?.frame)
+        XCTAssertNil(empty.latestText)
+        XCTAssertTrue(empty.supportsLatestText)
+
+        await h.mac.sendLeanWatchFrame(agentKey: "claude:s1", seq: 4, latest: TestMac.sameWords("r1"), title: "Back")
+        await eventually("the reference") { await h.state().watches[id]?.frame?.title == "Back" }
+        let back = try unwrap(await h.state().watches[id]?.frame)
+        XCTAssertEqual(back.latestText?.text, "Words one")
+        XCTAssertEqual(h.mac.watchOpens.count, 1)
+    }
+
     // MARK: the watchdog of the live views
 
     private func liveNotes() -> [String] {

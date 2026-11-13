@@ -59,6 +59,30 @@ extension TestMac {
         for phone in pairedPhones { await sendDown(WatchFrame(agentKey: agentKey, seq: seq, frame: frame), to: phone) }
     }
 
+    /// A frame as a Mac sends it to a phone that merges lean frames: no legacy `text`, and `latestText` in full (`words`), as a
+    /// reference to words sent before (`sameWords`), or null while the Mac buffers its first paragraph.
+    func sendLeanWatchFrame(
+        agentKey: String, seq: UInt64, latest: JSONValue, phase: String = "working", title: String = "Fix it", todo: String? = nil
+    ) async {
+        let todos: [JSONValue] = todo.map { [.object(["content": .string($0), "state": .string("pending")])] } ?? []
+        let frame: JSONValue = .object([
+            "type": .string("watchFrame"), "seq": .int(Int64(seq)), "phase": .string(phase), "title": .string(title),
+            "latestText": latest, "steps": .array([]), "stepsOmitted": .int(0), "todos": .array(todos),
+        ])
+        for phone in pairedPhones { await sendDown(WatchFrame(agentKey: agentKey, seq: seq, frame: frame), to: phone) }
+    }
+
+    static func words(_ revision: String, _ text: String, kind: String = "thinking") -> JSONValue {
+        .object([
+            "id": .string("stable"), "revision": .string(revision), "kind": .string(kind), "text": .string(text),
+            "truncated": .bool(false),
+        ])
+    }
+
+    static func sameWords(_ revision: String, kind: String = "thinking") -> JSONValue {
+        .object(["id": .string("stable"), "revision": .string(revision), "kind": .string(kind), "same": .bool(true)])
+    }
+
     func sendWatchClosed(agentKey: String, reason: String) async {
         for phone in pairedPhones { await sendDown(WatchClosed(agentKey: agentKey, reason: reason), to: phone) }
     }

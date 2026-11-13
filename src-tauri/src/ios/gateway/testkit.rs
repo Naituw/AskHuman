@@ -174,6 +174,26 @@ impl TestHost {
         }
     }
 
+    /// A frame of a host that has the latest text (`null` while it is buffering its first paragraph),
+    /// next to the legacy `text` of the same words.
+    pub fn set_latest_frame(&self, key: &str, sig: &str, text: &str, latest: serde_json::Value) {
+        self.frames.lock().unwrap().insert(
+            key.to_string(),
+            FrameData {
+                frame: serde_json::json!({
+                    "phase": "working",
+                    "title": "Refactor",
+                    "text": text,
+                    "latestText": latest,
+                    "steps": [],
+                    "todos": [],
+                }),
+                sig: sig.to_string(),
+                ended: false,
+            },
+        );
+    }
+
     pub fn set_frame(&self, key: &str, sig: &str, text: &str, ended: bool) {
         self.frames.lock().unwrap().insert(
             key.to_string(),
@@ -885,6 +905,8 @@ pub struct TestPhone {
     pub sas: String,
     /// Whether `pair.done` carries a push handle.
     pub with_push: bool,
+    /// Whether its `hello` says that it merges lean watch frames.
+    pub lean_watch: bool,
     ticket_key: Option<[u8; 32]>,
     pair_topic: Option<String>,
     queue: VecDeque<Plain>,
@@ -927,6 +949,7 @@ impl TestPhone {
             keys: None,
             sas: String::new(),
             with_push: true,
+            lean_watch: false,
             ticket_key: None,
             pair_topic: None,
             queue: VecDeque::new(),
@@ -1169,6 +1192,7 @@ impl TestPhone {
             app_ver: "1.0".into(),
             device_name: "Test iPhone".into(),
             lifecycle_results: true,
+            lean_watch: self.lean_watch,
         })
         .await;
         let ack: wire::HelloAck = self.recv_body(t::HELLO_ACK).await;

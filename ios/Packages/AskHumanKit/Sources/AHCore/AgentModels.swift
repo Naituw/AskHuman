@@ -72,6 +72,18 @@ public struct WatchTodo: Sendable, Equatable {
     }
 }
 
+/// What a lean frame says of the latest text, instead of the text: the one the phone was sent before, by its kind and
+/// revision (`Hello.leanWatch`). The engine puts the text it holds back before anything else sees the frame.
+public struct WatchLatestReference: Sendable, Equatable {
+    public var kind: String
+    public var revision: String
+
+    public init(kind: String, revision: String) {
+        self.kind = kind
+        self.revision = revision
+    }
+}
+
 /// The content of one `watch.frame`, decoded leniently: a missing field is an empty one.
 public struct WatchFrameData: Sendable, Equatable {
     /// `working`, `idle`, `waiting` or `ended`.
@@ -81,6 +93,8 @@ public struct WatchFrameData: Sendable, Equatable {
     /// The latest words of the Agent (Markdown).
     public var text: String?
     public var latestText: WatchLatestText?
+    /// Set instead of `latestText` by a lean frame whose latest text is the one the phone holds already.
+    public var latestReference: WatchLatestReference?
     /// A present null means the Mac is buffering its first paragraph, not a legacy Mac.
     public var supportsLatestText: Bool
     public var steps: [WatchStep]
@@ -98,14 +112,15 @@ public struct WatchFrameData: Sendable, Equatable {
         phase: String, title: String? = nil, project: String? = nil, text: String? = nil, steps: [WatchStep] = [],
         stepsOmitted: Int = 0, todos: [WatchTodo] = [], activeElapsedSecs: UInt64? = nil, at: Int64? = nil,
         model: String? = nil, reasoning: String? = nil, speed: TaskSpeed? = nil, latestText: WatchLatestText? = nil,
-        supportsLatestText: Bool = false
+        supportsLatestText: Bool = false, latestReference: WatchLatestReference? = nil
     ) {
         self.phase = phase
         self.title = title
         self.project = project
         self.text = text
         self.latestText = latestText
-        self.supportsLatestText = supportsLatestText || latestText != nil
+        self.latestReference = latestReference
+        self.supportsLatestText = supportsLatestText || latestText != nil || latestReference != nil
         self.steps = steps
         self.stepsOmitted = stepsOmitted
         self.todos = todos
@@ -138,8 +153,18 @@ public struct WatchFrameData: Sendable, Equatable {
             text: string("text"), steps: steps, stepsOmitted: Int(json["stepsOmitted"]?.intValue ?? 0), todos: todos,
             activeElapsedSecs: json["activeElapsedSecs"]?.intValue.map { UInt64(max(0, $0)) }, at: json["at"]?.intValue,
             model: string("model"), reasoning: string("reasoning"), speed: string("speed").flatMap(TaskSpeed.init(rawValue:)),
-            latestText: json["latestText"].flatMap(WatchLatestText.init(json:)), supportsLatestText: json["latestText"] != nil
+            latestText: json["latestText"].flatMap(WatchLatestText.init(json:)), supportsLatestText: json["latestText"] != nil,
+            latestReference: Self.latestReference(in: json["latestText"])
         )
+    }
+}
+
+extension WatchFrameData {
+    /// `{"same": true, "kind", "revision"}`: the words of an earlier frame again.
+    static func latestReference(in json: JSONValue?) -> WatchLatestReference? {
+        guard let json, json["same"]?.boolValue == true, let kind = json["kind"]?.stringValue,
+              let revision = json["revision"]?.stringValue else { return nil }
+        return WatchLatestReference(kind: kind, revision: revision)
     }
 }
 
@@ -149,6 +174,8 @@ public struct WatchState: Sendable, Equatable {
     public var agentKey: String
     public var seq: UInt64
     public var frame: WatchFrameData?
+    /// The latest text the Mac sent in full, which a lean frame's reference is to (it outlives the frames that have no text).
+    var latestHeld: WatchLatestText?
     /// Why the Mac stopped sending frames: `ended`, `limit` or `notFound`.
     public var closed: String?
     public var receivedAt: Date

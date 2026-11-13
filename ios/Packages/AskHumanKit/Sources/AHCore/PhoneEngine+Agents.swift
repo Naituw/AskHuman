@@ -43,7 +43,7 @@ struct WatchHealth: Sendable {
     var lastFrameAt: Date?
     /// The last time the Agent list changed in a way a frame shows (state, title, steps), until a frame comes.
     var changedAt: Date?
-    /// When the view was last asked for again by the watchdog.
+    /// When the view was last asked for again by the watchdog, or because of a frame that could not be read.
     var askedAt: Date?
     /// The watchdog asked, and the Mac's answer has not come: what the view showed meanwhile, to tell whether it was news.
     var asking = false
@@ -61,6 +61,8 @@ extension PhoneEngine {
     static let silentFrameWait: TimeInterval = 20
     /// The watchdog asks for the same view again at most this often.
     static let watchdogSpacing: TimeInterval = 60
+    /// A frame that refers to words the phone does not hold asks for them at most this often.
+    static let repairSpacing: TimeInterval = 5
 
     /// How long an interjection waits for the Mac's acknowledgement.
     static let interjectAckTimeout: TimeInterval = 20
@@ -180,11 +182,31 @@ extension PhoneEngine {
             return
         }
         if let current = watches[id], message.seq <= current.seq, current.closed == nil { return }
-        let data = WatchFrameData(json: message.frame)
-        watches[id] = WatchState(
+        var data = WatchFrameData(json: message.frame)
+        var held = watches[id]?.latestHeld
+        var missing = false
+        if let reference = data?.latestReference {
+            // A lean frame: its words are the ones that came with an earlier frame.
+            data?.latestReference = nil
+            if let words = held, words.kind == reference.kind, words.revision == reference.revision {
+                data?.latestText = words
+            } else {
+                data?.latestText = nil
+                missing = true
+            }
+        } else if let words = data?.latestText {
+            held = words
+        }
+        var state = WatchState(
             macId: macId, agentKey: message.agentKey, seq: message.seq, frame: data, closed: nil, receivedAt: clock.now()
         )
+        state.latestHeld = held
+        watches[id] = state
         noteFrame(of: id, data)
+        if missing {
+            // The frame that carried these words did not arrive. The rest of this one is shown, and the words are asked for.
+            await askForTheViewAgain(id, because: "a frame refers to words the phone does not hold", spacing: Self.repairSpacing)
+        }
     }
 
     func onWatchClosed(_ macId: String, _ message: WatchClosed) {
