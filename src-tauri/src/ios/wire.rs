@@ -2458,8 +2458,8 @@ mod tests {
             assert_eq!(page.items.len(), 3, "round {round}");
             assert!(!page.more, "round {round}");
             assert_eq!(thumbs_of(&page.items[oldest_first]), 0, "round {round}");
-            for newer in 0..oldest_first {
-                assert_eq!(thumbs_of(&page.items[newer]), 2, "round {round}");
+            for newer in page.items.iter().take(oldest_first) {
+                assert_eq!(thumbs_of(newer), 2, "round {round}");
             }
         }
         // The pictures stayed, only the thumbnails went.
