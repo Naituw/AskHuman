@@ -159,6 +159,21 @@ UIHostingController，按 [.intrinsicContentSize](https://developer.apple.com/do
 横幅 overlay 就在首次折叠丢失整组导航按钮，背景挂载、配对 sheet 与触觉反馈对照均通过。
 这是一项容器承载约束，不是延迟刷新或重建导航的补丁。
 
+**竖向栏里按钮与标签栏抢高度（2026-11-13 用户指出）**：Duo 外屏（466×678 pt）把标签栏和页面的工具栏按钮放进右侧同一条竖向栏，
+高度不够时系统默认（`automatic`，「偏向标签栏」）先收按钮：请求页的「下一条」与「更多」被并进一个系统溢出按钮「…」
+（辅助功能标识 `BottomOverflowBarButtonItem`），五个标签原样占着下半条。改为按钮优先：每个标签的 `NavigationStack`
+根内容挂 `prefersToolbarItemsOverTabBar()`（`AppTabs.swift`，iOS 27.1 起的 SwiftUI `toolbarVerticalCompressionBehavior(.prefersToolbarItems)`，
+对应 UIKit `UINavigationItem.verticalBarCompressionBehavior`；更早系统没有竖向栏，不做任何事）。高度不够时标签栏收成「当前标签」
+一个按钮，点一下展开成带文字的完整标签栏、选定后收回；页面的按钮一个不少。高度够时（Agent、待办、历史、Mac 详情只有一两个按钮）
+标签栏仍是完整的五个。
+
+- **位置有讲究**：挂在栈的根内容上、`navigationDestination` 之后，压栈的页面跟着生效；挂在 `NavigationStack` 外面或
+  `TabPage` 上无效（外屏逐处实测，只有根内容和页面自己有效）。新增带栈的标签要照做。
+- **分栏（`ListDetailColumns`，Duo 内屏、iPad）没改**：内屏横屏（669 pt 高）最多的请求页也只有「上一条 / 下一条」「更多」三个按钮，
+  连五个标签放得下，键盘弹起时键盘浮在栏上，两种设置的截图一样，没有可复现的溢出；有了再加。
+- **回归**：`AskHumanPersistentTabsUITests.testRequestKeepsEveryToolbarButtonBesideTheTabs`——外屏上没有这条偏好时红
+  （缺 `next-request`），有时绿；窄窗口之外自动跳过。
+
 独立程序在保留原 split → stack 模型时完成十次有效开合；产品验证状态见
 [排查记录](../investigations/ios-duo-fold-navigation.md)，不把独立程序通过当成产品回归通过。
 More 菜单提供含标题和符号的 `Label("More", systemImage: "ellipsis")`，让系统竖向栏与

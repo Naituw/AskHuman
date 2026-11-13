@@ -114,6 +114,26 @@ final class AppTabContainerController: UIViewController {
     override var childForPreferredVerticalBarBehavior: UIViewController? { tabs }
 }
 
+extension View {
+    /// Where the system lays the tab bar and a page's toolbar buttons out in one vertical strip (the outer
+    /// screen of a folding phone) and the strip is too short for both, the tab bar gives way: it folds into
+    /// the button of the tab that is open, which shows the whole bar again when it is tapped, and the page
+    /// keeps all of its buttons. The system's own choice is the other way round: it moves the buttons into
+    /// an overflow menu and leaves the five tabs where they were.
+    ///
+    /// Put it on the root content of a tab's `NavigationStack`, after its `navigationDestination`s: the
+    /// pages pushed over that root are covered by it. Outside the stack (the tab, the stack itself) it is
+    /// not heard.
+    @ViewBuilder
+    func prefersToolbarItemsOverTabBar() -> some View {
+        if #available(iOS 27.1, *) {
+            toolbarVerticalCompressionBehavior(.prefersToolbarItems)
+        } else {
+            self
+        }
+    }
+}
+
 extension AppTab {
     var title: String {
         switch self {

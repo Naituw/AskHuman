@@ -35,6 +35,7 @@ struct TodosScreen: View {
             ) { target in
                 TodoProjectScreen(target: target)
             }
+            .prefersToolbarItemsOverTabBar()
         }
     }
 }

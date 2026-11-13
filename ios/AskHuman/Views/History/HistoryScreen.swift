@@ -24,6 +24,7 @@ struct HistoryScreen: View {
                             ContentUnavailableView("Entry removed", systemImage: "trash")
                         }
                     }
+                    .prefersToolbarItemsOverTabBar()
             }
         }
     }

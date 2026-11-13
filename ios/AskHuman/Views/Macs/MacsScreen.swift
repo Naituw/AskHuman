@@ -18,6 +18,7 @@ struct MacsScreen: View {
                 MacsList(showPairing: $showPairing)
                     .awayStrip()
                     .navigationDestination(for: String.self) { id in MacDetailScreen(macId: id) }
+                    .prefersToolbarItemsOverTabBar()
             }
         }
     }
