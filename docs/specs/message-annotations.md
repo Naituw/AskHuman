@@ -60,7 +60,7 @@ Agent 的消息（Message）常常是一大段分析、方案或完成报告。�
 | 编号 | 决策项 | 结论 | 理由 / 否决后的代价 |
 |---|---|---|---|
 | D10 | 入口 | 选中文字后，选区旁浮出小按钮「添加附注」，点它才展开输入框 | 用户定（第 1 轮 Q4）。选字也常用来复制，一选就弹输入框会打断 |
-| D11 | 输入浮层 | 选区下方展开：被选原文在上、输入框在下。添加键跟随「发送快捷键」设置（默认 ⌘/Ctrl+Enter；设成「Enter 发送」时 Enter 添加、带修饰键的 Enter 换行）；输入法组词中的 Enter 不提交；Esc 只关浮层；浮层打开期间弹窗其余快捷键暂停（Enter 不会误提交答案）；打开期间被选的那段用虚线框标出 | 第 2 轮默认 #3、#4；第 3 轮图 2。规则与待办快速添加浮层相同（`useTodoPopover.ts`） |
+| D11 | 输入浮层 | 选区下方展开：被选原文在上、输入框在下。添加键跟随「发送快捷键」设置（默认 ⌘/Ctrl+Enter；设成「Enter 发送」时 Enter 添加、带修饰键的 Enter 换行）；输入法组词中的 Enter 不提交；Esc 只关浮层；浮层打开期间弹窗其余快捷键暂停（Enter 不会误提交答案）；打开期间被选的那段用虚线框标出 | 第 2 轮默认 #3、#4；第 3 轮图 2。规则与待办快速添加浮层相同（`useTodoPopover.ts`；浮层已于 2026-11-13 移除，同类规则现在在 `useTodoActions.ts` 的添加输入行里） |
 | D12 | 高亮 | 已加附注的文字有紫色下划线底色和编号小圆点（紫色是为了避开查找的黄色与系统选中的蓝色）；点高亮可再编辑、删除 | 第 2 轮默认 #4；第 3 轮图 3 |
 | D13 | 汇总 | 页脚「附注 N」按钮放在「发送」旁（快捷回复与发送之间），有附注才出现；点开是清单：点一条定位到原文并闪一下，鼠标悬停出现编辑 / 删除 | 用户定（第 2 轮 Q2：「是不是放在发送按钮附近比较好？」；Q3：「整体设计一下」；第 3 轮 Q2「按图做」） |
 | D14 | 不重叠 | 附注之间不重叠：选区碰到已有附注时，浮出的按钮变成「编辑该附注」；想对同一段说两件事，写进同一条 | 第 2 轮默认 #1 |
@@ -258,7 +258,7 @@ What's next（只有文本输出，没有 JSON）：「派活」「建议」都�
 
 - 引擎（E4）：附注根下取「未被跳过的文本节点依次拼接」为坐标系，块与块之间（段落、列表项、表格单元格、`<br>`）补一个虚拟换行；**跳过的是静态清单** `script, style, textarea, input, button, svg, iframe, .mermaid-block`，不沿用「页内查找」那套随 Mermaid 状态变化的动态跳过（`[data-find-skip]` / `[data-find-atomic]`）：Mermaid 图渲染完成、切换「显示源码」时 DOM 会变，坐标系必须不跟着变，所以整个 `.mermaid-block`（源码与图）从头到尾都不计入。选区 → `{start, end, quote}`，`quote` 取自这套坐标系的文字，空白压成一个空格、去首尾空白；高亮用 `<mark data-annotation-id>` 包裹，编号小圆点用 CSS 伪元素（`::after`，内容取自 mark 上的编号属性）画，不引入文本节点，所以不改变坐标系；先清掉再重绘，幂等；重绘后按 `{start, end, quote}` 校验，对不上就在文中就近找原文，再找不到标「找不到原文位置」（D16）。
 - 与「页内查找」共存：查找的 `<mark data-popup-find>` 与附注的 `<mark data-annotation>` 互不清除；Markdown 重新渲染（深浅色、Mermaid 异步完成）会换掉 DOM，所以每次 `markdown-content-updated` 之后重新应用高亮。
-- 状态在组合式函数 `useAnnotations` 里（每个请求一份，收件箱里每个请求一个 `usePopupCore` 实例，自然隔离），键盘模态的做法同 `useQuickReply` / `useTodoPopover`；提交时随 `PopupSubmission.annotations` 交给 Daemon。
+- 状态在组合式函数 `useAnnotations` 里（每个请求一份，收件箱里每个请求一个 `usePopupCore` 实例，自然隔离），键盘模态的做法同 `useQuickReply` / `useTodoPopover`（后者已随待办浮层移除，见 `useTodoActions`）；提交时随 `PopupSubmission.annotations` 交给 Daemon。
 
 ### 5.3 iOS
 

@@ -106,6 +106,13 @@ Current prototypes:
 - `ios-annotations.html` — a static mock of the same flow on the iPhone answer page, not product code and not a
   screenshot: `?board=flow|direct|bar&cells=1,2`. The `bar` board's widths are estimates; the real ones are measured by
   `AskHumanBarUITests` at 375 pt.
+- `popup-todo-actions.html` · `popup-todo-actions-board.html` · `ios-todo-actions.html` — the design-round prototypes
+  of complete / delete / add on every todo list of a request page (spec `docs/specs/todo-list-actions.md`; the images in
+  `docs/assets/todo-list-actions/` were rendered from them). The popup pages run the real `PopupView` against `mockIPC`
+  (`todoActionsMock.ts`) and **inject** the hover buttons and the add row into its DOM (`TodoActionsFrame.vue`); the
+  product now draws those itself (`TodoRowActions.vue`, `TodoAddRow.vue`), so the injected copies double them up. Treat
+  the pages as the historical baseline of the images, and use the real popup or its vitest suites for current
+  behaviour. `ios-todo-actions.html` is a static mock of the iPhone states, not product code.
 
 **Workflow:** iterate UI ideas on the prototype first (cheap, instant feedback, user can review
 in a browser), get the design confirmed, then port to the real views. Keep the prototype in

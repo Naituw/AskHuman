@@ -257,6 +257,16 @@ Agent 展示完整原生标题、Session ID 及可靠的模型 / 上下文；项
 终端动作只接受本请求的已知目录。浮层不占常驻高度；每次打开按需读取，短缓存、无轮询、跨请求失效。
 完整决策与来源边界见 `specs/popup-session-info.md`。
 
+## 页内待办清单（选 / 完成 / 删除 / 添加）
+
+规格 `docs/specs/todo-list-actions.md`（取代 `todo-quick-add.md` 的顶栏浮层），设计期的浏览器原型 `src/prototype/popup-todo-actions*.html`（已被产品实现取代，见 `docs/development.md`）。请求页里出现项目待办的三个地方——普通提问的折叠「待办」区（`TodoSection.vue`）、What's next 与 Stop 确认卡里的 TODO 选项行（`QuestionCards.vue` / `SequentialPane.vue`）——共用同一套动作；权限 / 出错确认卡没有页内清单。
+
+- **组件与状态**：`TodoRowActions.vue`（行尾 ✓ ✕，三处共用；完成中变「撤销」，删除第一下变红色「确认删除」）、`TodoAddRow.vue`（虚线「＋ 添加待办」行 ↔ 多行输入行）、`useTodoActions.ts`（接进 `usePopupCore.ts`）：`completeTodo`（乐观划线，`COMPLETE_GRACE_MS = 1000` 内可撤销，之后 `todos_complete` 并重读）、`removeTodo`（`todos_remove`，两步确认、点别处取消）、`submitTodoAdd`（`todos_add`，成功后输入行保持打开并清空、新行高亮 1.2 秒并滚入可见，落在可见范围外时写「已添加，排在第 N 位」）。完成 / 删除同时取消该条的选中（`unpick`），关窗或换请求前 `flushTodoCompletes` 把还在宽限期的完成提交掉。
+- **实时队列选项**：`liveTodoOptions = whatsNext || todoQueue`（`todoQueue` 由 Daemon 对 Stop 确认且有项目的请求置上，旧 daemon 没有这个字段）。这类请求的待办不是生成时的快照，而是随 `todos-updated` 刷新的实时选项（`whatsNextTodos.ts::refreshWhatsNextTodos`：What's next 的排布是「建议、待办、结束项」，Stop 是「待办、继续对话、结束对话」，上限：What's next 整个选项列表 `MAX_WHATS_NEXT_OPTIONS = 10`，Stop 的待办 `MAX_STOP_TODOS = 10`，超出的写在问题文字末尾），选中以原文 + id 提交；这类请求不渲染折叠区。添加行的位置由 `addRowPosition` 定（最后一条待办之后、静态选项之前，0 条也在）。
+- **空入口**：折叠区的显示条件不再要求有待办（`todoSectionVisible`）；0 条时只渲染一个「＋ 添加待办」药丸，加第一条后展开区并让输入行保持打开。
+- **键盘**（`handleTodoKeydown`，在 `onKeydown` 里排在附注与快捷回复菜单之后、页内查找之前）：⌘T / Ctrl+T = 添加待办（当前面板有页内清单 → 展开并聚焦添加行；没有 → 打开待办窗口；已在输入行里则不做事；查找条打开或语音快捷键占用 ⌘T 时让路）；添加输入行聚焦时 Enter 家族按「发送快捷键」设置添加或换行、Esc 只收输入行，输入法组词中一律放行，所以它们不会漏到「提交答案 / 关窗」；✓ ✕ 与添加行上的裸 Enter 只按下那个按钮。输入行 `@paste.stop`（全局粘贴监听会把剪贴板里的图片收进答案，这里只收文字）。
+- **顶栏按钮**：`PopupNavbar.vue` 的项目待办按钮直接 `openTodosWindow()`（预选当前项目；请求无项目则不预选），不再有浮层。
+
 ## 快捷回复菜单、待发指令与升级提示
 
 规格 `docs/specs/special-replies.md`（D17–D21、D27），计划与验证见 `docs/plans/special-replies.md`，浏览器原型 `src/prototype/popup-reply-menu.html`。页脚「快捷回复」按钮（发送左边，一个弹窗一个，不挂在某一题上）只出现在 Agent 自己的提问弹窗（含 What's next）；Stop 确认、出错卡、Codex 原生问题与开发中继带 `AskRequest.quick_reply = false`，权限与确认卡的页脚本来没有这个按钮（N10）。
@@ -266,7 +276,7 @@ Agent 展示完整原生标题、Session ID 及可靠的模型 / 上下文；项
 - **指令先待发再生效**（D19）：选了「离开模式…」或「不再使用…」只会把 `armedDirective` 放到待发条里；离开模式带范围下拉（所有 Agent / 仅此会话）与备注，不再使用固定为本会话；主按钮变成「发送并开启离开模式 / 发送并停用 AskHuman」（英文 “Send and go away” / “Send and turn off”，更长的措辞会把 560pt 宽默认窗口的页脚挤成两行），纯选择题也能不选就发（`canSubmit` 在待发时恒为真）；× 撤销。待发时页脚收成「取消 / 稍后回答 / 快捷回复 / 发送并…」，多题的上一个 / 下一个临时收起。指令随 `submit_popup` 的 `directive { kind, scope, note }` 交给 Daemon，在回答被接受之后才应用。
 - **升级提示条**（D21）：`AskRequest.escalated`（`asked` / `repeated` / `requested`）非空时，导航栏下面出现一条说明它为什么在离开模式里仍然送达，并带「结束离开模式」（Tauri 命令 `away_end`，失败时保留提示条并显示原因）。
 - **菜单的摆放**：菜单宽 336pt、右对齐按钮；多题时页脚的「上一题 / 下一题 / 发送」会把按钮挤到偏左，菜单打开后 `QuickReplyMenu.vue` 量一次自己的左边缘，超出窗口就整体右移（`translateX`，留 12px 边距）；一条预设最多显示两行（超出省略），菜单高度不超过窗口（`max-height: calc(100vh - 84px)`，超出在菜单内滚动，键盘移动高亮行时跟着滚）；头部标题不换行，提示文案要短（「点击即发送 · 未作答的 N 题同样回复」）。出厂预设的英文也按「一行放得下」写。
-- **键盘**：⌘K / Ctrl+K 开关菜单（列为保留键，`shortcut.ts::shortcutConflict` 对自定义语音快捷键报冲突）；菜单打开期间对键盘是模态的——除 ⌘W 外，回答区自己的 Enter / Esc、⌘数字、⌘T 都不会穿透，只有数字键、↑↓、回车和 Esc 归菜单；Esc 只关菜单并把焦点还给原处；它先于待办浮层处理，浮层开着时 ⌘K 不响应。
+- **键盘**：⌘K / Ctrl+K 开关菜单（列为保留键，`shortcut.ts::shortcutConflict` 对自定义语音快捷键报冲突）；菜单打开期间对键盘是模态的——除 ⌘W 外，回答区自己的 Enter / Esc、⌘数字、⌘T 都不会穿透，只有数字键、↑↓、回车和 Esc 归菜单；Esc 只关菜单并把焦点还给原处；它先于待办清单的按键处理（⌘T、添加行里的 Enter / Esc），所以菜单开着时 ⌘T 不响应。
 
 设置里的「快捷回复」卡（`settings/QuickRepliesCard.vue`，General 页，元素 id `quick-replies`）编辑 `general.quickReplies`：每行一个输入框（失焦保存，清空即删除），左侧把手拖动或在把手上按 ↑ / ↓ 排序，右侧叉号删除；最多 10 条，「恢复默认」把配置写回 `null`；没编辑过时显示出厂 5 条（`quick_reply_defaults` 命令按界面语言取），第一次编辑就把它们存成用户自己的列表。
 
@@ -278,7 +288,7 @@ Agent 展示完整原生标题、Session ID 及可靠的模型 / 上下文；项
 - **引擎** `src/lib/annotations.ts`：纯 TypeScript，不依赖 Vue，也不 import 别的模块，手机的 Message 网页共用同一份（`ios/AskHuman/Resources/WebMarkdown/annotations.js` 是它的打包产物，`ios/Tools/web-markdown/build-annotations.sh` 生成，`annotations.bundle.test.ts` 比对文件头里的哈希，源码改了不重打包就失败）。坐标系 = 附注根下「未被跳过的文本节点依次拼接」，块与块之间补一个虚拟换行；**跳过的是静态清单**（`script, style, textarea, input, button, svg, iframe, .mermaid-block`），不沿用页内查找随 Mermaid 状态变化的动态跳过，所以 Mermaid 渲染完成或切换源码都不改变坐标系。选区 → `{start, end, quote}`（原文换行与连续空白压成一个空格、≤ 2000 字、选区必须完全落在根里；三击选一段时 WebKit 把终点放在下一个块开头，引擎把紧邻根边缘、中间没有文字的端点收回根内）；高亮用 `<mark data-annotation-id>` 包裹，编号小圆点是 CSS 伪元素，不引入文本节点；每次重绘先清再画、按 `{start, end, quote}` 校验，对不上就在文中就近找原文，找不到标「找不到原文位置」（不高亮，清单里仍在，提交照常发出）。只用 Safari 13 就有的运行时 API。
 - **状态** `useAnnotations.ts`（`usePopupCore` 为每个请求创建一份；收件箱里每个请求一个 `usePopupCore` 实例，自然隔离）：`notes`（按位置排序、未定位的排最后，每次新增 / 删除后重排编号，N3）、`pending`、`editor`、`listOpen`；上限 20 条、每条 ≤ 2000 字（Daemon 汇聚点会再清洗一次，`Coordinator::try_submit`）。`collectAnswers` 的提交载荷带 `annotations: [{quote, note}]`（`PopupSubmission.annotations`，已按位置排好）；「已有回答」的判断（取消 / ⌘W / 关窗的二次确认、共享窗口的未答标记）改为 `hasAnyAnswer || notes.length > 0`，但「已回答 N/M」与发送按钮的条件不变（N8）。取消 = 丢弃附注。
 - **界面**：`AnnotationLayer.vue`（`position: fixed`，挂在弹窗外壳里）——选区旁（**上方**，放不下才翻到下方）浮出「添加附注」小按钮（`.an-fab`）；点它展开输入浮层（`.an-editor`：被选原文在上、输入框在下、被选段用虚线框标出，添加键跟随「发送快捷键」设置，Esc 只关浮层）；点高亮（选区已折叠时才响应，免得劫持拖选）进入编辑。`AnnotationChip.vue` 是页脚「发送」旁、快捷回复之后的「附注 N」按钮（有附注才出现，窄窗口只留图标与数字）与它的清单弹层：点一条定位到原文并闪一下，悬停出现编辑 / 删除。样式在 `popup.css` 的 `.an-*`，颜色 `--accent-annotation`（紫色，避开查找的黄与系统选中的蓝）。选区碰到已有附注时按钮变成「编辑该附注」（不重叠，D14）。
-- **键盘**（`handleAnnotationKeydown`，规则同 `useTodoPopover` 与 `useQuickReply`）：输入浮层只对焦点在它里面的按键模态（Esc、Enter、发送快捷键、输入法组词都归它；Enter 不会误提交答案，Esc 不会关窗），焦点在别处时按键照常给回答框；清单打开时对整个窗口模态（↑↓ 移动、Enter 定位、E 编辑、Delete / Backspace 删除、Esc 关闭，⌘W 放行）。浮层开着、里面有字时点发送，没添加的草稿并入附注而不丢。
+- **键盘**（`handleAnnotationKeydown`，规则同 `useTodoActions` 与 `useQuickReply`）：输入浮层只对焦点在它里面的按键模态（Esc、Enter、发送快捷键、输入法组词都归它；Enter 不会误提交答案，Esc 不会关窗），焦点在别处时按键照常给回答框；清单打开时对整个窗口模态（↑↓ 移动、Enter 定位、E 编辑、Delete / Backspace 删除、Esc 关闭，⌘W 放行）。浮层开着、里面有字时点发送，没添加的草稿并入附注而不丢。
 - **重绘**：Markdown 重新渲染（深浅色、Mermaid 异步完成）会换掉 DOM，所以 `markdown-content-updated` 之后先 `annotations.reapply()` 再 `refreshFind()`；附注增删改、切换「查看源码」之后同样重绘（源码视图下选的是源码文字，高亮按原文匹配，匹配不到就不显示）。查找的 `<mark data-popup-find>` 与附注的 `<mark data-annotation>` 互不清除。
 - **历史**：`HistoryDetail.vue` 显示已发送的附注、「复制为文本」带上（与 Agent 收到的区块同形：`> 原文` 一行加附注，条间空行）；`AskHuman --show-last` 也带。
 - **没在真机上点过的**：Windows 与 Linux（本机只有 macOS，靠 vitest 覆盖修饰键与布局断言）、鼠标拖选多词（computer-use 的拖动在 WKWebView 里不产生选区，实点只用了双击与三击）、真输入法组词，见 `docs/PROGRESS.md`。

@@ -1,6 +1,6 @@
 # 需求：所有出现待办清单的地方，都能完成、删除、添加待办（弹窗 + iOS）
 
-> 状态：**2026-11-13 设计定稿，待用户评审本文后实施**。决策由用户在 AskHuman 两轮问答里定下（选项与原话见 §10）；第一轮里我列出的「默认做法」用户没有异议，已并入 §3。图稿是原型渲染的状态图（桌面是真弹窗组件 + 真样式，iPhone 是静态示意），原型源码在 `src/prototype/popup-todo-actions*.html` / `ios-todo-actions.html`，不随产品发布。
+> 状态：**2026-11-13 设计经用户三轮 AskHuman 问答定稿（选项与原话见 §10），并已实现**（Mac + 弹窗 + iPhone，在主工作树里做、本地提交；iPhone 真机的滑动手感、Windows / Linux 的按键尚待验收，见 `docs/PROGRESS.md`）。第一轮里我列出的「默认做法」用户没有异议，已并入 §3；实现时与设计稿有出入的几处已改写进正文（D7 加完第一条之后的样子、iPhone 草稿与整滑规则、写入通路）。图稿是原型渲染的状态图（桌面是真弹窗组件 + 真样式，iPhone 是静态示意），原型源码在 `src/prototype/popup-todo-actions*.html` / `ios-todo-actions.html`，不随产品发布。
 > 用户原话（2026-11-13）：「我希望弹窗和 iOS 端，所有出现待办列表的场合都可以完成、删除、新增待办。……这个只是一个独立的入口，虽然我可以在下面选待办，但是如果我觉得这个待办的列表需要更新，我没有办法去完成或者删除其中的一些待办。所以你帮我统一设计一下合适的交互，就是所有的这种列表，我都可以去进行这种操作。」
 > 关联：[`todo-quick-add.md`](todo-quick-add.md)（落地后其桌面浮层 D4–D9、确认卡范围 D1 与 iOS 半屏添加页 D10–D13 被本文取代；D14 Mac 反查在途项目仍需要）、[`todo-whats-next.md`](todo-whats-next.md)（D5 Stop 卡、D7 弹窗待办区）、[`ios-todos.md`](ios-todos.md)（`todo.*` 线协议）、[`special-replies.md`](special-replies.md)（D28–D29 手机上选待办）。
 > 平台：弹窗三平台（macOS / Windows / Linux）；iOS 17+；Mac 端是现有 Daemon。
@@ -50,7 +50,7 @@
 | D4 | 完成 | 与待办窗口同一语义：`take`——出队并写入执行历史（弹窗 `todos_complete`，手机 `todo.op complete`）。**弹窗**：点 ✓ 后整行立刻划线、勾变绿，停约 1 秒可点「撤销」，之后提交并收起（沿用待办窗口 `TodosView.vue` 的 `COMPLETE_DELAY_MS = 1000`、`onPendingCheck` / `commitComplete`）。**iPhone**：立即发送并收起，底部胶囊「已完成「…」· 撤销」约 4 秒；撤销＝`restore` 加一次 `reorder` 放回原位（`restore` 本身把条目放到队尾） | 完成可逆是用户可接受的（待办窗口一直如此）；手机没有「宽限期」是因为 App 可能在 4 秒内被切走，不能把写入押在计时器上 |
 | D5 | 删除 | **两步确认、不可撤销**（沿用待办窗口 / 现有 ✕）。弹窗：悬停出现 ✕，点后变红色「确认删除」，再点才删，点别处取消。iPhone：左滑只露出红色「删除」，点它才删（整滑不删，「滑开再点」就是确认）；长按菜单里的「删除」本身就是菜单里的一次显式选择，直接执行 | 删除是真删（`todos_remove`），没有历史可找回 |
 | D6 | 添加 | 清单末尾的虚线「＋ 添加待办」行，点击就地变输入行（多行，自动长高）。弹窗提交键沿用「发送快捷键」设置、规则与答案框相同（设为 ⌘↵ 时 ⌘↵ 添加、Enter 换行；设为 Enter 时 Enter 添加、带修饰键的 Enter 换行；输入法组词中不处理），Esc 收起输入行（不关窗）；iPhone 多行输入、右侧 ↑ 添加。添加后输入行保持打开、清空，新行高亮片刻（约 1.2 秒，沿用浮层的时长），可连续添加；只填文字，追加在队尾，不带 ⚡ 与附件 | 用户定：原地输入（iPhone 选项 A）。与 `todo-quick-add` D3 / D6 同一做法，只是挪到了清单里 |
-| D7 | 空入口 | 项目没有待办时，普通提问页只显示一个「＋ 添加待办」（弹窗：与折叠标题同位置的药丸；iPhone：一行卡片），点它变输入行；加了第一条就变回「待办 1」的折叠区（点开才看到清单）。清单被清到 0 条时同样收回成空入口。What's next / Stop 的添加行始终在 TODO 选项之后、静态选项之前，0 条待办时也在 | 用户定：「没有的时候显示添加待办可以」。**否决**「折叠标题旁常驻一个 ＋」：用户不要 |
+| D7 | 空入口 | 项目没有待办时，普通提问页只显示一个「＋ 添加待办」（弹窗：与折叠标题同位置的药丸；iPhone：一行卡片），点它变输入行；加了第一条后清单展开、新行高亮，输入行保持打开可以接着加（不收回成折叠的「待办 1」，免得刚加的东西看不见）。清单被清到 0 条时收回成空入口。What's next / Stop 的添加行始终在 TODO 选项之后、静态选项之前，0 条待办时也在 | 用户定：「没有的时候显示添加待办可以」。**否决**「折叠标题旁常驻一个 ＋」：用户不要 |
 | D8 | 顶栏待办按钮与 ⌘T | **去掉顶栏浮层**（`TodoPopover.vue`、`useTodoPopover.ts` 及其模态键盘处理），按钮改回**直接打开待办窗口**（`openTodosWindow()` → `openTodos(project)`，预选当前项目；请求无项目则不预选）。⌘T（Windows / Linux 为 Ctrl+T）改为「添加待办」：当前面板有页内清单（含空入口）→ 展开、滚入可见、光标放进添加行；没有（权限 / 出错确认卡、无项目的请求、多题顺序模式的非末题面板）→ 打开待办窗口。已把语音快捷键设成 ⌘T 的用户，⌘T 仍归语音（沿用现有规则） | 用户定：「现在我们有统一的入口了，……否则这个功能挺重复的」。代价（用户认可）：确认卡上不能再就地记一条，要点顶栏进待办窗口 |
 | D9 | What's next | 与普通提问同款的行内动作；添加行在最后一条待办之后、「结束本轮」之前（顺序仍是：建议、待办、添加行、结束项）；添加 / 完成 / 删除后清单立即刷新，已选中的选项保持不变（被完成 / 删除的除外） | 待办本来就是这个问题的选项 |
 | D10 | Stop 确认卡 | 改成与 What's next 同一种**实时队列选项**：只留一份实时清单（TODO 标记 + ✓ ✕ + 添加行），**去掉下面重复的折叠「待办」区**；选项顺序不变（待办在前，然后是添加行，再是「继续对话」「结束对话」）。请求新增一个可选标记（`todoQueue`），让弹窗与手机知道这张卡的待办选项是实时队列。实时选中的待办与 What's next 一样以原文 + id 提交（没有冻结 chip 的下标），所以 Stop 的结果解析要补一处（§5.2）：按冻结 chip 同样的规则交付——原文不截断、附件随提示一起交付。IM 渠道与旧弹窗的 Stop 卡仍是快照选项 + 下标映射，不变 | 用户定做；设计时发现今天的 Stop 卡把同一批待办摆了两遍（图 3 对照），统一后不再重复 |
@@ -123,7 +123,7 @@
 - **`RequestTodoPicker`**（AHCore）：它不经 `TodosStore`，自己用 `backend.todoList(macId:projectId:)` 读队列、不订阅 `todo.watch`；`phase`、`macTakesPicks`（`caps.todos && caps.answerTodos`）、`mac?.link` 已经在那里。新增 `complete(_:)` / `remove(_:)` / `add(_:)` / `undoComplete()`，写入走 `backend.todoApply(macId:operation:)`（`TodoAddCall` 已用的同一个接口，`TodoMutation` 生成操作与 `clientMsgId`）：完成 / 删除先从本地队列拿掉，添加先放一行「发送中」，之后用 ack 里的 `list`（写入后的整份项目清单，拒绝时也带）对账，失败则 `reload()`。`mac?.link == .online` 才允许写（与 `TodosStore.canWrite` 同一条规则，写入不排队）。完成 / 删除同步取消选中（`AnswerComposer.setTodoIds`）。`isVisible` 现在是 `listsQueue && phase == .loaded && !todos.isEmpty`，改成不要求非空（0 条显示空入口卡）。
 - **`whatsNext` 泛化**：给 `AskView` 加 `todoQueue`（`Messages.swift`，`@OmitFalse`），并加一个 `listsTodoQueue = whatsNext || todoQueue`；`AnswerComposer`（单选限一条、选待办时清掉其它选项、结束项互斥、`dropTodoOptionSelections`——约 63、81–83、196–198、211–216、229 行）、`RequestTodoPicker.singleSelection`、`AnswerScreen`（约 67、486 行：什么时候显示待办卡 / 什么时候列队列）改认它；`DirectQuestion` 与快捷回复相关的 `whatsNext` 判断不动。
 - **移除**：`RequestTodoSheet.swift`、`RequestTodoComposer.swift`、`RequestScreen.swift` 里的菜单项与成功胶囊、`AppStore.todoComposer(for:)` / `closed(id:)`、`RequestTodoComposerTests`、`TodoE2ETests` 与 UI 测试里相应的用例、`Localizable` 里仅它用的文案；`TodoAddCall` 是共享件（开发者模式快速添加也用），保留。
-- **手势实现**：提问页是 `ScrollView` 而不是 `List`，没有 `.swipeActions`。用 UIKit 的 `UIPanGestureRecognizer`（`UIViewRepresentable`）或 SwiftUI `DragGesture` + 水平意图判断自绘，要与页面纵向滚动、左缘返回手势、行按压反馈并存；长按用 `.contextMenu`；VoiceOver 用 `.accessibilityAction`。
+- **手势实现**：提问页是 `ScrollView` 而不是 `List`，没有 `.swipeActions`，所以自绘（`SwipeActionRow.swift`）：SwiftUI `DragGesture(minimumDistance: 12)` 作为 `.simultaneousGesture` 挂在行上，起手时判一次方向（水平分量 > 垂直 × 1.2、且起点不在左缘 20pt 内才接管），要与页面纵向滚动、左缘返回手势、行按压反馈并存；按钮垫在行后面（`.background`），不参与行的布局，滑开时行高与下面的行都不动；滑动期间页面不滚（`SwipeCoordinator` + `.scrollDisabled`），松手那一下整行的点按被吞掉（`Button` 在触点抬起于自身时触发，滑动不能顺带选中）；长按用 `.contextMenu`；VoiceOver 用 `.accessibilityActions`。
 
 ## 6. 边界、风险与已知限制
 
@@ -133,7 +133,7 @@
 
 ### 6.2 iPhone 内联输入与键盘
 
-添加输入行在滚动页里，要走现有的键盘避让与「输入可见」机制（`InputRevealTarget` 一类）；输入框获得焦点算「正在编辑」，已结束请求的倒计时不能把页面收走；收起键盘或点别处，输入行变回一行（草稿保留在内存，请求页存续期间不丢，不落盘）。
+添加输入行在滚动页里，要走现有的键盘避让与「输入可见」机制（`InputRevealTarget` 一类）；输入框获得焦点算「正在编辑」，已结束请求的倒计时不能把页面收走；收起键盘或点别处时，输入行里没有字就变回虚线一行；写了一半的草稿则保持输入行的样子，不藏起来（草稿只在内存里，请求页存续期间不丢，不落盘）。弹窗同理：Esc 把输入行收成一行，写了一半的字留着，下次打开还在。
 
 ### 6.3 新旧组合
 
@@ -169,6 +169,8 @@
 **iOS**：`RequestTodoPicker` 单测（完成 / 删除 / 添加的乐观覆盖与回滚、选中联动、撤销＝`restore` + `reorder`、离线停用、`todoGone`、空入口可见性）；`AnswerComposer` 的队列泛化（Stop 单选）；Mock UI 测试（en + zh-Hans）：滑动、长按菜单、内联添加与键盘、空入口、Stop 卡；原有 `RequestTodoComposerTests` 随功能移除。**真机**：滑动 / 滚动 / 返回手势的手感（§6.1）。
 
 **装机验证**（`./scripts/install.sh`，先 `node scripts/machine-health.mjs`）：用真实弹窗按一遍——普通提问 / What's next / Stop 卡里悬停、完成、撤销、删除、添加；权限确认卡里 ⌘T 与顶栏按钮开待办窗口；项目 0 条待办；待办窗口里同时改清单，弹窗实时跟上。
+
+**实测记录（2026-11-13，主工作树，macOS）**：vitest 1824 条与 node 测试 223 条通过；`cargo test` 3018 条通过，`cargo fmt --check` 与 `clippy -D warnings` 干净（`ios_tasks.rs:699` 的旧 `manual_is_multiple_of` 提示不属于本功能，验证时 `-A` 掉）；Swift 包 538 条通过；模拟器 UI 测试 `AskHumanTodoPickUITests`（en 20 条、zh-Hans 19 条）通过，回归的十个类（主类、批注、输入可见、操作栏、直接提问、已结束、会话历史、到达、离开、折叠导航）与开发者模式类共 198 条通过（少数按原有设计跳过）；其中两条在回归那一轮因模拟器键盘事件没送达偶发失败（输入的字少了一个字母、「没有键盘焦点」），单独重跑通过。装机后在隔离的临时 `ASKHUMAN_HOME` 里用真实弹窗按过：普通提问里完成（划线 + 撤销，约 1 秒后收起并写入）、两步删除（同一时刻只有一行在等第二下）、添加行（⌘↵ 添加、Esc 只收输入行、不会把答案发出去）、⌘T 聚焦添加行、顶栏按钮开待办窗口且预选项目、What's next 的清单带添加行、外部清空待办后弹窗实时变成「＋ 添加待办」药丸。按的过程中发现两处并已修：输入行展开 / 长高时只把文本框滚进了视野，行的下沿压在底栏下面（改为滚整行）；输入框自己带了一圈全局焦点环，与行的焦点环叠成两层框（输入框不再画）。**没有按过**：Stop 卡的实时队列与权限确认卡上的 ⌘T / 顶栏按钮（只有单元测试覆盖）、Windows / Linux、iPhone 真机。
 
 ## 8. 落地后要同步的文档
 
