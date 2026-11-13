@@ -157,7 +157,7 @@ UIKit 容器获得全窗口，内部自行处理安全区；根页面同步选�
 UIHostingController，按 [.intrinsicContentSize](https://developer.apple.com/documentation/swiftui/uihostingcontrollersizingoptions/intrinsiccontentsize) 更新高度，空时不占高度，只有横幅可以点击时
 接收触摸。不要在根标签容器外再叠 SwiftUI `.overlay`：同二进制产品对照中，仅恢复这层
 横幅 overlay 就在首次折叠丢失整组导航按钮，背景挂载、配对 sheet 与触觉反馈对照均通过。
-这是一项容器承载约束，不是延迟刷新或重建导航的补丁。
+这是一项容器承载约束，不是延迟刷新或重建导航的补丁（下文的「补登记」是另一回事，针对系统在折叠时漏登记按钮）。
 
 **竖向栏里按钮与标签栏抢高度（2026-11-13 用户指出）**：Duo 外屏（466×678 pt）把标签栏和页面的工具栏按钮放进右侧同一条竖向栏，
 高度不够时系统默认（`automatic`，「偏向标签栏」）先收按钮：请求页的「下一条」与「更多」被并进一个系统溢出按钮「…」
@@ -178,10 +178,16 @@ UIHostingController，按 [.intrinsicContentSize](https://developer.apple.com/do
   `AskHumanFoldNavigationUITests.testFoldingAnOpenRequestKeepsEveryButtonBesideTheTabs`（内屏分栏里打开、折叠展开三轮，
   不带草稿和键盘）。两条在没有这条偏好时都红（缺 `next-request`），有时绿；前一条窄窗口之外自动跳过，后一条由
   `ios/Tools/test-fold-navigation.py` 驱动真实开合。
-- **这不是整组按钮消失的修复**：2026-11-14 用户在 build 24 真机（iOS 27.3 Beta）上仍遇到「内屏横屏打开一条提问、折叠到外屏，
-  竖条上一个按钮都没有（返回键也没了），只剩五个标签」。Duo 模拟器（27.1 / 27.2，没有 27.3 运行时）上折叠后的最坏情形是
-  上一条所述的默认布局，三个按钮还在；WebMarkdown、折叠放慢到 3 秒、先切到别的 App 再回来、打开开发者模式都复现不出「整组为空」。
-  本条修复了模拟器上能复现的那一档，真机那一档要靠真机的诊断报告，见[排查记录](../investigations/ios-duo-fold-navigation.md)。
+- **上一条不是整组按钮消失的修复，整组消失另有补登记**：2026-11-14 用户在 build 24 真机（iOS 27.3 Beta）上遇到「内屏横屏打开一条提问、折叠到外屏，
+  竖条上一个按钮都没有（返回键也没了），只剩五个标签」。同日在 Duo 模拟器（27.2）上复现：内屏先转成竖屏、停约 1.2 秒再折叠，约一半的折叠如此
+  （横屏直接折叠、转竖后立刻折叠都不出；只发生在压栈的页面上）。按钮已声明、竖条也在，是系统没有把折叠时新建的导航控制器的按钮登记进竖条。
+- **补登记**：`VerticalBarRepair`（`AppTabContainerController` 在容器尺寸变化后挂上）每半秒看一次竖条，发现压栈页面保留着返回键而竖条里一个按钮都不显示，
+  就把该页导航项的 `hidesBackButton` 取反、下一拍设回，系统因此重新登记；折叠后 0.5～2 秒内恢复。竖条正常时什么都不碰；找竖条靠视图类名，改名只会让它什么都不做。
+  **不要**换掉 SwiftUI 交给导航项的 `UIBarButtonItemGroup`（能恢复，但 SwiftUI 的下一次工具栏更新会越界崩溃），
+  `setNeedsUpdateOfVerticalBarConfiguration`、再赋同一批按钮组、重设同一个栈、隐藏再显示标签栏、重新布局都无效。
+  模拟器上 44 轮 0 坏（不补登记约一半坏）；**iOS 27.3 真机没有验证过**。回归：
+  `AskHumanFoldNavigationUITests.testFoldingFromTheUprightInnerScreenKeepsEveryButtonBesideTheTabs`（关掉补登记时第一轮折叠就红）。
+  证据与手法对照见[排查记录](../investigations/ios-duo-fold-navigation.md)。
 
 独立程序在保留原 split → stack 模型时完成十次有效开合；产品验证状态见
 [排查记录](../investigations/ios-duo-fold-navigation.md)，不把独立程序通过当成产品回归通过。
