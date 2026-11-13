@@ -112,6 +112,8 @@ public actor PhoneEngine: RemoteBackend {
     /// they are asked for again after every handshake.
     var wantedWatches: Set<String> = []
     var watches: [String: WatchState] = [:]
+    /// How each wanted watch is doing, for the watchdog that asks again for one that has gone quiet.
+    var watchHealth: [String: WatchHealth] = [:]
     /// The Agent of the last `follow.set` per Mac, to name the one a `limit` refusal is about.
     var followRequests: [String: String] = [:]
     var interjectBoxes: [String: ReplyMailbox<InterjectAck>] = [:]
@@ -287,6 +289,8 @@ public actor PhoneEngine: RemoteBackend {
         failInterjects(for: nil, with: .macOffline)
         failTodos(for: nil, with: .macOffline)
         watches = [:]
+        watchHealth = [:]
+        cancelTimer("watchdog")
         interruptTasks()
     }
 

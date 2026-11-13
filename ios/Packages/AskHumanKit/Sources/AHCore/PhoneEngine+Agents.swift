@@ -36,7 +36,32 @@ struct ReplyMailbox<Reply: Sendable> {
     }
 }
 
+/// What the engine knows of how an open live view is doing, to notice one that has gone quiet while its Agent has not.
+struct WatchHealth: Sendable {
+    /// When the view was asked for (again): its first frame is due soon after.
+    var openedAt: Date
+    var lastFrameAt: Date?
+    /// The last time the Agent list changed in a way a frame shows (state, title, steps), until a frame comes.
+    var changedAt: Date?
+    /// When the view was last asked for again by the watchdog.
+    var askedAt: Date?
+    /// The watchdog asked, and the Mac's answer has not come: what the view showed meanwhile, to tell whether it was news.
+    var asking = false
+    var shownWhenAsked: WatchFrameData?
+
+    init(openedAt: Date) { self.openedAt = openedAt }
+}
+
 extension PhoneEngine {
+    /// How often the open live views are looked at.
+    static let watchdogInterval: TimeInterval = 5
+    /// A view that was asked for and has had no frame after this long is asked for again.
+    static let firstFrameWait: TimeInterval = 5
+    /// A view whose Agent changed this long ago without a frame since is asked for again.
+    static let silentFrameWait: TimeInterval = 20
+    /// The watchdog asks for the same view again at most this often.
+    static let watchdogSpacing: TimeInterval = 60
+
     /// How long an interjection waits for the Mac's acknowledgement.
     static let interjectAckTimeout: TimeInterval = 20
     /// How long a query or clear waits for the Mac's `interject.state`.
@@ -65,8 +90,20 @@ extension PhoneEngine {
         }
         mac.agentsRev = delta.rev
         for key in delta.remove { mac.agents[key] = nil }
-        for view in delta.upsert { mac.agents[view.key] = view }
+        for view in delta.upsert {
+            let id = AgentItem.key(macId, view.key)
+            if wantedWatches.contains(id), Self.changesTheFrame(from: mac.agents[view.key], to: view) {
+                watchHealth[id]?.changedAt = clock.now()
+            }
+            mac.agents[view.key] = view
+        }
         macs[macId] = mac
+    }
+
+    /// Whether the change of an Agent in the list is one a live view shows too, so that a frame is due after it.
+    static func changesTheFrame(from old: AgentView?, to new: AgentView) -> Bool {
+        guard let old else { return false }
+        return old.state != new.state || old.title != new.title || old.turnSteps != new.turnSteps || old.currentTool != new.currentTool
     }
 
     /// Orders the list: questions first, then running, idle and finished sessions; the most
@@ -143,10 +180,11 @@ extension PhoneEngine {
             return
         }
         if let current = watches[id], message.seq <= current.seq, current.closed == nil { return }
+        let data = WatchFrameData(json: message.frame)
         watches[id] = WatchState(
-            macId: macId, agentKey: message.agentKey, seq: message.seq, frame: WatchFrameData(json: message.frame),
-            closed: nil, receivedAt: clock.now()
+            macId: macId, agentKey: message.agentKey, seq: message.seq, frame: data, closed: nil, receivedAt: clock.now()
         )
+        noteFrame(of: id, data)
     }
 
     func onWatchClosed(_ macId: String, _ message: WatchClosed) {
@@ -166,8 +204,10 @@ extension PhoneEngine {
             // A Mac that restarted numbers its frames from 1 again: they are not old frames to be dropped, and without this
             // the page would stay as it was until the user left it and came back.
             watches[id]?.seq = 0
+            watchHealth[id] = WatchHealth(openedAt: clock.now())
             await send(WatchOpen(agentKey: String(id.dropFirst(macId.count + 1))), to: macId)
         }
+        armWatchdog()
     }
 
     func suspendWatches() async {
@@ -177,19 +217,96 @@ extension PhoneEngine {
             }
         }
         watches = [:]
+        watchHealth = [:]
+        cancelTimer("watchdog")
     }
 
     public func watch(macId: String, agentKey: String, open: Bool) async {
         let id = AgentItem.key(macId, agentKey)
         if open {
             wantedWatches.insert(id)
+            watchHealth[id] = WatchHealth(openedAt: clock.now())
             if macs[macId]?.sync == .synced { await send(WatchOpen(agentKey: agentKey), to: macId) }
+            armWatchdog()
         } else {
             wantedWatches.remove(id)
             watches[id] = nil
+            watchHealth[id] = nil
             if macs[macId]?.sync == .synced { await send(WatchClose(agentKey: agentKey), to: macId) }
         }
         publish()
+    }
+
+    // MARK: the watchdog of the live views
+
+    /// A live view that shows nothing, or that shows an Agent that has stopped moving while the list says it works, is a
+    /// stream that broke somewhere unseen (a frame lost on the way, a Mac that forgot the view). Leaving the page and coming
+    /// back repairs it, because it asks the Mac for the view again; the watchdog does that by itself, once a minute at most
+    /// for a view, and writes down that it did (`Diagnostics`, category `live`) and whether the answer was news.
+    func armWatchdog() {
+        guard foreground, !wantedWatches.isEmpty, timers["watchdog"] == nil else { return }
+        after("watchdog", Self.watchdogInterval) { engine in await engine.checkWatches() }
+    }
+
+    func checkWatches() async {
+        defer { armWatchdog() }
+        guard foreground else { return }
+        let now = clock.now()
+        for id in wantedWatches.sorted() {
+            guard let health = watchHealth[id], watches[id]?.closed == nil else { continue }
+            if let askedAt = health.askedAt, now.timeIntervalSince(askedAt) < Self.watchdogSpacing { continue }
+            let reason: String
+            if health.lastFrameAt != nil {
+                // `changedAt` only stays set while no frame has come since the change.
+                guard let changedAt = health.changedAt, now.timeIntervalSince(changedAt) >= Self.silentFrameWait else { continue }
+                reason = "the Agent changed \(Int(now.timeIntervalSince(changedAt))) s ago and no frame came"
+            } else {
+                guard now.timeIntervalSince(health.openedAt) >= Self.firstFrameWait else { continue }
+                reason = "no first frame \(Int(now.timeIntervalSince(health.openedAt))) s after the view was asked for"
+            }
+            await askForTheViewAgain(id, because: reason, spacing: Self.watchdogSpacing)
+        }
+    }
+
+    /// Sends `watch.open` again for a wanted view: the Mac answers with a whole frame, words included.
+    func askForTheViewAgain(_ id: String, because reason: String, spacing: TimeInterval) async {
+        guard foreground, wantedWatches.contains(id), var health = watchHealth[id],
+              let split = id.firstIndex(of: "|") else { return }
+        let macId = String(id[..<split])
+        guard macs[macId]?.sync == .synced else { return }
+        let now = clock.now()
+        if let askedAt = health.askedAt, now.timeIntervalSince(askedAt) < spacing { return }
+        health.askedAt = now
+        health.openedAt = now
+        health.asking = true
+        health.shownWhenAsked = watches[id]?.frame
+        watchHealth[id] = health
+        Diagnostics.note("live", "a live view is asked for again: \(reason)")
+        await send(WatchOpen(agentKey: String(id[id.index(after: split)...])), to: macId)
+    }
+
+    /// A frame came for a view: it is alive, and a question the watchdog asked is answered.
+    func noteFrame(of id: String, _ data: WatchFrameData?) {
+        guard var health = watchHealth[id] else { return }
+        health.lastFrameAt = clock.now()
+        health.changedAt = nil
+        if health.asking {
+            health.asking = false
+            let verdict = Self.isNews(data, after: health.shownWhenAsked) ? "news" : "nothing new"
+            Diagnostics.note("live", "the answer to the question had \(verdict)")
+            health.shownWhenAsked = nil
+        }
+        watchHealth[id] = health
+    }
+
+    /// Whether a frame says anything the view did not show: the clocks in it do not count.
+    static func isNews(_ frame: WatchFrameData?, after shown: WatchFrameData?) -> Bool {
+        guard var fresh = frame, var old = shown else { return frame != nil || shown != nil }
+        fresh.at = nil
+        fresh.activeElapsedSecs = nil
+        old.at = nil
+        old.activeElapsedSecs = nil
+        return fresh != old
     }
 
     // MARK: interjections

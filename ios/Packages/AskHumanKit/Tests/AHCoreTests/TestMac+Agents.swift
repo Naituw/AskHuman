@@ -94,6 +94,7 @@ extension TestMac {
         case WatchOpen.type:
             guard let open = try? plain.body(as: WatchOpen.self) else { return }
             lock.withLock { watchOpens.append(open.agentKey) }
+            guard !ignoreWatchOpen else { return }
             await sendWatchFrame(agentKey: open.agentKey, seq: 1, text: "First frame")
         case WatchClose.type:
             guard let close = try? plain.body(as: WatchClose.self) else { return }

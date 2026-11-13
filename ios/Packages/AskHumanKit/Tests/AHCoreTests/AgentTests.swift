@@ -236,6 +236,101 @@ final class AgentTests: XCTestCase {
         XCTAssertNotNil(kept, "the last frame stays on screen")
     }
 
+    // MARK: the watchdog of the live views
+
+    private func liveNotes() -> [String] {
+        Diagnostics.shared.entries().filter { $0.category == "live" }.map(\.text)
+    }
+
+    func testAViewThatGetsNoFirstFrameIsAskedForAgainOnceAMinuteAtMost() async throws {
+        let h = Harness()
+        h.mac.agents = ["claude:s1": sampleAgent("claude:s1")]
+        h.mac.ignoreWatchOpen = true
+        await h.pair()
+        await eventually("the Agent list") { await h.state().agents.count == 1 }
+        let id = agentId(h, "claude:s1")
+        let notes = liveNotes().count
+        await h.engine.watch(macId: h.mac.macId, agentKey: "claude:s1", open: true)
+        await eventually("watch.open") { h.mac.watchOpens.count == 1 }
+
+        await h.pass(seconds: 4)
+        XCTAssertEqual(h.mac.watchOpens.count, 1, "the first frame is given a few seconds")
+        await h.advance(until: { h.mac.watchOpens.count == 2 }, limit: 10, "the watchdog asks again")
+        await h.pass(seconds: 50)
+        XCTAssertEqual(h.mac.watchOpens.count, 2, "once a minute at most")
+        await h.advance(until: { h.mac.watchOpens.count == 3 }, limit: 30, "and again a minute later")
+
+        // The Mac answers at last, and the answer is told apart from an ordinary frame in the log.
+        h.mac.ignoreWatchOpen = false
+        await h.advance(until: { h.mac.watchOpens.count == 4 }, limit: 70, "the next question")
+        await eventually("the first frame") { await h.state().watches[id]?.frame?.text == "First frame" }
+        let fresh = Array(liveNotes().dropFirst(notes))
+        XCTAssertEqual(fresh.filter { $0.contains("asked for again: no first frame") }.count, 3, "\(fresh)")
+        XCTAssertEqual(fresh.filter { $0.contains("had news") }.count, 1, "\(fresh)")
+    }
+
+    func testAViewWhoseAgentChangedWithoutAFrameIsAskedForAgain() async throws {
+        let h = Harness()
+        h.mac.agents = ["claude:s1": sampleAgent("claude:s1")]
+        await h.pair()
+        await eventually("the Agent list") { await h.state().agents.count == 1 }
+        let id = agentId(h, "claude:s1")
+        await h.engine.watch(macId: h.mac.macId, agentKey: "claude:s1", open: true)
+        await eventually("the first frame") { await h.state().watches[id]?.frame != nil }
+        let notes = liveNotes().count
+
+        h.mac.ignoreWatchOpen = true
+        await h.mac.changeAgents(upsert: [sampleAgent("claude:s1", title: "Renamed")])
+        await h.pass(seconds: 19)
+        XCTAssertEqual(h.mac.watchOpens.count, 1, "a frame is given a while to come")
+        await h.advance(until: { h.mac.watchOpens.count == 2 }, limit: 10, "the watchdog asks again")
+        await h.pass(seconds: 5)
+        await h.mac.changeAgents(upsert: [sampleAgent("claude:s1", title: "Renamed again")])
+        await h.pass(seconds: 50)
+        XCTAssertEqual(h.mac.watchOpens.count, 2, "once a minute at most")
+        await h.advance(until: { h.mac.watchOpens.count == 3 }, limit: 30, "and again when the minute is over")
+        let fresh = Array(liveNotes().dropFirst(notes))
+        XCTAssertEqual(fresh.filter { $0.contains("asked for again: the Agent changed") }.count, 2, "\(fresh)")
+    }
+
+    func testAViewThatKeepsGettingFramesOrWhoseAgentIsQuietIsLeftAlone() async throws {
+        let h = Harness()
+        h.mac.agents = ["claude:s1": sampleAgent("claude:s1")]
+        await h.pair()
+        await eventually("the Agent list") { await h.state().agents.count == 1 }
+        let id = agentId(h, "claude:s1")
+        await h.engine.watch(macId: h.mac.macId, agentKey: "claude:s1", open: true)
+        await eventually("the first frame") { await h.state().watches[id]?.frame != nil }
+        await h.pass(seconds: 100)
+        XCTAssertEqual(h.mac.watchOpens.count, 1, "a quiet Agent has nothing to send")
+
+        // A change that does come with its frame, a few seconds later, is not a stream that broke.
+        await h.mac.changeAgents(upsert: [sampleAgent("claude:s1", title: "Renamed")])
+        await h.pass(seconds: 3)
+        await h.mac.sendWatchFrame(agentKey: "claude:s1", seq: 2, text: "Second frame")
+        await eventually("the second frame") { await h.state().watches[id]?.frame?.text == "Second frame" }
+        await h.pass(seconds: 100)
+        XCTAssertEqual(h.mac.watchOpens.count, 1)
+
+        // Neither is a change of the list that no frame shows (a follow, a queued message).
+        await h.mac.changeAgents(upsert: [sampleAgent("claude:s1", title: "Renamed", followed: true, pending: 1)])
+        await h.pass(seconds: 100)
+        XCTAssertEqual(h.mac.watchOpens.count, 1)
+    }
+
+    func testAViewThatWasClosedIsNotAskedForAgain() async throws {
+        let h = Harness()
+        h.mac.agents = ["claude:s1": sampleAgent("claude:s1")]
+        h.mac.ignoreWatchOpen = true
+        await h.pair()
+        await eventually("the Agent list") { await h.state().agents.count == 1 }
+        await h.engine.watch(macId: h.mac.macId, agentKey: "claude:s1", open: true)
+        await eventually("watch.open") { h.mac.watchOpens.count == 1 }
+        await h.engine.watch(macId: h.mac.macId, agentKey: "claude:s1", open: false)
+        await h.pass(seconds: 100)
+        XCTAssertEqual(h.mac.watchOpens.count, 1)
+    }
+
     // MARK: interjections
 
     func testAnIdleDesktopChatAcceptsAMessageWithFilesAndNoPendingQueue() async throws {

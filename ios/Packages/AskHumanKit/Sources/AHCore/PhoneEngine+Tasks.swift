@@ -200,6 +200,7 @@ extension PhoneEngine {
     /// The frames of a Mac are void once it is gone; the wish to watch stays unless `forget`.
     func dropWatches(of macId: String, forget: Bool = false) {
         for id in watches.keys where id.hasPrefix(macId + "|") { watches[id] = nil }
+        for id in watchHealth.keys where id.hasPrefix(macId + "|") { watchHealth[id] = nil }
         if forget { wantedWatches = wantedWatches.filter { !$0.hasPrefix(macId + "|") } }
     }
 

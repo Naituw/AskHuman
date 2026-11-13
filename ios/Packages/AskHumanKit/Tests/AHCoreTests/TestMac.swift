@@ -73,6 +73,8 @@ final class TestMac: @unchecked Sendable {
     var ignoreTaskOptions = false
     var watchOpens: [String] = []
     var watchCloses: [String] = []
+    /// A Mac that takes `watch.open` and never sends the frame.
+    var ignoreWatchOpen = false
 
     // Todos: see `TestMac+Todos.swift`.
     var todoProjectsReply = TodoProjects(rev: 1, mode: "local", projects: [])
