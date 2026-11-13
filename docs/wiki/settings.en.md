@@ -63,7 +63,7 @@ Stop confirmations, permission approvals, error cards and Codex native questions
 
 On macOS, **Agents → Cursor → Cursor session protection (experimental)** is off by default and
 available while CLI/MCP integration is active. It applies to every local Cursor Desktop chat,
-including chats that have not called AskHuman, and covers two things under one switch:
+including chats that have not called AskHuman. One switch controls these protections.
 
 - **Background completions no longer continue on their own.** Background commands and subagents keep
   running and retain their results; completion notifications no longer start a model turn
@@ -74,13 +74,17 @@ including chats that have not called AskHuman, and covers two things under one s
   and can wrongly archive the chat. While a chat is generating, the protection keeps its loaded
   messages, lowering that risk. It costs more memory for running chats, does not fix Cursor's own
   error handling, and cannot protect a turn that already had gaps before the protection was active.
+- **Longer stall waiting and retry window.** Compatible windows wait 5 minutes for inbound messages
+  and allow consecutive stall retries within a 10-minute window.
+- **Separate HTTP/2 connections for parallel Agent streams.** If one connection drops, streams on
+  other connections can continue.
 
 Terminal Cursor CLI is not covered.
 
 While enabled, AskHuman keeps its daemon running and automatically attaches to existing and newly
-opened Cursor windows. Settings distinguish waiting, connecting, active, partly active (the part that
-is not active is named, and the other keeps working) and failed states. A compatible Cursor version
-must pass checks before each part becomes active; failed checks leave native behavior in place.
+opened Cursor windows. Settings distinguish waiting, connecting, active, partly active (and name
+the unavailable protections), and failed states. Each protection checks the running Cursor interfaces
+before activating. Cursor uses its native behavior when a check fails.
 Startup and reload require a short attachment period. No special Cursor launch command is needed, and
 compatibility with future upgrades is not guaranteed.
 Disabling the switch or integration restores native behavior without replaying already settled

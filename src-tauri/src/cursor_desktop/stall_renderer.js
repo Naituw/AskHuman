@@ -2,6 +2,7 @@
   "use strict";
   const key = "__ASKHUMAN_CURSOR_STALL_V1__";
   const kernelKey = "__ASKHUMAN_CURSOR_STALL_RENDERER_KERNEL_V1__";
+  const kernelContract = 1;
   const owner = __ASKHUMAN_OWNER__;
   const revision = __ASKHUMAN_REVISION__;
   const lease = __ASKHUMAN_LEASE__;
@@ -126,7 +127,7 @@
       throw error;
     }
     return {
-      owner, revision, intact, retryWindow: Math.max(policy.retryWindow, binding.nativeRetryWindow),
+      owner, revision, contract: kernelContract, intact, retryWindow: Math.max(policy.retryWindow, binding.nativeRetryWindow),
       failure: () => failed,
       disable() { target = undefined; },
       ready(host) { return host && target?.manager === host && target.pid === host.pid; },
@@ -140,14 +141,17 @@
       kernel = makeKernel();
       globalThis[kernelKey] = kernel;
     }
-    if (kernel.owner !== owner || kernel.revision !== revision || !kernel.intact()) {
+    // The previous kernel uses the same turn marker and retry policy. Adopt it when only the
+    // bridge changes so turns already queued in the native host can still read their snapshot.
+    if (kernel.owner !== owner || (kernel.contract ?? 1) !== kernelContract || !kernel.intact()) {
       throw new Error("Cursor window stall hooks changed after attachment");
     }
   } catch (error) {
     failure = String(error.message).slice(0, 160);
   }
   state.activate = () => {
-    const base = { prepared: true, surface };
+    const host = typeof extensions?._getExtensionHostManagers === "function" ? manager() : undefined;
+    const base = { prepared: true, surface, hostPid: host?.pid };
     if (failure || !kernel?.intact() || kernel.failure()) {
       return { ...base, state: "unavailable", error: failure || kernel?.failure() || "Cursor window stall hooks were replaced" };
     }
@@ -157,7 +161,6 @@
     if (environment.smokeTestNalStreamTimeoutMs !== undefined || native <= 0 || native >= policy.timeout) {
       return { ...base, state: "notApplicable", timeoutMs: native };
     }
-    const host = manager();
     if (!kernel.ready(host)) {
       kernel.disable();
       return { ...base, state: "pending", hostPid: host?.pid };
@@ -176,7 +179,7 @@
     return state.activate();
   };
   state.restore = () => {
-    if (kernel?.owner === owner && kernel.revision === revision) kernel.disable();
+    if (kernel?.owner === owner && (kernel.contract ?? 1) === kernelContract) kernel.disable();
     if (globalThis[key] === state) delete globalThis[key];
     return true;
   };

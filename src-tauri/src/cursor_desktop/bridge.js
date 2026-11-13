@@ -42,6 +42,7 @@
   }));
   let enabled = true, stopped = false, refreshPromise, registration;
   let attachStallHost;
+  const isolationHosts = new Map();
   const bounded = (promise, ms, label) => {
     let timer;
     return Promise.race([promise, new Promise((_, reject) => {
@@ -148,6 +149,7 @@
       record.attempts = 0;
       record.guards = {};
       delete record.error;
+      delete record.isolation;
     };
     record.destroy = () => windows.delete(wc.id);
     wc.on("did-start-loading", record.reload);
@@ -167,6 +169,7 @@
         if (!workbench.test(wc.getURL())) { record.phase = "ignored"; continue; }
         await refreshPrimary(record);
         for (const guard of guards) await refreshGuard(record, guard);
+        if (config.isolationHost) await refreshIsolation(record);
       }
     })().finally(() => { refreshPromise = undefined; });
     return refreshPromise;
@@ -247,6 +250,40 @@
     }
   }
 
+  async function refreshIsolation(record) {
+    if (stopped || !enabled) return;
+    const pid = record.guards.stall?.status?.hostPid;
+    if (!Number.isSafeInteger(pid)) {
+      record.isolation = record.guards.stall?.status?.state === "unavailable" || record.guards.stall?.error
+        ? {state: "unavailable", error: "Cursor has no verified local Agent Host"} : {state: "pending"};
+      return;
+    }
+    const prior = isolationHosts.get(pid);
+    if (prior && (prior.checkAt > Date.now() || prior.retryAt > Date.now())) {
+      record.isolation = prior.status;
+      return;
+    }
+    const generation = record.generation;
+    try {
+      attachStallHost ??= eval(config.stallAttach)(require, config, bounded);
+      if (prior?.checkAt && prior.identity === await attachStallHost.identity(pid)) {
+        prior.checkAt = Date.now() + 15000;
+        record.isolation = prior.status;
+        return;
+      }
+      const attached = await attachStallHost.isolate(pid, lease, identity => {
+        isolationHosts.set(pid, {identity, status: {state: "pending"}});
+      });
+      attached.checkAt = Date.now() + 15000;
+      isolationHosts.set(pid, attached);
+      if (generation === record.generation) record.isolation = attached.status;
+    } catch (error) {
+      const status = {state: "unavailable", error: String(error.message ?? error).slice(0, 180)};
+      isolationHosts.set(pid, {identity: isolationHosts.get(pid)?.identity, status, retryAt: Date.now() + 30000});
+      if (generation === record.generation) record.isolation = status;
+    }
+  }
+
   // Only known, bounded fields leave the window. Counts are plain non-negative integers that the
   // daemon can always parse: 64-bit fields stay within the safe range, 32-bit ones within a million.
   const count = value => Number.isFinite(value) && value > 0 ? Math.min(Math.floor(value), Number.MAX_SAFE_INTEGER) : 0;
@@ -280,6 +317,7 @@
     windows: [...windows.values()].filter(r => r.phase !== "ignored" && !r.wc.isDestroyed()).map(r => ({
       id: r.wc.id, phase: r.phase, surface: r.surface, suppressed: r.suppressed,
       verified: r.phase === "active" && r.verified === true, checks: r.checks ?? 0, error: r.error,
+      ...(config.isolationHost ? {isolation: r.isolation ?? {state: "pending"}} : {}),
       ...Object.fromEntries(guards.map(guard => [guard.name, guardStatus(r, guard)])),
     })),
   });
@@ -296,6 +334,14 @@
     const deadline = Date.now() + 4000;
     try {
       if (refreshPromise) await bounded(refreshPromise, 3000, "Attachment teardown is pending");
+      if (attachStallHost && isolationHosts.size) {
+        const hosts = [...isolationHosts].filter(([, state]) => state.identity);
+        const restored = await bounded(Promise.all(hosts.map(([pid, state]) =>
+          attachStallHost.restoreIsolation(pid, state.identity, lease))),
+          Math.max(1, deadline - Date.now()), "HTTP/2 isolation restoration is pending");
+        if (!restored.every(Boolean)) return {restored: false};
+        isolationHosts.clear();
+      }
       const results = await bounded(Promise.all([...windows.values()].map(async record => {
         record.generation++;
         record.wc.removeListener("did-start-loading", record.reload);

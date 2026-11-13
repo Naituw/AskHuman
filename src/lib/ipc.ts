@@ -849,6 +849,7 @@ export interface CursorDesktopWindow {
     timeoutMs?: number | null;
     retryWindowMs?: number | null;
   } | null;
+  isolation?: { state: string; error?: string | null } | null;
 }
 export interface CursorDesktopStatus {
   supported: boolean;

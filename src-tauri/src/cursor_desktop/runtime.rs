@@ -34,6 +34,7 @@ const STALL_RENDERER: &str = include_str!("stall_renderer.js");
 const STALL_HOST: &str = include_str!("stall_host.js");
 const STALL_ATTACH: &str = include_str!("stall_attach.js");
 const STALL_DISCOVERY: &str = include_str!("stall_discovery.js");
+const ISOLATION_HOST: &str = include_str!("isolation_host.js");
 const STALL_KEY: &str = "__ASKHUMAN_CURSOR_STALL_V1__";
 const PORT: u16 = 9229;
 
@@ -52,6 +53,7 @@ pub(super) fn adapter_revision() -> String {
             hash.update(STALL_HOST);
             hash.update(STALL_ATTACH);
             hash.update(STALL_DISCOVERY);
+            hash.update(ISOLATION_HOST);
             format!("{:x}", hash.finalize())[..16].into()
         })
         .clone()
@@ -530,6 +532,7 @@ fn bootstrap_source(manifest: &Manifest, package: &Path, close_inspector: bool) 
         // bridge and report their status alongside it.
         config["stallDiscovery"] = json!(STALL_DISCOVERY);
         config["stallAttach"] = json!(STALL_ATTACH);
+        config["isolationHost"] = json!(ISOLATION_HOST);
         config["stallHost"] =
             json!(STALL_HOST.replacen("__ASKHUMAN_STALL_POLICY__", STALL_POLICY, 1));
         config["guards"] = json!([{
@@ -1117,6 +1120,7 @@ mod tests {
             STALL_HOST,
             STALL_ATTACH,
             STALL_DISCOVERY,
+            ISOLATION_HOST,
         ] {
             every.update(part);
         }

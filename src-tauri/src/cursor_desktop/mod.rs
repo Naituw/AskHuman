@@ -76,6 +76,13 @@ pub struct StallStatus {
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", default)]
+pub struct IsolationStatus {
+    pub state: String,
+    pub error: Option<String>,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", default)]
 pub struct WindowStatus {
     pub pid: u32,
     pub id: u32,
@@ -88,6 +95,7 @@ pub struct WindowStatus {
     pub error: Option<String>,
     pub retention: Option<RetentionStatus>,
     pub stall: Option<StallStatus>,
+    pub isolation: Option<IsolationStatus>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -145,6 +153,18 @@ fn stall_state(window: &WindowStatus) -> GuardState {
     }
 }
 
+fn isolation_state(window: &WindowStatus) -> GuardState {
+    match window
+        .isolation
+        .as_ref()
+        .map(|status| status.state.as_str())
+    {
+        Some("active") => GuardState::Active,
+        Some("unavailable") => GuardState::Failed,
+        _ => GuardState::Pending,
+    }
+}
+
 /// How completely one window is protected. The guards are judged independently, so one that
 /// cannot attach never hides or disables the other.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -165,6 +185,7 @@ pub(super) fn coverage(window: &WindowStatus) -> Coverage {
         completion_state(window),
         retention_state(window),
         stall_state(window),
+        isolation_state(window),
     ];
     if states.contains(&Pending) {
         Coverage::Attaching
@@ -269,6 +290,26 @@ pub fn stall_summary(windows: &[WindowStatus]) -> Option<String> {
         count(GuardState::Failed),
         count(GuardState::Pending),
     ))
+}
+
+pub fn isolation_summary(windows: &[WindowStatus]) -> Option<String> {
+    windows
+        .iter()
+        .any(|window| window.isolation.is_some())
+        .then(|| {
+            let count = |state| {
+                windows
+                    .iter()
+                    .filter(|window| isolation_state(window) == state)
+                    .count()
+            };
+            format!(
+                "{} active, {} unavailable, {} pending",
+                count(GuardState::Active),
+                count(GuardState::Failed),
+                count(GuardState::Pending)
+            )
+        })
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
@@ -517,6 +558,10 @@ mod tests {
             checks: if completion == "active" { 6 } else { 0 },
             retention: guard.and_then(|(state, checks)| retention(state, checks)),
             stall: native_stall(),
+            isolation: Some(IsolationStatus {
+                state: "active".into(),
+                error: None,
+            }),
             ..WindowStatus::default()
         }
     }
@@ -526,6 +571,10 @@ mod tests {
         let mut window: WindowStatus = serde_json::from_str(r#"{"phase":"active"}"#).unwrap();
         window.retention = retention("active", 10);
         window.stall = native_stall();
+        window.isolation = Some(IsolationStatus {
+            state: "active".into(),
+            error: None,
+        });
         assert_ne!(
             coverage(&window),
             Coverage::Full,
@@ -569,8 +618,8 @@ mod tests {
             ("active", Some(("pending", 0)), Attaching),
             ("active", None, Attaching),
             ("error", Some(("active", 10)), Partial),
-            ("error", Some(("notApplicable", 0)), Failed),
-            ("error", Some(("unavailable", 0)), Failed),
+            ("error", Some(("notApplicable", 0)), Partial),
+            ("error", Some(("unavailable", 0)), Partial),
             ("error", Some(("pending", 0)), Attaching),
             ("error", None, Attaching),
             ("attaching", Some(("active", 10)), Attaching),
@@ -626,6 +675,10 @@ mod tests {
         // Before the completion guard has seen the surface, the retention guard's own call stands.
         let unknown = WindowStatus {
             surface: None,
+            isolation: Some(IsolationStatus {
+                state: "unavailable".into(),
+                error: None,
+            }),
             ..window("error", "ide", Some(("notApplicable", 0)))
         };
         assert_eq!(coverage(&unknown), Coverage::Failed);
@@ -636,7 +689,8 @@ mod tests {
         let full = window("active", "agents", Some(("active", 10)));
         let partial = window("active", "agents", Some(("unavailable", 0)));
         let attaching = window("attaching", "agents", None);
-        let failed = window("error", "ide", Some(("notApplicable", 0)));
+        let mut failed = window("error", "ide", Some(("notApplicable", 0)));
+        failed.isolation.as_mut().unwrap().state = "unavailable".into();
         let owned = |windows: &[&WindowStatus]| -> Vec<WindowStatus> {
             windows.iter().map(|w| (*w).clone()).collect()
         };
@@ -695,7 +749,8 @@ mod tests {
         assert!(windows_partly_covered(&[full.clone(), partial.clone()]));
         assert!(!windows_partly_covered(std::slice::from_ref(&full)));
         assert!(!windows_partly_covered(&[]));
-        let failed = window("error", "ide", Some(("notApplicable", 0)));
+        let mut failed = window("error", "ide", Some(("notApplicable", 0)));
+        failed.isolation.as_mut().unwrap().state = "unavailable".into();
         assert!(!windows_partly_covered(&[partial, failed]));
     }
 

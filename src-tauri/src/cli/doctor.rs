@@ -369,6 +369,9 @@ fn render_text(
     if let Some(summary) = crate::cursor_desktop::stall_summary(&cursor.windows) {
         out.push_str(&format!("  stall-protection: {summary}\n"));
     }
+    if let Some(summary) = crate::cursor_desktop::isolation_summary(&cursor.windows) {
+        out.push_str(&format!("  http2-run-isolation: {summary}\n"));
+    }
     if let Some(error) = cursor.error {
         out.push_str(&format!("  {error}\n"));
     }
