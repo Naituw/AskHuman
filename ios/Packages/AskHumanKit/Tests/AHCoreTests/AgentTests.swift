@@ -193,6 +193,34 @@ final class AgentTests: XCTestCase {
         await eventually("frames again") { await h.state().watches[self.agentId(h, "claude:s1")]?.frame != nil }
     }
 
+    /// A Mac that restarted numbers its frames from 1 again. They are the newest, not reordered old ones: the page that was
+    /// left open shows them, instead of staying as it was until it is left and opened again.
+    func testTheFramesOfARestartedMacReplaceTheOnesBeforeIt() async throws {
+        let h = Harness()
+        h.mac.agents = ["claude:s1": sampleAgent("claude:s1")]
+        await h.pair()
+        await eventually("the Agent list") { await h.state().agents.count == 1 }
+        let id = agentId(h, "claude:s1")
+        await h.engine.watch(macId: h.mac.macId, agentKey: "claude:s1", open: true)
+        await eventually("the first frame") { await h.state().watches[id]?.frame?.text == "First frame" }
+        await h.mac.sendWatchFrame(agentKey: "claude:s1", seq: 2, text: "Second frame")
+        await h.mac.sendWatchFrame(agentKey: "claude:s1", seq: 3, text: "Third frame")
+        await eventually("the third frame") { await h.state().watches[id]?.frame?.text == "Third frame" }
+
+        h.mac.epoch = "restarted"
+        await h.mac.publishPresence(online: true)
+        await eventually("watch.open again after the new handshake") { h.mac.watchOpens.count == 2 }
+        // The restarted Mac answers the open with its first frame, numbered 1.
+        await eventually("the first frame of the restarted Mac") { await h.state().watches[id]?.frame?.text == "First frame" }
+        await h.mac.sendWatchFrame(agentKey: "claude:s1", seq: 2, text: "Second frame of the restarted Mac")
+        await eventually("its second frame") { await h.state().watches[id]?.frame?.text == "Second frame of the restarted Mac" }
+        // Reordered frames of the same stream are still dropped.
+        await h.mac.sendWatchFrame(agentKey: "claude:s1", seq: 1, text: "Stale frame")
+        try await Task.sleep(nanoseconds: 60_000_000)
+        let kept = await h.state().watches[id]?.frame?.text
+        XCTAssertEqual(kept, "Second frame of the restarted Mac")
+    }
+
     func testTheMacClosingAWatchIsShown() async throws {
         let h = Harness()
         h.mac.agents = ["claude:s1": sampleAgent("claude:s1")]

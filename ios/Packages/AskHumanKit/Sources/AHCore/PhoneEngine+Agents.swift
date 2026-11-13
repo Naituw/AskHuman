@@ -163,6 +163,9 @@ extension PhoneEngine {
     func reopenWatches(_ macId: String) async {
         guard foreground else { return }
         for id in wantedWatches.sorted() where id.hasPrefix(macId + "|") {
+            // A Mac that restarted numbers its frames from 1 again: they are not old frames to be dropped, and without this
+            // the page would stay as it was until the user left it and came back.
+            watches[id]?.seq = 0
             await send(WatchOpen(agentKey: String(id.dropFirst(macId.count + 1))), to: macId)
         }
     }
