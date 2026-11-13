@@ -176,6 +176,30 @@ final class AskHumanAgentPageUITests: XCTestCase {
         XCTAssertTrue(update.waitForExistence(timeout: 5), "the new text waits for the finger to leave")
     }
 
+    /// The hold is a lease, not a lock: once the finger has left and the text has been held for a moment, what the Mac said
+    /// meanwhile takes the place of the words by itself, without a tap on "New content".
+    func testTheLatestTextIsReplacedByItselfAfterTheFingerLeaves() {
+        launch(contentSize: nil, open: false)
+        requireElement("agent-row-\(workingAgent)").tap()
+        let text = requireElement("watch-text")
+        let update = element("watch-text-update")
+        text.press(forDuration: 0.4)
+        XCTAssertTrue(update.waitForExistence(timeout: 5), "the new text waits while it is held")
+        XCTAssertTrue(eventually(timeout: 25) { !update.exists }, "the new text replaced the old one without a tap")
+    }
+
+    /// Only a finger on the text holds it. One that scrolls the page somewhere else does not (it used to: any drag down the
+    /// page held the text until "New content" was tapped).
+    func testADragElsewhereOnThePageDoesNotHoldTheLatestText() {
+        launch(contentSize: nil, open: false)
+        requireElement("agent-row-\(workingAgent)").tap()
+        requireElement("watch-text")
+        let start = marginPoint(window.frame.height * 0.4)
+        start.press(forDuration: 0.05, thenDragTo: start.withOffset(CGVector(dx: 0, dy: 120)), withVelocity: .slow, thenHoldForDuration: 0.1)
+        start.press(forDuration: 0.05, thenDragTo: start.withOffset(CGVector(dx: 0, dy: -120)), withVelocity: .slow, thenHoldForDuration: 0.1)
+        XCTAssertFalse(eventually(timeout: 2) { element("watch-text-update").exists }, "a drag beside the text held it")
+    }
+
     // MARK: opening and closing
 
     /// Polls `condition` for a few seconds (the window's height animates for a quarter of a second, and the simulators are slow).

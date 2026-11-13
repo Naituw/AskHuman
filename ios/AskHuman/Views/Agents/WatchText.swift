@@ -4,7 +4,6 @@ import AHCore
 /// One stable paragraph. Only the text is throttled; the surrounding watch keeps updating.
 struct WatchText: View {
     let frame: WatchFrameData
-    @Binding var pageReading: Bool
     @State private var presentation = WatchTextPresentation()
     /// The height the whole text takes at the width it has, as its window reports it.
     @State private var natural: CGFloat = 0
@@ -29,19 +28,24 @@ struct WatchText: View {
                 if thinking {
                     Text("Thinking").font(.caption.weight(.medium)).foregroundStyle(.secondary)
                 }
-                // A finger that stays on the text or moves over it (to scroll, or to select) is reading it. It is watched, not
-                // taken: a `DragGesture` here would stop the page from scrolling under such a finger (iOS 27).
+                // A finger that stays on the text or moves over it (to scroll, or to select) is reading it, and so is the
+                // moment after it left. It is watched, not taken: a `DragGesture` here would stop the page from scrolling
+                // under such a finger (iOS 27).
                 TextWindow(expanded: presentation.expanded, tail: thinking, height: previewHeight, natural: $natural) {
                     paragraph(displayed)
                 }
-                .background { ReadingTouch { presentation.lockReading() } }
+                .background {
+                    ReadingTouch(
+                        onBegan: { presentation.touchBegan() },
+                        onEnded: { presentation.touchEnded(now: .now) }
+                    )
+                }
                 .accessibilityIdentifier("watch-text")
                 controls(displayed, thinking: thinking)
             }
         }
         .background { PageAnchorMark(anchor: page) }
         .onChange(of: candidate, initial: true) { _, value in presentation.receive(value, now: .now) }
-        .onChange(of: pageReading, initial: true) { _, value in if value { presentation.lockReading() } }
         .task(id: presentation.deadline) {
             guard let deadline = presentation.deadline else { return }
             let delay = max(0, deadline.timeIntervalSinceNow)
@@ -66,7 +70,7 @@ struct WatchText: View {
     private func controls(_ displayed: WatchLatestText, thinking: Bool) -> some View {
         let openable = overflows || presentation.expanded
         let excerpt = displayed.truncated || (thinking && overflows && !presentation.expanded)
-        let newer = presentation.hasNewContent && (presentation.reading || presentation.expanded)
+        let newer = presentation.hasNewContent && presentation.reading
         if openable || excerpt || newer {
             HStack(spacing: 10) {
                 if openable {
@@ -97,14 +101,12 @@ struct WatchText: View {
         if closing { page.bringTopIntoSight(margin: revealMargin) }
         withAnimation(.snappy(duration: 0.26)) {
             presentation.toggleExpanded(now: .now)
-            if closing { pageReading = false }
         }
     }
 
     private func showNewest() {
         withAnimation(.snappy(duration: 0.26)) {
             presentation.updateNow(now: .now)
-            if !presentation.expanded { pageReading = false }
         }
     }
 }
