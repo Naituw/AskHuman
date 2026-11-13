@@ -84,6 +84,22 @@
         "annotatable": true
       }
     }}},
+    {"type": "request.new", "name": "todoQueue", "body": {"rev": 16, "full": true, "request": {
+      "id": "req6", "kind": "ask", "createdAt": 1792900005000,
+      "agent": {"kind": "claude", "label": "Claude Code"}, "project": {"key": "p1", "name": "HumanInLoop"},
+      "source": "hook", "contentHash": "sha256-tq",
+      "ask": {
+        "isMarkdown": false,
+        "message": {"text": "Claude Code wants to stop.", "files": []},
+        "questions": [{"text": "What next?", "options": [
+          {"text": "Fix the flaky test", "recommended": false, "todo": true},
+          {"text": "Continue the conversation", "recommended": false},
+          {"text": "End the conversation", "recommended": false}
+        ]}],
+        "selectOnly": false, "single": true,
+        "todoQueue": true
+      }
+    }}},
     {"type": "request.new", "name": "confirm", "body": {"rev": 9, "full": false, "request": {
       "id": "req2", "kind": "confirm", "createdAt": 1792900001000,
       "agent": {"kind": "codex", "label": "Codex"}, "project": {"key": "p2", "name": "Other"},

@@ -68,8 +68,8 @@ struct LaunchOptions {
     /// Seconds the countdown on the strip of an ended request page takes (the app's own 5 is too short for a UI test
     /// that has to look at the strip and press a button on a busy simulator).
     var endedCountdown: Double?
-    /// Seconds the "Added to <project>" note stays over a request page (the app's own 2 is too short for a
-    /// UI test that polls a busy simulator).
+    /// Seconds the notes over the todo list of a request page stay ("Completed … · Undo", a refused write; the app's own 4
+    /// is too short for a UI test that polls a busy simulator).
     var todoNoteHold: Double?
     /// Seconds the developer button's note ("Added to …", "Diagnostics copied") stays up (the app's own 1.8 is too
     /// short for a UI test that polls a busy simulator).

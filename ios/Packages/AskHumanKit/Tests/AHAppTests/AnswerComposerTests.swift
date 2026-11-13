@@ -424,6 +424,59 @@ final class AnswerComposerTests: XCTestCase {
         form.dropTodoOptionSelections()
         XCTAssertEqual(form.answers[0].selected, [0], "an ordinary question's options are its own")
     }
+
+    // MARK: the Stop confirmation as a live queue (docs/specs/todo-list-actions.md D10)
+
+    private func stopQueue() -> AskView {
+        AskView(
+            isMarkdown: true, message: MessageView(text: "wants to stop", files: []),
+            questions: [QuestionView(text: "What next?", options: [
+                OptionView(text: "a queued todo", recommended: false, todo: true),
+                OptionView(text: "Continue the conversation", recommended: false),
+                OptionView(text: "End the conversation", recommended: false),
+            ])],
+            selectOnly: false, single: true, todoQueue: true
+        )
+    }
+
+    func testOnlyWhatsNextAndTheStopQueueListTheLiveQueue() {
+        XCTAssertTrue(whatsNext().listsTodoQueue)
+        XCTAssertTrue(stopQueue().listsTodoQueue)
+        XCTAssertFalse(ask([question("1", "a")]).listsTodoQueue)
+    }
+
+    func testAStopQueueTakesOneTodoAndALaterChoiceReplacesIt() {
+        let form = composer(stopQueue())
+        form.setTodoIds(["t1", "t2"])
+        XCTAssertEqual(form.todoIds, ["t1"], "what comes next is one thing, as in What's next")
+        form.toggle(question: 0, option: 1)
+        XCTAssertEqual(form.todoIds, [], "\"continue\" takes the todo's place")
+        XCTAssertEqual(form.answers[0].selected, [1])
+        form.setTodoIds(["t3"])
+        XCTAssertEqual(form.answers[0].selected, [], "and a todo takes the place of the choice")
+        form.toggle(question: 0, option: 2)
+        XCTAssertEqual(form.todoIds, [], "so does \"end\"")
+        XCTAssertEqual(form.answers[0].selected, [2])
+    }
+
+    func testAStopQueueLetsGoOfTheTodoOptionsItsQuestionCarried() {
+        let form = composer(stopQueue())
+        form.toggle(question: 0, option: 0)
+        form.dropTodoOptionSelections()
+        XCTAssertEqual(form.answers[0].selected, [], "its row is not on screen once the queue is listed")
+        form.toggle(question: 0, option: 1)
+        form.dropTodoOptionSelections()
+        XCTAssertEqual(form.answers[0].selected, [1], "a choice the Agent offered stays")
+    }
+
+    func testAStopQueueRestoresThePickedTodoFromItsDraft() {
+        let view = stopQueue()
+        let first = composer(view, debounce: .seconds(60))
+        first.setTodoIds(["t1"])
+        first.flush()
+        XCTAssertEqual(composer(view).todoIds, ["t1"])
+    }
+
     // MARK: quick replies (docs/specs/special-replies.md D18/D27)
 
     private func repliesAsk(_ questions: [QuestionView], selectOnly: Bool = false, whatsNext: Bool = false) -> AskView {

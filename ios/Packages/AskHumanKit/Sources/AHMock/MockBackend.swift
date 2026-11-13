@@ -234,6 +234,7 @@ public actor MockBackend: RemoteBackend {
             case .direct: inbox = MockData.directInbox(now: date)
             case .sessionHistory: inbox = MockData.sessionHistoryInbox(now: date)
             case .historyPictures: inbox = MockData.historyPicturesInbox(now: date)
+            case .todoPick: inbox = MockData.todoPickInbox(now: date)
             default: inbox = MockData.inbox(now: date)
             }
             let traffic = scenario == .quota

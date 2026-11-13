@@ -230,9 +230,8 @@ public final class AppStore {
     @ObservationIgnored let defaults: UserDefaults
     @ObservationIgnored private var composers: [String: AnswerComposer] = [:]
     @ObservationIgnored private var confirmComposers: [String: ConfirmComposer] = [:]
-    /// The "Add todo…" sheets of the request pages, by inbox item id (memory only).
-    @ObservationIgnored private var todoComposers: [String: RequestTodoComposer] = [:]
-    /// The todos a request can be answered with, by inbox item id (memory only; what is picked is the draft's).
+    /// The todos a request can be answered with, by inbox item id (memory only; what is picked is the draft's). They are also
+    /// what the request page completes, deletes and adds todos through.
     @ObservationIgnored private var todoPickers: [String: RequestTodoPicker] = [:]
     @ObservationIgnored private var tasks: [Task<Void, Never>] = []
     @ObservationIgnored private var lastHistoryRevision = -1
@@ -246,8 +245,9 @@ public final class AppStore {
     @ObservationIgnored private var advanceTask: Task<Void, Never>?
     @ObservationIgnored private var noteTask: Task<Void, Never>?
     @ObservationIgnored public var advanceTiming = AdvanceTiming.standard
-    /// How long the "Added to <project>" note stays over a request page; tests stretch it to have time to look.
-    @ObservationIgnored public var todoNoteHold = Duration.seconds(2)
+    /// How long the notes over the list of a request page's todos stay ("Completed … · Undo", a refused write); tests
+    /// stretch it to have time to look.
+    @ObservationIgnored public var todoNoteHold = Duration.seconds(4)
     /// Arrivals whose request is not in the published state yet (events and states travel apart).
     @ObservationIgnored private var pendingArrivals: [String: RequestArrival] = [:]
     @ObservationIgnored private var presentedArrivalIds: [String: Date] = [:]
@@ -359,7 +359,6 @@ public final class AppStore {
         todos.update(macs: next.macs, foreground: next.foreground)
         todos.update(agents: next.agents)
         developer.update(macs: next.macs)
-        for composer in todoComposers.values { composer.update(mac: next.macs.first { $0.id == composer.macId }) }
         for picker in todoPickers.values { picker.update(mac: next.macs.first { $0.id == picker.macId }) }
         let now = Date()
         presentedArrivalIds = presentedArrivalIds.filter { now.timeIntervalSince($0.value) < 600 }
@@ -388,9 +387,6 @@ public final class AppStore {
         }
         for key in confirmComposers.keys where !live.contains(key) && !inboxPath.contains(key) {
             confirmComposers[key] = nil
-        }
-        for key in todoComposers.keys where !live.contains(key) && !inboxPath.contains(key) {
-            todoComposers[key] = nil
         }
         for key in todoPickers.keys where !live.contains(key) && !inboxPath.contains(key) {
             todoPickers[key] = nil
@@ -734,21 +730,9 @@ public final class AppStore {
         return composer
     }
 
-    /// The "Add todo…" sheet of a request: its project and Mac are fixed, and what was typed stays until the
-    /// request ends. `nil` when the request names no project (there is nothing to add the todo to).
-    public func todoComposer(for item: InboxItem) -> RequestTodoComposer? {
-        guard item.hasProject else { return nil }
-        if let existing = todoComposers[item.id] { return existing }
-        let composer = RequestTodoComposer(
-            backend: backend, macId: item.macId, macName: item.macName, projectKey: item.summary.project.key,
-            projectName: item.summary.project.name, mac: state.macs.first { $0.id == item.macId }
-        )
-        todoComposers[item.id] = composer
-        return composer
-    }
-
-    /// The todos of the request's project that can be picked while answering (docs/specs/special-replies.md D28):
-    /// `nil` when there is nothing to pick them for (no project, or a request that takes no answer form).
+    /// The todos of the request's project that can be picked while answering (docs/specs/special-replies.md D28), and
+    /// completed, deleted and added in place (docs/specs/todo-list-actions.md): `nil` when there is nothing to list them
+    /// for (no project, or a request that takes no answer form).
     public func todoPicker(for item: InboxItem) -> RequestTodoPicker? {
         guard item.hasProject, let composer = composer(for: item) else { return nil }
         if let existing = todoPickers[item.id] { return existing }
@@ -768,7 +752,6 @@ public final class AppStore {
             composers[id]?.discard()
             composers[id] = nil
             confirmComposers[id] = nil
-            todoComposers[id] = nil
             todoPickers[id] = nil
             finished[id] = nil
             retained[id] = nil

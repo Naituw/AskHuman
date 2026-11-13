@@ -329,10 +329,15 @@ public struct AskView: Codable, Equatable, Hashable, Sendable {
     /// (docs/specs/message-annotations.md). Only a Mac that takes notes sets it, so an older Mac never does;
     /// an older phone ignores it.
     @OmitFalse public var annotatable: Bool
+    /// The todo options of this question are the project's live queue, like What's next's: a Stop confirmation of a
+    /// project (docs/specs/todo-list-actions.md D10). The phone lists the queue itself, with the actions every todo
+    /// list has, instead of the todos the question was made with. Only a Mac that knows it sets it; an older phone
+    /// ignores it and shows the question as it was made.
+    @OmitFalse public var todoQueue: Bool
 
     public init(
         isMarkdown: Bool, message: MessageView, questions: [QuestionView], selectOnly: Bool, single: Bool,
-        whatsNext: Bool = false, quickReplies: [String] = [], annotatable: Bool = false
+        whatsNext: Bool = false, quickReplies: [String] = [], annotatable: Bool = false, todoQueue: Bool = false
     ) {
         self.isMarkdown = isMarkdown
         self.message = message
@@ -342,7 +347,11 @@ public struct AskView: Codable, Equatable, Hashable, Sendable {
         self.whatsNext = whatsNext
         self.quickReplies = quickReplies
         self.annotatable = annotatable
+        self.todoQueue = todoQueue
     }
+
+    /// The todos among the options are the project's live queue: What's next's, or a Stop confirmation's.
+    public var listsTodoQueue: Bool { whatsNext || todoQueue }
 }
 
 public struct ConfirmFieldView: Codable, Equatable, Hashable, Sendable {

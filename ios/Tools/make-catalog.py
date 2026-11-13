@@ -615,8 +615,6 @@ ZH = {
     "That is too long: %lld of %lld characters.": "内容太长了：%lld / %lld 个字符。",
     "This project is no longer on %@. Choose another.": "这个项目已不在 %@ 上，请另选一个。",
     "Update AskHuman on %@ to add todos from here.": "请先更新 %@ 上的 AskHuman，才能在这里添加待办。",
-    # The request page's "Add todo…" (docs/specs/todo-quick-add.md); the rest of its words are the quick-add's
-    "Add todo…": "添加待办…",
     # Large screens (docs/specs/ios-large-screen.md): what the empty detail column says. These were put into the
     # catalog by hand once; they are here so that the script reproduces the catalog again.
     "Pick one from the list to follow it and talk to it.": "从列表里选一个，查看它的进展并与它对话。",
@@ -631,7 +629,12 @@ ZH = {
     "Select an entry": "选择一条记录",
     # Project todos in the answer form (docs/specs/special-replies.md D28/D29)
     "%lld selected": "已选 %lld",
-    "Picked todos are sent to the Agent with your answer and removed from the list.": "选中的待办会和你的回答一起发给 Agent，并从待办里移除。",
+    "Picked todos are sent to the Agent with your answer and removed from the list. Swipe right to complete, left to delete.": "选中的待办会和你的回答一起发给 Agent，并从待办里移除。右滑完成，左滑删除。",
+    # Completing, deleting and adding todos in place (docs/specs/todo-list-actions.md)
+    "Complete": "完成",
+    "Completed “%@”": "已完成「%@」",
+    "Undo": "撤销",
+    "Todos can be changed when the Mac is reachable.": "Mac 可连接时才能修改待办。",
     "Show all %lld todos": "显示全部 %lld 条待办",
     "Show less": "收起",
     "Expanded": "已展开",

@@ -602,16 +602,6 @@
         }
       }
     },
-    "Add todo…" : {
-      "localizations" : {
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "添加待办…"
-          }
-        }
-      }
-    },
     "Added to %@" : {
       "localizations" : {
         "zh-Hans" : {
@@ -1422,12 +1412,32 @@
         }
       }
     },
+    "Complete" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "完成"
+          }
+        }
+      }
+    },
     "Completed" : {
       "localizations" : {
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
             "value" : "已完成"
+          }
+        }
+      }
+    },
+    "Completed “%@”" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "已完成「%@」"
           }
         }
       }
@@ -3951,12 +3961,12 @@
         }
       }
     },
-    "Picked todos are sent to the Agent with your answer and removed from the list." : {
+    "Picked todos are sent to the Agent with your answer and removed from the list. Swipe right to complete, left to delete." : {
       "localizations" : {
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "选中的待办会和你的回答一起发给 Agent，并从待办里移除。"
+            "value" : "选中的待办会和你的回答一起发给 Agent，并从待办里移除。右滑完成，左滑删除。"
           }
         }
       }
@@ -6159,6 +6169,16 @@
         }
       }
     },
+    "Todos can be changed when the Mac is reachable." : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Mac 可连接时才能修改待办。"
+          }
+        }
+      }
+    },
     "Too large" : {
       "localizations" : {
         "zh-Hans" : {
@@ -6225,6 +6245,16 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "开启通知后，即使 AskHuman 已关闭，新提问也能送达你。"
+          }
+        }
+      }
+    },
+    "Undo" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "撤销"
           }
         }
       }

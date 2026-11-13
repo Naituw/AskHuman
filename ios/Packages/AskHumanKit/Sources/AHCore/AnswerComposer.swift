@@ -59,8 +59,8 @@ public final class AnswerComposer {
         self.debounce = debounce
         let draft = drafts.draft(key: key)
         let stored = draft?.answers ?? []
-        // Older Macs still send single-choice What's next requests.
-        todoIds = ask.selectOnly ? [] : Array((draft?.todoIds ?? []).prefix(ask.whatsNext && ask.single ? 1 : Wire.maxPickedTodos))
+        // A single-choice live queue (older Macs' What's next, every Stop confirmation) takes one task.
+        todoIds = ask.selectOnly ? [] : Array((draft?.todoIds ?? []).prefix(ask.listsTodoQueue && ask.single ? 1 : Wire.maxPickedTodos))
         // Notes belong to a request that offered them: the Mac would drop them from any other.
         let restored = ask.annotatable ? Self.restoredAnnotations(draft?.annotations ?? []) : []
         annotations = restored
@@ -78,9 +78,9 @@ public final class AnswerComposer {
             }
             return answer
         }
-        if ask.whatsNext, !answers.isEmpty {
+        if ask.listsTodoQueue, !answers.isEmpty {
             if ask.single, !todoIds.isEmpty { answers[0].selected = [] }
-            else if let end = whatsNextEndOption, !todoIds.isEmpty || answers[0].selected.count > 1 {
+            else if let end = queueEndOption, !todoIds.isEmpty || answers[0].selected.count > 1 {
                 answers[0].selected.removeAll { $0 == end }
             }
         }
@@ -90,8 +90,10 @@ public final class AnswerComposer {
 
     public var selectOnly: Bool { ask.selectOnly }
     public var single: Bool { ask.single }
-    private var whatsNextEndOption: Int? {
-        guard ask.whatsNext, let options = ask.questions.first?.options,
+    /// The option that ends the conversation in a request that lists the project's live todo queue (the last one, when it
+    /// is not a todo): What's next's "end" and a Stop confirmation's "end conversation".
+    private var queueEndOption: Int? {
+        guard ask.listsTodoQueue, let options = ask.questions.first?.options,
               let last = options.indices.last, !options[last].todo else { return nil }
         return last
     }
@@ -184,7 +186,7 @@ public final class AnswerComposer {
         var selected = answers[question].selected
         if let at = selected.firstIndex(of: option) {
             selected.remove(at: at)
-        } else if question == 0, option == whatsNextEndOption {
+        } else if question == 0, option == queueEndOption {
             selected = [option]
             todoIds = []
         } else if single {
@@ -193,9 +195,9 @@ public final class AnswerComposer {
             selected.append(option)
             selected.sort()
         }
-        if ask.whatsNext, !selected.isEmpty {
+        if ask.listsTodoQueue, !selected.isEmpty {
             if single { todoIds = [] }
-            else if let end = whatsNextEndOption, option != end { selected.removeAll { $0 == end } }
+            else if let end = queueEndOption, option != end { selected.removeAll { $0 == end } }
         }
         answers[question].selected = selected
         changed()
@@ -205,15 +207,15 @@ public final class AnswerComposer {
 
     public func isTodoPicked(_ id: String) -> Bool { todoIds.contains(id) }
 
-    /// Replaces picked todos in queue order. Picking a task clears What's next's end choice.
+    /// Replaces picked todos in queue order. Picking a task clears the end choice of a live queue (What's next, Stop).
     public func setTodoIds(_ ids: [String]) {
         guard !selectOnly else { return }
-        let ids = Array(ids.prefix(ask.whatsNext && single ? 1 : Wire.maxPickedTodos))
+        let ids = Array(ids.prefix(ask.listsTodoQueue && single ? 1 : Wire.maxPickedTodos))
         guard ids != todoIds else { return }
         todoIds = ids
-        if ask.whatsNext, !ids.isEmpty, !answers.isEmpty {
+        if ask.listsTodoQueue, !ids.isEmpty, !answers.isEmpty {
             if single { answers[0].selected = [] }
-            else if let end = whatsNextEndOption { answers[0].selected.removeAll { $0 == end } }
+            else if let end = queueEndOption { answers[0].selected.removeAll { $0 == end } }
         }
         changed()
     }
@@ -223,10 +225,10 @@ public final class AnswerComposer {
         setTodoIds(todoIds.filter(available.contains))
     }
 
-    /// What's next with the whole queue listed: the options the question carries for queue entries are not
-    /// shown any more, so a choice of one of them is let go of (it would be a hidden choice otherwise).
+    /// A live queue (What's next, Stop) with the whole queue listed: the options the question carries for queue
+    /// entries are not shown any more, so a choice of one of them is let go of (it would be a hidden choice otherwise).
     public func dropTodoOptionSelections() {
-        guard ask.whatsNext else { return }
+        guard ask.listsTodoQueue else { return }
         var dropped = false
         for question in answers.indices {
             let options = ask.questions[question].options
