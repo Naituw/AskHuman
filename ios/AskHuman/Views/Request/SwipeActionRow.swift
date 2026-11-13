@@ -8,7 +8,9 @@ import UIKit
 //
 // The drag has to share the finger with three other things: the page's vertical scroll (the drag only takes over when the
 // first movement is clearly sideways, and the page stops scrolling for as long as it holds), the row's own tap (a tap is
-// not a drag), and the edge swipe that goes back (a drag that starts at the very edge of the screen is left alone).
+// not a drag), and the edge swipe that goes back (a drag that starts at the very edge of the screen is left alone). The
+// finger is read by `SwipePan`, a UIKit recognizer, because a SwiftUI `DragGesture` on the row stops the page from scrolling
+// under a finger that starts on it (iOS 27).
 
 /// One button under a row.
 struct SwipeRowAction {
@@ -83,20 +85,17 @@ struct SwipeActionRow<Content: View>: View {
     @State private var offset: CGFloat = 0
     /// Where the row was when the finger came down.
     @State private var origin: CGFloat = 0
-    /// What the finger is doing, decided by its first movement and kept until it lifts.
-    @State private var axis: Axis?
+    /// A finger is dragging the row sideways (`SwipePan` only begins for one that started sideways).
+    @State private var dragging = false
     @State private var width: CGFloat = 0
     /// The row is far enough across that letting go carries out the leading action.
     @State private var armed = false
     @State private var ticks = 0
     @State private var finishes = 0
-    @GestureState private var touching = false
 
     /// How much of the row a button takes when it is shown and left alone.
     private let reveal: CGFloat = 84
     private let corner: CGFloat = 12
-    /// Screen points from the left edge that belong to the back gesture.
-    private let backEdge: CGFloat = 20
 
     private var fullThreshold: CGFloat { max(reveal * 1.8, width * 0.45) }
 
@@ -124,29 +123,21 @@ struct SwipeActionRow<Content: View>: View {
                     .onChange(of: proxy.size.width) { _, new in width = new }
             }
         }
-        .simultaneousGesture(drag, including: swipeable ? .all : .subviews)
+        .background { SwipePan(isEnabled: swipeable, events: events) }
         .sensoryFeedback(.impact(weight: .light), trigger: ticks)
         .sensoryFeedback(.success, trigger: finishes)
         .onChange(of: coordinator?.openId) { _, open in
             // Another row was touched: this one closes.
-            if open != id, offset != 0, axis == nil { settle(0) }
+            if open != id, offset != 0, !dragging { settle(0) }
         }
         .onChange(of: swipeable) { _, now in
             if !now, offset != 0 { settle(0) }
         }
-        .onChange(of: touching) { _, now in
-            // The finger went without the drag ending (the page's scroll, or the system, took it): rest where it is nearest.
-            if !now, let held = axis {
-                axis = nil
-                if held == .horizontal {
-                    coordinator?.ended()
-                    armed = false
-                    release(projected: offset)
-                }
-            }
-        }
         .onDisappear {
-            if axis == .horizontal { coordinator?.ended() }
+            if dragging {
+                dragging = false
+                coordinator?.ended()
+            }
             coordinator?.closed(id)
         }
     }
@@ -192,32 +183,40 @@ struct SwipeActionRow<Content: View>: View {
 
     // MARK: the drag
 
-    private var drag: some Gesture {
-        DragGesture(minimumDistance: 12, coordinateSpace: .global)
-            .updating($touching) { _, state, _ in state = true }
-            .onChanged { value in
-                if axis == nil {
-                    let across = abs(value.translation.width)
-                    let along = abs(value.translation.height)
-                    // Only a clearly sideways start is the row's; one that starts at the screen's edge is the back gesture's.
-                    if across > along * 1.2, value.startLocation.x > backEdge {
-                        axis = .horizontal
-                        origin = offset
-                        coordinator?.began(id)
-                    } else {
-                        axis = .vertical
-                    }
-                }
-                guard axis == .horizontal else { return }
-                follow(origin + value.translation.width)
-            }
-            .onEnded { value in
-                let held = axis
-                axis = nil
-                guard held == .horizontal else { return }
+    /// What `SwipePan` reports of the finger. It only reports a finger that started sideways inside the row, away from the
+    /// screen's left edge (that one is the back gesture's); any other touch never reaches the row.
+    private var events: SwipePanEvents {
+        SwipePanEvents(
+            began: { translation in
+                dragging = true
+                origin = offset
+                coordinator?.began(id)
+                follow(origin + translation)
+            },
+            changed: { translation in
+                guard dragging else { return }
+                follow(origin + translation)
+            },
+            ended: { translation, velocity in
+                guard dragging else { return }
+                dragging = false
                 coordinator?.ended()
-                release(projected: origin + value.predictedEndTranslation.width)
+                // The last movement and the lift come together (a quick swipe across has only a few of them): the row is
+                // where the finger let go before it is decided what happens next.
+                follow(origin + translation)
+                // Where the row would come to rest if it were let go with this speed.
+                release(projected: origin + translation + velocity * 0.2)
+            },
+            cancelled: {
+                // The finger went without the drag ending (the system took it, or the row was switched off): rest where it
+                // is nearest.
+                guard dragging else { return }
+                dragging = false
+                coordinator?.ended()
+                armed = false
+                release(projected: offset)
             }
+        )
     }
 
     /// The row goes where the finger goes, held back where there is nothing to show.

@@ -120,7 +120,13 @@ final class AskHumanTodoPickUITests: XCTestCase {
         for _ in 0..<8 {
             let frame = element(id).frame
             if frame.minY > 120, frame.maxY < screen.height - 220 { break }
-            if frame.minY <= 120 { app.swipeDown(velocity: .slow) } else { app.swipeUp(velocity: .slow) }
+            // A drag as long as the distance still to go (a swipe is about as long as the screen is high, which on a
+            // tall phone carries the row past the clear part and back again for ever), held at the end so the page
+            // does not coast on.
+            let wanted = screen.height * 0.42 - frame.midY
+            let travel = max(-screen.height * 0.3, min(screen.height * 0.3, wanted))
+            let start = app.coordinate(withNormalizedOffset: CGVector(dx: 0.3, dy: travel < 0 ? 0.62 : 0.38))
+            start.press(forDuration: 0.05, thenDragTo: start.withOffset(CGVector(dx: 0, dy: travel)), withVelocity: .slow, thenHoldForDuration: 0.2)
         }
         return true
     }
@@ -345,6 +351,44 @@ final class AskHumanTodoPickUITests: XCTestCase {
         }
         XCTAssertTrue(moved, "the page moved")
         XCTAssertFalse(element("todo-undo").exists, "and nothing was done to the rows under the finger")
+        XCTAssertTrue(element("todo-row-6").exists)
+    }
+
+    /// A finger that comes down on a row, stays a moment and then drags the page up or down at a walking pace, the way a
+    /// hand does (the synthesized swipe above starts moving at once). On iOS 27 a drag gesture on the row took the page's
+    /// scroll away from such a finger. `sideways` makes the movement lean to the side, as a thumb's arc does.
+    private func scrollFromARow(_ id: String, linger: TimeInterval, sideways: CGFloat = 0, file: StaticString = #filePath, line: UInt = #line) {
+        let row = element(id)
+        let before = row.frame.minY
+        var moved = false
+        for direction: CGFloat in [-1, 1] where !moved {
+            let start = row.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5))
+            let end = start.withOffset(CGVector(dx: sideways * direction, dy: 150 * direction))
+            start.press(forDuration: linger, thenDragTo: end, withVelocity: .slow, thenHoldForDuration: 0.1)
+            moved = abs(element(id).frame.minY - before) > 20
+        }
+        XCTAssertTrue(moved, "the page moved under a finger that started on \(id)", file: file, line: line)
+        XCTAssertFalse(element("todo-undo").exists, "and nothing was done to the row", file: file, line: line)
+        XCTAssertFalse(element("todo-swipe-complete-3").exists, "and it was not swiped open", file: file, line: line)
+        XCTAssertFalse(element("todo-swipe-delete-3").exists, "and it was not swiped open", file: file, line: line)
+    }
+
+    func testAFingerThatLingersOnARowBeforeScrollingStillScrollsThePage() {
+        launch()
+        openRequest("req-migration")
+        openTheCard()
+        reveal("todo-row-3")
+        scrollFromARow("todo-row-3", linger: 0.3)
+        XCTAssertTrue(element("todo-row-6").exists)
+    }
+
+    func testAScrollThatLeansToTheSideStillScrollsThePage() {
+        launch()
+        openRequest("req-migration")
+        openTheCard()
+        reveal("todo-row-3")
+        // About 14 degrees off the vertical: still the page's, not a swipe of the row.
+        scrollFromARow("todo-row-3", linger: 0.1, sideways: 36)
         XCTAssertTrue(element("todo-row-6").exists)
     }
 

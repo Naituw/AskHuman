@@ -608,9 +608,10 @@ SSH 到 Mac B 的旧授权已用完，需要再次操作时当次确认。上述
 
 ## 待验收：页内待办清单的完成 / 删除 / 添加（弹窗 + iOS 请求页；Mac 弹窗与模拟器已验，iPhone 真机与 Windows / Linux 未验）
 
-需求 `docs/specs/todo-list-actions.md`（取代 `todo-quick-add.md` 的弹窗顶栏浮层与 iOS 请求页半屏添加页）。2026-11-13 在主工作树实现，本地提交、**未推送**，并 `./scripts/install.sh` 装为日常版；iOS 已应用户要求出了 TestFlight 内测包 **0.1.0 (22)**（Internal 与 Friends，源码 `9ed70abf`，记录见 `docs/plans/ios-channel.md`），等用户在真机上验。
+需求 `docs/specs/todo-list-actions.md`（取代 `todo-quick-add.md` 的弹窗顶栏浮层与 iOS 请求页半屏添加页）。2026-11-13 在主工作树实现，本地提交、**未推送**，并 `./scripts/install.sh` 装为日常版；iOS 已应用户要求出了 TestFlight 内测包 **0.1.0 (22)**（Internal 与 Friends，源码 `9ed70abf`，记录见 `docs/plans/ios-channel.md`）。用户在 iOS 27 的真机上发现这个包里**手指先落在待办行上就没法上下滚动页面**（SwiftUI `DragGesture` 在 iOS 27 上的行为，见需求 §6.1），已改成 UIKit 识别器 `SwipePan` 并本地提交，模拟器上 iOS 27.2 与 18.5 都过了；**还没有包含这个修复的 TestFlight 构建**（下一个是 23，要用户明确要求才出），等用户决定后到真机上验。
 
-- [ ] iPhone 真机：滑动手感——右滑完成（含一路滑到头松手）、左滑删除、滑开后再点、与页面纵向滚动、左缘返回手势、长按菜单会不会被自绘的拖动吃掉、键盘弹出时添加输入行是否可见。模拟器 UI 测试（`AskHumanTodoPickUITests`，中英文各一遍）只覆盖逻辑与手势的基本路径，需求 §6.1 要求真机看一次；手感不对先看 `SwipeActionRow`（水平分量 > 垂直 × 1.2 才接管、左缘 20pt 让给返回手势）与 `SwipeCoordinator.swallowsTap`（滑动之后吞掉整行的点按，否则松手会顺带选中）。
+- [ ] iPhone 真机（要先有含修复的新内测包）：**手指先落在待办行上，上下滚动页面**——慢拖、快滑、先停一下再拖、略斜着拖都试；构建 22 在 iOS 27 的真机上这样滚不动。模拟器只在 iOS 27.2 的 iPhone Duo 上复现过，真机上是否同一个原因没有直接证据。
+- [ ] iPhone 真机：滑动手感——右滑完成（含一路滑到头松手）、左滑删除、滑开后再点、与页面纵向滚动、左缘返回手势、长按菜单会不会被手势吃掉、键盘弹出时添加输入行是否可见。模拟器 UI 测试（`AskHumanTodoPickUITests`，iOS 27.2 的 Duo 上 en 与 zh-Hans、iOS 18.5 上 en 各一遍）只覆盖逻辑与手势的基本路径，需求 §6.1 要求真机看一次；手感不对先看 `SwipePan`（UIKit 识别器，头 8pt 里水平分量 > 垂直 × 1.2 才接管、左缘 20pt 让给返回手势）、`SwipeActionRow.events`（松手时按速度推算落点再吸附）与 `SwipeCoordinator.swallowsTap`（滑动之后吞掉整行的点按，否则松手会顺带选中）。
 - [ ] Windows / Linux：弹窗里 Ctrl+T 聚焦页内清单的添加行（确认卡里则打开待办窗口）、添加输入行里 Enter / Esc 不漏出去（需求 §5.1「键盘隔离」；macOS 已按过）。
 - [ ] 真实弹窗里没有按过的两处（只有单元测试）：Stop 确认卡的实时队列（要由真实 Agent 的 Stop 钩子触发）、权限确认卡上 ⌘T 与顶栏按钮开待办窗口。
 - [ ] 对应的 Mac 要装带这次改动的版本（本机日常版已装）：旧 Mac 上手机的 Stop 确认卡仍是快照选项 + 折叠待办卡，碰到「不在待办候选里的在途项目」还会回「这个项目已不在」。

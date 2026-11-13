@@ -123,13 +123,15 @@
 - **`RequestTodoPicker`**（AHCore）：它不经 `TodosStore`，自己用 `backend.todoList(macId:projectId:)` 读队列、不订阅 `todo.watch`；`phase`、`macTakesPicks`（`caps.todos && caps.answerTodos`）、`mac?.link` 已经在那里。新增 `complete(_:)` / `remove(_:)` / `add(_:)` / `undoComplete()`，写入走 `backend.todoApply(macId:operation:)`（`TodoAddCall` 已用的同一个接口，`TodoMutation` 生成操作与 `clientMsgId`）：完成 / 删除先从本地队列拿掉，添加先放一行「发送中」，之后用 ack 里的 `list`（写入后的整份项目清单，拒绝时也带）对账，失败则 `reload()`。`mac?.link == .online` 才允许写（与 `TodosStore.canWrite` 同一条规则，写入不排队）。完成 / 删除同步取消选中（`AnswerComposer.setTodoIds`）。`isVisible` 现在是 `listsQueue && phase == .loaded && !todos.isEmpty`，改成不要求非空（0 条显示空入口卡）。
 - **`whatsNext` 泛化**：给 `AskView` 加 `todoQueue`（`Messages.swift`，`@OmitFalse`），并加一个 `listsTodoQueue = whatsNext || todoQueue`；`AnswerComposer`（单选限一条、选待办时清掉其它选项、结束项互斥、`dropTodoOptionSelections`——约 63、81–83、196–198、211–216、229 行）、`RequestTodoPicker.singleSelection`、`AnswerScreen`（约 67、486 行：什么时候显示待办卡 / 什么时候列队列）改认它；`DirectQuestion` 与快捷回复相关的 `whatsNext` 判断不动。
 - **移除**：`RequestTodoSheet.swift`、`RequestTodoComposer.swift`、`RequestScreen.swift` 里的菜单项与成功胶囊、`AppStore.todoComposer(for:)` / `closed(id:)`、`RequestTodoComposerTests`、`TodoE2ETests` 与 UI 测试里相应的用例、`Localizable` 里仅它用的文案；`TodoAddCall` 是共享件（开发者模式快速添加也用），保留。
-- **手势实现**：提问页是 `ScrollView` 而不是 `List`，没有 `.swipeActions`，所以自绘（`SwipeActionRow.swift`）：SwiftUI `DragGesture(minimumDistance: 12)` 作为 `.simultaneousGesture` 挂在行上，起手时判一次方向（水平分量 > 垂直 × 1.2、且起点不在左缘 20pt 内才接管），要与页面纵向滚动、左缘返回手势、行按压反馈并存；按钮垫在行后面（`.background`），不参与行的布局，滑开时行高与下面的行都不动；滑动期间页面不滚（`SwipeCoordinator` + `.scrollDisabled`），松手那一下整行的点按被吞掉（`Button` 在触点抬起于自身时触发，滑动不能顺带选中）；长按用 `.contextMenu`；VoiceOver 用 `.accessibilityActions`。
+- **手势实现**：提问页是 `ScrollView` 而不是 `List`，没有 `.swipeActions`，所以自绘（`SwipeActionRow.swift`）。手指由 `SwipePan.swift` 读：一个 UIKit `UIPanGestureRecognizer` 子类，挂在行所在的 `UIScrollView` 上（找不到就挂窗口），每行一个、只认起点落在本行内的触点；头 8pt 的移动里水平分量 > 垂直 × 1.2、且起点不在左缘 20pt 内才开始，其余当场 `failed`——页面照常滚、左缘返回手势照常走。**不用 SwiftUI 的 `DragGesture`**：iOS 27 上挂在行上的 `DragGesture`（即使纵向时什么也不做）会让起手在行上的纵向滚动完全失效（§6.1 的真机发现）。要与页面纵向滚动、左缘返回手势、行按压反馈并存；按钮垫在行后面（`.background`），不参与行的布局，滑开时行高与下面的行都不动；滑动期间页面不滚（`SwipeCoordinator` + `.scrollDisabled`），松手那一下整行的点按被吞掉（`Button` 在触点抬起于自身时触发，滑动不能顺带选中）；长按用 `.contextMenu`；VoiceOver 用 `.accessibilityActions`。
 
 ## 6. 边界、风险与已知限制
 
 ### 6.1 iPhone 手势与滚动（最大的实现风险）
 
 自绘滑动要与三件事共存：页面纵向滚动（只在水平位移明显大于纵向时才接管）、导航栏左缘的返回手势（行的右滑不能从最左缘起手）、整行的点按与按压反馈。`.contextMenu` 与自绘 pan 同时挂在一行上时，长按识别是否会被 pan 吃掉，需要在真机上验证；模拟器测试覆盖逻辑，手感必须真机看一次（落地时记入 `docs/PROGRESS.md`）。
+
+**真机发现（2026-11-13，构建 22，iOS 27 的 iPhone）**：手指先落在待办行上，就没法上下滚动页面。构建 22 的实现是 `DragGesture(minimumDistance: 12)` + `.simultaneousGesture`，起手时判方向、纵向时什么也不做；iOS 18.5 模拟器上滚动一直正常（`testAScrollThatStartsOnARowStillScrollsThePage` 因此一直是绿的），换到 iOS 27.2 模拟器同一个用例就失败了，复现。二分：去掉 `.contextMenu`、去掉 `@GestureState`、去掉 `scrollDisabled` 的锁都不见好，只有关掉这个 `DragGesture` 才恢复，所以问题出在 SwiftUI 的这个手势本身，而不是我们的状态。改为 UIKit 识别器 `SwipePan`（§5.3）：纵向起手当场失败，不参与页面的滚动。教训：`.simultaneousGesture` 不等于「不挡滚动」，行内容挂在 `ScrollView` 里的横滑，要在每个主要 iOS 版本上用「手指先落在行上的纵向拖动」验一遍。
 
 ### 6.2 iPhone 内联输入与键盘
 
@@ -171,6 +173,8 @@
 **装机验证**（`./scripts/install.sh`，先 `node scripts/machine-health.mjs`）：用真实弹窗按一遍——普通提问 / What's next / Stop 卡里悬停、完成、撤销、删除、添加；权限确认卡里 ⌘T 与顶栏按钮开待办窗口；项目 0 条待办；待办窗口里同时改清单，弹窗实时跟上。
 
 **实测记录（2026-11-13，主工作树，macOS）**：vitest 1824 条与 node 测试 223 条通过；`cargo test` 3018 条通过，`cargo fmt --check` 与 `clippy -D warnings` 干净（`ios_tasks.rs:699` 的旧 `manual_is_multiple_of` 提示不属于本功能，验证时 `-A` 掉）；Swift 包 538 条通过；模拟器 UI 测试 `AskHumanTodoPickUITests`（en 20 条、zh-Hans 19 条）通过，回归的十个类（主类、批注、输入可见、操作栏、直接提问、已结束、会话历史、到达、离开、折叠导航）与开发者模式类共 198 条通过（少数按原有设计跳过）；其中两条在回归那一轮因模拟器键盘事件没送达偶发失败（输入的字少了一个字母、「没有键盘焦点」），单独重跑通过。装机后在隔离的临时 `ASKHUMAN_HOME` 里用真实弹窗按过：普通提问里完成（划线 + 撤销，约 1 秒后收起并写入）、两步删除（同一时刻只有一行在等第二下）、添加行（⌘↵ 添加、Esc 只收输入行、不会把答案发出去）、⌘T 聚焦添加行、顶栏按钮开待办窗口且预选项目、What's next 的清单带添加行、外部清空待办后弹窗实时变成「＋ 添加待办」药丸。按的过程中发现两处并已修：输入行展开 / 长高时只把文本框滚进了视野，行的下沿压在底栏下面（改为滚整行）；输入框自己带了一圈全局焦点环，与行的焦点环叠成两层框（输入框不再画）。**没有按过**：Stop 卡的实时队列与权限确认卡上的 ⌘T / 顶栏按钮（只有单元测试覆盖）、Windows / Linux、iPhone 真机。
+
+**实测记录（2026-11-13，真机反馈的滚动缺陷与修复）**：原因与改法见 §6.1。新增两条用例——手指在行上先停 0.3 秒再拖（`testAFingerThatLingersOnARowBeforeScrollingStillScrollsThePage`）、偏离竖直约 14° 的拖动（`testAScrollThatLeansToTheSideStillScrollsThePage`），都要求页面确实动了、行没有被滑开、也没有被完成或删除；原有的 `testAScrollThatStartsOnARowStillScrollsThePage`（起手即动的慢滑）要求页面动了、没有行被完成。换成 UIKit 识别器时发现并修了一处：UIKit 的 pan 可能把最后一次移动与抬手一起送来（快滑一下只有几个点），松手时要先按最终位移更新行再结算，否则一路滑到头只会停在「露出按钮」（`testSwipingATodoAllTheWayAcross…` 在 iOS 27.2 上因此失败过，已修）。UI 测试的 `reveal` 辅助也改成按剩余距离慢拖：iPhone Duo 屏幕又高又窄，原来的整屏滑动会把行来回甩到底栏下面，按到的是底栏。`AskHumanTodoPickUITests` 整类 22 条在 iOS 27.2 的 iPhone Duo 模拟器（en 与 zh-Hans）与 iOS 18.5 的 iPhone 16 模拟器（en）上通过。**没有验**：iPhone 真机（要先有含修复的内测包）、iOS 26.2 / 27.1 模拟器、iOS 18.5 上的 zh-Hans。
 
 ## 8. 落地后要同步的文档
 
