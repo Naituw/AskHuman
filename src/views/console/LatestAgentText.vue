@@ -9,7 +9,7 @@ const props = defineProps<{ candidate?: LatestAgentText | null; legacyText?: str
 const { t } = useI18n();
 const root = ref<HTMLElement | null>(null);
 const body = ref<HTMLElement | null>(null);
-const { displayed, expanded, reading, hasNewContent, receive, lockReading, toggleExpanded, updateNow } = useLatestAgentText();
+const { displayed, expanded, reading, hasNewContent, receive, holdBegin, holdEnd, holdBriefly, toggleExpanded, updateNow } = useLatestAgentText();
 const candidate = computed<LatestAgentText | null>(() => props.candidate !== undefined ? props.candidate : (props.legacyText ? {
   id: "legacy", revision: props.legacyText, kind: "assistant", text: props.legacyText, truncated: false,
 } : null));
@@ -19,45 +19,26 @@ watch([displayed, expanded], async () => {
   if (body.value) body.value.scrollTop = !expanded.value && displayed.value?.kind === "thinking" ? body.value.scrollHeight : 0;
 });
 
+// Only what happens on the text holds it: a pointer that is down on it, a wheel turned over it, a selection of it.
+// What happens elsewhere on the page does not.
 function selectionChanged() {
   const selection = window.getSelection();
   if (!selection || selection.isCollapsed || !selection.rangeCount || !root.value) return;
-  if (selection.getRangeAt(0).intersectsNode(root.value)) lockReading();
-}
-
-const scrollParents: HTMLElement[] = [];
-function wheelReading(event: WheelEvent) {
-  if (event.deltaY < 0) lockReading();
-}
-function keyboardReading(event: KeyboardEvent) {
-  if (["ArrowUp", "PageUp", "Home"].includes(event.key) || (event.key === " " && event.shiftKey)) lockReading();
-}
-function removeScrollListeners() {
-  scrollParents.forEach((node) => {
-    node.removeEventListener("wheel", wheelReading);
-    node.removeEventListener("pointerdown", lockReading);
-    node.removeEventListener("keydown", keyboardReading);
-  });
-  scrollParents.length = 0;
+  if (selection.getRangeAt(0).intersectsNode(root.value)) holdBriefly();
 }
 
 onMounted(() => {
   document.addEventListener("selectionchange", selectionChanged);
-});
-watch(root, (element) => {
-  removeScrollListeners();
-  for (let node = element?.parentElement; node; node = node.parentElement) {
-    if (/(auto|scroll)/.test(getComputedStyle(node).overflowY)) {
-      scrollParents.push(node);
-      node.addEventListener("wheel", wheelReading, { passive: true });
-      node.addEventListener("pointerdown", lockReading, { passive: true });
-      node.addEventListener("keydown", keyboardReading);
-    }
-  }
+  // A pointer that began on the text may be released anywhere (dragging a selection leaves it).
+  document.addEventListener("pointerup", holdEnd, { passive: true });
+  document.addEventListener("pointercancel", holdEnd, { passive: true });
+  window.addEventListener("blur", holdEnd);
 });
 onBeforeUnmount(() => {
   document.removeEventListener("selectionchange", selectionChanged);
-  removeScrollListeners();
+  document.removeEventListener("pointerup", holdEnd);
+  document.removeEventListener("pointercancel", holdEnd);
+  window.removeEventListener("blur", holdEnd);
 });
 </script>
 
@@ -65,7 +46,7 @@ onBeforeUnmount(() => {
   <section v-if="displayed" ref="root" class="latest-text">
     <div v-if="displayed.kind === 'thinking'" class="text-kind">{{ t("console.observation.thinking") }}</div>
     <div ref="body" class="text-body" :class="{ preview: !expanded, thinking: displayed.kind === 'thinking' }"
-      @pointerdown="lockReading" @wheel.passive="lockReading">
+      @pointerdown="holdBegin" @wheel.passive="holdBriefly">
       <p v-if="displayed.kind === 'thinking'" class="thought">{{ displayed.text }}</p>
       <MarkdownContent v-else class="prose" :source="displayed.text" />
     </div>
