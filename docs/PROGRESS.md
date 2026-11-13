@@ -608,7 +608,7 @@ SSH 到 Mac B 的旧授权已用完，需要再次操作时当次确认。上述
 
 ## 待验收：页内待办清单的完成 / 删除 / 添加（弹窗 + iOS 请求页；Mac 弹窗与模拟器已验，iPhone 真机与 Windows / Linux 未验）
 
-需求 `docs/specs/todo-list-actions.md`（取代 `todo-quick-add.md` 的弹窗顶栏浮层与 iOS 请求页半屏添加页）。2026-11-13 在主工作树实现，本地提交、**未推送**，并 `./scripts/install.sh` 装为日常版；**iOS 没有出 TestFlight 包**（要出先问用户）。
+需求 `docs/specs/todo-list-actions.md`（取代 `todo-quick-add.md` 的弹窗顶栏浮层与 iOS 请求页半屏添加页）。2026-11-13 在主工作树实现，本地提交、**未推送**，并 `./scripts/install.sh` 装为日常版；iOS 已应用户要求出了 TestFlight 内测包 **0.1.0 (22)**（Internal 与 Friends，源码 `9ed70abf`，记录见 `docs/plans/ios-channel.md`），等用户在真机上验。
 
 - [ ] iPhone 真机：滑动手感——右滑完成（含一路滑到头松手）、左滑删除、滑开后再点、与页面纵向滚动、左缘返回手势、长按菜单会不会被自绘的拖动吃掉、键盘弹出时添加输入行是否可见。模拟器 UI 测试（`AskHumanTodoPickUITests`，中英文各一遍）只覆盖逻辑与手势的基本路径，需求 §6.1 要求真机看一次；手感不对先看 `SwipeActionRow`（水平分量 > 垂直 × 1.2 才接管、左缘 20pt 让给返回手势）与 `SwipeCoordinator.swallowsTap`（滑动之后吞掉整行的点按，否则松手会顺带选中）。
 - [ ] Windows / Linux：弹窗里 Ctrl+T 聚焦页内清单的添加行（确认卡里则打开待办窗口）、添加输入行里 Enter / Esc 不漏出去（需求 §5.1「键盘隔离」；macOS 已按过）。
