@@ -112,14 +112,6 @@ final class AppTabContainerController: UIViewController {
     }
 
     override var childForPreferredVerticalBarBehavior: UIViewController? { tabs }
-
-    /// See `VerticalBarRepair`: after a fold the strip can come up without the page's back button.
-    private lazy var barRepair = VerticalBarRepair(container: self, root: tabs)
-
-    override func viewDidLayoutSubviews() {
-        super.viewDidLayoutSubviews()
-        barRepair.containerDidLayout()
-    }
 }
 
 extension View {

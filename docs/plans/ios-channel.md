@@ -1410,6 +1410,11 @@ INSTALLED、1 位 INVITED，Friends 1 位 INSTALLED，自动通知关闭，Frien
 内屏横屏点开提问、折叠到外屏，也试内屏竖屏停一会儿再折叠；看按钮是否在约 2 秒内出现。不出现时先别动，开发者菜单「复制诊断信息」，
 看 `bars` 行与悬浮栏按钮数。
 
+**后续（同日）：用户否决了这个包里的补登记**（`cb90aa6f`，「你加了轮询的补丁逻辑？本项目禁止打补丁」）：它在折叠后轮询竖条并翻 `hidesBackButton`，
+是治症状，不是找根因。已在源码里撤回（`revert(ios): drop the polling bar repair`），build 25 里带着它的这份留在 TestFlight 上，
+TestFlight 的 helper 没有撤回 / 过期构建的操作，下一个包替换；下面测试说明里「App 会自动让系统重新登记」「`bars` 记录」两处随之作废。
+改走根因：见 `PROGRESS.md`「待根因：Duo 折叠后整组导航按钮消失」。
+
 简体中文测试说明如下，中英文完整说明随交付报告提供。
 
 ```text

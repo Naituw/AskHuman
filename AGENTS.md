@@ -16,6 +16,10 @@ If the task needs a **new or existing git worktree** for parallel feature work o
 
 [`docs/PROGRESS.md`](docs/PROGRESS.md) tracks durable unfinished or deferred work and concrete next steps across sessions. Read it before starting work. When a tracked item is completed, delete its section — history stays in git.
 
+## No workaround patches
+
+Find and fix the root cause (owner decision, 2026-11-14). Do not ship a workaround that treats a symptom: polling or delayed retries, nudging a framework object until it recovers, probing private class names to detect a bad state, or stacking several of these. A control experiment that restores the symptom is evidence, not a fix. If the cause is a framework defect the project cannot fix, choose a design-level change (a structure that does not trigger it); if only a workaround is possible, ask the user through AskHuman before writing it, and never ship one without their approval. Say plainly in reports when something is a workaround.
+
 ## Verifying your changes
 
 After making any change to this project's functionality or logic, verify the result by running the install script to compile the new code directly into your environment, then use the newly installed `AskHuman` for subsequent prompts:
