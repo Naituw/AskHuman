@@ -112,8 +112,11 @@
   hook 进程的环境另有 `ANTIGRAVITY_CONVERSATION_ID`（与载荷的 `conversationId` 一致）和 `AGY_BROWSER_*`（浏览器调试地址，含会话级秘密，AskHuman 不读不记）；
   父进程是 App 共享的 `language_server`。〔App 实测，G1〕
 - `agy` 上，**工作区级**插件的 hooks 只在工作区被信任时才载入：不信任时 CLI 日志是 `hooks_manager.go:54] loaded 0 named hooks from 0 hooks.json file(s)`，
-  用 `--settings '{"trustedWorkspaces":[…]}'` 信任后变成 `loaded 1 … from 1 …`；这行日志是免费的载入诊断。〔`agy` 实测，G1〕
-  **全局**插件的 hooks 在 `agy` 上是否载入、会话里是否真触发〔未验证，V3〕。
+  用 `--settings '{"trustedWorkspaces":[…]}'` 信任后变成 `loaded 1 … from 1 …`，**并且会话里真的触发**（T1c：`SessionStart`、`PreInvocation` ×3、`Stop(NO_TOOL_CALL, fullyIdle:true)`）；
+  这行日志是免费的载入诊断。〔`agy` 实测，G1〕
+  `agy` 的 hook 进程：父进程是该会话自己的 `agy`；环境带 `ANTIGRAVITY_CONVERSATION_ID`、`ANTIGRAVITY_LS_ADDRESS`、`PLUGIN_ROOT`；`transcriptPath` 在 `~/.gemini/antigravity-cli/brain/<会话>/.system_generated/logs/`；
+  `Stop` 触发时 transcript 已含最终回复。〔`agy` 实测，G1 T1c〕
+  **全局**插件的 hooks 在 `agy` 上是否载入、触发〔未验证，V3；预期与工作区级是同一个载入器，P1 的真实验证里确认〕。
 - `timeout: 86400` 被接受，阻塞 40 秒被如实等待。〔实测〕整 24 小时〔未验证〕。
 
 载荷（stdin，camelCase）：公共字段 `conversationId`、`workspacePaths`、`cwd`（Agent 的工作目录，不是 hook 进程的）、`transcriptPath`、
@@ -607,10 +610,10 @@ Agents 页的 Antigravity 卡新增：集成模式（None / CLI / MCP）、生�
 | --- | --- | --- | --- |
 | V1 | App 冷启动时 sidecar 是否随之启动、≈30 秒是否够；登录失效时 `new-conversation` 的失败形态 | §12.5 | 需退出用户的 App，先征得同意；或在用户自然重启时观察 |
 | V2 | Stop 续跑上限（`max_stop_hook_continuations`）默认值与达到上限后的行为 | §9 | P3 第一步实测；若很小则另行设计降级 |
-| V3 | `agy` 上：**全局**插件 hooks 是否载入并在会话里触发（不触发则 hooks 改装全局 `hooks.json`，§6.2）、Stop `continue`、`PreInvocation` 注入、取消 / Ctrl-C、`send-message` 能否唤醒 `agy` 会话。**部分已验（G1）**：工作区级插件的 hooks 在受信任的工作区会被载入、不信任则不载入（§4.1）；会话里是否真触发没验 | P1、P3、P4 | P1 先用免费的 `hooks_manager` 载入日志探针（不起会话）；会话行为用 `agy` + Flash 低档逐项最小实测 |
+| V3 | `agy` 上：**全局**插件 hooks 是否载入并在会话里触发（不触发则 hooks 改装全局 `hooks.json`，§6.2）、Stop `continue`、`PreInvocation` 注入、取消 / Ctrl-C、`send-message` 能否唤醒 `agy` 会话。**部分已验（G1，含 T1c）**：工作区级插件的 hooks 在受信任的工作区会被载入**并在会话里触发**，不信任则不载入（§4.1）；全局插件、`continue`、注入、取消、`send-message` 没验 | P1、P3、P4 | P1：先用免费的 `hooks_manager` 载入日志探针（不起会话）确认全局插件被载入；会话行为用 `agy` + Flash 低档逐项最小实测。**`agy` 实验的提示必须写明「不要运行 AskHuman」**（见附录 A.2） |
 | V4 | MCP 缺省超时（无 `timeoutSeconds`）与整 24 小时等待 | `ask` 长等待 | 无法真等 24 小时；沿用既有口径 |
 | V5 | **已验（App，G1）**：子会话触发 hooks，载荷无父字段；MCP `_meta` 带 `parent_conversation_id`（§4.1、§4.2、§7）。**`agy` 的 MCP `_meta` 字段仍未验** | §7 | `agy` 那半留到 G4 |
-| V6 | **已验（G1）**：`Stop` 触发时 `transcript_full.jsonl` 已含最终回复（三个会话都是：根 `done`、子 `ok`、T3 `done`，均为最后一个 `PLANNER_RESPONSE`、`DONE`） | §9 卡片正文与标记去重 | — |
+| V6 | **已验（G1）**：`Stop` 触发时 `transcript_full.jsonl` 已含最终回复（App 三个会话：根 `done`、子 `ok`、T3 `done`；`agy` 的 T1c：`ok`；均为最后一个 `PLANNER_RESPONSE`、`DONE`） | §9 卡片正文与标记去重 | — |
 | V7 | sidecar 创建的会话在 App 里的可见位置、是否隐藏于会话列表 | 用户在电脑上接手任务 | 看 App 界面与 `hideFromConversationList` 归属 |
 | V8 | 重建同名**全局** sidecar 时 App 是否认领孤儿项目（插件 sidecar 已见到） | §12.3 历史归属 | 删除再重建同名 sidecar 后看项目与会话归属 |
 | V9 | 宽授权是否真让命令跑在沙箱之外，以及此时能否连 daemon socket | YOLO 在 CLI 模式下的可用性 | 对照实验一次 |
@@ -692,14 +695,16 @@ Agents 页的 Antigravity 卡新增：集成模式（None / CLI / MCP）、生�
 | 根会话的 `fullyIdle` | 根最后一次 `Stop(fullyIdle:false)` 之后没有根 `Stop`；`fullyIdle:true` 只来自子会话，晚 0.3 秒（§4.1、§8 L4）。**设计缺口，待 D17** |
 | `Stop` 时的 transcript | 已含最终回复（V6） |
 | 在途 MCP 调用期间改写插件文件 | server 不重启、调用不被打断、新 `mcp_config.json` 不作用于已运行的 server；删除插件目录也不停 server（V14，§6.3） |
-| `agy` 载入 hooks | 工作区级插件：未信任 → 0 个文件，信任 → 1 个；免费日志 `hooks_manager.go:54`（§4.1）。会话里是否触发没验 |
+| `agy` 载入并触发 hooks | 工作区级插件：未信任 → 0 个文件，信任 → 1 个；免费日志 `hooks_manager.go:54`（§4.1）。T1c：受信任目录里 `SessionStart`、`PreInvocation` ×3、`Stop(fullyIdle:true)` 都触发，hook 父进程是 `agy`，Stop 时 transcript 已含最终回复。全局插件没验（V3） |
+| `agy` 会话与用户的全局 AskHuman 规则（意外） | T1c 的 `agy` 会话遵守 `~/.gemini/config/rules/askhuman-antigravity.md`，先去跑 `AskHuman --whats-next`：第一次被 `agy` 的沙箱挡住（`operation not permitted`），第二次带 `BypassSandbox` 真的执行了（约 41 秒，界面停在首次引导屏、没人批准），连上了 daemon；用户当时开着离开模式，得到离开模式的自动答复，**AskHuman 历史里因此多了 1 条来自实验目录的 `away` 记录**（我没去改用户的历史文件）。教训：`agy` 实验的提示必须写明「不要运行 AskHuman」；App 里的 sidecar 会话被沙箱挡住，没有这个问题（T2 的根会话只是把规则里「子 Agent 不得使用 AskHuman」抄进了子会话的提示） |
 | `agy` 首次运行 | 先显示引导，`-i` 任务仍被发出并执行；信任提示本身没看到（V12 部分） |
 | sidecar 删除 | LS 日志 `Sidecar … removed from directory, stopping...`，进程约 10 秒内退出；遗留物清单见 §4.3 |
 | `agentapi` 的环境依赖 | 脱离 sidecar 环境 → `missing CSRF token`；`ANTIGRAVITY_AGENTAPI_EXE` 是 `language_server` 本体，要用 PATH 里的 `agentapi`；事件文件的 `commandInvocationTimestampMs` 是 sidecar 进程启动时间 |
 | MCP 宿主信息 | `initialize`：`antigravity-client` v1.0.0、协议 `2025-11-25`、声明 `elicitation`（form / url）；server 以工作区为单位、跨会话复用 |
 | 私有摘要库 | 表里有 `parent_conversation_id`、`nesting_depth`、`status`、`not_fully_idle`；只读看了结构，不依赖（D4） |
 
-用量（如实）：3 个真实任务、约 28 次 Flash 低档模型请求（按 `PreInvocation` 与 `agy` 日志里的请求数计）——T1a（`agy`，未信任目录）2 次；T2（App，带子 Agent）24 次（根 20 次、子 4 次）；T3（App，90 秒 MCP 调用）2 次；T1b 是不起会话的探针，0 次。
+用量（如实）：4 个真实任务（上限 5）、约 31 次 Flash 低档模型请求（按 `PreInvocation` 与 `agy` 日志里的请求数计）——T1a（`agy`，未信任目录）2 次；T2（App，带子 Agent）24 次（根 20 次、子 4 次）；T3（App，90 秒 MCP 调用）2 次；
+T1c（`agy`，受信任目录，补测 V3-a；用户离开期间我按计划里的备用名额做的）3 次；T1b 是不起会话的探针，0 次。
 **T2 超出我的估计**：根模型反复摸索怎么调用插件的 MCP 工具，约 17 次失败的发现尝试；T3 把确切的 `call_mcp_tool` 参数写进提示后只用了 2 次。
 还原：临时 sidecar 清单、`config.json` 里该 sidecar 的键（读-改-写，除该键外与实验前逐项相同，0600）、项目文件、`sidecar_data`、三个实验会话的文件、`mcp/` 发现文件、
 `agy` 的数据目录与 `default-cli-project.json`、实验插件、两个实验 MCP 进程都已清理；用户自己的会话与项目没有碰。
@@ -744,4 +749,12 @@ App 的私有摘要库里还留着那三个已删会话的条目，由 App 自�
 | G1 只用 Antigravity 可以吗（授权） | 「只用 Antigravity 对吧？可以，不需要授权。但严禁使用 Cursor」 | 我的理解（请纠正）：只用 Antigravity 的真实测试不再逐项授权，但仍受任务数预算、隔离与停止条件约束，超出（退出 App、改全局插件目录、真实目录开 YOLO）仍先问；本任务验证**严禁**使用 Cursor。已写入 §1.2 |
 | 是否批准 G1 的计划 | 「批准后马上做（T1 不碰 App；T2/T3 只在 App 里多一个临时项目，约 10–15 分钟）」 | 已执行，结果见 §4、§6.3、§17 与附录 A.2；暴露的设计缺口见 §8 L4（待 D17） |
 
-下一步：G1 结果与 D17（带子 Agent 的会话怎么处理）提交用户决定；D17 定案后开工 P1。
+### 2026-11-16 G1 报告（用户已开启离开模式，三个问题未答复）
+
+| 问题 | 状态 | 我的处理（离开模式：常规选择自行判断，设计变更不自行决定） |
+| --- | --- | --- |
+| D17：带子 Agent 的会话怎么处理（A 归并成树 / B 本版不处理 / C 只去噪） | **未答复，仍待定** | 不自行选择。P1 按「每个会话独立」写，这对 A / B / C 都是共同的底座（A 之后在其上加父子链接与树完成判定）；P3 的 Stop 卡与完成判定依赖它，做到那里仍没答复就升级 |
+| 补测 V3-a（`agy` 会话里工作区级插件 hooks 是否触发） | 未答复 | 用计划里的备用名额补做了 T1c（1 个任务、3 次请求，在已信任的实验目录；用户明确说过只用 Antigravity 不需要授权），结果：会触发（附录 A.2）。同时意外让该 `agy` 会话真的调用了 AskHuman（见附录 A.2） |
+| 提交规格与计划文档 | 未答复 | 按计划里「合适时提交」，只 `git add` 这两个文件，提交 `864aacad`（本地、未推送） |
+
+P1 的实现不依赖 D17；D17 影响的是 P1 之后接线的部分（根 / 子判断、完成判定）与 P3。
