@@ -7,7 +7,7 @@
 
 use super::cloudkeys;
 use super::helper_client::{self, HelperClient, Reach};
-use super::identity::FsResolver;
+use super::identity::{FsResolver, IdentityResolver};
 use super::model::{PauseReason, St};
 use super::store;
 use super::tick::{self, Env, Failpoints, Opts, TickError, TickReport};
@@ -109,27 +109,6 @@ pub fn computer_name() -> String {
     "Mac".to_string()
 }
 
-/// Local directories the core should keep linked besides the ones in `todos.json`: every recent
-/// workspace (so a new worktree is materialized before anyone looks at it) and the caller's project.
-fn known_keys(current: Option<&str>) -> Vec<String> {
-    let mut keys: Vec<String> = Vec::new();
-    for workspace in crate::agents::workspaces::list() {
-        if workspace.hidden {
-            continue;
-        }
-        let key = crate::project::detect_from(Path::new(&workspace.path));
-        if !key.is_empty() {
-            keys.push(key);
-        }
-    }
-    if let Some(project) = current.filter(|p| !p.is_empty()) {
-        keys.push(project.to_string());
-    }
-    keys.sort();
-    keys.dedup();
-    keys
-}
-
 // ---- the record of the last tick ------------------------------------------------
 
 /// What the UI and `todo-sync status` say about the most recent tick on this Mac.
@@ -221,12 +200,20 @@ fn read_last_tick(dir: &Path) -> Option<LastTick> {
 
 // ---- side effects (replaceable in tests) -----------------------------------------
 
-/// What the hooks do besides reading and writing files: starting processes.
+/// What the hooks do besides reading and writing the todo files: starting processes, and looking at
+/// the rest of the machine (which directories the user works in and which projects they belong to).
+/// Everything here is replaced in tests, so a test never depends on the machine it runs on.
 pub trait Effects {
     /// Continue a pull that ran out of time, in a detached process.
     fn spawn_tick(&self, reason: &str);
     /// Start the helper app if it is installed (the hooks rate-limit this).
     fn launch_helper(&self);
+    /// How a project directory is mapped to its identity (production reads `<dir>/.git/config`).
+    fn resolver(&self) -> &dyn IdentityResolver;
+    /// Local directories the core should keep linked besides the ones in `todos.json`: every recent
+    /// workspace (so a new worktree is materialized before anyone looks at it) and `current`, the
+    /// caller's project.
+    fn known_keys(&self, current: Option<&str>) -> Vec<String>;
 }
 
 pub struct RealEffects;
@@ -238,6 +225,29 @@ impl Effects for RealEffects {
 
     fn launch_helper(&self) {
         launch_helper_app();
+    }
+
+    fn resolver(&self) -> &dyn IdentityResolver {
+        &FsResolver
+    }
+
+    fn known_keys(&self, current: Option<&str>) -> Vec<String> {
+        let mut keys: Vec<String> = Vec::new();
+        for workspace in crate::agents::workspaces::list() {
+            if workspace.hidden {
+                continue;
+            }
+            let key = crate::project::detect_from(Path::new(&workspace.path));
+            if !key.is_empty() {
+                keys.push(key);
+            }
+        }
+        if let Some(project) = current.filter(|p| !p.is_empty()) {
+            keys.push(project.to_string());
+        }
+        keys.sort();
+        keys.dedup();
+        keys
     }
 }
 
@@ -415,7 +425,7 @@ pub fn before_whats_next_with(env: &Env, project: &str, effects: &dyn Effects) {
     let extra = [project.to_string()];
     let result = tick::full(
         env,
-        &FsResolver,
+        effects.resolver(),
         &mut client,
         &extra,
         now_ms(),
@@ -445,11 +455,12 @@ pub fn refresh_if_stale() {
         deadline: None,
         fresh_within_ms: Some(STALE_MS),
     };
+    let effects = RealEffects;
     let result = tick::full(
         &env,
-        &FsResolver,
+        effects.resolver(),
         &mut client,
-        &known_keys(None),
+        &effects.known_keys(None),
         now_ms(),
         &Failpoints::off(),
         &opts,
@@ -457,7 +468,7 @@ pub fn refresh_if_stale() {
     record_tick(&env.dir, "window", &result);
     if let Ok(report) = &result {
         if helper_missing(report) {
-            launch_helper_throttled(&env.dir, &RealEffects);
+            launch_helper_throttled(&env.dir, &effects);
         }
     }
 }
@@ -500,9 +511,9 @@ pub fn run_tick_with(
     let mut client = HelperClient::new(helper_client::socket_path(&env.dir));
     let result = tick::full(
         env,
-        &FsResolver,
+        effects.resolver(),
         &mut client,
-        &known_keys(None),
+        &effects.known_keys(None),
         now_ms(),
         &Failpoints::off(),
         &Opts::default(),
@@ -1072,8 +1083,8 @@ pub fn remove_project_with(
     };
     let removed = tick::remove_project(
         env,
-        &FsResolver,
-        &known_keys(Some(project)),
+        effects.resolver(),
+        &effects.known_keys(Some(project)),
         &identity,
         now_ms(),
         &Failpoints::off(),
@@ -1088,12 +1099,20 @@ pub fn remove_project_with(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::todo_sync::links::testing::MapResolver;
     use std::cell::RefCell;
 
+    /// The machine the service runs on, as far as the tests are concerned: no process is started,
+    /// the "recent workspaces" are a list the test sets, and directories resolve through a table.
     #[derive(Default)]
     struct Spy {
         ticks: RefCell<Vec<String>>,
         launches: RefCell<usize>,
+        resolver: MapResolver,
+        /// What `known_keys` reports besides the `current` project.
+        workspaces: RefCell<Vec<String>>,
+        /// The `current` argument of every `known_keys` call.
+        key_requests: RefCell<Vec<Option<String>>>,
     }
 
     impl Effects for Spy {
@@ -1103,6 +1122,46 @@ mod tests {
         fn launch_helper(&self) {
             *self.launches.borrow_mut() += 1;
         }
+        fn resolver(&self) -> &dyn IdentityResolver {
+            &self.resolver
+        }
+        fn known_keys(&self, current: Option<&str>) -> Vec<String> {
+            self.key_requests
+                .borrow_mut()
+                .push(current.map(str::to_string));
+            let mut keys = self.workspaces.borrow().clone();
+            keys.extend(current.filter(|p| !p.is_empty()).map(str::to_string));
+            keys.sort();
+            keys.dedup();
+            keys
+        }
+    }
+
+    impl Spy {
+        /// Nothing asked the machine anything: no directory resolved, no workspace listed.
+        fn assert_machine_untouched(&self) {
+            assert!(
+                self.resolver.seen.borrow().is_empty(),
+                "a directory was resolved"
+            );
+            assert!(
+                self.key_requests.borrow().is_empty(),
+                "the workspaces were listed"
+            );
+            assert!(self.ticks.borrow().is_empty(), "a tick was started");
+            assert_eq!(*self.launches.borrow(), 0, "the helper was launched");
+        }
+    }
+
+    /// Sync turned on and the first pull done, so the local phase (the one that resolves
+    /// directories) runs on the next tick.
+    fn enabled_after_first_pull(env: &Env, spy: &Spy) {
+        enable_with(env, 10, spy).unwrap();
+        let mut state = tick::peek(env).unwrap().unwrap();
+        state.last_pull_ok_ms = 1;
+        store::save(&env.dir, &state).unwrap();
+        spy.ticks.borrow_mut().clear();
+        *spy.launches.borrow_mut() = 0;
     }
 
     /// A throwaway installation: `todos.json`, its lock and the sidecar directory.
@@ -1134,11 +1193,68 @@ mod tests {
         before_read_with(&env, "/work/app");
         before_whats_next_with(&env, "/work/app", &spy);
         assert!(!env.dir.exists());
-        assert!(spy.ticks.borrow().is_empty());
-        assert_eq!(*spy.launches.borrow(), 0);
         let report = run_tick_with(&env, "poll", &spy).unwrap();
         assert!(report.disabled);
+        assert_eq!(remove_project_with(&env, "/work/app", &spy).unwrap(), 0);
         assert!(!env.dir.exists());
+        spy.assert_machine_untouched();
+        cleanup(&env);
+    }
+
+    #[test]
+    fn whats_next_resolves_only_the_project_it_was_asked_about() {
+        let env = temp_env("wn-resolver");
+        let spy = Spy::default();
+        enabled_after_first_pull(&env, &spy);
+        spy.resolver.set("/work/app", Some("github.com/x/y"));
+        spy.workspaces.borrow_mut().push("/work/other".into());
+
+        before_whats_next_with(&env, "/work/app", &spy);
+
+        let seen = spy.resolver.seen.borrow();
+        assert!(!seen.is_empty(), "the local phase resolved nothing");
+        assert!(
+            seen.iter().all(|key| key == "/work/app"),
+            "resolved {seen:?}"
+        );
+        assert!(
+            spy.key_requests.borrow().is_empty(),
+            "whats-next does not scan the recent workspaces"
+        );
+        cleanup(&env);
+    }
+
+    #[test]
+    fn a_tick_keeps_the_recent_workspaces_linked_through_the_injected_machine() {
+        let env = temp_env("tick-resolver");
+        let spy = Spy::default();
+        enabled_after_first_pull(&env, &spy);
+        spy.resolver.set("/work/app", Some("github.com/x/y"));
+        spy.resolver.set("/work/other", None);
+        spy.workspaces
+            .borrow_mut()
+            .extend(["/work/app".to_string(), "/work/other".to_string()]);
+
+        // No helper is running, which is not a failure; the local phase has already run by then.
+        run_tick_with(&env, "poll", &spy).unwrap();
+
+        assert_eq!(spy.key_requests.borrow().as_slice(), [None]);
+        let seen = spy.resolver.seen.borrow();
+        assert!(seen.iter().any(|key| key == "/work/app"));
+        assert!(seen.iter().any(|key| key == "/work/other"));
+        let state = tick::peek(&env).unwrap().unwrap();
+        assert_eq!(state.project_of("/work/app"), Some("github.com/x/y"));
+        assert!(state.links.contains_key("/work/other"));
+        cleanup(&env);
+    }
+
+    #[test]
+    fn removing_an_unknown_project_asks_the_machine_nothing() {
+        let env = temp_env("remove-unknown");
+        let spy = Spy::default();
+        enabled_after_first_pull(&env, &spy);
+        assert_eq!(remove_project_with(&env, "/nowhere", &spy).unwrap(), 0);
+        spy.assert_machine_untouched();
         cleanup(&env);
     }
 

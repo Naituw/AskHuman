@@ -66,6 +66,8 @@ struct Device {
     /// (project key, identity) of every directory the user has todos in on this Mac.
     dirs: Vec<(String, Option<String>)>,
     keys: Vec<String>,
+    /// The reasons of the detached ticks the service asked this Mac to start (see the `Effects` impl).
+    spawned: RefCell<Vec<String>>,
     now: u64,
 }
 
@@ -92,6 +94,7 @@ impl Device {
                 .map(|(k, p)| (k.to_string(), p.map(str::to_string)))
                 .collect(),
             keys: dirs.iter().map(|(k, _)| k.to_string()).collect(),
+            spawned: RefCell::new(Vec::new()),
             now: real_now_ms(),
         }
     }
@@ -2179,13 +2182,25 @@ fn a_crash_while_a_directory_takes_over_a_replica_converges_to_the_same_result()
 
 // ---- what the window asks the service ------------------------------------------------------------
 
-#[derive(Default)]
-struct SpyEffects(RefCell<Vec<String>>);
-
-impl super::service::Effects for SpyEffects {
+/// What the service sees of a simulated Mac: its own directories and their identities, no
+/// processes. Nothing in these tests reaches the real machine's workspaces or git configs.
+impl super::service::Effects for Device {
     fn launch_helper(&self) {}
+
     fn spawn_tick(&self, reason: &str) {
-        self.0.borrow_mut().push(reason.to_string());
+        self.spawned.borrow_mut().push(reason.to_string());
+    }
+
+    fn resolver(&self) -> &dyn super::identity::IdentityResolver {
+        &self.resolver
+    }
+
+    fn known_keys(&self, current: Option<&str>) -> Vec<String> {
+        let mut keys = self.keys.clone();
+        keys.extend(current.filter(|p| !p.is_empty()).map(str::to_string));
+        keys.sort();
+        keys.dedup();
+        keys
     }
 }
 
@@ -2301,12 +2316,11 @@ fn removing_a_project_from_the_window_goes_through_the_service() {
     a.tick();
     b.tick();
     let vk = virtual_key(P1);
-    let spy = SpyEffects::default();
 
     // Asked by the key of the replica, as the window does for a project this Mac has no directory of.
-    assert_eq!(service::remove_project_with(&b.env, &vk, &spy).unwrap(), 2);
+    assert_eq!(service::remove_project_with(&b.env, &vk, &b).unwrap(), 2);
     assert_eq!(
-        *spy.0.borrow(),
+        *b.spawned.borrow(),
         ["remove"],
         "the push is not left to the poll"
     );
@@ -2317,11 +2331,15 @@ fn removing_a_project_from_the_window_goes_through_the_service() {
     assert!(a.texts("/a").is_empty());
 
     // Unknown keys and projects that are already empty change nothing and start nothing.
-    spy.0.borrow_mut().clear();
+    b.spawned.borrow_mut().clear();
     assert_eq!(
-        service::remove_project_with(&b.env, "/nowhere", &spy).unwrap(),
+        service::remove_project_with(&b.env, "/nowhere", &b).unwrap(),
         0
     );
-    assert_eq!(service::remove_project_with(&a.env, "/a", &spy).unwrap(), 0);
-    assert!(spy.0.borrow().is_empty());
+    // A directory this Mac has is linked through this Mac's resolver, never by reading its disk.
+    a.resolver.seen.borrow_mut().clear();
+    assert_eq!(service::remove_project_with(&a.env, "/a", &a).unwrap(), 0);
+    assert!(a.resolver.seen.borrow().iter().any(|k| k == "/a"));
+    assert!(b.spawned.borrow().is_empty());
+    assert!(a.spawned.borrow().is_empty());
 }

@@ -74,6 +74,9 @@ pub(crate) mod testing {
     #[derive(Default)]
     pub struct MapResolver {
         pub map: RefCell<BTreeMap<String, Option<String>>>,
+        /// Every key it was asked about, in order: lets a test tell that this resolver (and not the
+        /// machine's file system) answered.
+        pub seen: RefCell<Vec<String>>,
     }
 
     impl MapResolver {
@@ -94,6 +97,7 @@ pub(crate) mod testing {
 
     impl IdentityResolver for MapResolver {
         fn resolve(&self, key: &str, _prev: Option<&Link>, now_ms: u64) -> Link {
+            self.seen.borrow_mut().push(key.to_string());
             Link {
                 p: self.map.borrow().get(key).cloned().flatten(),
                 cfg_mtime_ms: 0,
