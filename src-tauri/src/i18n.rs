@@ -1308,20 +1308,13 @@ pub fn tr(lang: Lang, key: &'static str) -> &'static str {
         "cmd.locateExeFailed" => pick(lang, "Failed to locate the program path: {e}", "无法定位程序路径: {e}"),
         "cmd.testPopupFailed" => pick(lang, "Failed to launch the test popup: {e}", "启动测试弹窗失败: {e}"),
         "cmd.hookInstalled" => pick(lang, "Cursor Hook installed", "已安装 Cursor Hook"),
-        "cmd.hookUpdated" => pick(lang, "Hook updated to the latest version", "已更新到最新版本"),
         "cmd.hookRemoved" => pick(lang, "Cursor Hook removed", "已移除 Cursor Hook"),
         "cmd.ruleInstalled" => pick(lang, "Rule written", "已写入规则文件"),
-        "cmd.ruleUpdated" => pick(lang, "Prompt updated to the latest version", "已更新到最新提示词"),
         "cmd.ruleRemoved" => pick(lang, "Rule removed", "已从规则文件移除"),
         "cmd.codexProtocolInstalled" => pick(
             lang,
             "Protocol installed (delivered by the Codex SessionStart hook)",
             "已安装协议（由 Codex SessionStart Hook 交付）",
-        ),
-        "cmd.codexProtocolUpdated" => pick(
-            lang,
-            "Protocol updated (delivered by the Codex SessionStart hook)",
-            "已更新协议（由 Codex SessionStart Hook 交付）",
         ),
         "cmd.codexProtocolUnsupported" => pick(
             lang,
@@ -1334,7 +1327,6 @@ pub fn tr(lang: Lang, key: &'static str) -> &'static str {
             "Codex 未接受 AskHuman 的 SessionStart Hook，未做任何改动",
         ),
         "cmd.skillInstalled" => pick(lang, "Skill written", "已写入 skill 文件"),
-        "cmd.skillUpdated" => pick(lang, "Skill updated to the latest version", "已更新 skill 到最新"),
         "cmd.skillRemoved" => pick(lang, "Skill removed", "已移除 skill 文件"),
         "cmd.unknownAgent" => pick(lang, "Unknown agent", "未知的 Agent"),
         "cmd.unknownMode" => pick(lang, "Unknown mode", "未知的模式"),
@@ -1342,7 +1334,6 @@ pub fn tr(lang: Lang, key: &'static str) -> &'static str {
         "cmd.lifecycleInstalled" => pick(lang, "Lifecycle tracking enabled", "已开启生命周期追踪"),
         "cmd.lifecycleRemoved" => pick(lang, "Lifecycle tracking disabled", "已关闭生命周期追踪"),
         "cmd.mcpConfigInstalled" => pick(lang, "MCP config written", "已写入 MCP 配置"),
-        "cmd.mcpConfigUpdated" => pick(lang, "MCP config updated to the latest version", "已更新 MCP 配置到最新"),
         "cmd.mcpConfigRemoved" => pick(lang, "MCP config removed", "已移除 MCP 配置"),
 
         // —— Telegram 测试连接（commands.telegram_test / test_connection）——

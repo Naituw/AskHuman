@@ -632,6 +632,7 @@ fn json_status(kind: AgentKind, path: &std::path::Path, shape: Shape) -> DiskLif
 /// `complete`＝每个事件都恰好是期望形态（命令逐字一致 + PreToolUse 带 timeout=86400）。
 /// Incomplete artifacts, such as an older entry without a timeout, become `outdated` and are
 /// repaired only after the user chooses Update in the Agent integration.
+#[cfg(test)]
 fn json_presence(kind: AgentKind, exe: &str, root: &Value, shape: Shape) -> (bool, bool) {
     json_presence_with_stop(kind, exe, root, shape, false)
 }
@@ -756,6 +757,7 @@ fn json_uninstall(kind: AgentKind, path: &std::path::Path, shape: Shape) -> Resu
 }
 
 /// 在 JSON 文本中插入/更新本功能各事件条目（CST 保留格式）。仅触碰本功能条目。
+#[cfg(test)]
 fn apply_json_install(kind: AgentKind, exe: &str, text: &str, shape: Shape) -> Result<String> {
     apply_json_install_with_stop(kind, exe, text, shape, false)
 }
@@ -1140,84 +1142,9 @@ fn read_codex_trust() -> std::collections::HashMap<String, String> {
     map
 }
 
-/// 写入/更新 config.toml 的 `[hooks.state.<key>] trusted_hash`（toml_edit 保留格式最小化编辑）。
-fn write_codex_trust(entries: &[(String, String)]) -> Result<()> {
-    use toml_edit::{DocumentMut, Item, Table};
-    let path = paths::codex_config_toml();
-    let existing = std::fs::read_to_string(&path).unwrap_or_default();
-    let mut doc = existing
-        .parse::<DocumentMut>()
-        .map_err(|e| anyhow!("解析 config.toml 失败，已中止（不覆盖原文件）：{e}"))?;
-
-    fn ensure_intermediate<'a>(parent: &'a mut Table, key: &str) -> Result<&'a mut Table> {
-        if !parent.contains_key(key) {
-            let mut t = Table::new();
-            t.set_implicit(true);
-            parent.insert(key, Item::Table(t));
-        }
-        parent
-            .get_mut(key)
-            .and_then(Item::as_table_mut)
-            .ok_or_else(|| anyhow!("config.toml 中 `{key}` 不是表，已中止"))
-    }
-
-    let hooks = ensure_intermediate(doc.as_table_mut(), "hooks")?;
-    let state = ensure_intermediate(hooks, "state")?;
-    for (key, hash) in entries {
-        if !state.contains_key(key) {
-            state.insert(key, Item::Table(Table::new()));
-        }
-        let entry = state
-            .get_mut(key)
-            .and_then(Item::as_table_mut)
-            .ok_or_else(|| anyhow!("config.toml 中信任条目不是表，已中止"))?;
-        entry.insert("trusted_hash", toml_edit::value(hash.clone()));
-    }
-    write_toml(&path, &doc.to_string())
-}
-
-/// 移除 config.toml 中所有以 `<abs hooks.json>:` 为前缀的信任条目；空表则删除。
-fn remove_codex_trust_for(hooks_json: &std::path::Path) -> Result<()> {
-    use toml_edit::{DocumentMut, Item};
-    let path = paths::codex_config_toml();
-    let Ok(existing) = std::fs::read_to_string(&path) else {
-        return Ok(());
-    };
-    let mut doc = existing
-        .parse::<DocumentMut>()
-        .map_err(|e| anyhow!("解析 config.toml 失败，已中止（不覆盖原文件）：{e}"))?;
-    let prefix = format!("{}:", hooks_json.to_string_lossy());
-
-    let mut changed = false;
-    if let Some(hooks) = doc.get_mut("hooks").and_then(Item::as_table_mut) {
-        if let Some(state) = hooks.get_mut("state").and_then(Item::as_table_mut) {
-            let before = state.len();
-            state.retain(|k, _| !k.starts_with(&prefix));
-            changed = state.len() != before;
-            if state.is_empty() {
-                hooks.remove("state");
-            }
-        }
-        if hooks.is_empty() {
-            doc.as_table_mut().remove("hooks");
-        }
-    }
-    if changed {
-        write_toml(&path, &doc.to_string())?;
-    }
-    Ok(())
-}
-
 // ===== 私有 IO =====
 
 fn write_text(path: &std::path::Path, text: &str) -> Result<()> {
-    if let Some(dir) = path.parent() {
-        std::fs::create_dir_all(dir)?;
-    }
-    atomic_write(path, text.as_bytes())
-}
-
-fn write_toml(path: &std::path::Path, text: &str) -> Result<()> {
     if let Some(dir) = path.parent() {
         std::fs::create_dir_all(dir)?;
     }

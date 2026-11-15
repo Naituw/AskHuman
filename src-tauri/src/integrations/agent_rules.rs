@@ -365,11 +365,6 @@ pub fn classify_body(body: &str, agent: AgentTarget) -> Variant {
     }
 }
 
-/// Antigravity requires the strict Unix adapter; existing rule targets remain portable.
-pub fn supported(agent: AgentTarget) -> bool {
-    agent != AgentTarget::Antigravity || cfg!(unix)
-}
-
 /// 目标文件的展示路径（把 home 前缀折叠为 `~`）。
 pub fn display_path(agent: AgentTarget) -> String {
     if agent.is_grok_skill() {
@@ -395,21 +390,6 @@ fn collapse_home(p: &Path) -> String {
 
 // MARK: - 安装 / 卸载
 
-/// 安装：写入最新推荐提示词（默认 CLI 变体，保持现状语义）。
-pub fn install(agent: AgentTarget) -> Result<String> {
-    if agent == AgentTarget::Antigravity {
-        anyhow::bail!(
-            "install Antigravity through AskHuman agents mode antigravity <cli|mcp> to preserve its mode bundle"
-        );
-    }
-    install_variant(agent, Variant::Cli)
-}
-
-/// 更新：把已安装的旧提示词覆盖为最新（默认 CLI 变体）。
-pub fn update(agent: AgentTarget) -> Result<String> {
-    update_variant(agent, Variant::Cli)
-}
-
 /// 安装指定变体的提示词（托管区块 upsert，保留区块外用户内容）。Grok 委托 skill（忽略 variant）。
 pub(crate) fn install_variant_unlocked(agent: AgentTarget, variant: Variant) -> Result<String> {
     if agent == AgentTarget::Antigravity {
@@ -427,35 +407,6 @@ pub(crate) fn install_variant_unlocked(agent: AgentTarget, variant: Variant) -> 
     }
     write_rule(agent, &variant.body(agent))?;
     Ok(crate::i18n::tr(crate::i18n::Lang::current(), "cmd.ruleInstalled").to_string())
-}
-
-pub fn install_variant(agent: AgentTarget, variant: Variant) -> Result<String> {
-    if agent == AgentTarget::Antigravity {
-        anyhow::bail!(
-            "install Antigravity through AskHuman agents mode antigravity <cli|mcp> to preserve its mode bundle"
-        );
-    }
-    install_variant_unlocked(agent, variant)
-}
-
-/// 更新为指定变体的最新提示词（与安装同样的写入逻辑，仅反馈文案不同）。Grok 委托 skill。
-pub fn update_variant(agent: AgentTarget, variant: Variant) -> Result<String> {
-    if agent == AgentTarget::Antigravity {
-        anyhow::bail!(
-            "update Antigravity through AskHuman agents update antigravity to preserve mode and ownership"
-        );
-    }
-    if agent.is_grok_skill() {
-        return crate::integrations::grok_skill::update();
-    }
-    if agent.is_codex_protocol() {
-        crate::integrations::codex_protocol::install(codex_mode(variant))?;
-        return Ok(
-            crate::i18n::tr(crate::i18n::Lang::current(), "cmd.codexProtocolUpdated").to_string(),
-        );
-    }
-    write_rule(agent, &variant.body(agent))?;
-    Ok(crate::i18n::tr(crate::i18n::Lang::current(), "cmd.ruleUpdated").to_string())
 }
 
 fn codex_mode(variant: Variant) -> crate::integrations::agent_mode::Mode {
@@ -515,15 +466,6 @@ pub(crate) fn uninstall_unlocked(agent: AgentTarget) -> Result<String> {
         }
     }
     Ok(crate::i18n::tr(lang, "cmd.ruleRemoved").to_string())
-}
-
-pub fn uninstall(agent: AgentTarget) -> Result<String> {
-    if agent == AgentTarget::Antigravity {
-        anyhow::bail!(
-            "remove Antigravity through AskHuman agents mode antigravity none to preserve its mode bundle"
-        );
-    }
-    uninstall_unlocked(agent)
 }
 
 /// 在文件管理器中定位规则文件。

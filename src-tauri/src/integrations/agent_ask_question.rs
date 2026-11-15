@@ -69,10 +69,6 @@ pub(crate) fn active_in_mode(kind: AgentKind, mode: super::agent_mode::Mode) -> 
     takeover_active(enabled(kind), mode)
 }
 
-pub(crate) fn active_in_current_mode(kind: AgentKind) -> bool {
-    active_in_mode(kind, super::agent_mode::current(target_for_kind(kind)))
-}
-
 pub fn status(kind: AgentKind) -> AskQuestionStatus {
     if !supported(kind) {
         return AskQuestionStatus {

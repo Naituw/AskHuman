@@ -417,6 +417,8 @@ pub fn codex_version() -> Option<(u64, u64, u64)> {
 }
 
 /// Cache the Grok feature probe without invoking Cursor or loading any agent session.
+/// Tests pin the version in `agent_lifecycle::events`, so only production builds probe it.
+#[cfg(not(test))]
 pub fn grok_version() -> Option<(u64, u64, u64)> {
     type VersionCache = Option<(String, Instant, Option<(u64, u64, u64)>)>;
     static CACHE: OnceLock<Mutex<VersionCache>> = OnceLock::new();
@@ -648,10 +650,6 @@ pub fn all_readiness() -> Vec<AgentReadiness> {
     collect_readiness(None, false)
 }
 
-pub fn all_readiness_fresh() -> Vec<AgentReadiness> {
-    collect_readiness(None, true)
-}
-
 pub fn collect_readiness(kind: Option<AgentKind>, force: bool) -> Vec<AgentReadiness> {
     let kinds: Vec<AgentKind> = kind
         .map(|kind| vec![kind])
@@ -869,6 +867,7 @@ pub fn cleanup_expired_records() {
     }
 }
 
+#[cfg(test)]
 pub fn create_record(
     source: LaunchSource,
     cwd: &Path,
@@ -879,6 +878,7 @@ pub fn create_record(
     create_record_with_files(source, cwd, kind, permission, task, &[], &[])
 }
 
+#[cfg(test)]
 pub fn create_record_with_files(
     source: LaunchSource,
     cwd: &Path,
@@ -902,6 +902,7 @@ pub fn create_record_with_files(
 
 /// [`create_record_with_files`] for a task that also picks the model and/or reasoning effort. A
 /// default `choice` is the same as not passing one: the Agent is started with no such flag.
+#[cfg(test)]
 #[allow(clippy::too_many_arguments)]
 pub fn create_record_with_choice(
     source: LaunchSource,

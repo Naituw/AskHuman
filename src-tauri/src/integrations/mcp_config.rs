@@ -440,15 +440,6 @@ pub(crate) fn install_with_env(
     Ok(crate::i18n::tr(crate::i18n::Lang::current(), "cmd.mcpConfigInstalled").to_string())
 }
 
-/// 更新：与安装同样写入逻辑，仅反馈文案不同。
-pub fn update(target: AgentTarget) -> Result<String> {
-    if !supported(target) {
-        return Err(anyhow!("MCP integration is unsupported for Pi"));
-    }
-    write_entry(target, &std::collections::BTreeMap::new())?;
-    Ok(crate::i18n::tr(crate::i18n::Lang::current(), "cmd.mcpConfigUpdated").to_string())
-}
-
 /// 卸载：移除本 server 条目（保留用户其它条目）；条目本就不存在则 no-op。
 pub fn uninstall(target: AgentTarget) -> Result<String> {
     if !supported(target) {

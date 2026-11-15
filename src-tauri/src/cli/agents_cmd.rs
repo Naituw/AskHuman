@@ -964,7 +964,6 @@ mod antigravity_aggregate_tests {
         let targets = aggregate_agents();
         assert_eq!(&targets[..5], &["cursor", "claude", "codex", "grok", "pi"]);
         assert_eq!(targets.contains(&"antigravity"), cfg!(unix));
-        assert_eq!(agent_rules::supported(AgentTarget::Antigravity), cfg!(unix));
         assert_eq!(targets.len(), if cfg!(unix) { 6 } else { 5 });
         let cleanup = cleanup_targets();
         assert_eq!(cleanup.len(), targets.len());

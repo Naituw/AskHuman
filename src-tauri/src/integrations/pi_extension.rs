@@ -82,10 +82,6 @@ pub fn status() -> ExtensionStatus {
     }
 }
 
-pub fn display_path() -> String {
-    collapse_home(&crate::paths::pi_extension_file())
-}
-
 pub fn set_cli_enabled(enabled: bool) -> Result<()> {
     update(|config| {
         config.cli = enabled;
@@ -101,11 +97,6 @@ pub fn set_lifecycle_enabled(enabled: bool) -> Result<()> {
 
 pub fn set_stop_enabled(enabled: bool) -> Result<()> {
     update(|config| config.stop = enabled && config.cli)
-}
-
-/// Rewrite the currently selected capability set using the current executable and template.
-pub fn refresh() -> Result<()> {
-    update(|_| {})
 }
 
 pub fn reveal() {
@@ -173,13 +164,6 @@ fn atomic_write(path: &Path, bytes: &[u8]) -> Result<()> {
     std::fs::write(&tmp, bytes)?;
     std::fs::rename(&tmp, path)?;
     Ok(())
-}
-
-fn collapse_home(path: &Path) -> String {
-    let home = crate::paths::integration_home();
-    path.strip_prefix(home)
-        .map(|rest| format!("~/{}", rest.display()))
-        .unwrap_or_else(|_| path.display().to_string())
 }
 
 fn reveal_path(path: &Path) {

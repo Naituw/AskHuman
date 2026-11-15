@@ -116,11 +116,6 @@ pub fn supported() -> bool {
     cfg!(any(unix, windows))
 }
 
-/// settings.json 是否存在。
-pub fn settings_exists() -> bool {
-    paths::claude_settings_json().exists()
-}
-
 /// 是否已安装本应用条目。
 pub fn is_installed() -> bool {
     read_value().map(|r| has_marker(&r)).unwrap_or(false)
@@ -179,13 +174,6 @@ fn script_command(script: &std::path::Path) -> String {
     } else {
         script.to_string_lossy().to_string()
     }
-}
-
-/// 更新：用最新脚本与条目覆盖（复用 install），同时确保 env 上限 ≥ 24h。
-pub fn update() -> Result<String> {
-    install()?;
-    let lang = crate::i18n::Lang::current();
-    Ok(crate::i18n::tr(lang, "cmd.hookUpdated").to_string())
 }
 
 /// 移除：删除本应用 PreToolUse 条目 + 删除脚本文件；保留 `env` 与其它条目。

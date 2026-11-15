@@ -5202,83 +5202,6 @@ pub fn restart_settings(app: AppHandle) -> Result<(), String> {
 mod tests {
     use super::*;
 
-    #[test]
-    fn public_rule_update_rejects_antigravity_generic_writer() {
-        let error = agent_rules::update(agent_rules::AgentTarget::Antigravity)
-            .unwrap_err()
-            .to_string();
-        assert!(error.contains("AskHuman agents update antigravity"));
-        for variant in [agent_rules::Variant::Cli, agent_rules::Variant::Mcp] {
-            assert!(
-                agent_rules::update_variant(agent_rules::AgentTarget::Antigravity, variant)
-                    .is_err()
-            );
-        }
-    }
-
-    #[cfg(unix)]
-    #[test]
-    fn generic_rule_writers_preserve_antigravity_mcp_bundle() {
-        use std::os::unix::fs::PermissionsExt;
-        const CHILD: &str = "ASKHUMAN_TEST_RULE_WRITER_CHILD";
-        if std::env::var_os(CHILD).is_none() {
-            let root = tempfile::tempdir().unwrap();
-            // Keep the child HOME free of temporary-root aliases such as macOS /var.
-            let root_path = root.path().canonicalize().unwrap();
-            let state = root_path.join("state");
-            std::fs::create_dir(&state).unwrap();
-            std::fs::set_permissions(&state, std::fs::Permissions::from_mode(0o700)).unwrap();
-            let result = std::process::Command::new(std::env::current_exe().unwrap())
-                .args([
-                    "--exact",
-                    "commands::tests::generic_rule_writers_preserve_antigravity_mcp_bundle",
-                    "--nocapture",
-                ])
-                .env(CHILD, "1")
-                .env("HOME", &root_path)
-                .env("ASKHUMAN_HOME", state)
-                .output()
-                .unwrap();
-            assert!(
-                result.status.success(),
-                "stdout: {}\nstderr: {}",
-                String::from_utf8_lossy(&result.stdout),
-                String::from_utf8_lossy(&result.stderr)
-            );
-            return;
-        }
-        let target = agent_rules::AgentTarget::Antigravity;
-        agent_mode::set(target, agent_mode::Mode::Mcp).unwrap();
-        let files = [
-            crate::paths::antigravity_rule_file(),
-            crate::paths::antigravity_mcp_config_json(),
-            crate::paths::integration_state_file(),
-        ];
-        let before = files.each_ref().map(|path| std::fs::read(path).unwrap());
-        for variant in [agent_rules::Variant::Cli, agent_rules::Variant::Mcp] {
-            assert!(agent_rules::install_variant(target, variant).is_err());
-            assert!(agent_rules::update_variant(target, variant).is_err());
-            assert_eq!(
-                files.each_ref().map(|path| std::fs::read(path).unwrap()),
-                before
-            );
-        }
-        for writer in [
-            agent_rules::install,
-            agent_rules::update,
-            agent_rules::uninstall,
-        ] {
-            assert!(writer(target).is_err());
-            assert_eq!(
-                files.each_ref().map(|path| std::fs::read(path).unwrap()),
-                before
-            );
-            let (mode, _, installed) = agent_mode::antigravity_status().unwrap();
-            assert_eq!(mode, agent_mode::Mode::Mcp);
-            assert!(installed);
-        }
-    }
-
     #[cfg(unix)]
     #[test]
     fn collaboration_style_scopes_preserve_preferences_and_carriers() {
@@ -5311,7 +5234,7 @@ mod tests {
         config.general.collaboration_style = CollaborationStyle::Custom;
         config.general.collaboration_style_custom_text = "default A".to_string();
         config.save_to(&crate::paths::config_file()).unwrap();
-        agent_rules::install_variant(AgentTarget::Cursor, Variant::Cli).unwrap();
+        agent_rules::install_variant_unlocked(AgentTarget::Cursor, Variant::Cli).unwrap();
         crate::integrations::grok_skill::install().unwrap();
         let codex_file = crate::paths::codex_agents_md();
         std::fs::create_dir_all(codex_file.parent().unwrap()).unwrap();
