@@ -72,6 +72,8 @@ const ALL: [AgentDef; 6] = [
     },
 ];
 
+/// Every known Agent regardless of platform (tests iterate this; the wizard uses [`available`]).
+#[cfg(test)]
 pub fn all() -> &'static [AgentDef] {
     &ALL
 }
@@ -84,6 +86,8 @@ pub fn available() -> Vec<&'static AgentDef> {
         .collect()
 }
 
+/// Look an Agent up by its stable id (test fixtures; the wizard iterates [`available`]).
+#[cfg(test)]
 pub fn find(id: &str) -> Option<&'static AgentDef> {
     ALL.iter().find(|def| def.id == id)
 }

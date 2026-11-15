@@ -56,6 +56,10 @@ pub struct CardSelect {
 /// `value=opt_{i}` 按下标还原原文，显示不影响提交值。
 /// `nonce` 为每张卡片唯一串，拼入各 `input` 块 block_id：Slack 客户端按 block_id 缓存输入草稿，
 /// 唯一化可避免新卡片回填上一题的输入/勾选（见 `docs/plans/slack-channel.md` 反馈意见）。
+///
+/// Production builds the card through [`build_question_card_with_state`]; this shortcut (no
+/// selection state) keeps the card tests short.
+#[cfg(test)]
 #[allow(clippy::too_many_arguments)]
 pub fn build_question_card(
     title: &str,

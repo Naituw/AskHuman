@@ -756,7 +756,8 @@ impl AwayEngine {
         }
     }
 
-    /// An engine that never touches the disk (tests and tools).
+    /// An engine that never touches the disk.
+    #[cfg(test)]
     pub fn in_memory() -> Self {
         Self {
             inner: Mutex::new(Inner::new(AwayState::default())),
@@ -822,10 +823,12 @@ impl AwayEngine {
     }
 
     /// The effective setting of one session right now.
+    #[cfg(test)]
     pub fn effective(&self, key: Option<&str>) -> Effective {
         self.inner.lock().unwrap().state.effective(key)
     }
 
+    #[cfg(test)]
     pub fn is_away(&self) -> bool {
         self.inner.lock().unwrap().state.global.is_some()
     }

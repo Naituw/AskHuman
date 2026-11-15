@@ -35,6 +35,10 @@ pub struct CardSubmit {
 /// 本地化后传入；提交值始终为选项原文）。
 /// `single`→真 radio：勾选器移出表单、各挂 toggle 回调（互斥由会话自管，按 `selected` 渲染勾选）；
 /// `select_only`→去掉补充输入框（严格选择）。`selected` 为当前已选原文（首次渲染传空）。
+///
+/// Production builds the card through [`build_question_card_with_todo`]; this shortcut (no todo
+/// markers) keeps the card tests short.
+#[cfg(test)]
 #[allow(clippy::too_many_arguments)]
 pub fn build_question_card(
     title: &str,
@@ -239,6 +243,9 @@ pub fn callback_update_card(card: Value) -> Value {
 /// 组装终态卡片（复刻钉钉「已提交」态）：沿用同一表单结构，但全部禁用——
 /// 勾选器按用户选择 `checked` 且 `disabled`、输入框 `default_value` 回显补充文字且 `disabled`、
 /// 提交按钮 `disabled` 并改文案。
+///
+/// Production uses [`build_finalized_card_with_todo`]; this shortcut serves the card tests.
+#[cfg(test)]
 pub fn build_finalized_card(p: &Finalized) -> Value {
     build_finalized_card_with_todo(p, "", "")
 }
