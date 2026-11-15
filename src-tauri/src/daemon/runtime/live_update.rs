@@ -264,8 +264,7 @@ impl Runtime {
                     saved.lease.generation, saved.pid
                 ));
                 if alive {
-                    *state.popup_inbox.lock().unwrap() =
-                        crate::daemon::popup_inbox::Host::restore(saved);
+                    *state.popup_inbox.lock().unwrap() = inbox::adopt_host(state, saved);
                 }
             }
             if let Some(mut focus) = self.store.metadata::<PopupFocusArbiter>("popup/focus")? {
@@ -333,11 +332,13 @@ impl Runtime {
         }
         let generation = state.popup_inbox.lock().unwrap().generation();
         if let Some(generation) = generation {
-            // The host kept across the update has to find its way back. The daemon holds no
-            // process of its own for it, so giving it up ends nothing.
+            // The host kept across the update has to find its way back; a daemon that inherited
+            // it as a child ends it if it gives the lease up (`inbox::adopt_host`).
             tokio::spawn(inbox::expire_unauthenticated(state.clone(), generation));
         }
         self.restoring.store(false, Ordering::SeqCst);
+        // A host that is gone before it reconnects is not waited for any longer than that.
+        inbox::recover_adopted_host_when_gone(state);
         Ok(())
     }
 

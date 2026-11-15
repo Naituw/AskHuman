@@ -253,6 +253,7 @@ AskHuman/
         runtime/
           mod.rs             状态与类型、serve 主循环、连接分发与请求提交
           live_update.rs     可恢复调用、恢复屏障、渠道暂停/接管与后台自动交接
+          inherited.rs       换代继承来的子进程：启动时接管并回收（不留僵尸），被放弃的接管宿主据此终止
           conn_slot.rs       渠道连接槽（四个 IM Router、iOS Gateway）：已发布连接与建连互不阻塞，读者永不等建连
           watch.rs           watch 订阅持久化、tick 刷新与卡片回调
           select.rs          跨渠道单选卡发送、路由与回调分发

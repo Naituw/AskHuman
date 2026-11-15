@@ -49,6 +49,17 @@ pub enum Launch {
 const FAILURE_BUDGET: usize = 2;
 const FAILURE_WINDOW: Duration = Duration::from_secs(30);
 
+/// How the host process the daemon holds for the lease that is still `Starting` is ended when the
+/// daemon gives that lease up.
+enum Owned {
+    /// A process this daemon image started and waits for: told to end through the signal its
+    /// waiter listens to.
+    Spawned(std::sync::Arc<tokio::sync::Notify>),
+    /// A child inherited across a live update, which has no waiter to tell: ended by this call,
+    /// in the step that gives the lease up.
+    Inherited(Box<dyn FnOnce() + Send>),
+}
+
 pub struct Host<T> {
     phase: Phase,
     generation: u64,
@@ -58,11 +69,12 @@ pub struct Host<T> {
     focus: Option<String>,
     recovery_pid: Option<u32>,
     recovery_birth: Option<String>,
-    /// Ends the host process this daemon started for the lease that is still `Starting`; fired
-    /// when the daemon gives that lease up before the host authenticated, dropped when it does.
-    /// Present only while `phase` is `Starting` with a host this daemon owns (a host kept across a
-    /// live update is not).
-    owned_child: Option<std::sync::Arc<tokio::sync::Notify>>,
+    /// Ends the host process this daemon holds for the lease that is still `Starting`; fired when
+    /// the daemon gives that lease up before the host authenticated, dropped when it does. Present
+    /// only while `phase` is `Starting` with a host this daemon owns: one it started itself, or a
+    /// child it inherited across a live update ([`Host::end_when_abandoned`]). A host kept across
+    /// an update that is not this daemon's child has none, and is left to end itself.
+    owned_child: Option<Owned>,
 }
 impl<T> Default for Host<T> {
     fn default() -> Self {
@@ -88,6 +100,26 @@ impl<T: Clone> Host<T> {
             recovery_birth: saved.birth,
             recovered: false,
             ..Self::default()
+        }
+    }
+
+    /// Makes giving up the restored lease end its host process, by running `end`. For a host that
+    /// is this daemon's own child, inherited across a live update: nothing waits for it and nothing
+    /// else would ever end it. Attach it before the host is published, so that no way of giving
+    /// the lease up can precede it. A lease that is not waiting, or whose host is already
+    /// owned, is left as it is.
+    pub fn end_when_abandoned(&mut self, end: impl FnOnce() + Send + 'static) {
+        if matches!(self.phase, Phase::Starting(_)) && self.owned_child.is_none() {
+            self.owned_child = Some(Owned::Inherited(Box::new(end)));
+        }
+    }
+
+    /// The generation and process of a host kept across a live update that has not reconnected
+    /// yet. A host this daemon started itself has no process id on record until it authenticates.
+    pub fn adopted_waiting(&self) -> Option<(u64, u32)> {
+        match &self.phase {
+            Phase::Starting(lease) => Some((lease.generation, self.recovery_pid?)),
+            _ => None,
         }
     }
 
@@ -132,7 +164,7 @@ impl<T: Clone> Host<T> {
         self.phase = Phase::Starting(lease.clone());
         self.recovery_pid = None;
         self.recovery_birth = None;
-        self.owned_child = Some(Default::default());
+        self.owned_child = Some(Owned::Spawned(Default::default()));
         Some(lease)
     }
 
@@ -182,7 +214,9 @@ impl<T: Clone> Host<T> {
     /// that is no longer expected must not be started for it.
     pub fn abandon_signal(&self, generation: u64) -> Option<std::sync::Arc<tokio::sync::Notify>> {
         match (&self.phase, &self.owned_child) {
-            (Phase::Starting(lease), Some(signal)) if lease.generation == generation => {
+            (Phase::Starting(lease), Some(Owned::Spawned(signal)))
+                if lease.generation == generation =>
+            {
                 Some(signal.clone())
             }
             _ => None,
@@ -193,8 +227,10 @@ impl<T: Clone> Host<T> {
     /// as every phase change, so a host that authenticates concurrently either got in first (and
     /// has nothing to end) or never will.
     fn abandon_owned(&mut self) {
-        if let Some(signal) = self.owned_child.take() {
-            signal.notify_one();
+        match self.owned_child.take() {
+            Some(Owned::Spawned(signal)) => signal.notify_one(),
+            Some(Owned::Inherited(end)) => end(),
+            None => {}
         }
     }
 
@@ -315,6 +351,18 @@ impl<T: Clone> Host<T> {
         now: Instant,
         prewarm: bool,
     ) -> Recovery<T> {
+        self.lose_waiting(generation, now, prewarm)
+    }
+
+    /// The host process of `generation` is gone before it authenticated: there is nothing left to
+    /// wait for, so the lease is recovered now instead of when the startup timer runs out. Acts
+    /// like [`Host::startup_timed_out`], only on a lease that is still waiting. A host that
+    /// authenticated first is a connection's to lose: its end of the connection recovers it.
+    pub fn host_exited(&mut self, generation: u64, now: Instant, prewarm: bool) -> Recovery<T> {
+        self.lose_waiting(generation, now, prewarm)
+    }
+
+    fn lose_waiting(&mut self, generation: u64, now: Instant, prewarm: bool) -> Recovery<T> {
         match &self.phase {
             Phase::Starting(lease) if lease.generation == generation => {
                 self.disconnected(generation, now, prewarm)
@@ -573,21 +621,193 @@ mod tests {
         assert!(host.generation().is_none());
     }
 
-    #[test]
-    fn a_host_kept_across_an_update_is_not_the_daemons_to_end() {
-        let mut host = Host::<()>::restore(SavedHost {
+    fn restored(generation: u64) -> Host<()> {
+        Host::restore(SavedHost {
             lease: Lease {
-                generation: 7,
+                generation,
                 token: "saved".into(),
             },
             pid: std::process::id(),
-            birth: None,
-        });
+            birth: Some("born".into()),
+        })
+    }
+
+    /// Counts how often the means of ending an inherited host process is used.
+    fn ender() -> (
+        std::sync::Arc<std::sync::atomic::AtomicUsize>,
+        impl FnOnce() + Send + 'static,
+    ) {
+        let count = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let hit = count.clone();
+        (count, move || {
+            hit.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        })
+    }
+
+    fn times(count: &std::sync::atomic::AtomicUsize) -> usize {
+        count.load(std::sync::atomic::Ordering::SeqCst)
+    }
+
+    #[test]
+    fn a_host_kept_across_an_update_with_no_means_of_ending_it_is_only_forgotten() {
+        // Not this daemon's child (a launchd replacement reparented it): left to end itself.
+        let mut host = restored(7);
         assert!(host.abandon_signal(7).is_none());
-        // Giving it up still works; there is just no process of ours to end.
         assert!(matches!(
             host.disconnected(7, Instant::now(), true),
             Recovery::Restart(_)
+        ));
+    }
+
+    #[test]
+    fn an_inherited_host_is_ended_by_every_way_of_giving_its_lease_up() {
+        type GiveUp = fn(&mut Host<()>);
+        let ways: [(&str, GiveUp); 5] = [
+            ("recycled while idle", |host| {
+                assert!(host.stop_idle().is_none());
+            }),
+            ("retired while idle", |host| {
+                assert!(host.retire_idle(7));
+            }),
+            ("startup timed out", |host| {
+                host.startup_timed_out(7, Instant::now(), false);
+            }),
+            ("exited", |host| {
+                host.host_exited(7, Instant::now(), false);
+            }),
+            ("disconnected", |host| {
+                host.disconnected(7, Instant::now(), false);
+            }),
+        ];
+        for (name, give_up) in ways {
+            let mut host = restored(7);
+            let (count, end) = ender();
+            host.end_when_abandoned(end);
+            assert_eq!(times(&count), 0, "{name}: ended before it was given up");
+
+            give_up(&mut host);
+            assert_eq!(times(&count), 1, "{name}");
+            assert!(host.generation().is_none_or(|generation| generation != 7));
+
+            // Once is all: nothing else of the old lease is left to end.
+            host.stop_idle();
+            host.startup_timed_out(7, Instant::now(), false);
+            assert_eq!(times(&count), 1, "{name}: ended twice");
+        }
+    }
+
+    #[test]
+    fn an_inherited_host_that_reconnected_is_not_the_daemons_to_end() {
+        let mut host = restored(7);
+        let (count, end) = ender();
+        host.end_when_abandoned(end);
+        let (tx, _rx) = tokio::sync::mpsc::unbounded_channel();
+        assert_eq!(host.connect("saved", tx), Some((7, false)));
+
+        // It authenticated first: neither the timer nor its later loss ends the process.
+        assert!(matches!(
+            host.startup_timed_out(7, Instant::now(), false),
+            Recovery::Stale
+        ));
+        assert!(matches!(
+            host.disconnected(7, Instant::now(), false),
+            Recovery::Idle
+        ));
+        assert_eq!(times(&count), 0);
+    }
+
+    #[test]
+    fn only_a_lease_waiting_for_a_host_nobody_owns_takes_the_means_of_ending_it() {
+        // Nothing reserved.
+        let mut host = Host::<()>::default();
+        let (count, end) = ender();
+        host.end_when_abandoned(end);
+        host.start().unwrap();
+        host.stop_idle();
+        assert_eq!(times(&count), 0, "no lease was waiting when it was offered");
+
+        // A host this daemon started has its own waiter.
+        let mut host = Host::<()>::default();
+        let lease = host.start().unwrap();
+        let (count, end) = ender();
+        host.end_when_abandoned(end);
+        assert!(host.abandon_signal(lease.generation).is_some());
+        host.stop_idle();
+        assert_eq!(times(&count), 0, "the spawned host's waiter ends it");
+
+        // Already authenticated.
+        let mut host = restored(7);
+        let (tx, _rx) = tokio::sync::mpsc::unbounded_channel();
+        host.connect("saved", tx).unwrap();
+        let (count, end) = ender();
+        host.end_when_abandoned(end);
+        host.disconnected(7, Instant::now(), false);
+        assert_eq!(times(&count), 0);
+    }
+
+    #[test]
+    fn a_kept_host_is_waiting_for_only_until_it_reconnects() {
+        let mut host = restored(7);
+        assert_eq!(host.adopted_waiting(), Some((7, std::process::id())));
+
+        let (tx, _rx) = tokio::sync::mpsc::unbounded_channel();
+        host.connect("saved", tx).unwrap();
+        assert_eq!(host.adopted_waiting(), None);
+
+        // A host this daemon started has no process on record before it authenticates.
+        let mut started = Host::<()>::default();
+        started.start().unwrap();
+        assert_eq!(started.adopted_waiting(), None);
+        assert_eq!(Host::<()>::default().adopted_waiting(), None);
+    }
+
+    #[test]
+    fn a_host_that_exited_is_recovered_only_while_its_lease_is_waiting() {
+        let now = Instant::now();
+
+        // Waiting, with a request that needs a host: replaced, and the loss counts.
+        let mut host = restored(7);
+        host.enqueue("r".into(), 1, ());
+        let Recovery::Restart(next) = host.host_exited(7, now, false) else {
+            panic!("a waiting lease with a request needs another host");
+        };
+        assert_eq!(next.generation, 8);
+
+        // Another generation, or one that authenticated: not this lease's to lose.
+        assert!(matches!(host.host_exited(7, now, false), Recovery::Stale));
+        let (tx, _rx) = tokio::sync::mpsc::unbounded_channel();
+        host.connect(&next.token, tx).unwrap();
+        assert!(matches!(host.host_exited(8, now, false), Recovery::Stale));
+        assert!(host.sender().is_some(), "still connected");
+    }
+
+    #[test]
+    fn an_idle_host_that_exits_costs_no_restart_budget() {
+        // The usual case: the host was idle, saw its connection end at the update and left.
+        let now = Instant::now();
+        let mut host = Host::<()>::default();
+        for _ in 0..20 {
+            let lease = host.start().unwrap();
+            assert!(matches!(
+                host.host_exited(lease.generation, now, false),
+                Recovery::Idle
+            ));
+        }
+        assert!(!host.would_refuse(now), "nothing was counted as a failure");
+
+        // With a request waiting each loss is a failure, and the budget stops the restarts.
+        let mut host = restored(7);
+        host.enqueue("r".into(), 1, ());
+        let mut generation = 7;
+        for _ in 0..2 {
+            let Recovery::Restart(next) = host.host_exited(generation, now, false) else {
+                panic!("within the budget");
+            };
+            generation = next.generation;
+        }
+        assert!(matches!(
+            host.host_exited(generation, now, false),
+            Recovery::Failed(_)
         ));
     }
 

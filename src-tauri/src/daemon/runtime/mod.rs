@@ -45,6 +45,7 @@ mod failure_confirmation;
 mod fork;
 mod inbound;
 mod inbox;
+mod inherited;
 mod ios;
 mod ios_agents;
 mod ios_history;
@@ -197,6 +198,11 @@ fn run_cmd(background: bool, wait_for_gui_handoff: bool) -> i32 {
     BACKGROUND_LOG_TO_FILE.store(background, Ordering::Relaxed);
     #[cfg(not(windows))]
     let _ = background;
+    // Before this image has started a child of its own: what exists now is what the previous image
+    // left behind across an in-place update, and has nobody to wait for it. The same table is
+    // handed to every `serve` below, because a failed exec resumes this image with children it
+    // started itself, which must not be mistaken for inherited ones.
+    let inherited = inherited::Inherited::collect();
     let wait_for_handoff = wait_for_gui_handoff
         || cfg!(windows) && std::env::args().any(|arg| arg == "--wait-for-handoff");
     let deadline = Instant::now() + Duration::from_secs(30);
@@ -254,7 +260,12 @@ fn run_cmd(background: bool, wait_for_gui_handoff: bool) -> i32 {
     loop {
         super::recovery::set_handoff(false);
         let intent = Arc::new(Mutex::new(super::handoff::Intent::default()));
-        let code = tauri::async_runtime::block_on(serve(&lock, intent.clone(), startup_fp));
+        let code = tauri::async_runtime::block_on(serve(
+            &lock,
+            intent.clone(),
+            startup_fp,
+            inherited.clone(),
+        ));
         let intent = *intent.lock().unwrap();
         #[cfg(target_os = "macos")]
         if intent == super::handoff::Intent::MoveToGui {
@@ -315,6 +326,9 @@ struct ServerState {
     /// Cross-process popup focus owner and background cascade order.
     popup_focus: Mutex<PopupFocusArbiter>,
     popup_inbox: Mutex<super::popup_inbox::Host<InteractionEntry>>,
+    /// Child processes the previous image left behind across a live update, which this image now
+    /// waits for and can end (`inherited.rs`).
+    inherited: Arc<inherited::Inherited>,
     /// 钉钉长连接 Router（惰性建连、常热复用；连接死亡后按需重连）。
     /// The router slots and the iOS gateway slot never make a reader wait for a connect (see
     /// `conn_slot`).
@@ -419,6 +433,7 @@ fn test_state(directory: &std::path::Path) -> Arc<ServerState> {
         popup_announcement: Default::default(),
         popup_focus: Mutex::new(PopupFocusArbiter::new()),
         popup_inbox: Mutex::new(Default::default()),
+        inherited: inherited::Inherited::adopting([]),
         dd_router: Default::default(),
         fs_router: Default::default(),
         tg_router: Default::default(),
@@ -1013,6 +1028,7 @@ async fn serve(
     _lock: &LockGuard,
     exit: Arc<Mutex<super::handoff::Intent>>,
     startup_fp: lifecycle::Fingerprint,
+    inherited: Arc<inherited::Inherited>,
 ) -> i32 {
     super::recovery::enter_daemon();
     let listener = match transport::bind() {
@@ -1126,6 +1142,7 @@ async fn serve(
         popup_announcement: Default::default(),
         popup_focus: Mutex::new(PopupFocusArbiter::new()),
         popup_inbox: Mutex::new(super::popup_inbox::Host::default()),
+        inherited,
         dd_router: Default::default(),
         fs_router: Default::default(),
         tg_router: Default::default(),
@@ -1154,6 +1171,9 @@ async fn serve(
         replay: Mutex::new(crate::daemon::ask_dedup::ReplayCache::new()),
         ios: Default::default(),
     });
+    // Waiting for the inherited children starts before anything else can need the answer (the
+    // restore below asks whether a kept popup host is still there).
+    state.inherited.start();
 
     let mut background_tasks = Vec::new();
     #[cfg(target_os = "macos")]

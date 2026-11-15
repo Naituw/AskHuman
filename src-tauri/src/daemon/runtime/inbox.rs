@@ -1,6 +1,7 @@
 //! Shared Popup Host dispatch, authenticated request routing, and bounded recovery.
 use super::*;
-use crate::daemon::popup_inbox::{Launch, Lease, Recovery};
+use crate::daemon::popup_inbox::{Host, Launch, Lease, Recovery, SavedHost};
+use inherited::{Ending, Inherited};
 use std::collections::HashSet;
 
 pub(super) async fn write_popup_message<W: tokio::io::AsyncWrite + Unpin>(
@@ -501,8 +502,9 @@ fn spawn_inbox_host(lease: Lease, state: &Arc<ServerState>) -> bool {
 }
 
 /// Give a host [`HOST_STARTUP_TIMEOUT`] to authenticate, then give its lease up: the process the
-/// daemon started for it is ended and recovery decides what happens to the requests waiting for
-/// a host. Also used for a host kept across a live update, which has no process of ours to end.
+/// daemon holds for it is ended and recovery decides what happens to the requests waiting for a
+/// host. Also used for a host kept across a live update, whose process is ended too when it is
+/// this daemon's own child (see [`adopt_host`]).
 pub(super) async fn expire_unauthenticated(state: Arc<ServerState>, generation: u64) {
     let expired = startup_window(
         || state.closing.load(Ordering::SeqCst),
@@ -542,10 +544,87 @@ enum Cause {
     /// A host did not authenticate in time. Acts only if it is still waiting, in the same step
     /// that authentication would have taken it in, so a host that got in first is left alone.
     StartupTimeout,
+    /// The process of a host kept across a live update is gone before it reconnected. Acts only
+    /// if its lease is still waiting, like [`Cause::StartupTimeout`].
+    HostExited,
 }
 
 pub(super) fn recover_inbox(state: &Arc<ServerState>, generation: u64) {
     recover(state, generation, Cause::Disconnected);
+}
+
+/// The host saved by the previous image, ready to be published as the current one. When it is
+/// this daemon's own child, inherited across the update, giving its lease up ends the process:
+/// no waiter of ours holds it, so nothing else ever would, and a host left running keeps
+/// reconnecting to a daemon that no longer expects it.
+///
+/// That is only done for a host the start time identifies: the one on record is the one the
+/// process with that pid has now. Anything less cannot tell the saved host from another child that
+/// was given its pid after the host was gone (`process_alive` accepts such a pid, since it only
+/// decides whether to wait), and a wrong process must not be ended. Such a host is still waited
+/// for and still recovered when it exits. Once identified, the pid stays this process until it is
+/// reaped, and [`Inherited`] is the only thing that reaps it: the proof it makes before the signal
+/// is that the pid is still unreaped.
+pub(super) fn adopt_host(state: &ServerState, saved: SavedHost) -> Host<InteractionEntry> {
+    let pid = saved.pid;
+    let identified = is_the_saved_process(
+        &saved,
+        crate::daemon::recovery::process_birth(pid).as_deref(),
+    );
+    let mut host = Host::restore(saved);
+    if identified {
+        // Attached before the host is published: no way of giving the lease up can come first.
+        let inherited = state.inherited.clone();
+        host.end_when_abandoned(move || end_inherited_host(&inherited, pid));
+    } else {
+        log(&format!(
+            "popup host pid={pid} cannot be identified by its start time; it will not be ended if given up"
+        ));
+    }
+    host
+}
+
+/// Whether the start time on record is the one the process has now. Neither side being known is
+/// not enough, and neither is one of them.
+fn is_the_saved_process(saved: &SavedHost, current_birth: Option<&str>) -> bool {
+    matches!(
+        (saved.birth.as_deref(), current_birth),
+        (Some(recorded), Some(current)) if recorded == current
+    )
+}
+
+fn end_inherited_host(inherited: &Inherited, pid: u32) {
+    match inherited.end(pid) {
+        Ending::Signalled => log(&format!(
+            "popup host pid={pid} was given up before it reconnected; ending it"
+        )),
+        Ending::Failed(error) => log(&format!("cannot end popup host pid={pid}: {error}")),
+        // Not ours to end, or already gone: nothing is left to do.
+        Ending::AlreadyGone | Ending::NotOurs => {}
+    }
+}
+
+/// Recovers the lease of a host kept across a live update as soon as its process is gone, instead
+/// of when the startup timer runs out. Does nothing unless the host is this daemon's own inherited
+/// child and has not reconnected yet. Call it once the restore is complete: recovery decides what
+/// to start from the requests waiting for a host, and those are only all known by then.
+///
+/// The watcher holds the state weakly. It lasts as long as the host does, and a daemon that
+/// resumes after a failed update builds a new state; the old one must not be kept alive for it.
+pub(super) fn recover_adopted_host_when_gone(state: &Arc<ServerState>) {
+    let Some((generation, pid)) = state.popup_inbox.lock().unwrap().adopted_waiting() else {
+        return;
+    };
+    let Some(mut watch) = state.inherited.watch(pid) else {
+        return;
+    };
+    let state = Arc::downgrade(state);
+    tokio::spawn(async move {
+        watch.exited().await;
+        if let Some(state) = state.upgrade() {
+            recover(&state, generation, Cause::HostExited);
+        }
+    });
 }
 
 fn recover(state: &Arc<ServerState>, generation: u64, cause: Cause) {
@@ -561,10 +640,15 @@ fn recover(state: &Arc<ServerState>, generation: u64, cause: Cause) {
         match cause {
             Cause::Disconnected => host.disconnected(generation, Instant::now(), prewarm),
             Cause::StartupTimeout => host.startup_timed_out(generation, Instant::now(), prewarm),
+            Cause::HostExited => host.host_exited(generation, Instant::now(), prewarm),
         }
     };
-    if matches!(cause, Cause::StartupTimeout) && !matches!(recovery, Recovery::Stale) {
-        log("popup host startup timed out");
+    if !matches!(recovery, Recovery::Stale) {
+        match cause {
+            Cause::StartupTimeout => log("popup host startup timed out"),
+            Cause::HostExited => log("popup host exited before it reconnected"),
+            Cause::Disconnected => {}
+        }
     }
     match recovery {
         Recovery::Restart(lease) => {

@@ -453,6 +453,10 @@ async fn popup_reaper_waits_for_exit_after_stderr_closes() {
 }
 
 fn state() -> Arc<ServerState> {
+    state_inheriting(Inherited::adopting([]))
+}
+
+fn state_inheriting(inherited: Arc<Inherited>) -> Arc<ServerState> {
     let mut config = AppConfig::default();
     config.general.popup_prewarm = false;
     Arc::new(ServerState {
@@ -474,6 +478,7 @@ fn state() -> Arc<ServerState> {
         popup_announcement: Default::default(),
         popup_focus: Mutex::new(PopupFocusArbiter::new()),
         popup_inbox: Mutex::new(Default::default()),
+        inherited,
         dd_router: Default::default(),
         fs_router: Default::default(),
         tg_router: Default::default(),
@@ -1126,4 +1131,226 @@ async fn independent_popup_reconnect_clears_the_previous_update_banner() {
         }
     ));
     task.abort();
+}
+
+/// Hosts kept across a live update that are this daemon's own children: real processes, nobody
+/// holding a waiter for them, as after an in-place update.
+#[cfg(unix)]
+mod adopted_hosts {
+    use super::*;
+    use crate::daemon::server_impl::inherited::testing::{
+        exists, orphaned, wait_until_zombie, Stranger,
+    };
+    use crate::daemon::server_impl::inherited::{Gone, Inherited};
+    use std::os::unix::process::ExitStatusExt;
+
+    /// Publishes the saved host the way the end of a restore does, and returns its generation.
+    fn adopt(state: &Arc<ServerState>, pid: u32, birth: Option<&str>) -> u64 {
+        let saved = SavedHost {
+            lease: Lease {
+                generation: 7,
+                token: "saved".into(),
+            },
+            pid,
+            birth: birth.map(str::to_owned),
+        };
+        *state.popup_inbox.lock().unwrap() = adopt_host(state, saved);
+        7
+    }
+
+    /// The start time the daemon records for a running process, as a host's record carries it.
+    fn born(pid: u32) -> String {
+        crate::daemon::recovery::process_birth(pid).expect("a running child has a start time")
+    }
+
+    fn lease_given_up(state: &ServerState) -> bool {
+        state.popup_inbox.lock().unwrap().generation().is_none()
+    }
+
+    async fn eventually(what: &str, mut done: impl FnMut() -> bool) {
+        let deadline = Instant::now() + Duration::from_secs(10);
+        while !done() {
+            assert!(Instant::now() < deadline, "{what}");
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+    }
+
+    async fn reaped(inherited: &Inherited, pid: u32) -> Gone {
+        let mut watch = inherited.watch(pid).expect("an inherited child");
+        tokio::time::timeout(Duration::from_secs(10), watch.exited())
+            .await
+            .expect("the child is reaped")
+    }
+
+    #[tokio::test]
+    async fn a_kept_host_that_exits_before_it_reconnects_is_recovered_at_once() {
+        let (pid, held) = orphaned("read line; exit 0");
+        let inherited = Inherited::adopting([pid]);
+        inherited.start();
+        let state = state_inheriting(inherited.clone());
+        adopt(&state, pid, Some(&born(pid)));
+        recover_adopted_host_when_gone(&state);
+
+        // No startup timer runs here: only the host's own exit can end the wait.
+        tokio::time::sleep(Duration::from_millis(300)).await;
+        assert!(!lease_given_up(&state), "still waiting while the host runs");
+
+        drop(held);
+        eventually("the lease of the exited host is recovered", || {
+            lease_given_up(&state)
+        })
+        .await;
+        reaped(&inherited, pid).await;
+    }
+
+    #[tokio::test]
+    async fn a_kept_host_that_had_exited_before_the_watch_began_is_recovered_at_once() {
+        let (pid, held) = orphaned("read line; exit 0");
+        // Recorded while it ran, as the previous image did.
+        let recorded = born(pid);
+        drop(held);
+        wait_until_zombie(pid);
+        let inherited = Inherited::adopting([pid]);
+        let state = state_inheriting(inherited);
+        adopt(&state, pid, Some(&recorded));
+        recover_adopted_host_when_gone(&state);
+        eventually("the lease of the exited host is recovered", || {
+            lease_given_up(&state)
+        })
+        .await;
+    }
+
+    #[tokio::test]
+    async fn a_kept_host_that_reconnected_is_not_recovered_when_it_exits() {
+        let (pid, held) = orphaned("read line; exit 0");
+        let inherited = Inherited::adopting([pid]);
+        inherited.start();
+        let state = state_inheriting(inherited.clone());
+        let generation = adopt(&state, pid, Some(&born(pid)));
+        recover_adopted_host_when_gone(&state);
+        let (tx, _rx) = tokio::sync::mpsc::unbounded_channel();
+        state
+            .popup_inbox
+            .lock()
+            .unwrap()
+            .connect("saved", tx)
+            .unwrap();
+
+        drop(held);
+        reaped(&inherited, pid).await;
+        // The watcher has had its notice; a connected host's end is its connection's to report.
+        tokio::time::sleep(Duration::from_millis(200)).await;
+        let host = state.popup_inbox.lock().unwrap();
+        assert_eq!(host.generation(), Some(generation));
+        assert!(host.sender().is_some());
+    }
+
+    #[tokio::test]
+    async fn giving_up_a_kept_host_ends_its_process() {
+        let (pid, _held) = orphaned("exec sleep 600");
+        let inherited = Inherited::adopting([pid]);
+        inherited.start();
+        let state = state_inheriting(inherited.clone());
+        adopt(&state, pid, Some(&born(pid)));
+
+        // Any way of giving the lease up does it; the startup timer is one of them.
+        assert!(state.popup_inbox.lock().unwrap().stop_idle().is_none());
+
+        let Gone::Reaped(status) = reaped(&inherited, pid).await else {
+            panic!("a child of ours is reaped");
+        };
+        assert_eq!(status.signal(), Some(libc::SIGKILL));
+        assert!(!exists(pid));
+    }
+
+    #[tokio::test]
+    async fn a_kept_host_with_no_start_time_on_record_is_not_ended() {
+        let (pid, _held) = orphaned("exec sleep 600");
+        let inherited = Inherited::adopting([pid]);
+        inherited.start();
+        let state = state_inheriting(inherited.clone());
+        adopt(&state, pid, None);
+
+        assert!(state.popup_inbox.lock().unwrap().stop_idle().is_none());
+
+        // A pid alone does not say that this is the host that was saved.
+        tokio::time::sleep(Duration::from_millis(300)).await;
+        assert!(exists(pid), "left running");
+        inherited.end(pid);
+        reaped(&inherited, pid).await;
+    }
+
+    #[tokio::test]
+    async fn a_kept_host_whose_start_time_is_not_the_one_on_record_is_not_ended() {
+        // A pid that another child was given after the host: `process_alive` would not accept
+        // this, but the adoption must not depend on it for the one thing it cannot undo.
+        let (pid, _held) = orphaned("exec sleep 600");
+        let inherited = Inherited::adopting([pid]);
+        inherited.start();
+        let state = state_inheriting(inherited.clone());
+        adopt(&state, pid, Some("an earlier process"));
+
+        assert!(state.popup_inbox.lock().unwrap().stop_idle().is_none());
+
+        tokio::time::sleep(Duration::from_millis(300)).await;
+        assert!(exists(pid), "left running");
+        inherited.end(pid);
+        reaped(&inherited, pid).await;
+    }
+
+    #[test]
+    fn only_a_start_time_that_matches_the_one_on_record_identifies_a_host() {
+        let saved = |birth: Option<&str>| SavedHost {
+            lease: Lease {
+                generation: 1,
+                token: "t".into(),
+            },
+            pid: 1,
+            birth: birth.map(str::to_owned),
+        };
+        assert!(is_the_saved_process(&saved(Some("a")), Some("a")));
+        assert!(!is_the_saved_process(&saved(Some("a")), Some("b")));
+        // `process_alive` lets these through; nothing here says it is the same process.
+        assert!(!is_the_saved_process(&saved(Some("a")), None));
+        assert!(!is_the_saved_process(&saved(None), Some("a")));
+        assert!(!is_the_saved_process(&saved(None), None));
+    }
+
+    #[tokio::test]
+    async fn a_kept_host_that_is_not_our_child_is_neither_watched_nor_ended() {
+        let stranger = Stranger::start();
+        let inherited = Inherited::adopting([stranger.0]);
+        let state = state_inheriting(inherited);
+        adopt(&state, stranger.0, Some(&born(stranger.0)));
+        recover_adopted_host_when_gone(&state);
+
+        // Its exit would not be noticed, so it is not waited for...
+        unsafe { libc::kill(stranger.0 as libc::pid_t, libc::SIGSTOP) };
+        tokio::time::sleep(Duration::from_millis(300)).await;
+        assert!(!lease_given_up(&state));
+        // ...and giving the lease up does not touch it.
+        assert!(state.popup_inbox.lock().unwrap().stop_idle().is_none());
+        tokio::time::sleep(Duration::from_millis(100)).await;
+        assert!(exists(stranger.0));
+        unsafe { libc::kill(stranger.0 as libc::pid_t, libc::SIGCONT) };
+    }
+
+    #[tokio::test]
+    async fn the_exit_watch_does_not_keep_the_daemon_state_alive() {
+        let (pid, held) = orphaned("read line; exit 0");
+        let inherited = Inherited::adopting([pid]);
+        inherited.start();
+        let state = state_inheriting(inherited.clone());
+        adopt(&state, pid, Some(&born(pid)));
+        recover_adopted_host_when_gone(&state);
+
+        // A daemon that resumes after a failed update builds another state; the old one is not
+        // kept for as long as the host lives.
+        let weak = Arc::downgrade(&state);
+        drop(state);
+        assert!(weak.upgrade().is_none());
+
+        drop(held);
+        reaped(&inherited, pid).await;
+    }
 }
