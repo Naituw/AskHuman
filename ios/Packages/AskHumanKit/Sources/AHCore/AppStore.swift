@@ -198,6 +198,17 @@ public final class AppStore {
         }
     }
 
+    /// How often the Inbox says how much data this month has used (`trafficReminder`).
+    public var trafficReminderStep: TrafficReminderStep {
+        didSet { defaults.set(trafficReminderStep.rawValue, forKey: Self.trafficReminderStepKey) }
+    }
+
+    /// The highest data-use reminder the reader closed, with its month. It and the lower ones stay away until the month
+    /// ends; the next multiple of the step is a new reminder.
+    public internal(set) var closedTrafficReminder: ClosedTrafficReminder? {
+        didSet { defaults.set(closedTrafficReminder?.stored, forKey: Self.closedTrafficReminderKey) }
+    }
+
     /// The countdown on the strip of the open page whose request ended elsewhere, while it runs (docs/specs/ios-answer-flow.md §3.8).
     public internal(set) var endedCountdown: EndedCountdown?
     /// How long that countdown is; tests shorten or stretch it.
@@ -258,6 +269,8 @@ public final class AppStore {
     @ObservationIgnored var interjectComposers: [String: InterjectComposer] = [:]
 
     private static let autoAdvanceKey = "ah.autoAdvance"
+    private static let trafficReminderStepKey = "ah.trafficReminderStep"
+    private static let closedTrafficReminderKey = "ah.closedTrafficReminder"
 
     public init(backend: RemoteBackend, drafts: DraftStore, defaults: UserDefaults = .standard) {
         self.backend = backend
@@ -266,6 +279,9 @@ public final class AppStore {
         todos = TodosStore(backend: backend, defaults: defaults)
         developer = DeveloperTools(backend: backend, defaults: defaults)
         autoAdvance = defaults.object(forKey: Self.autoAdvanceKey) as? Bool ?? true
+        trafficReminderStep = (defaults.object(forKey: Self.trafficReminderStepKey) as? Int)
+            .flatMap(TrafficReminderStep.init(rawValue:)) ?? .standard
+        closedTrafficReminder = defaults.string(forKey: Self.closedTrafficReminderKey).flatMap(ClosedTrafficReminder.init(stored:))
     }
 
     // MARK: lifecycle

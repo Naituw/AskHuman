@@ -1662,6 +1662,16 @@
         }
       }
     },
+    "Data use reminders" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "流量提醒"
+          }
+        }
+      }
+    },
     "Default" : {
       "localizations" : {
         "zh-Hans" : {
@@ -2058,6 +2068,16 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "离开模式下的升级提问"
+          }
+        }
+      }
+    },
+    "Every %lld GB" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "每 %lld GB"
           }
         }
       }
@@ -5371,6 +5391,16 @@
         }
       }
     },
+    "The Inbox says so when this month's use gets close to each step. Close a reminder and the next one comes at the next step." : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "本月流量快到每一档时，收件箱会提醒你。关掉一条提醒后，要到快到下一档时才会再提醒。"
+          }
+        }
+      }
+    },
     "The Mac" : {
       "localizations" : {
         "zh-Hans" : {
@@ -5931,22 +5961,22 @@
         }
       }
     },
-    "This month's data use is close to the broker's free allowance. The service pauses when it runs out." : {
+    "This month's data use is close to %lld GB." : {
       "localizations" : {
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "本月流量快用完 Broker 的免费额度了。用完后服务会暂停。"
+            "value" : "本月流量快到 %lld GB 了。"
           }
         }
       }
     },
-    "This month's free data allowance may be used up, so the broker may refuse connections." : {
+    "This month's data use is over %lld GB." : {
       "localizations" : {
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "本月的免费流量额度可能已用完，Broker 可能会拒绝连接。"
+            "value" : "本月流量已超过 %lld GB。"
           }
         }
       }

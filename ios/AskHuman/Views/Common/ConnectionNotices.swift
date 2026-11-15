@@ -22,7 +22,7 @@ struct ConnectionNotices: View {
         if !notices.isEmpty {
             Section {
                 ForEach(notices, id: \.id) { notice in
-                    NoticeRow(id: notice.id, text: notice.text, symbol: notice.symbol, tint: notice.tint)
+                    NoticeRow(id: notice.id, text: notice.text, symbol: notice.symbol, tint: notice.tint, onClose: notice.onClose)
                 }
             }
         }
@@ -33,6 +33,7 @@ struct ConnectionNotices: View {
         var text: LocalizedStringKey
         var symbol: String
         var tint: Color
+        var onClose: (() -> Void)?
     }
 
     private func notices() -> [Notice] {
@@ -54,20 +55,17 @@ struct ConnectionNotices: View {
             break
         }
         if scope == .inbox {
-            if let traffic = store.state.brokerTraffic?.stats ?? store.state.traffic {
-                switch traffic.level {
-                case .ok: break
-                case .warning:
-                    result.append(Notice(
-                        id: "traffic", text: "This month's data use is close to the broker's free allowance. The service pauses when it runs out.",
-                        symbol: "gauge.with.dots.needle.67percent", tint: .orange
-                    ))
-                case .exhausted:
-                    result.append(Notice(
-                        id: "traffic", text: "This month's free data allowance may be used up, so the broker may refuse connections.",
-                        symbol: "gauge.with.dots.needle.100percent", tint: .red
-                    ))
-                }
+            // It only counts, and says nothing of the broker's plan. Closing it hides it until the next GB (or month).
+            if let reminder = store.trafficReminder {
+                result.append(Notice(
+                    id: "traffic",
+                    text: reminder.reached
+                        ? "This month's data use is over \(reminder.gigabytes) GB."
+                        : "This month's data use is close to \(reminder.gigabytes) GB.",
+                    symbol: reminder.reached ? "gauge.with.dots.needle.100percent" : "gauge.with.dots.needle.67percent",
+                    tint: .secondary,
+                    onClose: { store.closeTrafficReminder() }
+                ))
             }
             if store.state.clockSkew {
                 result.append(Notice(

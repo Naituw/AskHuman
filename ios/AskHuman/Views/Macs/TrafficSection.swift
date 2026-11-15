@@ -7,6 +7,25 @@ struct TrafficSection: View {
     @Environment(AppStore.self) private var store
 
     var body: some View {
+        @Bindable var store = store
+        Section {
+            Picker("Data use reminders", selection: $store.trafficReminderStep) {
+                ForEach(TrafficReminderStep.allCases, id: \.self) { step in
+                    Group {
+                        if step == .off {
+                            Text("Off")
+                        } else {
+                            Text("Every \(step.rawValue) GB")
+                        }
+                    }
+                    .tag(step)
+                }
+            }
+            .accessibilityIdentifier("traffic-reminder-step")
+        } footer: {
+            Text("The Inbox says so when this month's use gets close to each step. Close a reminder and the next one comes at the next step.")
+        }
+
         Section {
             if let summary = store.state.brokerTraffic {
                 LabeledContent("Recorded devices", value: "\(summary.records.count)")

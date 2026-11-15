@@ -293,15 +293,6 @@ public struct MacMeta: Codable, Equatable, Sendable {
     }
 }
 
-/// How much of the broker's free monthly quota the counted traffic is likely to have used.
-public enum TrafficLevel: Sendable, Equatable {
-    case ok
-    /// From 80% of the free quota on: the service pauses once it is used up.
-    case warning
-    /// By this phone's count the quota may already be gone.
-    case exhausted
-}
-
 /// Monthly broker traffic counters, for the "data used" line on the Mac screen.
 public struct TrafficStats: Codable, Equatable, Sendable {
     public var month: String
@@ -320,16 +311,9 @@ public struct TrafficStats: Codable, Equatable, Sendable {
 
     /// EMQX Serverless free tier: 1 GiB a month, inbound plus outbound.
     public static let freeQuotaBytes: UInt64 = 1 << 30
-    public static let warningShare = 0.8
 
     /// Each endpoint records its own broker-facing leg. The device ledger adds those legs.
     public var brokerEstimateBytes: UInt64 { BrokerTraffic.add(sentBytes, receivedBytes) }
 
     public var quotaShare: Double { Double(brokerEstimateBytes) / Double(Self.freeQuotaBytes) }
-
-    public var level: TrafficLevel {
-        let share = quotaShare
-        if share >= 1 { return .exhausted }
-        return share >= Self.warningShare ? .warning : .ok
-    }
 }

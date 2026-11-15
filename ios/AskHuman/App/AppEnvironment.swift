@@ -111,6 +111,12 @@ struct LaunchOptions {
     /// less than 0.05, when it is not given). A test that needs one text on the screen before the next arrives slows the frames
     /// down: at the usual pace the second text came a third of a second after the first, which a slow first render overtook.
     var watchTick: Double?
+    /// `-AHTrafficStep 0|1|2|5|10`: how often the Inbox reminds about the month's data use, in GB (0 is off; the standard
+    /// step when it is not given).
+    var trafficStep: Int?
+    /// `-AHTrafficGate <path>`: the month's traffic takes a jump to 1.9 GB, close to the second GB, once that file exists (a
+    /// test of the reminder that comes back at the next GB closes the first one, then makes the file).
+    var trafficGate: String?
 
     init(defaults: UserDefaults = .standard) {
         mock = defaults.bool(forKey: "AHMock")
@@ -164,6 +170,8 @@ struct LaunchOptions {
         watchText = defaults.string(forKey: "AHWatchText")
         watchTextNext = defaults.string(forKey: "AHWatchTextNext")
         if defaults.object(forKey: "AHWatchTick") != nil { watchTick = max(0.05, defaults.double(forKey: "AHWatchTick")) }
+        if defaults.object(forKey: "AHTrafficStep") != nil { trafficStep = defaults.integer(forKey: "AHTrafficStep") }
+        trafficGate = defaults.string(forKey: "AHTrafficGate")
     }
 }
 
@@ -196,6 +204,7 @@ final class AppEnvironment {
             if let kind = launch.watchText { Task { await backend.setWatchText(kind) } }
             if let kind = launch.watchTextNext { Task { await backend.setWatchTextNext(kind) } }
             if let seconds = launch.watchTick { Task { await backend.setWatchTick(seconds) } }
+            if let path = launch.trafficGate { Task { await backend.setTrafficGate(path: path) } }
             if let kind = launch.followEvent {
                 Task {
                     try? await Task.sleep(for: .seconds(2))
@@ -219,6 +228,7 @@ final class AppEnvironment {
             if let autoAdvance = launch.autoAdvance { suite.set(autoAdvance, forKey: "ah.autoAdvance") }
             if let developerMode = launch.developerMode { suite.set(developerMode, forKey: "ah.developerMode") }
             store = AppStore(backend: backend, drafts: drafts, defaults: suite)
+            if let step = launch.trafficStep.flatMap(TrafficReminderStep.init(rawValue:)) { store.trafficReminderStep = step }
             if let hold = launch.advanceHold { store.advanceTiming.hold = .seconds(hold) }
             if let settle = launch.advanceSettle { store.advanceTiming.settle = .seconds(settle) }
             if let seconds = launch.endedCountdown { store.endedCountdownLength = .seconds(seconds) }

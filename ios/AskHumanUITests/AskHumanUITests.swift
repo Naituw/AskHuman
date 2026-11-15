@@ -758,12 +758,63 @@ final class AskHumanUITests: XCTestCase {
         shot("62-answer-offline")
     }
 
-    func testTheInboxWarnsBeforeTheFreeDataAllowanceRunsOut() {
+    func testTheInboxSaysPlainlyThatTheMonthIsCloseToAGigabyte() {
         launch("quota")
         _ = requireElement("inbox-row-req-select")
         let notice = requireElement("notice-traffic")
-        XCTAssertTrue(notice.label.contains(localized("close to the broker's free allowance", "快用完")), notice.label)
+        XCTAssertTrue(notice.label.contains(localized("close to 1 GB", "快到 1 GB")), notice.label)
+        // It only counts: what the broker's plan does at the end of the allowance is not its business.
+        XCTAssertFalse(notice.label.contains(localized("allowance", "额度")), notice.label)
+        XCTAssertFalse(notice.label.contains(localized("pauses", "暂停")), notice.label)
         shot("63-inbox-quota")
+    }
+
+    func testAClosedDataUseNoticeComesBackAtTheNextGigabyte() {
+        let gate = "/tmp/ah-traffic-gate"
+        try? FileManager.default.removeItem(atPath: gate)
+        addTeardownBlock { try? FileManager.default.removeItem(atPath: gate) }
+        launch("quota", extra: ["-AHTrafficGate", gate])
+        _ = requireElement("inbox-row-req-select")
+        _ = requireElement("notice-traffic")
+        let close = requireElement("notice-traffic-close")
+        XCTAssertGreaterThanOrEqual(close.frame.width, 43.9, "the ✕ is a small mark with a finger-sized target")
+        XCTAssertGreaterThanOrEqual(close.frame.height, 43.9)
+        close.tap()
+        XCTAssertTrue(gone("notice-traffic"), "closing the notice takes it away")
+        XCTAssertTrue(element("inbox-row-req-select").exists, "the requests stay")
+        shot("63-inbox-quota-closed")
+        // The month's use grows to close to the second GB (the mock does it when the file is there): a new reminder.
+        FileManager.default.createFile(atPath: gate, contents: Data())
+        let next = requireElement("notice-traffic", timeout: 30)
+        XCTAssertTrue(next.label.contains(localized("close to 2 GB", "快到 2 GB")), next.label)
+        shot("63-inbox-quota-next")
+    }
+
+    func testTheDataUseReminderIsSetOnTheMacsPage() {
+        launch("quota", extra: ["-AHTab", "macs"])
+        func choose(_ title: String) {
+            reveal("traffic-reminder-step")
+            requireElement("traffic-reminder-step").tap()
+            let entry = app.buttons.matching(NSPredicate(format: "label == %@", title)).firstMatch
+            XCTAssertTrue(entry.waitForExistence(timeout: 5), "the reminder menu has no entry \(title)")
+            entry.tap()
+        }
+        reveal("traffic-reminder-step")
+        shot("63-macs-reminder")
+        // The month is at 0.9 GB: a step of 2 GB has nothing to say yet, and neither has a step that is off.
+        choose(localized("Every 2 GB", "每 2 GB"))
+        tab(0)
+        _ = requireElement("inbox-row-req-select")
+        XCTAssertTrue(gone("notice-traffic", timeout: 5), "close to 2 GB it is not")
+        tab(4)
+        choose(localized("Off", "已关闭"))
+        tab(0)
+        _ = requireElement("inbox-row-req-select")
+        XCTAssertTrue(gone("notice-traffic", timeout: 5), "off means off")
+        tab(4)
+        choose(localized("Every 1 GB", "每 1 GB"))
+        tab(0)
+        _ = requireElement("notice-traffic")
     }
 
     /// How long the mocked first sync takes in the tests below. The title only says "Updating…" while
