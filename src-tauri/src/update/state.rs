@@ -107,28 +107,6 @@ pub fn is_dismissed(version: &str) -> bool {
     load().dismissed_versions.iter().any(|item| item == version)
 }
 
-/// Dismiss one version from proactive prompts.
-pub fn dismiss(version: &str) {
-    mutate_at(
-        &paths::update_state_file(),
-        &paths::update_state_lock(),
-        |state| {
-            if !state.dismissed_versions.iter().any(|item| item == version) {
-                state.dismissed_versions.push(version.to_string());
-            }
-        },
-    );
-}
-
-/// Clear all dismissed versions.
-pub fn clear_dismissed() {
-    mutate_at(
-        &paths::update_state_file(),
-        &paths::update_state_lock(),
-        |state| state.dismissed_versions.clear(),
-    );
-}
-
 /// Set or clear the pending-restart flag.
 pub fn set_pending(pending: bool) {
     mutate_at(

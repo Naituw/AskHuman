@@ -59,10 +59,6 @@ pub fn load() -> UiState {
     load_at(&path())
 }
 
-pub fn save(state: &UiState) {
-    save_at(&path(), state);
-}
-
 /// Load, mutate and save in one step. In-process callers are serialized by a static mutex; the
 /// file is not locked across processes: every write is a low-frequency, user-triggered, single
 /// field change (the same trade-off the legacy tip flag made).

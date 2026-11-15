@@ -279,13 +279,10 @@ mod unix {
             self
         }
 
+        /// Move the deadline of an existing connection (tests shorten it mid-conversation).
+        #[cfg(test)]
         pub fn set_deadline(&mut self, deadline: Option<Instant>) {
             self.deadline = deadline;
-        }
-
-        /// The handshake of this connection, if one succeeded.
-        pub fn hello_info(&self) -> Option<&HelloInfo> {
-            self.handshake.as_ref()
         }
 
         #[cfg(test)]
@@ -523,10 +520,6 @@ mod fallback {
 
         pub fn with_deadline(self, _deadline: Option<std::time::Instant>) -> HelperClient {
             self
-        }
-
-        pub fn hello_info(&self) -> Option<&HelloInfo> {
-            None
         }
 
         pub fn status(&mut self) -> Result<Value, NetError> {
