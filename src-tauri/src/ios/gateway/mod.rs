@@ -53,9 +53,7 @@ use super::envelope::{self, Plain, Scope};
 use super::push::{PushClient, PushOutcome};
 use super::store::{PhoneState, Store, Traffic};
 use super::transport::{BrokerTransport, TransportEvent};
-use super::wire::{
-    self, t, AgentView, Caps, Msg, Presence, SlotInfo, CLOCK_SKEW_MS, KID_PAIR, PROTO,
-};
+use super::wire::{self, t, AgentView, Caps, Msg, Presence, SlotInfo, CLOCK_SKEW_MS, PROTO};
 use crate::config::IosChannelConfig;
 use crate::daemon::away::{AwayOp, SessionSetting};
 
@@ -1733,6 +1731,3 @@ fn hex16() -> String {
         .map(|b| format!("{b:02x}"))
         .collect()
 }
-
-#[allow(dead_code)]
-const _: u32 = KID_PAIR;
