@@ -103,6 +103,14 @@ struct LaunchOptions {
     /// `-AHWatchText thinking|answer|long|short`: the working Agent's live view has a latest text of that kind (the page's
     /// expand and collapse need one that does not fit the preview, and one that does).
     var watchText: String?
+    /// `-AHWatchTextNext thinking|answer|long|short`: and from its third frame on (a third of a second, at the usual pace of
+    /// the frames) it says that one instead, which the page shows once its replacement interval allows (the page's tests of a
+    /// text replaced by itself).
+    var watchTextNext: String?
+    /// `-AHWatchTick 1`: the live view of the working Agent sends a frame every that many seconds (twice the latency, and not
+    /// less than 0.05, when it is not given). A test that needs one text on the screen before the next arrives slows the frames
+    /// down: at the usual pace the second text came a third of a second after the first, which a slow first render overtook.
+    var watchTick: Double?
 
     init(defaults: UserDefaults = .standard) {
         mock = defaults.bool(forKey: "AHMock")
@@ -154,6 +162,8 @@ struct LaunchOptions {
         if defaults.object(forKey: "AHHistoryDelay") != nil { historyDelay = max(0, defaults.double(forKey: "AHHistoryDelay")) }
         historyGate = defaults.string(forKey: "AHHistoryGate")
         watchText = defaults.string(forKey: "AHWatchText")
+        watchTextNext = defaults.string(forKey: "AHWatchTextNext")
+        if defaults.object(forKey: "AHWatchTick") != nil { watchTick = max(0.05, defaults.double(forKey: "AHWatchTick")) }
     }
 }
 
@@ -184,6 +194,8 @@ final class AppEnvironment {
             if let delay = launch.historyDelay { Task { await backend.setSessionHistoryDelay(realSeconds: delay) } }
             if let gate = launch.historyGate { Task { await backend.setSessionHistoryGate(path: gate) } }
             if let kind = launch.watchText { Task { await backend.setWatchText(kind) } }
+            if let kind = launch.watchTextNext { Task { await backend.setWatchTextNext(kind) } }
+            if let seconds = launch.watchTick { Task { await backend.setWatchTick(seconds) } }
             if let kind = launch.followEvent {
                 Task {
                     try? await Task.sleep(for: .seconds(2))

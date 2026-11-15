@@ -174,6 +174,8 @@ final class AskHumanAgentPageUITests: XCTestCase {
         XCTAssertFalse(update.exists, "nothing is waiting yet")
         text.press(forDuration: 0.4)
         XCTAssertTrue(update.waitForExistence(timeout: 5), "the new text waits for the finger to leave")
+        XCTAssertGreaterThanOrEqual(update.frame.height, fingertip, "\"New content\" is as tall as a fingertip")
+        XCTAssertGreaterThanOrEqual(update.frame.width, fingertip, "\"New content\" is as wide as a fingertip")
     }
 
     /// The hold is a lease, not a lock: once the finger has left and the text has been held for a moment, what the Mac said
@@ -186,6 +188,24 @@ final class AskHumanAgentPageUITests: XCTestCase {
         text.press(forDuration: 0.4)
         XCTAssertTrue(update.waitForExistence(timeout: 5), "the new text waits while it is held")
         XCTAssertTrue(eventually(timeout: 25) { !update.exists }, "the new text replaced the old one without a tap")
+    }
+
+    /// "New content" is only there while the text is held: a finger on it, and the 3 seconds after. When the lease is over it
+    /// goes, while the text it offered still waits for the 10 seconds between replacements. The view used to wake only when
+    /// the text was due, so the offer stayed on the screen until the replacement, up to seven seconds after the lease.
+    func testNewContentGoesWhenTheLeaseEndsWhileTheTextStillWaitsForTheInterval() throws {
+        launch(contentSize: nil, open: false)
+        requireElement("agent-row-\(workingAgent)").tap()
+        let text = requireElement("watch-text")
+        let shownAt = Date()
+        let update = element("watch-text-update")
+        let first = app.staticTexts.matching(NSPredicate(format: "label CONTAINS %@", "我已经定位到不稳定的原因")).firstMatch
+        XCTAssertTrue(first.exists, "the first text is shown")
+        text.press(forDuration: 0.4)
+        XCTAssertTrue(update.waitForExistence(timeout: 5), "the new text waits while it is held")
+        try XCTSkipIf(Date().timeIntervalSince(shownAt) > 5, "too slow a run to tell the end of the lease from the end of the interval")
+        XCTAssertTrue(eventually(timeout: 8) { !update.exists }, "the offer went away when the lease ended")
+        XCTAssertTrue(first.exists, "while the text it offered was still waiting for the interval")
     }
 
     /// Only a finger on the text holds it. One that scrolls the page somewhere else does not (it used to: any drag down the
@@ -231,10 +251,15 @@ final class AskHumanAgentPageUITests: XCTestCase {
         XCTAssertTrue(eventually { toggle.label == self.localized("Collapse", "收起") && windowHeight() > closed + 100 },
                       "the window grew to the whole text")
         XCTAssertFalse(excerpt.exists, "the whole text is not an excerpt")
+        // Closed with the button at the top, which is the one that is in reach: the other one is at the end of the text, and on
+        // a phone that is shorter than the text it is under the message bar or below the screen (closing from there is
+        // `testClosingALongTextBringsItBackIntoSight`).
+        let collapse = requireElement("watch-text-collapse", timeout: 5)
         shot("window-\(sample)-open")
-        toggle.tap()
+        collapse.tap()
         XCTAssertTrue(eventually { toggle.label == self.localized("Expand", "展开") && abs(windowHeight() - closed) < 2 },
                       "the window went back to the preview")
+        XCTAssertFalse(element("watch-text-collapse").exists, "a closed text has the one button")
         shot("window-\(sample)-closed-again")
     }
 
@@ -249,23 +274,100 @@ final class AskHumanAgentPageUITests: XCTestCase {
         XCTAssertFalse(app.staticTexts[localized("Latest excerpt", "末尾片段")].exists, "the thought is whole")
     }
 
+    /// What a fingertip needs of a button (Apple's guideline): the one that opens the text was 24 × 14 points, and it was
+    /// missed more often than not.
+    private let fingertip: CGFloat = 43.5
 
+    /// The whole 44 points are the button, not only the words in the middle of them: a tap in the corner of that area opens
+    /// the text, which is also what a tap beside the words does.
+    func testTheButtonThatOpensTheTextIsAsBigAsAFingertipAllOverItsArea() {
+        launch(contentSize: nil, extra: ["-AHWatchText", "long"])
+        let toggle = requireElement("watch-text-expand")
+        XCTAssertGreaterThanOrEqual(toggle.frame.height, fingertip, "tall enough")
+        XCTAssertGreaterThanOrEqual(toggle.frame.width, fingertip, "wide enough")
+        // The words are in the middle of the area's height: its top and bottom edges are where only the area is.
+        toggle.coordinate(withNormalizedOffset: CGVector(dx: 0.08, dy: 0.92)).tap()
+        XCTAssertTrue(eventually { toggle.label == self.localized("Collapse", "收起") }, "a tap at the corner of the area opened the text")
+        let collapse = requireElement("watch-text-collapse", timeout: 5)
+        XCTAssertGreaterThanOrEqual(collapse.frame.height, fingertip, "the button at the top is as tall as a fingertip")
+        XCTAssertGreaterThanOrEqual(collapse.frame.width, fingertip, "the button at the top is as wide as a fingertip")
+        collapse.coordinate(withNormalizedOffset: CGVector(dx: 0.08, dy: 0.08)).tap()
+        XCTAssertTrue(eventually { toggle.label == self.localized("Expand", "展开") }, "a tap at the corner of its area closed it")
+    }
+
+    /// An opened long text is closed from its top, which is where the page is after opening it: its other button is at the end
+    /// of the text, a screen and a half further down.
+    func testAnOpenedLongTextIsClosedFromItsTopWithoutScrollingToItsEnd() {
+        launch(contentSize: nil, extra: ["-AHWatchText", "long"])
+        let toggle = requireElement("watch-text-expand")
+        XCTAssertFalse(element("watch-text-collapse").exists, "closed, the text has the one button")
+        toggle.tap()
+        let collapse = requireElement("watch-text-collapse", timeout: 5)
+        XCTAssertTrue(eventually { toggle.label == self.localized("Collapse", "收起") }, "the text opened")
+        XCTAssertTrue(collapse.isHittable, "the button at the top of the opened text is on the screen")
+        XCTAssertFalse(toggle.isHittable, "the one at its end is not: the text is taller than the screen")
+        shot("window-open-long-top")
+        collapse.tap()
+        XCTAssertTrue(eventually { toggle.label == self.localized("Expand", "展开") && !element("watch-text-collapse").exists },
+                      "the text closed from its top")
+        XCTAssertTrue(toggle.isHittable, "back in the overview, with its button")
+    }
+
+    /// The window of the text: between what is above it and its bottom button.
+    private func windowHeight(of toggle: XCUIElement, above: XCUIElement) -> CGFloat { toggle.frame.minY - above.frame.maxY }
+
+    /// The height of the window once it has stopped changing: opening or replacing a text moves it over a quarter of a second,
+    /// and the button's label has changed long before that (the first look at it is somewhere on the way).
+    private func settledWindowHeight(of toggle: XCUIElement, above: XCUIElement) -> CGFloat {
+        var last = windowHeight(of: toggle, above: above)
+        for _ in 0..<20 {
+            Thread.sleep(forTimeInterval: 0.3)
+            let now = windowHeight(of: toggle, above: above)
+            if abs(now - last) < 1 { return now }
+            last = now
+        }
+        return last
+    }
+
+    /// Opening a text does not hold it (2026-11-15: it did, until it was closed, and then only a tap on "New content" showed
+    /// what the Agent said next). The next paragraph replaces an opened text by itself, and the text stays open.
+    func testAnOpenedTextIsReplacedByItselfAndStaysOpen() {
+        // One frame a second, so that the answer (the third frame) comes three seconds after the page opened. At the usual
+        // pace it came after a third of a second, and on a busy machine the first render of the long text took longer than
+        // that: the page then showed the answer first, and there was nothing left to replace it.
+        launch(contentSize: nil, extra: ["-AHWatchText", "long", "-AHWatchTextNext", "answer", "-AHWatchTick", "1"])
+        let toggle = requireElement("watch-text-expand")
+        let above = requireElement("watch-live")
+        toggle.tap()
+        XCTAssertTrue(eventually { toggle.label == self.localized("Collapse", "收起") }, "the text opened")
+        let whole = settledWindowHeight(of: toggle, above: above)
+        XCTAssertGreaterThan(whole, 400, "the first text is the long one, opened")
+        // Ten seconds after the first text was shown the answer takes its place: shorter, so the window gets shorter.
+        XCTAssertTrue(eventually(timeout: 30) { self.windowHeight(of: toggle, above: above) < whole - 150 },
+                      "the next text replaced the opened one without a tap")
+        XCTAssertEqual(toggle.label, localized("Collapse", "收起"), "it is still open")
+        XCTAssertTrue(element("watch-text-collapse").exists, "and can be closed from its top")
+        XCTAssertFalse(element("watch-text-update").exists, "nothing is waiting any more")
+        shot("window-replaced-while-open")
+    }
 
     /// A long text read down to its end is closed from there: the page goes back up to it instead of being left at the end of
     /// the shorter page, where something else is.
     func testClosingALongTextBringsItBackIntoSight() {
         launch(contentSize: nil, extra: ["-AHWatchText", "long"])
         let toggle = requireElement("watch-text-expand")
+        let field = requireElement("interject-field")
         toggle.tap()
         XCTAssertTrue(eventually { toggle.label == self.localized("Collapse", "收起") }, "the text opened")
-        // Down the text to its end (its top out of sight, its button on the screen), with fingers in the margin beside the card.
+        // Down the text to its end (its top out of sight, its button on the screen above the message bar, which floats over
+        // the page: a tap under it is a tap in its text field), with fingers in the margin beside the card.
         let screen = window.frame
-        for _ in 0..<14 where !(element("watch-text").frame.minY < 0 && toggle.isHittable) {
+        for _ in 0..<14 where !(element("watch-text").frame.minY < 0 && toggle.frame.maxY < field.frame.minY) {
             let start = marginPoint(screen.height * 0.62)
             start.press(forDuration: 0.05, thenDragTo: start.withOffset(CGVector(dx: 0, dy: -screen.height * 0.3)), withVelocity: .slow, thenHoldForDuration: 0.2)
         }
         XCTAssertLessThan(element("watch-text").frame.minY, 0, "the top of the text is above the screen")
-        XCTAssertTrue(toggle.isHittable, "its button is on the screen")
+        XCTAssertLessThan(toggle.frame.maxY, field.frame.minY, "its button is on the screen, above the message bar")
         shot("window-read-to-the-end")
         toggle.tap()
         XCTAssertTrue(

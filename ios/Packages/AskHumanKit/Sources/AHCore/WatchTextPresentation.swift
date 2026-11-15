@@ -30,7 +30,8 @@ public struct WatchLatestText: Sendable, Equatable {
 ///
 /// New text replaces the shown text at most every `interval` seconds, unless somebody is reading it. Reading is a lease
 /// (docs/specs/agent-observation-latest-text.md §4): a finger on the text holds it, and so does `lease` seconds after the
-/// finger left, which a finger that comes back renews. An opened text holds until it is closed or the newest is asked for.
+/// finger left, which a finger that comes back renews. Opening the text only makes its window taller (it holds nothing of
+/// its own, apart from the lease after the tap), so what the Agent says next replaces an opened text by itself too.
 public struct WatchTextPresentation: Sendable, Equatable {
     public private(set) var displayed: WatchLatestText?
     public private(set) var pending: WatchLatestText?
@@ -47,18 +48,26 @@ public struct WatchTextPresentation: Sendable, Equatable {
 
     public init() {}
 
-    /// Whether the text is held, so that what is pending waits. A lease that has run out only stops being counted at the
-    /// next `tick` or `receive`, which is also when anything waits for it.
-    public var reading: Bool { expanded || touching || heldUntil != nil }
+    /// Whether the text is held, so that what is pending waits. A lease that has run out stops being counted at the next
+    /// `tick` or `receive`; the view has one scheduled for the end of the lease (`wake`), so the text does not look held
+    /// for longer than it is. Being open is not being held.
+    public var reading: Bool { touching || heldUntil != nil }
     public var hasNewContent: Bool { pending != nil }
 
     /// When the pending text is shown, if nothing holds it by then: the replacement interval after the last one, and not
     /// before the lease has run out. `nil` while the text is held without an end, or when nothing is pending.
     public var deadline: Date? {
-        guard pending != nil, !expanded, !touching, let lastShown else { return nil }
+        guard pending != nil, !touching, let lastShown else { return nil }
         let due = lastShown.addingTimeInterval(Self.interval)
         guard let heldUntil else { return due }
         return max(due, heldUntil)
+    }
+
+    /// The next moment the presentation changes by itself, for the view to tick at: when the lease ends (the text stops being
+    /// held, and so does the offer of what is pending) or when the pending text is due, whichever is first. `nil` while
+    /// nothing is waiting for time to pass.
+    public var wake: Date? {
+        [deadline, heldUntil].compactMap { $0 }.min()
     }
 
     public mutating func receive(_ candidate: WatchLatestText?, now: Date) {
@@ -91,10 +100,17 @@ public struct WatchTextPresentation: Sendable, Equatable {
         heldUntil = now.addingTimeInterval(Self.lease)
     }
 
+    /// Opens or closes the text. Opening holds the words for the lease after the tap, as after a finger: the paragraph that
+    /// was just chosen for reading in full is not replaced a moment later because its replacement happened to be due. After
+    /// that the text is replaced by itself like a closed one. Closing goes back to the overview, which shows the newest.
     public mutating func toggleExpanded(now: Date) {
         expanded.toggle()
-        heldUntil = nil
-        if !expanded { showLatest(now: now) }
+        if expanded {
+            heldUntil = touching ? nil : now.addingTimeInterval(Self.lease)
+        } else {
+            heldUntil = nil
+            showLatest(now: now)
+        }
     }
 
     public mutating func updateNow(now: Date) {

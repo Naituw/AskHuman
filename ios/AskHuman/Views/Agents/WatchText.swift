@@ -11,6 +11,10 @@ struct WatchText: View {
     @ScaledMetric(relativeTo: .subheadline) private var previewHeight: CGFloat = 84
     /// What of the page above the text is kept in sight when closing it brings the page back to it.
     @ScaledMetric(relativeTo: .subheadline) private var revealMargin: CGFloat = 56
+    /// The least a thing to tap is tall and wide (Apple's 44 pt guideline). The controls used to be the bare words in caption
+    /// type (24 × 14 pt for 展开), which a fingertip misses more often than it hits. It does not scale with the text: the
+    /// words fit in it at every size, and a taller row only makes the card longer.
+    private let tapSize: CGFloat = 44
 
     private var candidate: WatchLatestText? {
         if frame.supportsLatestText { return frame.latestText }
@@ -25,9 +29,7 @@ struct WatchText: View {
         VStack(alignment: .leading, spacing: 6) {
             if let displayed = presentation.displayed {
                 let thinking = displayed.kind == "thinking"
-                if thinking {
-                    Text("Thinking").font(.caption.weight(.medium)).foregroundStyle(.secondary)
-                }
+                header(thinking: thinking)
                 // A finger that stays on the text or moves over it (to scroll, or to select) is reading it, and so is the
                 // moment after it left. It is watched, not taken: a `DragGesture` here would stop the page from scrolling
                 // under such a finger (iOS 27).
@@ -46,9 +48,9 @@ struct WatchText: View {
         }
         .background { PageAnchorMark(anchor: page) }
         .onChange(of: candidate, initial: true) { _, value in presentation.receive(value, now: .now) }
-        .task(id: presentation.deadline) {
-            guard let deadline = presentation.deadline else { return }
-            let delay = max(0, deadline.timeIntervalSinceNow)
+        .task(id: presentation.wake) {
+            guard let wake = presentation.wake else { return }
+            let delay = max(0, wake.timeIntervalSinceNow)
             do { try await Task.sleep(for: .seconds(delay)) } catch { return }
             presentation.tick(now: .now)
         }
@@ -64,8 +66,29 @@ struct WatchText: View {
         }
     }
 
+    /// What the text is (a thought has a name) and, while a text that does not fit its preview is open, a way to close it
+    /// that does not need the page scrolled to the end of the text first: that is where the other one is.
+    @ViewBuilder
+    private func header(thinking: Bool) -> some View {
+        let closable = presentation.expanded && overflows
+        if thinking || closable {
+            HStack(spacing: 10) {
+                if thinking {
+                    Text("Thinking").font(.caption.weight(.medium)).foregroundStyle(.secondary)
+                }
+                Spacer(minLength: 0)
+                if closable {
+                    Button(action: toggle) { toggleLabel(open: true) }
+                        .accessibilityIdentifier("watch-text-collapse")
+                        .buttonStyle(.plain)
+                        .foregroundStyle(.secondary)
+                }
+            }
+        }
+    }
+
     /// Open / close, what the preview is of, and the way to the newest text. A text that fits in the preview has nothing to
-    /// open or to say about being an excerpt.
+    /// open or to say about being an excerpt. Both buttons are at least `tapSize` tall and wide, hit anywhere in that.
     @ViewBuilder
     private func controls(_ displayed: WatchLatestText, thinking: Bool) -> some View {
         let openable = overflows || presentation.expanded
@@ -74,24 +97,45 @@ struct WatchText: View {
         if openable || excerpt || newer {
             HStack(spacing: 10) {
                 if openable {
-                    Button(action: toggle) {
-                        if presentation.expanded { Text("Collapse") } else { Text("Expand") }
-                    }
-                    .accessibilityIdentifier("watch-text-expand")
+                    Button(action: toggle) { toggleLabel(open: presentation.expanded) }
+                        .accessibilityIdentifier("watch-text-expand")
                 }
                 if excerpt {
                     Text("Latest excerpt").foregroundStyle(.tertiary)
                 }
                 Spacer(minLength: 0)
                 if newer {
-                    Button("New content", action: showNewest)
-                        .accessibilityIdentifier("watch-text-update")
+                    Button(action: showNewest) {
+                        Text("New content")
+                            .font(.caption.weight(.semibold))
+                            .foregroundStyle(Color.accentColor)
+                            .padding(.horizontal, 12)
+                            .padding(.vertical, 6)
+                            .background(Color.accentColor.opacity(0.14), in: Capsule())
+                            .frame(minWidth: tapSize, minHeight: tapSize)
+                            .contentShape(Rectangle())
+                    }
+                    .accessibilityIdentifier("watch-text-update")
                 }
             }
             .font(.caption)
             .buttonStyle(.plain)
             .foregroundStyle(.secondary)
         }
+    }
+
+    /// The words of the button that opens or closes the text, with the arrow that says which, over an area the size of a
+    /// fingertip. Nothing but the words and the arrow is drawn: the rest of the area is only there to be hit.
+    private func toggleLabel(open: Bool) -> some View {
+        Label {
+            Text(open ? "Collapse" : "Expand")
+        } icon: {
+            Image(systemName: open ? "chevron.up" : "chevron.down").accessibilityHidden(true)
+        }
+        .labelStyle(.titleAndIcon)
+        .font(.caption.weight(.medium))
+        .frame(minWidth: tapSize, minHeight: tapSize, alignment: .leading)
+        .contentShape(Rectangle())
     }
 
     private func toggle() {
@@ -133,6 +177,9 @@ private struct TextWindow<Content: View>: View {
 
     private var overflows: Bool { natural > height + 1 }
 
+    /// The height of the window: the preview's, or (open) the whole text's.
+    private var shown: CGFloat { expanded ? max(natural, height) : height }
+
     var body: some View {
         content
             .frame(maxWidth: .infinity, alignment: .leading)
@@ -143,9 +190,12 @@ private struct TextWindow<Content: View>: View {
             .onPreferenceChange(NaturalHeight.self) { natural = $0 }
             // A short text still takes the preview's height, so that what is under the window stays where it is when the
             // text is replaced by one of another length.
-            .frame(height: expanded ? max(natural, height) : height, alignment: tail ? .bottomLeading : .topLeading)
+            .frame(height: shown, alignment: tail ? .bottomLeading : .topLeading)
             .clipped()
             .mask { edge }
+            // An opened window follows the text it shows. The words are replaced without a transaction of their own, and the
+            // height only changes once the new words are measured, so it is animated here and not at the replacement.
+            .animation(.snappy(duration: 0.26), value: shown)
     }
 
     /// Opaque, but for the closed window's cut edge, which fades out over `fade` points.

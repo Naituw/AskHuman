@@ -195,6 +195,11 @@ public actor MockBackend: RemoteBackend {
     /// What the working Agent's live view says as its latest text (`MockData.watchLatest`): `thinking` or `answer`, both
     /// long, or `short`. Unset keeps the text of a Mac from before the latest text.
     public var watchText: String?
+    /// What it says from the third frame on (`-AHWatchTextNext`): the next paragraph of the Agent, which the page shows
+    /// when its replacement interval allows. Unset keeps the first text.
+    public var watchTextNext: String?
+    /// Seconds between the frames of the working Agent's live view (`-AHWatchTick`); unset: twice the latency, at least 0.05.
+    public var watchTick: Double?
 
     public private(set) var submissions: [Submission] = []
     public private(set) var uploads: [UploadSource] = []
