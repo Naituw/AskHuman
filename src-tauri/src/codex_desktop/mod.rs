@@ -3,8 +3,8 @@
 pub(crate) mod actions;
 mod launch;
 pub use launch::{
-    available, catalog_runtime, integration_enabled, launch_status, resolve_launch, LaunchStatus,
-    UnavailableReason,
+    available, catalog_runtime, integration_enabled, launch_status, resolve_launch, select_target,
+    LaunchStatus, UnavailableReason,
 };
 mod models;
 pub use models::list_models;

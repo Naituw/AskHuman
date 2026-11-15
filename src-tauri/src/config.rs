@@ -693,6 +693,7 @@ impl Default for TodoSyncConfig {
 pub struct AppConfig {
     pub codex_desktop: crate::codex_desktop::Config,
     pub cursor_desktop: crate::cursor_desktop::Config,
+    pub antigravity_desktop: crate::antigravity_desktop::Config,
     pub general: GeneralConfig,
     pub channels: ChannelsConfig,
     pub agent_tasks: AgentTasksConfig,

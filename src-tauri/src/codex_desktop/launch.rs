@@ -137,6 +137,10 @@ pub fn resolve_launch(
         crate::agents::AgentKind::Cursor => {
             return crate::cursor_desktop::resolve_launch(id, explicit)
         }
+        // Antigravity's App route works through sidecars; its choice is made the same way.
+        crate::agents::AgentKind::Antigravity => {
+            return crate::antigravity_desktop::resolve_launch(id, explicit)
+        }
         _ => return Ok(LaunchTarget::Terminal),
     }
     if let Some(id) = id {

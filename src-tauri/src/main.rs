@@ -12,6 +12,7 @@
 
 mod agents;
 mod annotations;
+mod antigravity_desktop;
 mod app;
 mod ask_question;
 mod attachment_browser;
