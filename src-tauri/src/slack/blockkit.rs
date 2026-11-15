@@ -31,10 +31,7 @@ pub struct CardSubmit {
     pub user_id: String,
     /// 卡片所在消息 ts（`container.message_ts`），用于匹配当前题卡片。
     pub message_ts: String,
-    /// 卡片所在频道 id。
-    // Parsed from the payload but not compared with the conversation channel on submit (the
-    // single-select path does compare it); only tests read it.
-    #[allow(dead_code)]
+    /// 卡片所在频道 id；回调未带频道时为空串。
     pub channel_id: String,
     /// 勾选的预定义选项（选项文本，已按下标还原）。
     pub selected_options: Vec<String>,

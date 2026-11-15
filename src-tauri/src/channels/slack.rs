@@ -342,9 +342,14 @@ impl MessagingChannel for SlackSession {
                     if let Some(selection) = blockkit::parse_single_select(&payload) {
                         if ctx.single
                             && selection.index < ctx.options.len()
-                            && selection.message_ts == message_ts
-                            && (user_id.is_empty() || selection.user_id == user_id)
-                            && (selection.channel_id.is_empty() || selection.channel_id == dm)
+                            && is_own_card(
+                                &selection.message_ts,
+                                &selection.channel_id,
+                                &selection.user_id,
+                                &message_ts,
+                                dm,
+                                &user_id,
+                            )
                         {
                             selected_single = Some(selection.index);
                             let _ = ctx.save(
@@ -372,9 +377,14 @@ impl MessagingChannel for SlackSession {
                     else {
                         continue;
                     };
-                    if reply.message_ts != message_ts
-                        || (!user_id.is_empty() && reply.user_id != user_id)
-                    {
+                    if !is_own_card(
+                        &reply.message_ts,
+                        &reply.channel_id,
+                        &reply.user_id,
+                        &message_ts,
+                        dm,
+                        &user_id,
+                    ) {
                         continue;
                     }
                     let answer = QuestionAnswer {
@@ -914,10 +924,51 @@ fn event_user(event: &Value) -> &str {
     event.get("user").and_then(|v| v.as_str()).unwrap_or("")
 }
 
+/// Whether an interactive callback belongs to this question's own card: the card's message, the
+/// card's conversation and, once the user is known, the same user. A payload that carries no
+/// channel id gives no evidence against the conversation, which is how the card parsers report
+/// a callback Slack did not stamp with one.
+fn is_own_card(
+    callback_ts: &str,
+    callback_channel: &str,
+    callback_user: &str,
+    message_ts: &str,
+    dm: &str,
+    user_id: &str,
+) -> bool {
+    callback_ts == message_ts
+        && (callback_channel.is_empty() || callback_channel == dm)
+        && (user_id.is_empty() || callback_user == user_id)
+}
+
 /// 取文件扩展名（无则空串）。
 fn ext_of(name: &str) -> &str {
     std::path::Path::new(name)
         .extension()
         .and_then(|e| e.to_str())
         .unwrap_or("")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::is_own_card;
+
+    #[test]
+    fn own_card_needs_the_same_message_conversation_and_user() {
+        assert!(is_own_card("1.1", "D1", "U1", "1.1", "D1", "U1"));
+        // Another message in the same conversation is somebody else's card.
+        assert!(!is_own_card("2.2", "D1", "U1", "1.1", "D1", "U1"));
+        // The same message timestamp in another conversation is not this card either.
+        assert!(!is_own_card("1.1", "C9", "U1", "1.1", "D1", "U1"));
+        // Another user pressing the button does not answer the question.
+        assert!(!is_own_card("1.1", "D1", "U2", "1.1", "D1", "U1"));
+    }
+
+    #[test]
+    fn own_card_accepts_what_the_payload_does_not_say() {
+        // Slack did not stamp the callback with a conversation: nothing speaks against it.
+        assert!(is_own_card("1.1", "", "U1", "1.1", "D1", "U1"));
+        // The addressed user is not known yet: any sender on the right card counts.
+        assert!(is_own_card("1.1", "D1", "U2", "1.1", "D1", ""));
+    }
 }
