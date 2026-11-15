@@ -433,4 +433,94 @@ mod tests {
         assert_eq!(group_for("setup_channel_status"), Group::Setup);
         assert_eq!(group_for("open_settings"), Group::Core);
     }
+
+    /// The handler of each group, in the order of this file's functions.
+    const HANDLERS: [(&str, Group); 9] = [
+        ("development", Group::Development),
+        ("setup", Group::Setup),
+        ("core", Group::Core),
+        ("integration", Group::Integration),
+        ("channel", Group::Channel),
+        ("history", Group::History),
+        ("todo", Group::Todo),
+        ("task", Group::Task),
+        ("update", Group::Update),
+    ];
+
+    /// This file without its test module, whose own text mentions the macro as well.
+    fn production_source() -> &'static str {
+        include_str!("invoke.rs")
+            .split("#[cfg(test)]")
+            .next()
+            .expect("the file has a production part")
+    }
+
+    /// Every handler function with the command names its `generate_handler!` list registers.
+    /// The list is a literal inside the macro, so the source is the only place to read it from;
+    /// an entry that is not a plain `crate::path::command` fails the test instead of being skipped.
+    fn registered_commands() -> Vec<(&'static str, Vec<&'static str>)> {
+        const OPEN: &str = "tauri::generate_handler![";
+        let mut handlers = Vec::new();
+        let mut rest = production_source();
+        while let Some(start) = rest.find(OPEN) {
+            let name = rest[..start]
+                .rsplit("fn ")
+                .next()
+                .and_then(|declaration| declaration.split('(').next())
+                .expect("a handler list sits inside a function");
+            let list = &rest[start + OPEN.len()..];
+            let end = list.find("];").expect("the registration list is closed");
+            let commands = list[..end]
+                .split(',')
+                .map(str::trim)
+                .filter(|entry| !entry.is_empty())
+                .map(|entry| {
+                    let path = entry
+                        .strip_prefix("crate::")
+                        .unwrap_or_else(|| panic!("`{entry}` is not a `crate::` path"));
+                    assert!(
+                        path.chars()
+                            .all(|c| c.is_ascii_alphanumeric() || c == '_' || c == ':'),
+                        "unexpected registration entry `{entry}`"
+                    );
+                    path.rsplit("::").next().expect("a path has a last segment")
+                })
+                .collect();
+            handlers.push((name, commands));
+            rest = &list[end..];
+        }
+        handlers
+    }
+
+    /// A command that is registered in one handler but routed to another one is rejected by the
+    /// handler that receives it, as if it did not exist.
+    #[test]
+    fn every_registered_command_is_routed_to_the_handler_that_registers_it() {
+        let handlers = registered_commands();
+        assert_eq!(
+            handlers.iter().map(|(name, _)| *name).collect::<Vec<_>>(),
+            HANDLERS.map(|(name, _)| name),
+            "one handler per group, in the order of the groups"
+        );
+        let mut seen = std::collections::HashSet::new();
+        for ((name, commands), (_, group)) in handlers.iter().zip(HANDLERS) {
+            assert!(!commands.is_empty(), "`{name}` registers no command");
+            for command in commands {
+                assert!(seen.insert(*command), "`{command}` is registered twice");
+                assert_eq!(
+                    group_for(command),
+                    group,
+                    "`{command}` is registered in `{name}` but routed elsewhere"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn each_group_is_dispatched_to_its_own_handler() {
+        for (name, group) in HANDLERS {
+            let arm = format!("Group::{group:?} => {name}(invoke),");
+            assert!(production_source().contains(&arm), "missing `{arm}`");
+        }
+    }
 }
