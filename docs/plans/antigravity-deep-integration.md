@@ -270,6 +270,7 @@ F 权限接管与 Fork（规格 §13）；H 上下文恢复 Hook 与原生 `ask_
   免费部分（隔离 HOME，0 次请求）——生成的全局插件被 `agy plugin list` 识别（1 条规则 / 1 个 MCP server / 1 个 hook），`agy plugin disable` 写的键正是 AskHuman 读的键，`agents` 与 `doctor` 随即提示、`enable` 后消失；
   会话部分——真实 HOME 的 `agy` + 实验目录 + 实验用 AskHuman 实例，工作区级的同内容插件副本：会话在注册表里出现（pid 是 `agy`）、`working` → `idle`（completed）、标题取自第一条请求、终止后标 `ended`，模型答出规则已载入。
   身份端到端（0 次模型请求）——合成的 Antigravity 宿主驱动安装版 MCP server、干净环境下跑 CLI：提问绑定根会话（子会话记到根）、`show_last` 按会话隔离、未登记的环境会话 ID 不被采信、CLI `--show-last` 拒绝项目级回退。
+  迁移演练（0 次模型请求）——用户真实 `config/` 子树与旧规则台账的副本：旧规则退役并换成插件、`config.json` 逐字节不变，`mcp` / `cli` / `none` 互转与重复设置都正常，真实目录前后核对无变化。
   **没验到的**（如实）：全局插件在 App / `agy` 会话里的触发（V22）、MCP 的 `agy` `_meta` 键名（合成宿主用的是 App 的键名，留到 G4）、设置页与控制台的肉眼验收（只验了注册表与命令行）、D17 相关。
   **用量**：3 次 `agy` 启动、约 5 次 Flash 低档请求（信任路径写成 `/tmp/…` 白跑 2 次、网络慢被我的超时终止 1 次、有效 2 次）；对用户真实 `~/.gemini` 的临时改动（`antigravity-cli/`、`default-cli-project.json`）已删除并与实验前逐项核对。
   **下一步**：按计划，阶段之间要向用户报告并经批准再开 P2（先发门 G2 的验证计划）；D17 仍待用户决定。
