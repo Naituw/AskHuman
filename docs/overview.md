@@ -333,19 +333,19 @@ CLI、Popup Host、GUI Host 与 Daemon 共用 NDJSON 消息类型（`ClientMsg` 
 - 弹窗：按 request ID 的 `popup_init`、`submit_popup`、`confirm_popup`、`cancel_popup`；共享容器 `popup_inbox_init` / `activate` / `layout` / `commit` / `idle`
 - 附件面板（Popup 提问附件与历史详情）：`popup_preview_prepare` / `layout`、`popup_preview_read` / `cancel_read` / `thumbnail`、`popup_preview_reveal` / `menu`（命令名沿用；`request_id` 实为所有者 ID：Popup 请求 ID，或历史窗口的 `history:<条目 ID>`）；原文件打开仍用 `open_path`
 - Popup 拖入文件（`popup_drop.rs`）：`popup_drop_read_image`（读拖入的图片，失败时拒绝出 `{reason, where, message}`）、`popup_drop_log`（把每次拖拽的结果写进 `daemon.log` 的 `askhuman_drop` 行，只记标签与计数，不记路径和文件名）
-- 其他附件入口：`preview_attachments`、`close_preview`、`read_image_data_url`、`file_icon_data_url`、`show_attachment_menu`、`attachments_exist`（逐路径答复原文件是否还在，只有 `NotFound` 算不存在；弹窗与历史的胶囊据此标出已不存在的附件并拒绝拖出）
+- 其他附件入口：`preview_attachments`、`read_image_data_url`、`file_icon_data_url`、`show_attachment_menu`、`attachments_exist`（逐路径答复原文件是否还在，只有 `NotFound` 算不存在；弹窗与历史的胶囊据此标出已不存在的附件并拒绝拖出）
 - 离开模式与快捷回复：`away_end`（弹窗 / 控制台里「结束离开模式」，经 `client::away_op`）、`quick_reply_defaults`（设置卡的出厂预设，中英各一份）、`capsule_init` / `capsule_resize` / `capsule_dismiss_welcome` / `capsule_focus_waiting`（桌面胶囊窗口，仅 macOS）
-- 设置：`get_settings`、`save_settings`、`get_prompt`、`set_theme`、`update_theme`、`open_settings`、`popup_sound_support`、`play_popup_sound`
+- 设置：`get_settings`、`save_settings`、`get_prompt`、`set_theme`、`open_settings`、`popup_sound_support`、`play_popup_sound`
 - 历史：`open_history`、`history_init`、`get_history`、`get_history_projects`、`history_count`、`trim_history`、`resolve_history_session_titles`、`delete_history_entries`、`clear_all_history`
-- Cursor / Claude 超时 Hook 与 Pi Extension：前两者保留专用命令；统一设置入口走 `agent_mode_*` 与 `agent_hook_reveal` / `open`
-- Agent Rules：`agent_rule_status` / `install` / `update` / `uninstall` / `reveal` / `open`
+- Cursor / Claude 超时 Hook 与 Pi Extension：统一设置入口走 `agent_mode_*` 与 `agent_hook_reveal` / `open`
+- Agent Rules：`agent_rule_reveal` / `open`（安装、更新与卸载走 `agent_mode_*`）
 - Agent 模式与配置文件：`agent_mode_status` / `set` / `update`、`mcp_config_reveal` / `open`、`agent_hook_reveal` / `open`、`mcp_command_path`（`agent_mode_status` 只聚合本地集成产物；Agent CLI 是否在 PATH / Pi 版本由 `agent_task_readiness` 负责，它同时带上统一的「现在能不能启动任务」结论 `startable` / `startRoute`，见 `integrations/agent_start.rs`）
 - 渠道测试与识别：`telegram_test`；钉钉、飞书、Slack 各自的 `*_test` / `*_detect_prepare` / `*_detect_wait`；共用 `detect_cancel`
 - iOS 渠道（设置页「实验」Tab）：`ios_op`（状态 / 配对 / 撤销 / 重命名，经 IPC 的 `ClientMsg::Ios`）、`ios_test`、`ios_pair_qr`、`ios_connection_export` / `ios_connection_import`
 - iCloud 待办同步（设置页「实验」Tab 与待办窗口侧栏）：`todo_sync_*`（状态 / 启用 / 停用 / 立即同步 / 清除 / 修复，以及 iCloud 模式窗口用的项目列表、详情与移除；全部在阻塞线程上跑），见 `docs/overview-todo-sync.md`
-- 版本自更新：`get_app_version`、`update_check`、`update_get_notes`、`update_apply`、`update_dismiss`、`popup_update_state`、`restart_settings`
+- 版本自更新：`get_app_version`、`update_check`、`update_get_notes`、`update_apply`、`popup_update_state`、`restart_settings`
 - Agent 生命周期：`agents_init`、`agent_force_idle`；自动集成卡内的 capability 通过
-  `agent_mode_status` 聚合，并由 `agent_lifecycle_status` / `install` / `uninstall` 查询或切换
+  `agent_mode_status` 聚合，并由 `agent_lifecycle_install` / `uninstall` 切换
 - Agent 控制台（spec gui-agent-console）：`agents_focus`（焦点会话，daemon 推 `agent-detail` 帧）、`focus_request`（去回答）、`interject_append` / `interject_peek`（输入框追加与待送达气泡）、`agents_message`（空闲或已结束的 Cursor Desktop 聊天——快照带 `canMessage` 的那些——直接送进原聊天，经 `ClientMsg::AgentMessage`，答复 `accepted` / `rejected` / `unknown`）、`console_transcript`（完整会话分页）、`console_diff_stat` / `console_diff_file` / `console_stage`（项目 diff 状态条与暂存）
 - 新建 Agent 任务（GUI）：`open_new_task`、`new_task_init`、`new_task_projects`(+`_refreshed`)、`project_key_of`、`new_task_launch`
 

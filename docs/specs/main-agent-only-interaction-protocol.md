@@ -143,8 +143,8 @@ Guard 状态纳入现有 Rule / Skill 更新口径，而不是新增设置行：
 - 不在应用启动时静默修改尚未选择更新的旧集成；用户通过现有更新动作完成迁移。
 - Cursor / Grok 不显示 Guard 缺失，也不因此永久处于需更新状态。
 - Rule/skill 正文或 Guard 需更新不阻止 IM `/new` 选择 Agent；集成 Tab 仍显示更新提示。
-- 低层 `agent_rule_*` 状态仍描述 rules / skill 文件本身；面向用户的三态集成状态由
-  `agent_mode` 聚合 rules 与 Guard。
+- 低层 rules 状态（`agent_rules` 的 `is_installed` / `needs_update`）仍描述 rules / skill 文件本身；
+  面向用户的三态集成状态由 `agent_mode` 聚合 rules 与 Guard。
 
 ## 验收标准
 

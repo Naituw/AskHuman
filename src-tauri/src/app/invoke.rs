@@ -71,7 +71,6 @@ fn group_for(command: &str) -> Group {
         || matches!(
             command,
             "open_history"
-                | "open_interject"
                 | "focus_request"
                 | "get_history"
                 | "get_history_projects"
@@ -89,16 +88,13 @@ fn group_for(command: &str) -> Group {
     {
         Group::Channel
     } else if command.starts_with("agent_")
-        || command.starts_with("cursor_hook_")
         || command.starts_with("cursor_desktop_")
-        || command.starts_with("claude_hook_")
         || command.starts_with("mcp_")
         || matches!(
             command,
             "permission_rules_panel"
                 | "save_collaboration_style"
                 | "collaboration_style_defaults"
-                | "collaboration_style_apply_integrations"
                 | "focus_agent_terminal"
         )
     {
@@ -189,7 +185,6 @@ fn core(invoke: Invoke<Wry>) -> bool {
         crate::commands::popup_preview_reveal,
         crate::commands::popup_preview_menu,
         crate::commands::preview_attachments,
-        crate::commands::close_preview,
         crate::commands::read_image_data_url,
         crate::commands::attachments_exist,
         crate::popup_drop::popup_drop_read_image,
@@ -208,7 +203,6 @@ fn core(invoke: Invoke<Wry>) -> bool {
         crate::commands::popup_sound_support,
         crate::commands::play_popup_sound,
         crate::commands::set_theme,
-        crate::commands::update_theme,
         crate::commands::open_settings,
         crate::commands::open_agent_console,
         crate::commands::apply_window_effect,
@@ -235,22 +229,7 @@ fn integration(invoke: Invoke<Wry>) -> bool {
         crate::commands::agent_task_test_terminal,
         crate::commands::save_collaboration_style,
         crate::commands::collaboration_style_defaults,
-        crate::commands::collaboration_style_apply_integrations,
-        crate::commands::cursor_hook_status,
-        crate::commands::cursor_hook_install,
-        crate::commands::cursor_hook_update,
-        crate::commands::cursor_hook_uninstall,
-        crate::commands::cursor_hook_reveal,
         crate::commands::cursor_desktop_status,
-        crate::commands::claude_hook_status,
-        crate::commands::claude_hook_install,
-        crate::commands::claude_hook_update,
-        crate::commands::claude_hook_uninstall,
-        crate::commands::claude_hook_reveal,
-        crate::commands::agent_rule_status,
-        crate::commands::agent_rule_install,
-        crate::commands::agent_rule_update,
-        crate::commands::agent_rule_uninstall,
         crate::commands::agent_rule_reveal,
         crate::commands::agent_rule_open,
         crate::commands::agent_mode_status,
@@ -266,7 +245,6 @@ fn integration(invoke: Invoke<Wry>) -> bool {
         crate::commands::mcp_command_path,
         crate::commands::agent_hook_reveal,
         crate::commands::agent_hook_open,
-        crate::commands::agent_lifecycle_status,
         crate::commands::agent_lifecycle_install,
         crate::commands::agent_lifecycle_uninstall,
         crate::commands::focus_agent_terminal,
@@ -302,7 +280,6 @@ fn channel(invoke: Invoke<Wry>) -> bool {
 #[inline(never)]
 fn history(invoke: Invoke<Wry>) -> bool {
     let handler: fn(Invoke<Wry>) -> bool = tauri::generate_handler![
-        crate::commands::open_interject,
         crate::commands::interject_init,
         crate::commands::interject_submit,
         crate::commands::interject_cancel,
@@ -345,7 +322,6 @@ fn todo(invoke: Invoke<Wry>) -> bool {
         crate::commands::todos_clear,
         crate::commands::todos_reorder,
         crate::commands::todos_set_auto,
-        crate::commands::todos_set_text,
         crate::commands::todos_history,
         crate::commands::todos_restore,
         crate::commands::todos_history_clear,
@@ -402,7 +378,6 @@ fn update(invoke: Invoke<Wry>) -> bool {
         crate::commands::update_get_version_notes,
         crate::commands::update_apply,
         crate::commands::update_prepare,
-        crate::commands::update_dismiss,
         crate::commands::restart_settings,
     ];
     handler(invoke)

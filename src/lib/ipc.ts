@@ -20,18 +20,15 @@ import type {
   AgentTaskWorkspace,
   AgentMode,
   AgentModeStatus,
-  ClaudeHookStatus,
   HistoryEntry,
   HistoryInit,
   HistorySessionTitleRequest,
   HistorySessionTitleResult,
-  HookStatus,
   InterjectInit,
   InterjectPending,
   IosConnectionFields,
   IosOp,
   IosResult,
-  LifecycleStatus,
   NewTaskInit,
   NewTaskProject,
   ForkTaskInit,
@@ -41,7 +38,6 @@ import type {
   PopupSoundSupport,
   PushedAgent,
   PushedUpdateState,
-  RuleStatus,
   PermissionRulesOp,
   PermissionRulesResult,
   PopupSubmission,
@@ -147,10 +143,6 @@ export const openPath = (path: string) => invoke<void>("open_path", { path });
 export const previewAttachments = (paths: string[], index: number) =>
   invoke<void>("preview_attachments", { paths, index });
 
-export const refocusPreview = () => invoke<void>("refocus_preview");
-
-export const closePreview = () => invoke<void>("close_preview");
-
 export const readImageDataUrl = (path: string) =>
   invoke<string>("read_image_data_url", { path });
 
@@ -241,10 +233,6 @@ export const saveCollaborationStyle = (
 export const collaborationStyleDefaults = () =>
   invoke<{ aligned: string; autonomous: string }>("collaboration_style_defaults");
 
-/** Rewrite rules/skill for every agent with an enabled integration mode. */
-export const collaborationStyleApplyIntegrations = () =>
-  invoke<void>("collaboration_style_apply_integrations");
-
 export const openTestPopup = () => invoke<void>("open_test_popup");
 
 export const popupSoundSupport = () =>
@@ -255,9 +243,6 @@ export const playPopupSound = (name: string) =>
 
 export const setTheme = (theme: ThemeMode) =>
   invoke<void>("set_theme", { theme });
-
-export const updateTheme = (theme: ThemeMode) =>
-  invoke<void>("update_theme", { theme });
 
 export const openSettings = (tab?: string) =>
   invoke<void>("open_settings", { tab: tab ?? null });
@@ -412,40 +397,6 @@ export const flushSpeech = () => invoke<void>("flush_speech");
 
 export const speechAvailable = () => invoke<boolean>("speech_available");
 
-export const cursorHookStatus = () => invoke<HookStatus>("cursor_hook_status");
-
-export const cursorHookInstall = () => invoke<string>("cursor_hook_install");
-
-export const cursorHookUpdate = () => invoke<string>("cursor_hook_update");
-
-export const cursorHookUninstall = () => invoke<string>("cursor_hook_uninstall");
-
-export const cursorHookReveal = () => invoke<void>("cursor_hook_reveal");
-
-export const claudeHookStatus = () =>
-  invoke<ClaudeHookStatus>("claude_hook_status");
-
-export const claudeHookInstall = () => invoke<string>("claude_hook_install");
-
-export const claudeHookUpdate = () => invoke<string>("claude_hook_update");
-
-export const claudeHookUninstall = () =>
-  invoke<string>("claude_hook_uninstall");
-
-export const claudeHookReveal = () => invoke<void>("claude_hook_reveal");
-
-export const agentRuleStatus = (agent: AgentId) =>
-  invoke<RuleStatus>("agent_rule_status", { agent });
-
-export const agentRuleInstall = (agent: AgentId) =>
-  invoke<string>("agent_rule_install", { agent });
-
-export const agentRuleUpdate = (agent: AgentId) =>
-  invoke<string>("agent_rule_update", { agent });
-
-export const agentRuleUninstall = (agent: AgentId) =>
-  invoke<string>("agent_rule_uninstall", { agent });
-
 export const agentRuleReveal = (agent: AgentId) =>
   invoke<void>("agent_rule_reveal", { agent });
 
@@ -492,9 +443,6 @@ export const agentHookReveal = (agent: AgentId) =>
 export const agentHookOpen = (agent: AgentId) =>
   invoke<void>("agent_hook_open", { agent });
 
-export const agentLifecycleStatus = (agent: AgentKind) =>
-  invoke<LifecycleStatus>("agent_lifecycle_status", { agent });
-
 export const agentLifecycleInstall = (agent: AgentKind) =>
   invoke<string>("agent_lifecycle_install", { agent });
 
@@ -510,13 +458,6 @@ export const focusAgentTerminal = (
 /** 手动把某 agent 置为「空闲」（纠正漏 hook 卡「工作中」）。即发即走，daemon 改后推回新快照。 */
 export const agentForceIdle = (sessionId: string) =>
   invoke<void>("agent_force_idle", { sessionId });
-
-/** 打开某 agent 的插话 composer 窗口（经统一宿主路由，每 session 全局单窗）。 */
-export const openInterject = (
-  sessionId: string,
-  kind: string | null,
-  cwd: string | null,
-) => invoke<void>("open_interject", { sessionId, kind, cwd });
 
 /** 插话窗口初始化：登记 composer 打开 + 取待送达预填全文。 */
 export const interjectInit = (sessionId: string) =>
@@ -587,9 +528,6 @@ export const updateGetVersionNotes = (version: string) =>
 export const updateApply = () => invoke<void>("update_apply");
 
 export const updatePrepare = () => invoke<void>("update_prepare");
-
-export const updateDismiss = (version: string) =>
-  invoke<void>("update_dismiss", { version });
 
 export const restartSettings = () => invoke<void>("restart_settings");
 
@@ -672,10 +610,6 @@ export const todoAttachmentThumbnail = (
 /** 切换自动执行标记；返回新状态（条目不存在返回 null）。 */
 export const todosSetAuto = (project: string, id: string, auto: boolean) =>
   invoke<boolean | null>("todos_set_auto", { project, id, auto });
-
-/** Update pending todo text (GUI double-click edit). Returns stored text or null. */
-export const todosSetText = (project: string, id: string, text: string) =>
-  invoke<string | null>("todos_set_text", { project, id, text });
 
 export const todosRemove = (project: string, id: string) =>
   invoke<boolean>("todos_remove", { project, id });

@@ -2,7 +2,6 @@
 
 use crate::app::AppState;
 use crate::config::{AppConfig, ThemeMode, WindowEffect};
-use crate::integrations::cursor_hook;
 use crate::models::{InteractionRequest, QuestionAnswer};
 use crate::telegram::TelegramClient;
 use serde::{Deserialize, Serialize};
@@ -967,12 +966,6 @@ pub async fn todo_attachment_thumbnail(
 #[tauri::command]
 pub fn todos_set_auto(project: String, id: String, auto: bool) -> Option<bool> {
     crate::todos::set_auto(&project, &id, auto)
-}
-
-/// 修改待办正文（GUI 双击编辑）；返回落盘后的文本，条目不存在或空文本返回 None。
-#[tauri::command]
-pub fn todos_set_text(project: String, id: String, text: String) -> Option<String> {
-    crate::todos::set_text(&project, &id, &text)
 }
 
 #[tauri::command]
@@ -2017,17 +2010,6 @@ pub fn popup_preview_menu(
             }
         })
         .map_err(|e| e.to_string())
-}
-
-/// 关闭当前 QuickLook 预览（点击附件以外区域时调用）。
-#[tauri::command]
-pub fn close_preview(#[allow(unused_variables)] app: AppHandle) {
-    #[cfg(target_os = "macos")]
-    {
-        let _ = app.run_on_main_thread(|| {
-            crate::macos_quicklook::hide();
-        });
-    }
 }
 
 /// Read an image file into a base64 data URL. Shared by `read_image_data_url` and the popup's
@@ -3478,7 +3460,6 @@ fn apply_collaboration_targets(
 }
 
 /// Compatibility entry point for setup: refresh agents that inherit the default.
-#[tauri::command]
 pub fn collaboration_style_apply_integrations() -> Result<(), String> {
     use crate::agents::AgentKind;
     let config = AppConfig::load_without_secrets();
@@ -3648,22 +3629,6 @@ pub fn set_theme(app: AppHandle, theme: String) {
     apply_theme_to_windows(&app, &theme);
 }
 
-/// 从弹窗导航栏切换主题：写入配置并实时应用到所有窗口。
-#[tauri::command]
-pub fn update_theme(app: AppHandle, theme: String) -> Result<(), String> {
-    // Only the theme changes; load without resolving secrets so save() neither reads nor rewrites
-    // the keychain (blank secret fields are left as-is by save()).
-    let mut cfg = AppConfig::load_without_secrets();
-    cfg.general.theme = match theme.as_str() {
-        "light" => ThemeMode::Light,
-        "dark" => ThemeMode::Dark,
-        _ => ThemeMode::System,
-    };
-    cfg.save().map_err(|e| e.to_string())?;
-    apply_theme_to_windows(&app, &theme);
-    Ok(())
-}
-
 /// Apply native appearance to every WebView window and refresh Solid's native safety backing.
 pub(crate) fn apply_theme_to_windows(app: &AppHandle, theme: &str) {
     let t = match theme {
@@ -3754,152 +3719,14 @@ pub fn speech_available() -> bool {
     false
 }
 
-// ===== Cursor Hook =====
-
-#[derive(Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct HookStatus {
-    installed: bool,
-    /// 已安装但脚本与最新内置版本不一致 → 需更新。
-    outdated: bool,
-    hooks_json_exists: bool,
-    supported: bool,
-}
-
-#[tauri::command]
-pub fn cursor_hook_status() -> HookStatus {
-    HookStatus {
-        installed: cursor_hook::is_installed(),
-        outdated: cursor_hook::needs_update(),
-        hooks_json_exists: cursor_hook::hooks_json_exists(),
-        supported: cursor_hook::supported(),
-    }
-}
-
-#[tauri::command]
-pub fn cursor_hook_install() -> Result<String, String> {
-    cursor_hook::install().map_err(|e| e.to_string())
-}
-
-#[tauri::command]
-pub fn cursor_hook_update() -> Result<String, String> {
-    cursor_hook::update().map_err(|e| e.to_string())
-}
-
-#[tauri::command]
-pub fn cursor_hook_uninstall() -> Result<String, String> {
-    cursor_hook::uninstall().map_err(|e| e.to_string())
-}
-
-#[tauri::command]
-pub fn cursor_hook_reveal() {
-    cursor_hook::reveal();
-}
-
-// ===== Claude Code Hook（PreToolUse 超时延长） =====
-
-use crate::integrations::claude_hook;
-
-/// Claude Code Hook 安装状态（与 Cursor Hook 对称，驱动设置页徽标与按钮）。
-#[derive(Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct ClaudeHookStatus {
-    installed: bool,
-    /// 已安装但脚本与最新内置版本不一致 → 需更新。
-    outdated: bool,
-    settings_exists: bool,
-    supported: bool,
-}
-
-#[tauri::command]
-pub fn claude_hook_status() -> ClaudeHookStatus {
-    ClaudeHookStatus {
-        installed: claude_hook::is_installed(),
-        outdated: claude_hook::needs_update(),
-        settings_exists: claude_hook::settings_exists(),
-        supported: claude_hook::supported(),
-    }
-}
-
-#[tauri::command]
-pub fn claude_hook_install() -> Result<String, String> {
-    claude_hook::install().map_err(|e| e.to_string())
-}
-
-#[tauri::command]
-pub fn claude_hook_update() -> Result<String, String> {
-    claude_hook::update().map_err(|e| e.to_string())
-}
-
-#[tauri::command]
-pub fn claude_hook_uninstall() -> Result<String, String> {
-    claude_hook::uninstall().map_err(|e| e.to_string())
-}
-
-#[tauri::command]
-pub fn claude_hook_reveal() {
-    claude_hook::reveal();
-}
-
 // ===== Agent 全局规则（Cursor / Claude Code / Codex） =====
 
 use crate::integrations::agent_rules::{self, AgentTarget};
-
-/// Rules 安装状态（驱动设置页 Agent 分组的徽标与按钮）。
-#[derive(Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct RuleStatus {
-    installed: bool,
-    /// 已安装但提示词正文与最新内置版本不一致 → 需更新。
-    outdated: bool,
-    /// 展示用文件路径（home 折叠为 ~）。
-    path: String,
-    supported: bool,
-}
 
 fn parse_agent(agent: &str) -> Result<AgentTarget, String> {
     AgentTarget::parse(agent).ok_or_else(|| {
         crate::i18n::tr(crate::i18n::Lang::current(), "cmd.unknownAgent").to_string()
     })
-}
-
-#[tauri::command]
-pub fn agent_rule_status(agent: String) -> Result<RuleStatus, String> {
-    let a = parse_agent(&agent)?;
-    if a == agent_rules::AgentTarget::Antigravity {
-        let (_, updates, installed) =
-            agent_mode::antigravity_status().map_err(|e| e.to_string())?;
-        return Ok(RuleStatus {
-            installed,
-            outdated: updates.rule,
-            path: agent_rules::display_path(a),
-            supported: true,
-        });
-    }
-    Ok(RuleStatus {
-        installed: agent_rules::is_installed(a),
-        outdated: agent_rules::needs_update(a),
-        path: agent_rules::display_path(a),
-        supported: agent_rules::supported(a),
-    })
-}
-
-#[tauri::command]
-pub fn agent_rule_install(agent: String) -> Result<String, String> {
-    let a = parse_agent(&agent)?;
-    agent_rules::install(a).map_err(|e| e.to_string())
-}
-
-#[tauri::command]
-pub fn agent_rule_update(agent: String) -> Result<String, String> {
-    let a = parse_agent(&agent)?;
-    agent_rules::update(a).map_err(|e| e.to_string())
-}
-
-#[tauri::command]
-pub fn agent_rule_uninstall(agent: String) -> Result<String, String> {
-    let a = parse_agent(&agent)?;
-    agent_rules::uninstall(a).map_err(|e| e.to_string())
 }
 
 #[tauri::command]
@@ -4162,12 +3989,6 @@ fn parse_agent_kind(agent: &str) -> Result<AgentKind, String> {
 }
 
 #[tauri::command]
-pub fn agent_lifecycle_status(agent: String) -> Result<agent_lifecycle::LifecycleStatus, String> {
-    let k = parse_agent_kind(&agent)?;
-    Ok(agent_lifecycle::status(k))
-}
-
-#[tauri::command]
 pub fn agent_lifecycle_install(app: AppHandle, agent: String) -> Result<String, String> {
     let k = parse_agent_kind(&agent)?;
     let msg = agent_lifecycle::install(k).map_err(|e| e.to_string())?;
@@ -4200,31 +4021,6 @@ pub fn agent_force_idle(session_id: String) {
 }
 
 // ===== Agent 插话（spec agent-interject）=====
-
-/// 打开某 agent 的插话 composer 窗口（AgentsView「发送消息」按钮）：路由到统一宿主
-/// （每 session 全局单窗），失败兜底本进程建窗。`kind`/`cwd` 仅用于窗口头部展示。
-#[tauri::command]
-pub fn open_interject(
-    app: AppHandle,
-    session_id: String,
-    kind: Option<String>,
-    cwd: Option<String>,
-) -> Result<(), String> {
-    let target = crate::gui_host::InterjectTarget {
-        session: session_id,
-        agent: kind,
-        cwd,
-    };
-    route_open_window(
-        app,
-        crate::gui_host::WindowKind::Interject,
-        false,
-        None,
-        Some(target),
-        None,
-    );
-    Ok(())
-}
 
 /// 插话窗口初始化负载：主题 + 语言 + 待送达预填全文、条数与附件。
 #[derive(Serialize)]
@@ -5362,7 +5158,7 @@ pub async fn update_get_notes(aggregate: bool) -> Result<String, String> {
 }
 
 /// 应用更新：把新二进制落盘（不 restart；换新交给 daemon drain）。下载进度经
-/// `update_download_progress` 事件回传；完成发 `update_apply_finished`。
+/// `update_download_progress` 事件回传。
 #[tauri::command]
 pub async fn update_apply(app: AppHandle) -> Result<(), String> {
     crate::update::ensure_automatic_apply_allowed().map_err(|e| e.to_string())?;
@@ -5374,7 +5170,6 @@ pub async fn update_apply(app: AppHandle) -> Result<(), String> {
     updater.apply(Some(cb)).await.map_err(|e| e.to_string())?;
     crate::update::state::set_pending(true);
     crate::client::notify_update_applied().await;
-    let _ = app.emit("update_apply_finished", ());
     #[cfg(windows)]
     app.exit(0);
     Ok(())
@@ -5385,12 +5180,6 @@ pub async fn update_apply(app: AppHandle) -> Result<(), String> {
 #[tauri::command]
 pub fn update_prepare() -> Result<(), String> {
     crate::update::spawn_manual_prepare().map_err(|error| error.to_string())
-}
-
-/// 忽略某版本（不再主动弹该版本提示；设置内手动检查可重置）。
-#[tauri::command]
-pub fn update_dismiss(version: String) {
-    crate::update::state::dismiss(&version);
 }
 
 /// 设置内更新后「重启设置页面」：用新二进制重开设置进程，再退出当前设置窗。
@@ -5415,7 +5204,9 @@ mod tests {
 
     #[test]
     fn public_rule_update_rejects_antigravity_generic_writer() {
-        let error = agent_rule_update("antigravity".to_string()).unwrap_err();
+        let error = agent_rules::update(agent_rules::AgentTarget::Antigravity)
+            .unwrap_err()
+            .to_string();
         assert!(error.contains("AskHuman agents update antigravity"));
         for variant in [agent_rules::Variant::Cli, agent_rules::Variant::Mcp] {
             assert!(
@@ -5427,9 +5218,9 @@ mod tests {
 
     #[cfg(unix)]
     #[test]
-    fn public_rule_commands_preserve_antigravity_mcp_bundle() {
+    fn generic_rule_writers_preserve_antigravity_mcp_bundle() {
         use std::os::unix::fs::PermissionsExt;
-        const CHILD: &str = "ASKHUMAN_TEST_RULE_COMMAND_CHILD";
+        const CHILD: &str = "ASKHUMAN_TEST_RULE_WRITER_CHILD";
         if std::env::var_os(CHILD).is_none() {
             let root = tempfile::tempdir().unwrap();
             // Keep the child HOME free of temporary-root aliases such as macOS /var.
@@ -5440,7 +5231,7 @@ mod tests {
             let result = std::process::Command::new(std::env::current_exe().unwrap())
                 .args([
                     "--exact",
-                    "commands::tests::public_rule_commands_preserve_antigravity_mcp_bundle",
+                    "commands::tests::generic_rule_writers_preserve_antigravity_mcp_bundle",
                     "--nocapture",
                 ])
                 .env(CHILD, "1")
@@ -5472,8 +5263,12 @@ mod tests {
                 before
             );
         }
-        for command in [agent_rule_install, agent_rule_update, agent_rule_uninstall] {
-            assert!(command("antigravity".to_string()).is_err());
+        for writer in [
+            agent_rules::install,
+            agent_rules::update,
+            agent_rules::uninstall,
+        ] {
+            assert!(writer(target).is_err());
             assert_eq!(
                 files.each_ref().map(|path| std::fs::read(path).unwrap()),
                 before

@@ -1483,20 +1483,6 @@ export interface IosConnectionFields {
   relayUrl: string;
 }
 
-export interface HookStatus {
-  installed: boolean;
-  outdated: boolean;
-  hooksJsonExists: boolean;
-  supported: boolean;
-}
-
-export interface ClaudeHookStatus {
-  installed: boolean;
-  outdated: boolean;
-  settingsExists: boolean;
-  supported: boolean;
-}
-
 export type AgentId = "cursor" | "claude" | "codex" | "grok" | "pi" | "antigravity";
 
 export interface UpdateInfo {
@@ -1524,13 +1510,6 @@ export interface PushedAgent {
   kind?: string | null;
   pid?: number | null;
   launchId?: string | null;
-}
-
-export interface RuleStatus {
-  installed: boolean;
-  outdated: boolean;
-  path: string;
-  supported: boolean;
 }
 
 /** Agent 集成模式（三态互斥）。 */
