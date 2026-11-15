@@ -3,9 +3,9 @@
 //!
 //! The Reader task blocks only on `ws.recv()` instead of a cancellable `select`, so callbacks are
 //! not lost. Card callback bodies are decided by the routed session, written by the Router, and
-//! paired with a completion signal for terminal single-process callers.
+//! paired with a completion signal the session can wait on.
 //!
-//! 单进程与 Daemon 复用：Daemon 持共享且常热的 Router；单进程每进程起一个仅挂 1 个会话的同款 Router。
+//! Daemon 持共享且常热的 Router，跨请求复用。
 
 use super::client::FeishuClient;
 use super::ws::{FeishuWs, WsEvent};
@@ -34,8 +34,7 @@ pub enum FsInbound {
 /// Response handle for a card callback.
 ///
 /// `send` only hands the response body back to the Router. `send_and_wait` additionally waits
-/// until the Router has attempted the WebSocket write, which keeps terminal single-process
-/// callers alive long enough to acknowledge the platform callback.
+/// (bounded by `CARD_ACK_TIMEOUT`) until the Router has attempted the WebSocket write.
 pub struct CardAck {
     response: oneshot::Sender<Option<Value>>,
     write_complete: oneshot::Receiver<()>,

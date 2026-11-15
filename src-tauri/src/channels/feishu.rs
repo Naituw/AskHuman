@@ -46,36 +46,21 @@ async fn send_inbound_reply(client: &FeishuClient, reply: InboundReply, lang: La
     }
 }
 
-/// Router 归属：单进程自建一个仅挂本会话的 Router；Daemon 复用共享且常热的 Router。
-#[derive(Clone)]
-enum FsTransport {
-    Own,
-    Shared(Arc<FsRouter>),
-}
-
 /// 薄外层：接 Coordinator（并行抢答），把会话委托给 `run_conversation` + `FeishuSession`。
 pub struct FeishuChannel {
     config: FeishuChannelConfig,
     preempt: Arc<Preemption>,
-    transport: FsTransport,
+    /// Daemon 持有的共享且常热的 Router，不在此处保活。
+    router: Arc<FsRouter>,
 }
 
 impl FeishuChannel {
-    /// 单进程外层：本会话自建并独占一条连接（每进程一个 Router、仅挂本会话）。
-    pub fn new(config: FeishuChannelConfig) -> Self {
-        Self {
-            config,
-            preempt: Arc::new(Preemption::new()),
-            transport: FsTransport::Own,
-        }
-    }
-
     /// Daemon 外层：复用共享且常热的 Router（跨请求复用，根治多连接抢消息）。
     pub fn shared(config: FeishuChannelConfig, router: Arc<FsRouter>) -> Self {
         Self {
             config,
             preempt: Arc::new(Preemption::new()),
-            transport: FsTransport::Shared(router),
+            router,
         }
     }
 }
@@ -95,26 +80,11 @@ impl Channel for FeishuChannel {
         let preempt = self.preempt.clone();
         let request = request.clone();
         let origin = origin.clone();
-        let transport = self.transport.clone();
+        let router = self.router.clone();
         tauri::async_runtime::spawn(async move {
             let lang = Lang::current();
-            // 取得本会话的事件源句柄（Own：现连一个 Router；Shared：复用）。`_keep` 持有
-            // Own Router 直至会话结束；Shared 的 Router 由 Daemon 持有。
-            let (events, _keep): (RoutedFs, Option<Arc<FsRouter>>) = match transport {
-                FsTransport::Own => match FsRouter::connect(&config).await {
-                    Ok(router) => (router.register(), Some(router)),
-                    Err(e) => {
-                        eprintln!(
-                            "{}{}",
-                            i18n::warn_prefix(lang),
-                            i18n::tr(lang, "channel.fsConfigInvalidSkip").replace("{e}", &e)
-                        );
-                        sink.surface_lost("feishu", &e);
-                        return;
-                    }
-                },
-                FsTransport::Shared(router) => (router.register(), None),
-            };
+            // 本会话的事件源句柄：向共享 Router 注册，会话结束时随句柄丢弃而注销。
+            let events: RoutedFs = router.register();
             let mut session = FeishuSession::new(config, events);
             if let Err(e) = session.open().await {
                 eprintln!(

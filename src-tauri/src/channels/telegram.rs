@@ -43,36 +43,21 @@ async fn send_inbound_reply(client: &TelegramClient, reply: InboundReply, lang: 
     }
 }
 
-/// Router 归属：单进程自建一个仅挂本会话的 Router；Daemon 复用共享且常热的 Router。
-#[derive(Clone)]
-enum TgTransport {
-    Own,
-    Shared(Arc<TgRouter>),
-}
-
 /// 薄外层：接 Coordinator（并行抢答），把会话委托给 `run_conversation` + `TelegramSession`。
 pub struct TelegramChannel {
     config: TelegramChannelConfig,
     preempt: Arc<Preemption>,
-    transport: TgTransport,
+    /// Daemon 持有的共享且常热的 Router，不在此处保活。
+    router: Arc<TgRouter>,
 }
 
 impl TelegramChannel {
-    /// 单进程外层：本会话自建并独占一个轮询器（每进程一个 Router、仅挂本会话）。
-    pub fn new(config: TelegramChannelConfig) -> Self {
-        Self {
-            config,
-            preempt: Arc::new(Preemption::new()),
-            transport: TgTransport::Own,
-        }
-    }
-
     /// Daemon 外层：复用共享且常热的 Router（单一 offset 轮询，根治多轮询互吞更新）。
     pub fn shared(config: TelegramChannelConfig, router: Arc<TgRouter>) -> Self {
         Self {
             config,
             preempt: Arc::new(Preemption::new()),
-            transport: TgTransport::Shared(router),
+            router,
         }
     }
 }
@@ -87,26 +72,11 @@ impl Channel for TelegramChannel {
         let preempt = self.preempt.clone();
         let request = request.clone();
         let origin = origin.clone();
-        let transport = self.transport.clone();
+        let router = self.router.clone();
         tauri::async_runtime::spawn(async move {
             let lang = Lang::current();
-            // 取得本会话的事件源句柄（Own：现起一个 Router；Shared：复用）。`_keep` 持有
-            // Own Router 直至会话结束；Shared 的 Router 由 Daemon 持有。
-            let (events, _keep): (RoutedTg, Option<Arc<TgRouter>>) = match transport {
-                TgTransport::Own => match TgRouter::connect(&config).await {
-                    Ok(router) => (router.register(), Some(router)),
-                    Err(e) => {
-                        eprintln!(
-                            "{}{}",
-                            i18n::warn_prefix(lang),
-                            i18n::tr(lang, "channel.tgConfigInvalidSkip").replace("{e}", &e)
-                        );
-                        sink.surface_lost("telegram", &e);
-                        return;
-                    }
-                },
-                TgTransport::Shared(router) => (router.register(), None),
-            };
+            // 本会话的事件源句柄：向共享 Router 注册，会话结束时随句柄丢弃而注销。
+            let events: RoutedTg = router.register();
             let mut session = TelegramSession::new(config, events);
             if let Err(e) = session.open().await {
                 eprintln!(

@@ -1,36 +1,24 @@
 //! 抢答协调器：并行 Channel 的首个终态结果生效，其余被 `interrupt` 收尾。
 //!
-//! 收到首个结果后不立即退出，而是给落败渠道一个**收尾窗口**（最多 ~2s，事件驱动、提前结束）
-//! 把卡片改成终态（钉钉灰显「已提交」、Telegram 编辑卡片为「已回答」等），随后输出结果并退出。
+//! 收到首个结果后不立即交付，而是给落败渠道一个**收尾窗口**（最多 ~5s，事件驱动、提前结束）
+//! 把卡片改成终态（钉钉灰显「已提交」、Telegram 编辑卡片为「已回答」等），随后把渲染好的结果
+//! 回传给连接处理器（由它写 IPC `final`；Daemon 常驻，协调器本身不退出进程）。
 
 use super::RenderOutcome;
-use crate::channels::{Channel, Interruption, Preemption};
+use crate::channels::{Channel, Interruption};
 use crate::i18n::{self, Lang};
 use crate::models::{AskRequest, ChannelAction, ChannelResult};
-use std::io::Write;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
-use tauri::{AppHandle, Manager};
 use tokio::sync::mpsc::UnboundedSender;
 
 use super::terminal_gate::FirstTerminalGate;
 
-/// 收尾窗口上限：超过即强制退出，保证进程不会因某端收尾卡住而挂起。
-/// 事件驱动为主（落败端收尾完成即提前退出），此上限仅为兜底；取值偏宽以容忍
+/// 收尾窗口上限：超过即不再等待，保证请求不会因某端收尾卡住而一直挂着。
+/// 事件驱动为主（落败端收尾完成即提前结束），此上限仅为兜底；取值偏宽以容忍
 /// 跨网络编辑卡片（如代理下访问 Telegram）较慢的情况。
 const FINALIZE_TIMEOUT: Duration = Duration::from_secs(5);
-
-/// 拿到结果后如何退出进程。
-#[derive(Clone)]
-pub enum Exiter {
-    /// GUI 模式：经 Tauri 事件循环退出（携带退出码）。
-    Gui(AppHandle),
-    /// headless 模式：直接退出进程。
-    Process,
-    /// Daemon 模式：不退出进程，把渲染好的结果经通道回传连接处理器（由它写 IPC `final`）。
-    Ipc(UnboundedSender<RenderOutcome>),
-}
 
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub(crate) struct HistoryBinding {
@@ -43,7 +31,7 @@ pub struct Coordinator {
     inner: Mutex<Inner>,
     submit_lock: Mutex<()>,
     terminal: FirstTerminalGate<()>,
-    /// 结果渲染 / 收尾文案使用的界面语言（Daemon 模式为调用方上送的 lang；单进程为 `Lang::current()`）。
+    /// 结果渲染 / 收尾文案使用的界面语言（调用方上送的 lang）。
     lang: Lang,
     /// 当前项目 key（用于回复历史归类；可空）。
     project: String,
@@ -66,10 +54,10 @@ pub struct Coordinator {
     /// 终态动作（首个 submit 写入，`finish` 不取走）：只有真实作答才允许进重放缓存
     /// （spec duplicate-ask-coalescing D6）。
     winner_action: Mutex<Option<ChannelAction>>,
-    /// 是否已进入收尾阶段（首个 submit 后置位）。GUI 据此拦下「关窗即退出」，
-    /// 仅放行协调器自身的 `app.exit`，确保结果先输出；收尾前不拦（Cmd+Q 等照常退出）。
+    /// 是否已进入收尾阶段（首个终态产生后置位）。Daemon 据此不再给它补挂渠道、合流新的调用方，
+    /// 取消与换新的判定也靠它区分「还在等人」与「已出结果、正在收尾」。
     finalizing: AtomicBool,
-    /// 结果是否已输出（保证只输出 / 退出一次）。
+    /// 结果是否已交付（保证只交付一次）。
     emitted: AtomicBool,
     /// Whether this request should be recorded in ordinary reply history.
     record_history_enabled: bool,
@@ -86,63 +74,13 @@ pub struct Coordinator {
 }
 
 struct Inner {
-    exiter: Exiter,
+    /// 渲染好的终态结果回传连接处理器（由它写 IPC `final`）。Daemon 常驻，这里不退出进程。
+    outcome_tx: UnboundedSender<RenderOutcome>,
     request: AskRequest,
     channels: Vec<Arc<dyn Channel>>,
-    /// headless 模式：共享抢答信号 + 消息渠道总数（用于算落败数）。GUI 为 None。
-    headless: Option<(Arc<Preemption>, usize)>,
 }
 
 impl Coordinator {
-    /// GUI 模式协调器。`project` / `source` / `agent_kind` 写入回复历史（可空）。
-    pub fn new(
-        app: AppHandle,
-        request: AskRequest,
-        project: String,
-        source: String,
-        agent_kind: Option<String>,
-    ) -> Arc<Self> {
-        let caller = crate::cli::caller_context();
-        let binding = merged_caller_binding(agent_kind, caller);
-        Self::build(
-            Exiter::Gui(app),
-            request,
-            None,
-            Lang::current(),
-            project,
-            source,
-            binding.agent_kind,
-            binding.agent_session_id,
-            binding.mcp_instance_id,
-            true,
-        )
-    }
-
-    /// headless 模式协调器（无 GUI，结果到达后直接退出进程）。
-    /// `preempt` 为各会话共享的抢答信号；`messaging_count` 为并行消息渠道数。
-    pub fn new_headless(
-        request: AskRequest,
-        preempt: Arc<Preemption>,
-        messaging_count: usize,
-        project: String,
-        source: String,
-    ) -> Arc<Self> {
-        let caller = crate::cli::caller_context();
-        let binding = merged_caller_binding(None, caller);
-        Self::build(
-            Exiter::Process,
-            request,
-            Some((preempt, messaging_count)),
-            Lang::current(),
-            project,
-            source,
-            binding.agent_kind,
-            binding.agent_session_id,
-            binding.mcp_instance_id,
-            true,
-        )
-    }
-
     /// Daemon 模式协调器：结果到达后渲染并经 `tx` 回传，不退出进程。
     /// `lang` 为调用方上送的界面语言（A11，使 `auto` 跟随调用方）。
     pub fn new_ipc(
@@ -154,48 +92,20 @@ impl Coordinator {
         binding: HistoryBinding,
         record_history_enabled: bool,
     ) -> Arc<Self> {
-        Self::build(
-            Exiter::Ipc(tx),
-            request,
-            None,
-            lang,
-            project,
-            source,
-            binding.agent_kind,
-            binding.agent_session_id,
-            binding.mcp_instance_id,
-            record_history_enabled,
-        )
-    }
-
-    #[allow(clippy::too_many_arguments)] // internal constructor; a params struct adds churn without clarity
-    fn build(
-        exiter: Exiter,
-        request: AskRequest,
-        headless: Option<(Arc<Preemption>, usize)>,
-        lang: Lang,
-        project: String,
-        source: String,
-        agent_kind: Option<String>,
-        agent_session_id: Option<String>,
-        mcp_instance_id: Option<String>,
-        record_history_enabled: bool,
-    ) -> Arc<Self> {
         Arc::new(Self {
             inner: Mutex::new(Inner {
-                exiter,
+                outcome_tx: tx,
                 request,
                 channels: Vec::new(),
-                headless,
             }),
             terminal: FirstTerminalGate::new(),
             submit_lock: Mutex::new(()),
             lang,
             project,
             source,
-            agent_kind: Mutex::new(agent_kind),
-            agent_session_id,
-            mcp_instance_id,
+            agent_kind: Mutex::new(binding.agent_kind),
+            agent_session_id: binding.agent_session_id,
+            mcp_instance_id: binding.mcp_instance_id,
             pending: Arc::new(AtomicUsize::new(0)),
             result: Mutex::new(None),
             winner: Mutex::new(None),
@@ -220,7 +130,7 @@ impl Coordinator {
         self.directive.lock().unwrap().take()
     }
 
-    /// 是否已进入收尾阶段（供 GUI 事件循环决定是否拦下关窗退出）。
+    /// 是否已进入收尾阶段：首个终态已产生，请求不再接受新的渠道或调用方。
     pub fn is_finalizing(&self) -> bool {
         self.finalizing.load(Ordering::SeqCst)
     }
@@ -478,9 +388,9 @@ impl Coordinator {
         } else {
             None
         };
-        let (exiter, pending_count, dequeue_ids) = {
+        let (pending_count, dequeue_ids) = {
             let inner = self.inner.lock().unwrap();
-            // 进入收尾：此后 GUI 拦下关窗退出，独占由协调器主动 `app.exit`。
+            // 进入收尾：此后请求不再接受新的渠道或调用方。
             self.finalizing.store(true, Ordering::SeqCst);
             let source = result.source_channel_id.clone();
             let action = result.action;
@@ -501,27 +411,19 @@ impl Coordinator {
                 ChannelAction::Cancel => Interruption::Cancelled(winner.clone()),
             };
 
-            let pending = match &inner.headless {
-                // headless：取消共享信号；落败数 = 渠道数 - 1（赢家）。
-                Some((preempt, count)) => {
-                    preempt.interrupt(reason.clone());
-                    count.saturating_sub(1)
-                }
-                // GUI：逐个取消落败渠道；弹窗瞬时关闭不计入收尾等待。
-                None => {
-                    let losers: Vec<Arc<dyn Channel>> = inner
-                        .channels
-                        .iter()
-                        .filter(|c| c.id() != source)
-                        .cloned()
-                        .collect();
-                    for ch in &losers {
-                        ch.interrupt(&reason);
-                    }
-                    losers.iter().filter(|c| c.id() != "popup").count()
-                }
-            };
-            (inner.exiter.clone(), pending, dequeue_ids)
+            // 逐个取消落败渠道；弹窗瞬时关闭不计入收尾等待。弹窗在独立的 GUI Helper 进程里，
+            // 关窗由它自己收到 cancel / 连接断开处理。
+            let losers: Vec<Arc<dyn Channel>> = inner
+                .channels
+                .iter()
+                .filter(|c| c.id() != source)
+                .cloned()
+                .collect();
+            for ch in &losers {
+                ch.interrupt(&reason);
+            }
+            let pending = losers.iter().filter(|c| c.id() != "popup").count();
+            (pending, dequeue_ids)
         };
 
         if !dequeue_ids.is_empty() {
@@ -530,29 +432,14 @@ impl Coordinator {
 
         self.pending.store(pending_count, Ordering::SeqCst);
 
-        // GUI（单进程）：立即关闭弹窗（赢家是弹窗时它不在 losers 中，需显式关）。
-        // Daemon 模式弹窗在独立 GUI Helper 进程，关窗由其自身收到 cancel / 连接断开处理，此处不涉及。
-        if let Exiter::Gui(app) = &exiter {
-            if let Some(w) = app.get_webview_window("popup") {
-                let _ = w.close();
-            }
-        }
-
-        // 收尾窗口：等落败端收尾完成（pending 归零）或 2s 超时后输出并退出。
+        // 收尾窗口：等落败端收尾完成（pending 归零）或 `FINALIZE_TIMEOUT` 超时后交付结果。
         let me = Arc::clone(self);
         let waiter = async move {
             let _operation = operation;
             me.wait_for_finalizers().await;
             me.finish();
         };
-        match exiter {
-            Exiter::Gui(_) => {
-                tauri::async_runtime::spawn(waiter);
-            }
-            Exiter::Process | Exiter::Ipc(_) => {
-                tokio::spawn(waiter);
-            }
-        }
+        tokio::spawn(waiter);
         true
     }
 
@@ -567,26 +454,18 @@ impl Coordinator {
             return;
         }
         let inner = self.inner.lock().unwrap();
-        let pending_count = match &inner.headless {
-            Some((_, count)) => *count,
-            None => inner
-                .channels
-                .iter()
-                .filter(|channel| channel.id() != "popup")
-                .count(),
-        };
+        let pending_count = inner
+            .channels
+            .iter()
+            .filter(|channel| channel.id() != "popup")
+            .count();
         // Caller disconnect cancellation has no result waiter to keep the request handler alive.
         // Count IM finalizers before interrupting them so the daemon can retain the coordinator
         // until every card reaches a terminal state (or the bounded timeout expires).
         self.pending.store(pending_count, Ordering::SeqCst);
         let reason = Interruption::Cancelled(source);
-        match &inner.headless {
-            Some((preempt, _)) => preempt.interrupt(reason),
-            None => {
-                for ch in &inner.channels {
-                    ch.interrupt(&reason);
-                }
-            }
+        for ch in &inner.channels {
+            ch.interrupt(&reason);
         }
         // A disconnected caller still created a real request. Keep its prompt and predefined
         // options in history just like a human-initiated Cancel; only answers are empty.
@@ -624,32 +503,25 @@ impl Coordinator {
             });
     }
 
-    /// 输出已采纳结果并退出（只生效一次）。无结果时直接返回，交由调用方兜底。
+    /// 渲染并交付已采纳的结果（只生效一次）。没有已采纳的结果时直接返回，什么也不交付。
     pub fn finish(&self) {
         if self.emitted.swap(true, Ordering::SeqCst) {
             return;
         }
-        let (exiter, request) = {
-            let inner = self.inner.lock().unwrap();
-            (inner.exiter.clone(), inner.request.clone())
-        };
+        let request = self.inner.lock().unwrap().request.clone();
         let result = self.result.lock().unwrap().take();
         let Some(mut result) = result else {
-            // 无结果（headless 全部会话结束仍未作答）：不退出，交由调用方报错。
             return;
         };
         if let Some(info) = request.message.development.as_deref() {
             if let Err(error) =
                 crate::development::verification::retain_reply_files(info, &mut result)
             {
-                self.deliver(
-                    exiter,
-                    RenderOutcome {
-                        stdout: String::new(),
-                        stderr: Some(error),
-                        exit_code: 1,
-                    },
-                );
+                self.deliver(RenderOutcome {
+                    stdout: String::new(),
+                    stderr: Some(error),
+                    exit_code: 1,
+                });
                 return;
             }
         }
@@ -657,37 +529,22 @@ impl Coordinator {
         let (outcome, image_paths) = super::render_result(&request, &result, self.lang);
         // 旁路写回复历史：最佳努力，绝不影响主流程（stdout / 退出码）。
         self.record_history(&request, &result, &image_paths);
-        self.deliver(exiter, outcome);
+        self.deliver(outcome);
     }
 
-    /// Emit an already-rendered outcome exactly once (shared by `finish` and the no-surface
+    /// Deliver an already-rendered outcome exactly once (shared by `finish` and the no-surface
     /// failure path).
     fn emit(&self, outcome: RenderOutcome) {
         if self.emitted.swap(true, Ordering::SeqCst) {
             return;
         }
-        let exiter = self.inner.lock().unwrap().exiter.clone();
-        self.deliver(exiter, outcome);
+        self.deliver(outcome);
     }
 
-    fn deliver(&self, exiter: Exiter, outcome: RenderOutcome) {
-        // Daemon 模式：回传连接处理器，不打印、不退出（进程常驻）。
-        if let Exiter::Ipc(tx) = &exiter {
-            let _ = tx.send(outcome);
-            return;
-        }
-        // 单进程：打印结果并退出。
-        if let Some(err) = &outcome.stderr {
-            super::stderr_redirect::eprintln_real(err);
-        } else {
-            println!("{}", outcome.stdout);
-        }
-        let _ = std::io::stdout().flush();
-        match exiter {
-            Exiter::Gui(app) => app.exit(outcome.exit_code),
-            Exiter::Process => std::process::exit(outcome.exit_code),
-            Exiter::Ipc(_) => unreachable!("handled above"),
-        }
+    /// 回传连接处理器，由它写 IPC `final`；不打印、不退出（Daemon 常驻）。
+    fn deliver(&self, outcome: RenderOutcome) {
+        let tx = self.inner.lock().unwrap().outcome_tx.clone();
+        let _ = tx.send(outcome);
     }
 
     /// Whether this request's terminal result goes to reply history (what the daemon chose).
@@ -757,17 +614,6 @@ impl Coordinator {
             answers,
             annotations: result.annotations.clone(),
         }
-    }
-}
-
-fn merged_caller_binding(
-    explicit_agent_kind: Option<String>,
-    caller: crate::cli::CallerContext,
-) -> HistoryBinding {
-    HistoryBinding {
-        agent_kind: explicit_agent_kind.or(caller.agent_kind),
-        agent_session_id: caller.agent_session_id,
-        mcp_instance_id: caller.mcp_instance_id,
     }
 }
 
@@ -889,32 +735,6 @@ mod tests {
         assert!(entry.answers.is_empty());
         assert_eq!(entry.agent_session_id.as_deref(), Some("session-1"));
         assert_eq!(entry.mcp_instance_id.as_deref(), Some("instance-1"));
-    }
-
-    #[test]
-    fn coordinator_bindings_keep_cross_platform_caller_context() {
-        let caller = crate::cli::CallerContext {
-            agent_kind: Some("codex".into()),
-            agent_session_id: Some("thread".into()),
-            mcp_instance_id: Some("instance".into()),
-            from_mcp: true,
-        };
-        assert_eq!(
-            merged_caller_binding(None, caller.clone()),
-            HistoryBinding {
-                agent_kind: Some("codex".into()),
-                agent_session_id: Some("thread".into()),
-                mcp_instance_id: Some("instance".into()),
-            }
-        );
-        assert_eq!(
-            merged_caller_binding(Some("cursor".into()), caller),
-            HistoryBinding {
-                agent_kind: Some("cursor".into()),
-                agent_session_id: Some("thread".into()),
-                mcp_instance_id: Some("instance".into()),
-            }
-        );
     }
 
     #[tokio::test]

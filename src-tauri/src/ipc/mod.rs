@@ -963,7 +963,7 @@ pub enum ServerMsg {
         detail: serde_json::Value,
     },
     /// 菜单栏宿主整合状态（D→宿主，spec D10）：连上即一帧 + 变化即推。
-    /// 字段名 snake_case（与既有结构体变体一致；IPC 两端同二进制）。宿主据 `running` 与
+    /// 字段名 snake_case（与既有结构体变体一致；IPC 两端同二进制）。宿主据连接是否在线与
     /// `active_requests` 切图标三态，菜单文字取最近一帧；`pending` 触发宿主二进制换新。
     TrayState {
         /// daemon 是否在运行（本帧来自运行中的 daemon → 恒为 true；断连由宿主自行判定为「停止」）。

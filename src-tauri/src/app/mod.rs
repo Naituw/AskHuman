@@ -30,7 +30,7 @@ use crate::config::{AppConfig, ThemeMode, WindowEffect};
 use crate::dingtalk::client::DingTalkClient;
 use crate::feishu::client::FeishuClient;
 use crate::i18n::{self, Lang};
-use crate::models::{AskRequest, ChannelAction, ChannelResult, InteractionRequest, QuestionAnswer};
+use crate::models::{AskRequest, ChannelAction, ChannelResult, InteractionRequest};
 use crate::slack::client::SlackClient;
 use crate::telegram::TelegramClient;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -301,22 +301,6 @@ impl GuiBridge {
         !self.presented.swap(true, Ordering::SeqCst)
     }
 
-    /// 提交作答。`directive` is the one-shot instruction picked from the quick-reply menu.
-    pub fn send_answer(
-        &self,
-        answers: Vec<QuestionAnswer>,
-        directive: Option<crate::daemon::away::Directive>,
-        annotations: Vec<crate::annotations::UserAnnotation>,
-    ) {
-        self.terminal(crate::ipc::ClientMsg::Answer {
-            request_id: self.request_id(),
-            action: ChannelAction::Send,
-            answers,
-            directive,
-            annotations,
-        });
-    }
-
     /// 取消（关窗 / Cmd+Q）。
     pub fn send_cancel(&self) {
         self.terminal(crate::ipc::ClientMsg::Answer {
@@ -325,14 +309,6 @@ impl GuiBridge {
             answers: Vec::new(),
             directive: None,
             annotations: Vec::new(),
-        });
-    }
-
-    pub fn send_confirm_answer(&self, choice_index: usize, comment: Option<String>) {
-        self.terminal(crate::ipc::ClientMsg::ConfirmAnswer {
-            request_id: self.request_id(),
-            choice_index,
-            comment,
         });
     }
 
@@ -1484,7 +1460,7 @@ fn launch(state: AppState, view: View, popup_ipc: Option<PopupIpc>) -> tauri::Re
 /// 渲染结果：把一个终态 `ChannelResult` 转成「给 stdout 的文本 / 给 stderr 的错误 + 退出码」。
 ///
 /// Pure rendering function apart from attachment writes. The daemon returns its result to the
-/// CLI over IPC; `emit_result` remains a process-output adapter for internal callers and tests.
+/// CLI over IPC.
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct RenderOutcome {
     /// 给 CLI stdout 的结果区块文本（不含尾换行；打印方负责换行）。
@@ -1634,17 +1610,6 @@ fn render_whats_next(
         },
         image_paths_per_q,
     )
-}
-
-/// 把结果输出到 stdout（或 stderr），返回退出码。（保留供复用；当前协调器内联渲染。）
-pub(crate) fn emit_result(request: &AskRequest, result: &ChannelResult) -> i32 {
-    let (outcome, _) = render_result(request, result, Lang::current());
-    if let Some(err) = &outcome.stderr {
-        stderr_redirect::eprintln_real(err);
-    } else {
-        println!("{}", outcome.stdout);
-    }
-    outcome.exit_code
 }
 
 /// 解析“实际”主题：system 时探测系统深/浅色。
@@ -2854,53 +2819,6 @@ fn persist_popup_size(window: &tauri::Window, event_size: tauri::PhysicalSize<u3
         }
         let _ = cfg.save();
     }
-}
-
-/// GUI 是否可用（进入 Tauri 前的轻量预探测）。
-///
-/// 因 release 为 `panic = "abort"`，无法用 `catch_unwind` 兜住 GUI 初始化崩溃，
-/// 故在 Linux 上先探测显示环境与 WebKitGTK；实际 `build()` 失败仍由调用方按 `Err` 兜底。
-/// macOS / Windows 使用系统 WebView，默认视为可用。
-#[cfg(target_os = "linux")]
-fn gui_available(lang: Lang) -> Result<(), String> {
-    let has_display =
-        std::env::var_os("DISPLAY").is_some() || std::env::var_os("WAYLAND_DISPLAY").is_some();
-    if !has_display {
-        return Err(i18n::tr(lang, "app.noDisplay").to_string());
-    }
-    if !webkitgtk_loadable() {
-        return Err(i18n::tr(lang, "app.noWebkitgtk").to_string());
-    }
-    Ok(())
-}
-
-#[cfg(not(target_os = "linux"))]
-fn gui_available(_lang: Lang) -> Result<(), String> {
-    Ok(())
-}
-
-/// 探测 WebKitGTK 运行库是否可被加载（dlopen 成功即视为可用）。
-#[cfg(target_os = "linux")]
-fn webkitgtk_loadable() -> bool {
-    use std::ffi::CString;
-    const CANDIDATES: [&str; 4] = [
-        "libwebkit2gtk-4.1.so.0",
-        "libwebkit2gtk-4.1.so",
-        "libwebkit2gtk-4.0.so.37",
-        "libwebkit2gtk-4.0.so",
-    ];
-    for name in CANDIDATES {
-        if let Ok(c) = CString::new(name) {
-            unsafe {
-                let handle = libc::dlopen(c.as_ptr(), libc::RTLD_LAZY);
-                if !handle.is_null() {
-                    libc::dlclose(handle);
-                    return true;
-                }
-            }
-        }
-    }
-    false
 }
 
 /// 静默 GUI 事件循环期间的系统噪音日志：把进程 stderr 重定向到 /dev/null，

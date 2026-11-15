@@ -36,7 +36,7 @@ pub struct RequestEntry {
     pub seq: u64,
     /// 一次性 token：GUI Helper 连回握手出示。
     pub token: String,
-    /// 抢答协调器（Ipc 退出，结果经 `final_tx` 回传）。
+    /// 抢答协调器；它持有终态结果通道的发送端，结果经它回传给提交连接的处理器。
     pub coordinator: Arc<Coordinator>,
     /// 给 GUI Helper 的题目下发负载。
     pub show: ShowPayload,
@@ -75,8 +75,6 @@ pub struct RequestEntry {
     pub quiet_feedback: bool,
     /// CLI 断开 / 请求结束时通知 GUI 连接处理器收尾。
     pub cancel: Arc<Notify>,
-    /// 渲染结果发送端（协调器 finish 与看门狗共用；连接处理器从对应 rx 取）。
-    pub final_tx: UnboundedSender<RenderOutcome>,
 }
 
 impl RequestEntry {
@@ -590,7 +588,7 @@ impl RequestRegistry {
         let coordinator = Coordinator::new_ipc(
             request.clone(),
             lang,
-            final_tx.clone(),
+            final_tx,
             task.project.clone(),
             task.source.clone(),
             crate::app::coordinator::HistoryBinding {
@@ -665,7 +663,6 @@ impl RequestRegistry {
             held,
             quiet_feedback,
             cancel: Arc::new(Notify::new()),
-            final_tx,
         });
 
         let mut inner = self.inner.lock().unwrap();
