@@ -7,6 +7,7 @@
 
 
 > 状态：已实现并用于 Daemon 换新、stop 与 restart。2026-10-22 补充「多份二进制互相顶替」的刹车与可观测性：D10–D12、§6（`daemon/restart_guard.rs`、`cli/install_check.rs`）。
+> 2026-11-15 补充 daemon 被渠道建连卡住后整体不应答的事故修复：D15–D17、§9。
 > 关联计划：`docs/plans/daemon-graceful-drain.md`
 > 影响面：Daemon 生命周期（`daemon/mod.rs`）、IPC 协议消息（`ipc/mod.rs`，仅增量字段/枚举值，PROTOCOL_VERSION 不变）、CLI 客户端（`client/mod.rs`）、`daemon stop/restart/status` 子命令、`scripts/install.sh`（及 `install-windows.ps1`）。**不改**正常提问流程的任何行为、stdout 契约、退出码语义。
 
@@ -45,6 +46,9 @@
 | D12 | 可观测性（2026-10-22） | 每次让位都在 `daemon.log` 写明原因（`client binary differs` / `own binary changed on disk` / `protocol version differs`）、客户端版本 / 协议号 / pid / 路径，以及 Daemon 自己的 exe 与指纹；`started` 行带 `exe=` 与 `fp=`；hold 开始写一行详细说明，之后至多每 5 分钟一行。`daemon status` 增 `binary` 行与 hold 警告；`StatusInfo` 增 `exePath` / `fingerprint` / `binaryConflict`（都带 `serde(default)`，新旧互相忽略）。`AskHuman doctor` 增 Install 小节，`doctor install [--warn-only] [--json]` 可单独运行：列出 PATH 上的各份二进制（按内容指纹区分，npm shim 解析到真实平台包），指出排第一的是哪份，并提示 ① 当前二进制被 PATH 里更靠前的另一份遮蔽 ② PATH 上有内容不同的多份 ③ Daemon 来自另一个文件 ④ hold 正在生效；并列出近 1 小时的换新记录。指向同一个文件的多个入口（例如 `~/.local/bin/AskHuman` 是链到 npm 包内二进制的符号链接，装一次所有名字同时更新）算同一份、不报警：单文件布局本身没有不一致，`install.sh` 照常写到链接指向的文件。`install.sh` 装完后调用 `doctor install --warn-only`（无冲突时静默；Dev Instance 只跳过 PATH 比对）。不做托盘 / 菜单栏提示；Windows 脚本与「hooks / MCP 配置里写死路径」的扫描之后再做（见 `docs/PROGRESS.md`） |
 | D13 | daemon 自持的错误卡不算在途请求（2026-11-03） | Agent 最终失败的错误卡（`native_request_id` 以 `failure:` / `failure-control:` 开头）是 daemon 替用户持有的卡，没有调用方在等，最长挂 24 小时；若计入「在途请求」，用户这时换新会让所有新提问排队到有人回答这张卡为止。`RequestRegistry::active_count()`（排空判定、`daemon status`、SIGTERM / `daemon stop` 是否排空）因此不计它们（菜单栏图标与「待答」列表用 `in_flight_count()`，仍计入）；卡自己写入 `~/.askhuman/state/failure-cards.json`，关停时（accept 循环退出后、取消请求之前）冻结该记录，新 daemon 启动后恢复。见 `docs/specs/agent-failure-inbox.md` §5.1 |
 | D14 | 自身更新必须自行接班 | 自身盘上二进制替换由 daemon 负责。支持恢复时直接交接并接管原题，旧调用能力不足时保持服务直到可安全交接。Unix exec 稳定安装入口，Windows 使用有界接班进程。显式 stop、SIGTERM 与闲退保留停止语义，单轮失败有界并由程序恢复与重试。详见[即时换新](daemon-live-update.md)及[更新接班](daemon-update-and-failure-recovery.md) |
+| D15 | 渠道建连不挡读者（2026-11-15） | 每条渠道连接（四个 IM Router、iOS Gateway）放在 `ConnSlot`（`daemon/runtime/conn_slot.rs`）里：已发布的连接由 `std::sync::Mutex` 保护且从不跨 `await`，建连另由一把独立的异步门串行。`Status`、托盘、关停读槽因此**从不等待建连**。建连开始（排队之前）时记下槽的代数，入槽时复核：建连期间被失效（配置变更、关停）的连接不会装进槽；交接标志由入槽时的 `suspended` 判定在槽的锁内再读一次。更新交接的准备与渠道自动识别用 `settled()` 等进行中的建连落地，等待时间由各连接自己的超时限定。见 §9 |
+| D16 | 握手有时限，沉默的 daemon 会被替换（2026-11-15） | 客户端对 daemon 的 Hello / Status / Stop 各在 5 秒内（连接、写、读合计）必须完成。超时是 `ErrorKind::TimedOut`，表示「活着但不应答」，与「不在」（`Ok(None)`）和「应答错了」分开。Hello 路径（`ensure_running`）把无应答当作无 daemon，沿既有的拉起阶梯（`ReuseAlive` → 5 秒就绪超时 → `Replace`）。提问 / 确认的恢复路径（`client::recovery`）改用 Status 探测：连续两次沉默才替换，第二次探测在拉起锁下进行，锁必须真的拿到，且 `daemon.json` 的 `(pid, started_at)` 仍是被诊断的那个实例，所以别的客户端刚拉起的后继不会被当成沉默者。恢复路径拒绝替换（没拿到锁、实例已变）后，调用方接着走 Hello 路径，那条阶梯的条件是既有的、更弱的（拿不到锁照样往下走，也不核对实例），所以这些条件约束的是恢复路径自己，不是替换的唯一入口（已知缺口，见 `docs/PROGRESS.md`）。其余会把「无应答」当成「不在」的调用方各自区分：`daemon stop` 对沉默的 daemon 报「运行中但不应答」并以 1 退出，不报 not running；Windows `update prepare` 把沉默当作仍在运行，拒绝报告就绪（排空等待中则继续等并说明）。替换（launchd bootout + bootstrap）只在 macOS 上做；Linux / Windows 没有服务管理器可以替换，只得到有界的超时与重试。这是对「沉默」的恢复手段，不是根因修复（根因由 D15 消除）。见 §9 |
+| D17 | 测不出的指纹不算变化（2026-11-15） | 指纹读失败（例如文件描述符耗尽 `EMFILE`）得到 `Fingerprint::UNKNOWN`（哈希为 0），它不是可比较的值：「盘上二进制变了吗」的比较（`differs_from`）把未知当作没有差异，「是不是同一个二进制」的身份闸（`same_as`：交接、Dev 对端校验）把未知当作不同，两个方向都向安全一侧失败；读失败也不写入 `binhash.json`，旧版缓进去的零哈希项会被忽略并自愈。启动时测不出自己的指纹，daemon 在日志里写明更新检测对本进程关闭 |
 
 ## 4. 约束与既有规则（不可破坏）
 
@@ -112,3 +116,51 @@ Cursor 新建任务把「Agents 窗口路线」的操作通过新增的 `ClientM
 - 同一协议号内的互通不受影响：本次的消息只在 `__cursor-desktop` 隐藏入口和 GUI 的 Cursor 新建任务调用，旧客户端不会收到它。
 
 不改排空、在途草稿与首答胜出的语义。
+
+## 9. 渠道建连卡住时 Daemon 仍然应答（2026-11-15 事故补充）
+
+2026-11-15 11:21 一次即时换新（exec）之后，新 daemon 的 Slack 路由器建连卡在 WebSocket 握手上。
+`ensure_*_router` 持着路由槽的异步互斥锁等建连，`Status`（`active_im_connections`）要锁同一把槽，
+于是 `Status` 从此不再应答。CLI 的 Hello / Status 没有上限，之后每个提问、每个 hook 都挂在这个沉默的
+daemon 上，约两小时。其间合并作答宿主因「启动超时」每约 6 秒被重拉一次，被放弃的宿主从不被终止，
+文件描述符耗尽；读自身二进制指纹也失败，全零指纹与启动指纹用 `!=` 比较，daemon 又误以为盘上二进制变了
+而进入排空。四个互相独立的缺陷，各自把一次网络卡顿放大成整机挂起，所以各自修，只修一部分的话下次换个原因仍会再挂：
+
+| 缺陷 | 修法 |
+| --- | --- |
+| 读者等建连：`Status`、托盘、关停、交接准备与建连抢同一把锁 | D15：`ConnSlot`，读者从不等建连；iOS Gateway 用同一个槽 |
+| Slack / 钉钉 / 飞书的 WebSocket 握手没有上限 | `channels::health::connect_websocket` 给整个握手（TCP、TLS、升级）15 秒上限，超时是普通建连失败，沿用既有退避、日志与渠道健康上报；飞书首个应用层 ping 最多等 5 秒 |
+| 客户端握手没有上限，沉默的 daemon 挡住所有调用 | D16 |
+| 弹窗宿主被放弃后不终止，各启动路径又没有共同的预算 | [统一作答窗口 §22](popup-request-inbox.md#22-宿主启动失败的收束2026-11-15) |
+| 测不出的指纹被当成「变了」 | D17 |
+
+**哪些是根因修复，哪些是恢复手段**：D15、WebSocket 握手上限、D17 与宿主启动失败的收束消除各自的放大环节；
+D16 的「替换沉默的 daemon」是恢复手段，它不能让一个卡住的建连变快，只保证下一个客户端不会陪着一起挂。
+因此它刻意保守：连续两次沉默、拿到拉起锁、`daemon.json` 仍指向被诊断的实例，三者同时成立才替换。
+
+**不在此次范围**：Hello 之后的数据交换（提交请求、读取结果）仍无上限，那里的等待是正常的（人在作答）；
+Linux / Windows 不能替换沉默的 daemon；本次也没有提高进程的文件描述符上限。其余延期项见 `docs/PROGRESS.md`。
+
+补充验收（接第 5 节）：
+
+16. 任一 IM Router 的建连卡住（网关收下 TCP 后不应答）时，`AskHuman daemon status` 与 `im conns` 仍在 5 秒内应答，
+    其他渠道与弹窗照常受理（`status_is_answered_while_a_channel_is_still_connecting`）。
+17. 对一个收下连接却不应答的 daemon，Hello / Status / Stop 各在 5 秒后以超时返回而不是挂起；
+    macOS 上提问的恢复路径在两次探测都沉默后替换它；第二次探测已有应答、拉起锁没拿到、`daemon.json` 换了实例时都不替换。
+18. 指纹读失败（模拟文件不可读）不触发排空，也不被写进 `binhash.json`；身份闸对两个都测不出的指纹判为不同。
+
+实测（macOS，2026-11-15）：用一次性 `ASKHUMAN_HOME`（独立 launchd 标签）加一个本机假 Slack（`ASKHUMAN_SLACK_API_BASE`，
+可在运行中把 Socket Mode 地址切到「收下 TCP 却永不应答」的黑洞），对同一场景分别跑事故当天的旧构建与修复后的构建：
+
+| 场景 | 旧构建（事故当天） | 修复后 |
+| --- | --- | --- |
+| 启动时 Slack 握手卡住 | `daemon start` 超过 60 秒不返回（被测试的 60 秒上限截断），`daemon status` 20 秒内不应答 | 立即启动，`status` 即时应答，握手 15 秒后以「timed out after 15s」失败并重试 |
+| 持有在途提问时即时换新（exec），同时握手卡住（事故原链路） | 换新后 20 轮 `status` 全部挂起，观察的两分半钟内没有恢复 | 70 轮全部即时应答，在途提问保留，每 15 秒一次建连失败 |
+| daemon 被 SIGSTOP（收下连接，不读不写） | 提问挂起超过 45 秒（测试上限），daemon 不被替换 | 15 秒内提示并替换，新 daemon 应答，提问继续 |
+| daemon 被 SIGSTOP 时 `daemon stop` / `daemon stop --force` | 两者都挂起超过 25 秒（测试上限） | 各 10 秒内返回 1：「running but not answering」，不再说 not running；`daemon restart` 26 秒内换上新 daemon（本行用修复后的 debug 构建实测） |
+| 二进制不可读（`chmod 000` 并清掉哈希缓存） | 误判「盘上二进制已变」，进入排空，之后每 2 秒重试换新 | 无排空，daemon 照常服务 |
+
+替换沉默的 daemon 不丢在途提问：被卡住的 daemon 被 launchd 终止，或收到 SIGTERM 进入排空后被终止，新 daemon 都从恢复存储取回
+在途提问（日志里同一请求在新进程里再次 accepted，`status` 显示仍在途），等待中的 CLI 没有退出。
+弹窗宿主的启动收束靠 `daemon::server_impl::inbox` 里起真实子进程的测试验证，没有图形界面的端到端记录；
+Linux / Windows 没有实机记录。

@@ -28,7 +28,7 @@
 - **独立 Popup Helper**（可选 `channels.popup.windowMode=independent`）：每请求一个窗口，沿用旧冷热池及焦点仲裁；模式切换只影响新请求，保留在途窗口和草稿。
 - **GUI Host**（macOS/Linux/Windows 每用户至多 1 个、长命）：承载菜单栏/托盘，以及全局唯一的设置、历史、待办、Agent、Interject、新建任务与 Fork 窗口；各打开入口通过自有 IPC 路由到宿主。
 
-**关键约定**：每种 IM 渠道全局只保留一条连接；每个请求仅首个终态回答生效；IPC 和运行状态均为用户私有；既有 stdout、结果区块、退出码和配置兼容契约保持不变。Daemon 排空换新见 `docs/specs/daemon-graceful-drain.md`。自身盘上更新在全部在途调用与窗口具备恢复能力时保存原题并即时交接，CLI/窗口重连，IM 接管原卡，iOS 保留草稿与提交；能力不足时保留旧服务并继续受理兼容新题，旧调用结束后接班。macOS/Linux exec 稳定安装入口，不依赖托盘或新 CLI；显式停止、信号和闲退不自启，崩溃自愈仍未提供。恢复身份、可靠首答、交接屏障及首次上线边界见 [即时换新](specs/daemon-live-update.md)。
+**关键约定**：每种 IM 渠道全局只保留一条连接；每个请求仅首个终态回答生效；IPC 和运行状态均为用户私有；既有 stdout、结果区块、退出码和配置兼容契约保持不变。Daemon 排空换新见 `docs/specs/daemon-graceful-drain.md`。自身盘上更新在全部在途调用与窗口具备恢复能力时保存原题并即时交接，CLI/窗口重连，IM 接管原卡，iOS 保留草稿与提交；能力不足时保留旧服务并继续受理兼容新题，旧调用结束后接班。macOS/Linux exec 稳定安装入口，不依赖托盘或新 CLI；显式停止、信号和闲退不自启，崩溃自愈仍未提供。恢复身份、可靠首答、交接屏障及首次上线边界见 [即时换新](specs/daemon-live-update.md)。Daemon 不得因某个渠道卡在建连而不应答：渠道连接放在连接槽里，`Status`、托盘与关停从不等待建连；客户端对 Hello / Status / Stop 各有 5 秒上限，沉默的 Daemon 在 macOS 上会被替换，测不出的二进制指纹不当作「已变化」（[排空 D15–D17、§9](specs/daemon-graceful-drain.md#9-渠道建连卡住时-daemon-仍然应答2026-11-15-事故补充)）。
 
 **多份二进制并存**：握手比较的是二进制内容指纹，所以内容不同的两份 AskHuman（npm 全局安装 + `install.sh` 本地构建等）会轮流把对方的 Daemon 顶掉。Daemon 因此记录每次让位的原因与客户端，并在同一对二进制 10 分钟内互顶 ≥2 次后不再为「内容不同但协议号相同」的客户端让位（hold）；`daemon status`、`doctor` 与 `install.sh` 会指出多份安装、PATH 遮蔽和 hold。设计见同一份 spec 的 D10–D12 与 §6。
 
@@ -253,6 +253,7 @@ AskHuman/
         runtime/
           mod.rs             状态与类型、serve 主循环、连接分发与请求提交
           live_update.rs     可恢复调用、恢复屏障、渠道暂停/接管与后台自动交接
+          conn_slot.rs       渠道连接槽（四个 IM Router、iOS Gateway）：已发布连接与建连互不阻塞，读者永不等建连
           watch.rs           watch 订阅持久化、tick 刷新与卡片回调
           select.rs          跨渠道单选卡发送、路由与回调分发
           inbound.rs         IM 入站命令层与共享命令处理

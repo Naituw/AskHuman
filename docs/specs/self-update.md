@@ -91,4 +91,4 @@ Direct 和 npm 更新继续使用既有的主程序替换方式，连旧版本 D
 7. **安全**：macOS 校验签名 / TeamID；Windows 所有自动 apply 入口 fail closed，未签名 release 不被运行时执行。
 8. **发布流程**：打 tag 发布时，Release body 由 git-cliff 生成（仅 feat/fix/perf 等、emoji 分组、scope 粗体、Full Changelog 链接）；若存在 `docs/release-notes/v<版本>.md` 则改用其内容（D15/D16/D17）。
 9. **门槛 / 回归**：本地等于或高于最新版时不提示更新（D7）；正常提问 / drain / 设置 / 历史等既有功能不受影响。
-10. **Windows 手动闭环**：`AskHuman update prepare` 在 daemon 未运行/运行/有在途与 GUI Host 打开时均可靠处理；返回 0 后 Direct/npm 可手动替换，下次调用按既有 lazy-start 拉起新 daemon。保留的事务 worker 继续通过 installer/负向测试。
+10. **Windows 手动闭环**：`AskHuman update prepare` 在 daemon 未运行/运行/有在途与 GUI Host 打开时均可靠处理；返回 0 后 Direct/npm 可手动替换，下次调用按既有 lazy-start 拉起新 daemon。daemon 接受连接却不应答（沉默）不算已停止：开始时直接以非 0 退出，排空等待中继续等，收尾检查时同样不报就绪。保留的事务 worker 继续通过 installer/负向测试。
