@@ -3,10 +3,8 @@ import type { IosTraffic, IosTrafficRecord } from "../../lib/types";
 
 /** EMQX Serverless free tier: 1 GiB per month, inbound plus outbound. */
 export const FREE_QUOTA_BYTES = 1024 ** 3;
-/** The card turns amber from this share of the free quota on. */
-export const WARN_RATIO = 0.8;
-
-export type TrafficLevel = "ok" | "warn" | "full";
+/** A GB as the broker counts it: 1024³ bytes. */
+export const GIGABYTE = 1024 ** 3;
 
 /**
  * Each device records its own broker-facing leg. Adding the endpoint records counts each leg once.
@@ -19,10 +17,28 @@ export function quotaShare(traffic: IosTraffic): number {
   return brokerEstimate(traffic) / FREE_QUOTA_BYTES;
 }
 
-export function trafficLevel(traffic: IosTraffic): TrafficLevel {
-  const share = quotaShare(traffic);
-  if (share >= 1) return "full";
-  return share >= WARN_RATIO ? "warn" : "ok";
+/** What the card says about this month's data use: close to a multiple of the step, or past it. */
+export interface TrafficReminder {
+  /** The multiple of the step the use is close to or past, in GB. */
+  gigabytes: number;
+  /** The use has reached `gigabytes`; otherwise it is only close: in the last fifth before it. */
+  reached: boolean;
+}
+
+/**
+ * The reminder for `bytes` used this month, at every `step` GB; null below the lead of the first multiple. It counts and
+ * says nothing of the broker's plan. The last fifth before each multiple counts as close to it, so the first reminder of a
+ * 1 GB step comes at 80%. The phone's Inbox follows the same rule (`TrafficReminder.due`, docs/specs/ios-traffic.md); this
+ * card has no step to choose and no way to close it: it is a line under the usage, not a notice.
+ */
+export function trafficReminder(bytes: number, step = 1): TrafficReminder | null {
+  const unit = step * GIGABYTE;
+  const whole = Math.floor(bytes / unit);
+  // `unit - floor(unit / 5)` is the first whole byte at or past 80% of the step.
+  if (bytes - whole * unit >= unit - Math.floor(unit / 5)) {
+    return { gigabytes: (whole + 1) * step, reached: false };
+  }
+  return whole > 0 ? { gigabytes: whole * step, reached: true } : null;
 }
 
 export function formatBytes(bytes: number): string {
