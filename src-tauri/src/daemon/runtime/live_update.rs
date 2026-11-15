@@ -333,17 +333,9 @@ impl Runtime {
         }
         let generation = state.popup_inbox.lock().unwrap().generation();
         if let Some(generation) = generation {
-            let state = state.clone();
-            tokio::spawn(async move {
-                tokio::time::sleep(Duration::from_secs(5)).await;
-                let waiting = {
-                    let host = state.popup_inbox.lock().unwrap();
-                    host.generation() == Some(generation) && host.sender().is_none()
-                };
-                if waiting && !state.closing.load(Ordering::SeqCst) {
-                    inbox::recover_inbox(&state, generation);
-                }
-            });
+            // The host kept across the update has to find its way back. The daemon holds no
+            // process of its own for it, so giving it up ends nothing.
+            tokio::spawn(inbox::expire_unauthenticated(state.clone(), generation));
         }
         self.restoring.store(false, Ordering::SeqCst);
         Ok(())
@@ -1048,14 +1040,22 @@ impl Runtime {
                 None,
             )
             .await;
-            if popup && !entry.coordinator.has_channel("popup") {
+            // While hosts keep failing to start no popup can be backed, so leave the surface for a
+            // later pass instead of registering one that would wait for a host that is not coming.
+            if popup
+                && !entry.coordinator.has_channel("popup")
+                && !inbox::popup_launch_blocked(state)
+            {
                 entry
                     .coordinator
                     .register(Arc::new(GuiHelperPopupChannel::new(
                         entry.request_id.clone(),
                         entry.gui.clone(),
                     )));
-                let _ = dispatch_popup(&entry, state, "", false);
+                if !dispatch_popup(&entry, state, "", false) && merged_popup(state) {
+                    // Hosts started failing between the check and the dispatch.
+                    inbox::fail_surface(&InteractionEntry::Ask(entry.clone()));
+                }
             }
         }
         for entry in state.registry.in_flight_confirm_entries() {
@@ -1078,8 +1078,14 @@ impl Runtime {
                 .filter(|channel| entry.retry_delivery(channel))
                 .collect();
             attach_confirm_im_channels(&entry, state, &config, &retry).await;
-            if popup && entry.retry_delivery("popup") {
-                dispatch_interaction_popup(InteractionEntry::Confirm(entry), state, "", false);
+            if popup && !inbox::popup_launch_blocked(state) && entry.retry_delivery("popup") {
+                let entry = InteractionEntry::Confirm(entry);
+                if !dispatch_interaction_popup(entry.clone(), state, "", false)
+                    && merged_popup(state)
+                {
+                    // Hosts started failing between the check and the dispatch.
+                    inbox::fail_surface(&entry);
+                }
             }
         }
     }

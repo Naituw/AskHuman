@@ -128,7 +128,7 @@ async fn popup_reaper_logs_failure_and_reaps_before_descendant_stderr_closes() {
     let mut logs = Vec::new();
     tokio::time::timeout(
         Duration::from_secs(1),
-        reap_popup_host(child, pid, |message| logs.push(message)),
+        reap_popup_host(child, pid, Default::default(), |message| logs.push(message)),
     )
     .await
     .expect("direct child cleanup must not wait for descendant-held stderr");
@@ -170,7 +170,7 @@ async fn popup_reaper_drains_large_stderr_and_keeps_successful_exit_silent() {
     let mut logs = Vec::new();
     tokio::time::timeout(
         Duration::from_secs(3),
-        reap_popup_host(child, pid, |message| logs.push(message)),
+        reap_popup_host(child, pid, Default::default(), |message| logs.push(message)),
     )
     .await
     .expect("over-limit stderr must still be drained");
@@ -178,6 +178,54 @@ async fn popup_reaper_drains_large_stderr_and_keeps_successful_exit_silent() {
         logs.is_empty(),
         "successful hosts must not emit captured noise"
     );
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn popup_reaper_ends_a_host_the_daemon_gave_up_and_reports_it_once() {
+    let child = tokio::process::Command::new("/bin/sh")
+        .arg("-c")
+        .arg("printf 'could not connect\\n' >&2; exec /bin/sleep 600")
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::piped())
+        .spawn()
+        .unwrap();
+    let pid = child.id().unwrap();
+    let abandon = Arc::new(tokio::sync::Notify::new());
+    let logs = std::sync::Mutex::new(Vec::new());
+    let reaper = reap_popup_host(child, pid, abandon.clone(), |message| {
+        logs.lock().unwrap().push(message)
+    });
+    tokio::pin!(reaper);
+
+    // Nobody gave up on it: a host that is merely slow keeps running.
+    assert!(
+        tokio::time::timeout(Duration::from_millis(300), &mut reaper)
+            .await
+            .is_err()
+    );
+    assert_eq!(unsafe { libc::kill(pid as libc::pid_t, 0) }, 0);
+
+    abandon.notify_one();
+    tokio::time::timeout(Duration::from_secs(3), &mut reaper)
+        .await
+        .expect("a host the daemon gave up must be ended, not left running");
+    let mut status = 0;
+    assert_eq!(
+        unsafe { libc::waitpid(pid as libc::pid_t, &mut status, libc::WNOHANG) },
+        -1,
+        "the process was already reaped"
+    );
+    let logs = logs.lock().unwrap();
+    assert_eq!(
+        logs.len(),
+        1,
+        "being ended is reported once, not as a crash"
+    );
+    assert!(logs[0].contains(&format!("pid={pid} was given up before it connected")));
+    assert!(logs[0].contains("could not connect"));
+    assert!(!logs[0].contains("exited with"));
 }
 
 #[cfg(windows)]
@@ -197,7 +245,7 @@ async fn popup_reaper_logs_windows_failure_with_pid_and_escaped_stderr() {
     let mut logs = Vec::new();
     tokio::time::timeout(
         Duration::from_secs(5),
-        reap_popup_host(child, pid, |message| logs.push(message)),
+        reap_popup_host(child, pid, Default::default(), |message| logs.push(message)),
     )
     .await
     .expect("a failed host must be reaped");
@@ -226,7 +274,7 @@ async fn popup_reaper_drains_windows_stderr_and_keeps_successful_exit_silent() {
     let mut logs = Vec::new();
     tokio::time::timeout(
         Duration::from_secs(10),
-        reap_popup_host(child, pid, |message| logs.push(message)),
+        reap_popup_host(child, pid, Default::default(), |message| logs.push(message)),
     )
     .await
     .expect("over-limit stderr must still be drained");
@@ -331,7 +379,7 @@ async fn popup_reaper_bounds_failed_stderr_after_overflow() {
     let mut logs = Vec::new();
     tokio::time::timeout(
         Duration::from_secs(10),
-        reap_popup_host(child, pid, |message| logs.push(message)),
+        reap_popup_host(child, pid, Default::default(), |message| logs.push(message)),
     )
     .await
     .expect("failed over-limit stderr must be drained");
@@ -353,7 +401,7 @@ async fn popup_reaper_does_not_wait_for_inherited_stderr_on_any_platform() {
     let mut logs = Vec::new();
     tokio::time::timeout(
         Duration::from_secs(2),
-        reap_popup_host(child, pid, |message| logs.push(message)),
+        reap_popup_host(child, pid, Default::default(), |message| logs.push(message)),
     )
     .await
     .expect("the direct child must finish before its three-second descendant");
@@ -388,7 +436,7 @@ async fn popup_reaper_waits_for_exit_after_stderr_closes() {
     .expect("fixture must close stderr and signal readiness");
     let mut logs = Vec::new();
     {
-        let reaper = reap_popup_host(child, pid, |message| logs.push(message));
+        let reaper = reap_popup_host(child, pid, Default::default(), |message| logs.push(message));
         tokio::pin!(reaper);
         assert!(
             tokio::time::timeout(Duration::from_millis(150), &mut reaper)
@@ -538,6 +586,138 @@ async fn each_popup_refreshes_renamed_sessions_even_with_a_cached_title() {
 struct Observed<R> {
     reader: R,
     consumed: Option<tokio::sync::oneshot::Sender<()>>,
+}
+
+#[tokio::test(start_paused = true)]
+async fn a_host_that_stays_silent_is_given_up_after_the_startup_timeout() {
+    use futures_util::FutureExt;
+    let state = state();
+    let (generation, abandon) = {
+        let mut host = state.popup_inbox.lock().unwrap();
+        let lease = host.start().unwrap();
+        (
+            lease.generation,
+            host.abandon_signal(lease.generation).unwrap(),
+        )
+    };
+    let timer = tokio::spawn(expire_unauthenticated(state.clone(), generation));
+
+    tokio::time::sleep(Duration::from_secs(4)).await;
+    assert_eq!(
+        state.popup_inbox.lock().unwrap().generation(),
+        Some(generation)
+    );
+    assert!(
+        abandon.notified().now_or_never().is_none(),
+        "still within the timeout"
+    );
+
+    tokio::time::sleep(Duration::from_secs(2)).await;
+    timer.await.unwrap();
+    // Nobody waits for this host, so recovery has nothing to restart it for; the point is that
+    // the lease is gone and the process that held it was told to end.
+    assert!(state.popup_inbox.lock().unwrap().generation().is_none());
+    assert!(
+        abandon.notified().now_or_never().is_some(),
+        "the host's process is ended"
+    );
+}
+
+#[tokio::test(start_paused = true)]
+async fn a_host_that_authenticated_in_time_is_left_alone_by_the_startup_timer() {
+    use futures_util::FutureExt;
+    let state = state();
+    let (generation, abandon, token) = {
+        let mut host = state.popup_inbox.lock().unwrap();
+        let lease = host.start().unwrap();
+        (
+            lease.generation,
+            host.abandon_signal(lease.generation).unwrap(),
+            lease.token,
+        )
+    };
+    let timer = tokio::spawn(expire_unauthenticated(state.clone(), generation));
+    let (tx, _rx) = tokio::sync::mpsc::unbounded_channel();
+    state
+        .popup_inbox
+        .lock()
+        .unwrap()
+        .connect(&token, tx)
+        .unwrap();
+
+    tokio::time::sleep(Duration::from_secs(6)).await;
+    timer.await.unwrap();
+    let host = state.popup_inbox.lock().unwrap();
+    assert_eq!(host.generation(), Some(generation));
+    assert!(host.sender().is_some(), "still connected");
+    assert!(abandon.notified().now_or_never().is_none(), "never ended");
+}
+
+#[tokio::test(start_paused = true)]
+async fn the_startup_window_starts_over_while_the_daemon_is_restoring() {
+    let restoring = std::sync::atomic::AtomicBool::new(true);
+    let closing = std::sync::atomic::AtomicBool::new(false);
+    let window = startup_window(
+        || closing.load(Ordering::SeqCst),
+        || restoring.load(Ordering::SeqCst),
+    );
+    tokio::pin!(window);
+
+    // Restoring: a host cannot authenticate yet, so its silence says nothing.
+    assert!(tokio::time::timeout(Duration::from_secs(12), &mut window)
+        .await
+        .is_err());
+    restoring.store(false, Ordering::SeqCst);
+    assert!(tokio::time::timeout(Duration::from_secs(6), &mut window)
+        .await
+        .expect("the window ends once the restore is over"));
+}
+
+#[tokio::test(start_paused = true)]
+async fn the_startup_window_is_dropped_when_the_daemon_closes() {
+    let closing = std::sync::atomic::AtomicBool::new(false);
+    let window = startup_window(|| closing.load(Ordering::SeqCst), || false);
+    tokio::pin!(window);
+    closing.store(true, Ordering::SeqCst);
+    assert!(!tokio::time::timeout(Duration::from_secs(6), &mut window)
+        .await
+        .expect("a closing daemon ends the wait"));
+}
+
+#[tokio::test]
+async fn a_popup_is_refused_while_hosts_keep_failing_to_start() {
+    let state = state();
+    {
+        let mut host = state.popup_inbox.lock().unwrap();
+        let mut lease = host.start().unwrap();
+        for _ in 0..2 {
+            lease = match host.disconnected(lease.generation, Instant::now(), true) {
+                Recovery::Restart(lease) => lease,
+                _ => panic!("expected a restart within the budget"),
+            };
+        }
+        // The third host in a row never came up either: recovery gives up.
+        assert!(matches!(
+            host.disconnected(lease.generation, Instant::now(), true),
+            Recovery::Failed(_)
+        ));
+    }
+    let task = serde_json::from_value(serde_json::json!({
+        "message": { "text": "refused popup" }, "questions": [],
+        "isMarkdown": false, "source": "test", "lang": "en",
+        "recordHistory": false, "outputFormat": "json"
+    }))
+    .unwrap();
+    let (entry, _result) = state.registry.create(task, None);
+
+    assert!(popup_launch_blocked(&state));
+    // The popup is reported as undeliverable. Queueing it here would leave the request waiting
+    // for a host that is not going to be started, and starting one anyway is how a broken host
+    // used to be respawned every few seconds without end.
+    assert!(!dispatch_inbox_popup(InteractionEntry::Ask(entry), &state));
+    let host = state.popup_inbox.lock().unwrap();
+    assert!(host.requests().is_empty());
+    assert!(host.generation().is_none(), "no host was started");
 }
 
 #[tokio::test]
