@@ -3,7 +3,7 @@ import { createHash } from "node:crypto";
 import {
   chmodSync, closeSync, copyFileSync, existsSync, lstatSync, mkdirSync, mkdtempSync,
   openSync, readFileSync, readdirSync, readlinkSync, rmSync, statSync, symlinkSync,
-  writeFileSync,
+  utimesSync, writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
@@ -67,12 +67,22 @@ exec ${realDu} "$@"
 `;
 }
 
+// What `cargo build --message-format=json-render-diagnostics` prints on stdout: install.sh reads
+// the path of the binary from it. TEST_CARGO_ARTIFACT is the file the fake build "produced"; set it
+// empty and cargo reports no executable.
+const reportArtifact = `if [ "\${1:-}" = "build" ] && [ -n "\${TEST_CARGO_ARTIFACT:-}" ]; then
+  printf '%s\\n' '{"reason":"compiler-artifact","target":{"kind":["lib"],"name":"humaninloop"},"executable":null,"fresh":true}'
+  printf '{"reason":"compiler-artifact","target":{"kind":["bin"],"name":"AskHuman"},"executable":"%s","fresh":false}\\n' "$TEST_CARGO_ARTIFACT"
+  printf '%s\\n' '{"reason":"build-finished","success":true}'
+fi
+`;
+
 // Records every cargo invocation, the RUSTC_BOOTSTRAP value `cargo build` saw, and can replay
 // cargo-sweep output.
 const recordingCargo = `#!/bin/sh
 printf '%s\\n' "$*" >> "$TEST_CARGO_LOG"
 if [ "\${1:-}" = "build" ]; then printf '%s\\n' "\${RUSTC_BOOTSTRAP-<unset>}" > "$TEST_CARGO_BUILD_ENV"; fi
-if [ "\${1:-}" = "sweep" ] && [ -n "\${TEST_SWEEP_OUTPUT:-}" ]; then printf '%s\\n' "$TEST_SWEEP_OUTPUT"; fi
+${reportArtifact}if [ "\${1:-}" = "sweep" ] && [ -n "\${TEST_SWEEP_OUTPUT:-}" ]; then printf '%s\\n' "$TEST_SWEEP_OUTPUT"; fi
 exit 0
 `;
 
@@ -123,6 +133,7 @@ function fixture(t, { linked = false, fresh = false, os = "Darwin", checkout = "
   }
   copyFileSync(installer, path.join(repo, "scripts/install.sh"));
   copyFileSync(new URL("./install-linux.rs", import.meta.url), path.join(repo, "scripts/install-linux.rs"));
+  copyFileSync(new URL("./cargo-artifact.mjs", import.meta.url), path.join(repo, "scripts/cargo-artifact.mjs"));
   writeFileSync(path.join(repo, "scripts/build-frontend-if-needed.mjs"), "");
   executable(path.join(repo, "src-tauri/target/local-install/AskHuman"), newBinary);
   const target = path.join(targetDir, "AskHuman");
@@ -140,9 +151,10 @@ function fixture(t, { linked = false, fresh = false, os = "Darwin", checkout = "
   if (!fresh) writeFileSync(state, "source=previous\ninstalled=previous\n");
 
   // Exercise the real installer without builds, keychain access, or production processes.
-  for (const name of ["pnpm", "cargo", "cargo-sweep", "xattr"]) {
+  for (const name of ["pnpm", "cargo-sweep", "xattr"]) {
     executable(path.join(stubs, name), "#!/bin/sh\nexit 0\n");
   }
+  executable(path.join(stubs, "cargo"), `#!/bin/sh\n${reportArtifact}exit 0\n`);
   if (rustcAvailable) {
     executable(path.join(stubs, "rustc"), `#!/bin/sh
 set -eu
@@ -218,6 +230,7 @@ fi
           TEST_DU_STATE: path.join(root, "du-state"),
           TEST_CARGO_LOG: cargoLog,
           TEST_CARGO_BUILD_ENV: cargoBuildEnv,
+          TEST_CARGO_ARTIFACT: path.join(repo, "src-tauri/target/local-install/AskHuman"),
           TEST_RUSTC_LOG: rustcLog,
           ...extraEnv,
         },
@@ -384,6 +397,62 @@ test("a first install publishes only after successful verification", unixOnly, t
   assertSuccess(f.run());
   assert.equal(readFileSync(f.target, "utf8"), newBinary + "# signed\n");
   assertNoStage(f);
+});
+
+// --- which binary is installed ---
+
+test("installs the executable cargo reports when the target directory was moved", unixOnly, t => {
+  const f = fixture(t);
+  // The incident: CARGO_TARGET_DIR sent the build elsewhere while an older build still sat where
+  // the repository layout would put it, and the installer took that older one without any error.
+  executable(path.join(f.repo, "src-tauri/target/local-install/AskHuman"), "#!/bin/sh\n# older build\nexit 0\n");
+  const moved = path.join(f.repo, "moved-target/local-install/AskHuman");
+  mkdirSync(path.dirname(moved), { recursive: true });
+  executable(moved, newBinary);
+  const result = f.run({ TEST_CARGO_ARTIFACT: moved });
+  assertSuccess(result);
+  assert.equal(readFileSync(f.target, "utf8"), newBinary + "# signed\n");
+  assert.ok(result.stdout.includes(`编译产物: ${moved}`), result.stdout);
+  assertNoStage(f);
+});
+
+test("an artifact older than the build is installed when cargo reports it", unixOnly, t => {
+  const f = fixture(t);
+  // cargo leaves the file untouched when nothing changed, so the installer must not compare ages.
+  utimesSync(path.join(f.repo, "src-tauri/target/local-install/AskHuman"), new Date(0), new Date(0));
+  assertSuccess(f.run());
+  assert.equal(readFileSync(f.target, "utf8"), newBinary + "# signed\n");
+  assertNoStage(f);
+});
+
+test("stops without touching the install when cargo reports no AskHuman executable", unixOnly, t => {
+  const f = fixture(t);
+  const oldInode = statSync(f.target).ino;
+  // A file sits at the usual path, but nothing says it came from this build.
+  const result = f.run({ TEST_CARGO_ARTIFACT: "" });
+  assert.equal(result.error, undefined);
+  assert.notEqual(result.status, 0);
+  assert.match(result.stderr, /cargo 没有报告 AskHuman 的可执行文件/);
+  assert.equal(statSync(f.target).ino, oldInode);
+  assert.equal(readFileSync(f.target, "utf8"), oldBinary);
+  assert.equal(readFileSync(f.state, "utf8"), "source=previous\ninstalled=previous\n");
+  assertNoStage(f);
+});
+
+test("a failed cargo build stops the install with cargo's exit status", unixOnly, t => {
+  const f = fixture(t, { stubs: { cargo: "#!/bin/sh\nexit 7\n" } });
+  const result = f.run();
+  assert.equal(result.status, 7);
+  assert.equal(readFileSync(f.target, "utf8"), oldBinary);
+  assertNoStage(f);
+});
+
+test("cargo is asked for JSON messages so the artifact path can be read back", unixOnly, t => {
+  const f = fixture(t, { stubs: { cargo: recordingCargo } });
+  assertSuccess(f.run());
+  assert.ok(f.cargoCalls().includes(
+    "build --profile local-install --manifest-path src-tauri/Cargo.toml --features custom-protocol "
+    + "--message-format=json-render-diagnostics"), f.cargoCalls().join("\n"));
 });
 
 // --- target/ cache budgets, log and environment guard ---

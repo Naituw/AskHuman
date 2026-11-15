@@ -228,13 +228,23 @@ node scripts/build-frontend-if-needed.mjs
 
 echo "==> 编译 $BUILD_PROFILE 二进制（前端资源在此步骤被嵌入）"
 # --features custom-protocol：生产构建必须启用，否则二进制以 dev 模式连 devUrl 导致白屏。
-cargo build --profile "$BUILD_PROFILE" --manifest-path src-tauri/Cargo.toml --features "$DEV_BUILD_FEATURES"
-
-BIN_PATH="src-tauri/target/$BUILD_PROFILE/AskHuman"
-if [ ! -f "$BIN_PATH" ]; then
-  echo "错误: 未找到编译产物 $BIN_PATH" >&2
-  exit 1
+#
+# The binary to install is the one this cargo run reports, not a path rebuilt from the repository
+# layout: a `CARGO_TARGET_DIR` (some sandboxes and CI set one) moves every artifact, and a
+# hard-coded `src-tauri/target/...` then installs an older build without any error. cargo reports an
+# up-to-date artifact too, so no modification-time comparison is needed (cargo leaves the file
+# untouched when nothing changed). Compiler diagnostics are still rendered on stderr.
+BUILD_MESSAGES="$(mktemp "${TMPDIR:-/tmp}/askhuman-cargo-messages.XXXXXX")"
+BUILD_STATUS=0
+cargo build --profile "$BUILD_PROFILE" --manifest-path src-tauri/Cargo.toml --features "$DEV_BUILD_FEATURES" \
+  --message-format=json-render-diagnostics > "$BUILD_MESSAGES" || BUILD_STATUS=$?
+BIN_PATH=""
+if [ "$BUILD_STATUS" -eq 0 ]; then
+  BIN_PATH="$(node "$SCRIPT_DIR/cargo-artifact.mjs" "$BUILD_MESSAGES" AskHuman)" || BUILD_STATUS=$?
 fi
+rm -f "$BUILD_MESSAGES"
+[ "$BUILD_STATUS" -eq 0 ] || exit "$BUILD_STATUS"
+echo "    编译产物: $BIN_PATH"
 
 _file_sha256() {
   local path="$1"

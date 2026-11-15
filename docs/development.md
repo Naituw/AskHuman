@@ -187,6 +187,15 @@ request a network timestamp). After a successful copy it enforces per-profile ta
 Cargo-coordinated cleanup: local package artifacts are removed first, while dependency caches are
 retained whenever they fit.
 
+The installer builds with `--message-format=json-render-diagnostics` and installs the executable that
+cargo reports for the `AskHuman` target (`scripts/cargo-artifact.mjs`). It prints that path
+(`编译产物:`) and stops when cargo reports none. A path rebuilt from the repository layout broke as
+soon as `CARGO_TARGET_DIR` moved the artifacts (some sandboxes and CI set one): the installer took an
+older build from `src-tauri/target` and said nothing. It compares no modification times either,
+because cargo leaves the file untouched when nothing changed. The cache log and the budgets below
+still assume `src-tauri/target`, so with `CARGO_TARGET_DIR` set they look at an empty directory and
+clean nothing.
+
 The budgets are 4 / 6 / 6 / 4 GiB for `local-install` / `dev` / `full-debug` / `release` in the main
 checkout and 3 / 5 / 5 / 3 GiB in a linked git worktree, where several copies of `target/` add up.
 The Swift speech bridge's Clang/Swift module cache is shared by every profile in

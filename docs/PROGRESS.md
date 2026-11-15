@@ -29,6 +29,16 @@
 - [ ] 渠道路由器首次建连失败没有退避：失败后下一个调用者会立刻再试一次（每次最长 15 秒，由槽的门串行）。事故里这不是主因，没有改。
 - [ ] 没有提高进程的文件描述符上限（`RLIMIT_NOFILE`）：用户在本次范围里选的是修各个放大环节，不是抬上限。
 
+## 待办：安装脚本里仍写死 `src-tauri/target` 的部分
+
+`install.sh` 取产物的路径已改为采用 cargo 在本次构建里报告的那个（见 [开发指南](development.md)），`CARGO_TARGET_DIR`
+再也不会让它装进旧二进制。下面这些是同一个假设的其余落点，没有在这次范围内：
+
+- [ ] `scripts/install-windows.ps1` 仍按 `src-tauri\target\<profile>\AskHuman.exe` 取产物，与修好前的 `install.sh` 是同一个隐患
+  （设置了 `CARGO_TARGET_DIR` 就会装进旧版本且不报错）。改法同 `install.sh`；需要能在 Windows 上跑 `install-windows.cmd` 才能验证，没做。
+- [ ] `install.sh` 与 `install-windows.ps1` 的缓存日志（`askhuman-cache.log`）、各 profile 体积预算和 Swift 模块缓存预算仍写死
+  `src-tauri/target`；设置了 `CARGO_TARGET_DIR` 时它们看的是一个空目录，预算清理不生效（不会误删，只是不清）。
+
 ## 待实际重新登录观察：macOS 守护进程进入 Aqua
 
 2026-11-13 的弹窗超时发生在旧 Aqua 域退出、新域尚未建立时。旧版回退到 `setsid` 后继续持有
