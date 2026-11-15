@@ -31,40 +31,6 @@ const TAG_APP_BASE: isize = 100;
 
 const NS_MODAL_RESPONSE_OK: isize = 1;
 
-/// Show the native macOS folder picker and return the selected directory.
-///
-/// This function must run on the AppKit main thread. The Tauri command that calls it uses
-/// `run_on_main_thread`, matching the attachment menu and Quick Look integrations in this module.
-pub fn choose_directory() -> Result<Option<String>, String> {
-    unsafe {
-        let panel_cls = AnyClass::get(c"NSOpenPanel")
-            .ok_or_else(|| "NSOpenPanel is unavailable".to_string())?;
-        let panel: *mut AnyObject = msg_send![panel_cls, openPanel];
-        if panel.is_null() {
-            return Err("failed to create NSOpenPanel".to_string());
-        }
-        let _: () = msg_send![panel, setCanChooseFiles: false];
-        let _: () = msg_send![panel, setCanChooseDirectories: true];
-        let _: () = msg_send![panel, setAllowsMultipleSelection: false];
-        let _: () = msg_send![panel, setCanCreateDirectories: true];
-        let _: () = msg_send![panel, setResolvesAliases: true];
-
-        let resp: isize = msg_send![panel, runModal];
-        if resp != NS_MODAL_RESPONSE_OK {
-            return Ok(None);
-        }
-
-        let url: *mut NSURL = msg_send![panel, URL];
-        if url.is_null() {
-            return Ok(None);
-        }
-        let path: *mut NSString = msg_send![url, path];
-        let path =
-            Retained::retain(path).ok_or_else(|| "selected path is unavailable".to_string())?;
-        Ok(Some(path.to_string()))
-    }
-}
-
 struct Ivars {
     app: AppHandle,
     path: String,

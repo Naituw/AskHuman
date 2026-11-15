@@ -25,8 +25,6 @@ const MAX_TITLE_CHARS: usize = 200;
 /// after this) and, five seconds later, as the daemon stops waiting for an answer.
 const RENDERER_WINDOW: Duration = Duration::from_secs(40);
 const DAEMON_WINDOW: Duration = Duration::from_secs(45);
-/// The pause between two asks while the renderer still answers `pending`.
-const POLL_PAUSE: Duration = Duration::from_millis(250);
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(tag = "op", rename_all = "camelCase", rename_all_fields = "camelCase")]

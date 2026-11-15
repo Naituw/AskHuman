@@ -62,10 +62,6 @@ impl DingTalkClient {
         &self.user_id
     }
 
-    pub fn http(&self) -> &reqwest::Client {
-        &self.http
-    }
-
     async fn token(&self) -> Result<String, DingTalkError> {
         token::get_token(&self.http, &self.client_id, &self.client_secret).await
     }

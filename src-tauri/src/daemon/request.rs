@@ -80,6 +80,7 @@ pub struct RequestEntry {
 impl RequestEntry {
     /// Stashes (or, with `None`, drops) the directive of the answer being submitted. It lives on the
     /// coordinator, the one handle every answering surface (popup, phone) holds.
+    #[cfg(test)]
     pub fn set_directive(&self, directive: Option<crate::daemon::away::Directive>) {
         self.coordinator.set_directive(directive);
     }
@@ -476,6 +477,7 @@ impl RequestRegistry {
 
     /// 建立一个请求：分配 request_id / token，建 Coordinator（Ipc）+ popup adapter。
     /// 返回登记项与「渲染结果接收端」（连接处理器据此写 IPC `final`）。
+    #[cfg(test)]
     pub fn create(
         &self,
         task: TaskRequest,
@@ -1174,9 +1176,7 @@ impl RequestRegistry {
     }
 
     /// 向所有已连上的活动 GUI Helper 广播一条消息（如 `ConfigChanged` 实时切主题/语言，A12）。
-    pub fn broadcast_to_guis(&self, msg: ServerMsg) {
-        self.broadcast_to_guis_except(msg, None);
-    }
+    /// `excluded` 是不需要收到这条消息的发送端（例如发起变更的那个 GUI 连接）。
     pub fn broadcast_to_guis_except(
         &self,
         msg: ServerMsg,

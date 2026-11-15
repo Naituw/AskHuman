@@ -332,26 +332,6 @@ fn markdown_to_html(src: &str) -> String {
     crate::attachment_markdown::render(src, false)
 }
 
-/// 关闭当前预览面板（若存在且可见）。
-pub fn hide() {
-    invalidate_preparation();
-    let Some(cls) = panel_class() else {
-        return;
-    };
-    unsafe {
-        let exists: bool = msg_send![cls, sharedPreviewPanelExists];
-        if !exists {
-            return;
-        }
-        let panel: Retained<AnyObject> = msg_send![cls, sharedPreviewPanel];
-        let visible: bool = msg_send![&*panel, isVisible];
-        if visible {
-            let null: *mut AnyObject = std::ptr::null_mut();
-            let _: () = msg_send![&*panel, orderOut: null];
-        }
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;

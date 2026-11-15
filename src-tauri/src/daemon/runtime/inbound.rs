@@ -1015,22 +1015,11 @@ pub(super) async fn continue_task_picker(
             )
             .await;
         }
-        PickerKind::TaskAgent | PickerKind::TaskTarget => {
-            if picker.kind == PickerKind::TaskAgent {
-                let Some(kind) = AgentKind::parse(selected_id) else {
-                    return;
-                };
-                payload.kind = kind.as_str().into();
-            } else {
-                payload.target = Some(match selected_id {
-                    "terminal" => crate::codex_desktop::LaunchTarget::Terminal,
-                    "desktop" => crate::codex_desktop::LaunchTarget::Desktop,
-                    _ => return,
-                });
-            }
-            let Some(kind) = AgentKind::parse(&payload.kind) else {
+        PickerKind::TaskAgent => {
+            let Some(kind) = AgentKind::parse(selected_id) else {
                 return;
             };
+            payload.kind = kind.as_str().into();
             let ready = crate::integrations::agent_start::startable_now(
                 &crate::integrations::agent_launch::readiness(kind),
             );
@@ -2553,7 +2542,6 @@ pub(super) async fn run_stage_confirm(
         cs.push(ConfirmEntry {
             channel: channel_id.to_string(),
             message_id: mid,
-            session_id: session_id.to_string(),
             git_root: root,
             paths_fp: crate::gitutil::paths_fingerprint(&preview.paths),
             view,

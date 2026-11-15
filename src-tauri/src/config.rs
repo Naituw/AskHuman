@@ -145,15 +145,6 @@ impl CollaborationStyle {
             Self::Custom => "custom",
         }
     }
-
-    pub fn parse(s: &str) -> Option<Self> {
-        match s {
-            "aligned" => Some(Self::Aligned),
-            "autonomous" => Some(Self::Autonomous),
-            "custom" => Some(Self::Custom),
-            _ => None,
-        }
-    }
 }
 
 /// A missing style inherits the default. Draft text survives selecting another style.

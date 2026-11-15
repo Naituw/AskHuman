@@ -120,19 +120,9 @@ pub fn resolve_activity(kind: AgentKind, session_id: &str, turn_ended: bool) -> 
     Some(activity)
 }
 
-/// Read the last assistant text from a caller-validated transcript path without the `/status`
-/// 500-character display limit. Reads remain bounded by `MAX_TAIL_BYTES`.
-pub fn resolve_last_assistant_text_from_path(
-    kind: AgentKind,
-    path: &Path,
-    max_chars: usize,
-) -> Option<String> {
-    resolve_last_assistant_text_from_path_raw(kind, path)
-        .map(|text| truncate_preserving_layout(&text, max_chars))
-}
-
-/// Read the raw last assistant text from a caller-validated transcript path. The file read is
-/// bounded even though the returned event text is not display-truncated.
+/// Read the raw last assistant text from a caller-validated transcript path, without the
+/// `/status` 500-character display limit. The file read is bounded by `MAX_TAIL_BYTES` even though
+/// the returned event text is not display-truncated.
 pub fn resolve_last_assistant_text_from_path_raw(kind: AgentKind, path: &Path) -> Option<String> {
     let lines = read_tail(path, MAX_TAIL_BYTES);
     let mut last = None;
@@ -153,15 +143,6 @@ pub fn resolve_last_assistant_text_from_path_raw(kind: AgentKind, path: &Path) -
         }
     }
     last
-}
-
-fn truncate_preserving_layout(text: &str, max_chars: usize) -> String {
-    if text.chars().count() <= max_chars {
-        text.to_string()
-    } else {
-        let head: String = text.chars().take(max_chars).collect();
-        format!("{}\n\n… [truncated]", head.trim_end())
-    }
 }
 
 /// 取文件 mtime 的 Unix 秒（best-effort）。
@@ -1392,19 +1373,20 @@ mod tests {
         });
         std::fs::write(&path, format!("{old}\nmalformed\n{latest}\n")).unwrap();
         assert_eq!(
-            resolve_last_assistant_text_from_path(AgentKind::Cursor, &path, 2_000).as_deref(),
+            resolve_last_assistant_text_from_path_raw(AgentKind::Cursor, &path).as_deref(),
             Some("最后一段\n第二行")
         );
 
+        // The raw text is returned whole: no display truncation is applied here.
         let long = "你".repeat(2_001);
         let record = serde_json::json!({
             "role": "assistant",
             "message": {"content": [{"type":"text", "text":long}]}
         });
         std::fs::write(&path, format!("{record}\n")).unwrap();
-        let text = resolve_last_assistant_text_from_path(AgentKind::Cursor, &path, 2_000).unwrap();
-        assert_eq!(text.matches('你').count(), 2_000);
-        assert!(text.ends_with("… [truncated]"));
+        let text = resolve_last_assistant_text_from_path_raw(AgentKind::Cursor, &path).unwrap();
+        assert_eq!(text.matches('你').count(), 2_001);
+        assert!(!text.contains("[truncated]"));
     }
 
     #[test]

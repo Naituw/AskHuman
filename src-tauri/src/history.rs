@@ -115,30 +115,6 @@ pub fn has_agent_origin() -> bool {
     has_agent_origin_at(&paths::history_file())
 }
 
-/// Latest completed exchange for one exact native Agent session.
-pub fn latest_send_for_session(agent_kind: &str, session_id: &str) -> Option<HistoryEntry> {
-    recent_sends_for_session(agent_kind, session_id, 1)
-        .entries
-        .into_iter()
-        .next()
-}
-
-/// Latest completed exchange in one MCP-process/project fallback partition.
-pub fn latest_send_for_mcp_instance(mcp_instance_id: &str, project: &str) -> Option<HistoryEntry> {
-    recent_sends_for_mcp_instance(mcp_instance_id, project, 1)
-        .entries
-        .into_iter()
-        .next()
-}
-
-/// Latest completed exchange for a project, used only by an ordinary non-Agent CLI call.
-pub fn latest_send_for_project(project: &str) -> Option<HistoryEntry> {
-    recent_sends_for_project(project, 1)
-        .entries
-        .into_iter()
-        .next()
-}
-
 /// Recent completed Send entries for a scope: newest-first slice of length ≤ `n`, plus total.
 #[derive(Debug, Clone)]
 pub struct RecentSends {
@@ -403,35 +379,6 @@ fn count_sends_after_at(
             entry.action == ChannelAction::Send && entry.timestamp_ms > after_ms && predicate(entry)
         })
         .count()
-}
-
-fn latest_send_for_session_at(
-    path: &Path,
-    agent_kind: &str,
-    session_id: &str,
-) -> Option<HistoryEntry> {
-    recent_sends_for_session_at(path, agent_kind, session_id, 1)
-        .entries
-        .into_iter()
-        .next()
-}
-
-fn latest_send_for_mcp_instance_at(
-    path: &Path,
-    mcp_instance_id: &str,
-    project: &str,
-) -> Option<HistoryEntry> {
-    recent_sends_for_mcp_instance_at(path, mcp_instance_id, project, 1)
-        .entries
-        .into_iter()
-        .next()
-}
-
-fn latest_send_for_project_at(path: &Path, project: &str) -> Option<HistoryEntry> {
-    recent_sends_for_project_at(path, project, 1)
-        .entries
-        .into_iter()
-        .next()
 }
 
 fn projects_at(path: &Path) -> Vec<ProjectInfo> {
@@ -753,9 +700,11 @@ mod tests {
     }
 
     #[test]
-    fn latest_send_queries_use_exact_partitions_and_ignore_cancel() {
+    fn newest_send_queries_use_exact_partitions_and_ignore_cancel() {
         let dir = tempdir().unwrap();
         let path = dir.path().join("history.jsonl");
+        // The id of the newest completed Send in a partition, if the partition has one.
+        let newest = |sends: RecentSends| sends.entries.first().map(|entry| entry.id.clone());
 
         let mut first = entry("first", "/p", 1);
         first.agent_kind = Some("codex".into());
@@ -777,40 +726,52 @@ mod tests {
         record_at(&path, other_session, 200);
 
         assert_eq!(
-            latest_send_for_session_at(&path, "codex", "s1").unwrap().id,
-            "first"
+            newest(recent_sends_for_session_at(&path, "codex", "s1", 1)).as_deref(),
+            Some("first")
         );
         assert_eq!(
-            latest_send_for_mcp_instance_at(&path, "m1", "/p")
-                .unwrap()
-                .id,
-            "other"
+            newest(recent_sends_for_mcp_instance_at(&path, "m1", "/p", 1)).as_deref(),
+            Some("other")
         );
-        assert_eq!(latest_send_for_project_at(&path, "/p").unwrap().id, "other");
+        assert_eq!(
+            newest(recent_sends_for_project_at(&path, "/p", 1)).as_deref(),
+            Some("other")
+        );
 
         // Exact Agent partitions include both kind and native session id.
-        assert!(latest_send_for_session_at(&path, "cursor", "s1").is_none());
-        assert!(latest_send_for_session_at(&path, "codex", "missing").is_none());
+        assert_eq!(
+            newest(recent_sends_for_session_at(&path, "cursor", "s1", 1)),
+            None
+        );
+        assert_eq!(
+            newest(recent_sends_for_session_at(&path, "codex", "missing", 1)),
+            None
+        );
         // MCP fallback partitions include both process instance and project.
-        assert!(latest_send_for_mcp_instance_at(&path, "m1", "/other").is_none());
-        assert!(latest_send_for_mcp_instance_at(&path, "m2", "/p").is_none());
-        assert!(latest_send_for_project_at(&path, "/other").is_none());
+        assert_eq!(
+            newest(recent_sends_for_mcp_instance_at(&path, "m1", "/other", 1)),
+            None
+        );
+        assert_eq!(
+            newest(recent_sends_for_mcp_instance_at(&path, "m2", "/p", 1)),
+            None
+        );
+        assert_eq!(
+            newest(recent_sends_for_project_at(&path, "/other", 1)),
+            None
+        );
 
         // A restarted MCP process in the same project cannot see the previous instance partition.
         let mut restarted = entry("restarted", "/p", 4);
         restarted.mcp_instance_id = Some("m2".into());
         record_at(&path, restarted, 200);
         assert_eq!(
-            latest_send_for_mcp_instance_at(&path, "m1", "/p")
-                .unwrap()
-                .id,
-            "other"
+            newest(recent_sends_for_mcp_instance_at(&path, "m1", "/p", 1)).as_deref(),
+            Some("other")
         );
         assert_eq!(
-            latest_send_for_mcp_instance_at(&path, "m2", "/p")
-                .unwrap()
-                .id,
-            "restarted"
+            newest(recent_sends_for_mcp_instance_at(&path, "m2", "/p", 1)).as_deref(),
+            Some("restarted")
         );
     }
 

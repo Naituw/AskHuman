@@ -79,9 +79,6 @@ pub struct Operation {
 }
 
 impl Operation {
-    pub fn submitted(&self) -> bool {
-        matches!(self.status.as_str(), "accepted" | "started")
-    }
     pub fn started_control(&self) -> Option<StartedControl> {
         (self.status == "started")
             .then(|| self.turn_id.clone())

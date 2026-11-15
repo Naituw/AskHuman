@@ -110,11 +110,6 @@ pub fn session_id_from_env_map(kind: AgentKind, env: &HashMap<String, String>) -
         .filter(|s| !s.is_empty())
 }
 
-/// 读取本进程 env 取会话 ID。
-pub fn session_id_from_env(kind: AgentKind) -> Option<String> {
-    session_id_from_env_map(kind, &env_snapshot())
-}
-
 /// A copy of this process's environment. Entries that are not valid Unicode are skipped:
 /// `std::env::vars()` panics on them, and release builds abort on panic.
 pub(crate) fn env_snapshot() -> HashMap<String, String> {
@@ -272,11 +267,6 @@ pub fn walk_agent_pid(kind: AgentKind, start_pid: u32) -> Option<u32> {
         return None;
     }
     Some(matched.pid)
-}
-
-/// 从当前进程向上 walk 定位指定家族的 Agent pid。
-pub fn walk_agent_pid_from_self(kind: AgentKind) -> Option<u32> {
-    walk_agent_pid(kind, std::process::id())
 }
 
 /// 从 `start_pid` 向上回溯，返回最近的（非自身）Agent 祖先及其家族。

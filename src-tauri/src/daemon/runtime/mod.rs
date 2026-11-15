@@ -676,7 +676,6 @@ impl Default for SelectState {
 enum PickerKind {
     TaskWorkspace,
     TaskAgent,
-    TaskTarget,
     TaskPermission,
     TaskInputSource,
     ForkSource,
@@ -712,7 +711,6 @@ enum PickerKind {
 struct ConfirmEntry {
     channel: String,
     message_id: String,
-    session_id: String,
     git_root: std::path::PathBuf,
     paths_fp: String,
     /// 通用展示模型；wire slot 必须经它映射回 `/stage` 的稳定业务 action id。

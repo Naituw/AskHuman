@@ -380,6 +380,7 @@ pub struct TodoSelection {
 
 impl QuestionAnswer {
     /// 是否为空回答：没选项、没（去空白后的）输入、没图片、没回复文件。
+    #[cfg(test)]
     pub fn is_empty(&self) -> bool {
         self.selected_options.is_empty()
             && self
@@ -595,13 +596,6 @@ pub enum InteractionRequest {
 }
 
 impl InteractionRequest {
-    pub fn id(&self) -> &str {
-        match self {
-            Self::Ask(request) => &request.id,
-            Self::Confirm(request) => &request.id,
-        }
-    }
-
     pub fn ask(&self) -> Option<&AskRequest> {
         match self {
             Self::Ask(request) => Some(request),
