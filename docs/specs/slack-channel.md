@@ -63,7 +63,7 @@ AskHuman "请看看这个改动？" -f ./diff.patch -q "要继续吗？" -o "继
 
 ## 4. 约束与既有规则（不可破坏）
 
-- **stdout 洁净契约不变**：结果仍只输出 `[选择的选项]`/`[用户输入]`/`[图片]`/`[文件]`/`[状态]` 区块；Slack 答案经同一 `emit_result`/`render_result` 聚合输出。
+- **stdout 洁净契约不变**：结果仍只输出 `[选择的选项]`/`[用户输入]`/`[图片]`/`[文件]`/`[状态]` 区块；Slack 答案经同一 `render_result` 聚合输出。
 - **现有功能契约不变**：弹窗、Telegram、钉钉、飞书、抢答、配置容错（缺字段走默认、未知字段忽略）、`--settings/--history/--help/--version`、退出码（0/1/3）保持。
 - **release 构建模式**：生产构建须 `--features custom-protocol`；TLS 沿用 rustls，不引入 OpenSSL；**不新增任何 crate**。
 - **配置容错**：新增 `channels.slack` 与其字段用 `#[serde(default)]`；旧配置无该字段走默认。

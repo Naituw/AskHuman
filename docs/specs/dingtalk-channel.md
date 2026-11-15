@@ -53,7 +53,7 @@ AskHuman "请看看这个改动？" -f ./diff.patch -q "要继续吗？" -o "继
 
 ## 4. 约束与既有规则（不可破坏）
 
-- **stdout 洁净契约不变**：结果仍只输出 `[选择的选项]`/`[用户输入]`/`[图片]`/`[文件]`/`[状态]` 区块；钉钉答案经同一 `emit_result` 聚合输出。
+- **stdout 洁净契约不变**：结果仍只输出 `[选择的选项]`/`[用户输入]`/`[图片]`/`[文件]`/`[状态]` 区块；钉钉答案经同一 `render_result` 聚合输出。
 - **现有功能契约不变**：弹窗、Telegram、抢答、配置容错（缺字段走默认、未知字段忽略）、`--settings/--help/--version`、退出码（0/1/3）保持。
 - **release 构建模式**：生产构建须 `--features custom-protocol`，不回退该修复。
 - **新增依赖**：允许新增 WebSocket 相关 crate（`tokio-tungstenite`(rustls) / `futures-util` / `async-trait`）；TLS 沿用 rustls，不引入 OpenSSL。

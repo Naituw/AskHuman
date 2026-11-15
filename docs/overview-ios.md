@@ -34,7 +34,7 @@ Agent / CLI ─► Daemon ── IosGateway（一个 actor）──► MQTT（TL
 | 位置 | 职责 |
 |---|---|
 | `ios/crypto.rs` · `envelope.rs` · `wire.rs` | 密钥派生、信封、全部线协议消息与限额常量；与 Swift `AHProtocol` 共用 `ios/Fixtures/wire-v1/` 夹具，两边测试必须同时通过 |
-| `ios/transport.rs` | `rumqttc` 传输（TLS 优先、WSS 备用、退避重连）、`LoopbackTransport`（测试：丢包 / 乱序 / 断线注入）、`probe`（设置页「测试连接」）。明文 TCP 只对回环地址生效（`first_via`） |
+| `ios/transport.rs` | `rumqttc` 传输（TLS 优先、WSS 备用、退避重连）、`LoopbackTransport`（仅测试编译，在 `ios/transport/loopback.rs`：丢包 / 乱序 / 断线注入）、`probe`（设置页「测试连接」）。明文 TCP 只对回环地址生效（`first_via`） |
 | `ios/store.rs` | `~/.askhuman/ios/` 下的 `state.json`（手机、关注集、推送句柄、本月流量）与 `journal.json`（状态变更消息的幂等日志）；配对密钥在系统钥匙串，缺钥匙串时回退 `keys.json` 并在设置页提示 |
 | `ios/views.rs` | 把请求投影成手机渲染的视图（选项原文、TODO、确认变体、快捷回复 `quickReplies`、升级标记 `escalated` 与可附注 `annotatable`） |
 | `ios/todos_view.rs` | 待办「项目列表」的纯函数：候选 + 同步元数据 → 带不透明 id、同名后缀、分段的行（与桌面端侧栏的 `mergeProjects` / `labelProjects` 同一算法，两边各有镜像用例）；只有哈希 id 与最少的上层目录名上线，路径不出 Mac |
