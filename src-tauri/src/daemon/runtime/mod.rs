@@ -38,6 +38,7 @@ use transport::Stream;
 
 mod agent_control;
 mod away_ops;
+mod conn_slot;
 mod cursor_reports;
 mod detect;
 mod failure_confirmation;
@@ -59,6 +60,7 @@ mod todo;
 mod watch;
 
 use away_ops::*;
+use conn_slot::Installed;
 use detect::*;
 use fork::*;
 use inbound::*;
@@ -314,13 +316,15 @@ struct ServerState {
     popup_focus: Mutex<PopupFocusArbiter>,
     popup_inbox: Mutex<super::popup_inbox::Host<InteractionEntry>>,
     /// 钉钉长连接 Router（惰性建连、常热复用；连接死亡后按需重连）。
-    dd_router: tokio::sync::Mutex<Option<Arc<DdRouter>>>,
+    /// The router slots and the iOS gateway slot never make a reader wait for a connect (see
+    /// `conn_slot`).
+    dd_router: conn_slot::ConnSlot<DdRouter>,
     /// 飞书长连接 Router（惰性建连、常热复用；连接死亡后按需重连）。
-    fs_router: tokio::sync::Mutex<Option<Arc<FsRouter>>>,
+    fs_router: conn_slot::ConnSlot<FsRouter>,
     /// Telegram 长轮询 Router（惰性建连、常热复用；单一 offset）。
-    tg_router: tokio::sync::Mutex<Option<Arc<TgRouter>>>,
+    tg_router: conn_slot::ConnSlot<TgRouter>,
     /// Slack Socket Mode Router（惰性建连、常热复用；连接死亡后按需重连）。
-    sl_router: tokio::sync::Mutex<Option<Arc<SlRouter>>>,
+    sl_router: conn_slot::ConnSlot<SlRouter>,
     /// 最近一次已知配置快照（config watch 据此比对差异，决定哪些 Router 需失效，A12）。
     config: Mutex<AppConfig>,
     /// 版本自更新快照（后台检查 / 指纹监听维护，握手与广播据此告知弹窗）。
@@ -368,7 +372,7 @@ struct ServerState {
     replay: Mutex<crate::daemon::ask_dedup::ReplayCache>,
     /// iOS channel gateway (`docs/plans/ios-channel.md` §4.3), present while the channel is enabled
     /// and configured. See `ios.rs`.
-    ios: Mutex<Option<IosSlot>>,
+    ios: conn_slot::ConnSlot<IosSlot>,
 }
 
 /// 一条控制台焦点订阅（`tx` 即该 agents 订阅者的发送端；同一订阅者重设焦点就地更新）。
@@ -438,7 +442,7 @@ fn test_state(directory: &std::path::Path) -> Arc<ServerState> {
         gui_focus: Default::default(),
         last_waiting: Default::default(),
         replay: Mutex::new(crate::daemon::ask_dedup::ReplayCache::new()),
-        ios: Mutex::new(None),
+        ios: Default::default(),
     })
 }
 
@@ -1122,10 +1126,10 @@ async fn serve(
         popup_announcement: Default::default(),
         popup_focus: Mutex::new(PopupFocusArbiter::new()),
         popup_inbox: Mutex::new(super::popup_inbox::Host::default()),
-        dd_router: tokio::sync::Mutex::new(None),
-        fs_router: tokio::sync::Mutex::new(None),
-        tg_router: tokio::sync::Mutex::new(None),
-        sl_router: tokio::sync::Mutex::new(None),
+        dd_router: Default::default(),
+        fs_router: Default::default(),
+        tg_router: Default::default(),
+        sl_router: Default::default(),
         config: Mutex::new(crate::development::channel_safety::runtime_config(
             AppConfig::load(),
         )),
@@ -1148,7 +1152,7 @@ async fn serve(
         gui_focus: Mutex::new(Vec::new()),
         last_waiting: Mutex::new(Vec::new()),
         replay: Mutex::new(crate::daemon::ask_dedup::ReplayCache::new()),
-        ios: Mutex::new(None),
+        ios: Default::default(),
     });
 
     let mut background_tasks = Vec::new();
@@ -1544,10 +1548,10 @@ async fn serve(
 
     // 收尾：主动丢弃常热 Router（其 Drop 中止 reader 任务、关闭 IM 长连接），再清理 socket/meta。
     // 进行中的请求各自持有 Router Arc 克隆，故仅在无人持有时才真正断连。
-    *state.dd_router.lock().await = None;
-    *state.fs_router.lock().await = None;
-    *state.tg_router.lock().await = None;
-    *state.sl_router.lock().await = None;
+    state.dd_router.invalidate();
+    state.fs_router.invalidate();
+    state.tg_router.invalidate();
+    state.sl_router.invalidate();
     for connection in &connections {
         connection.abort();
     }
@@ -1932,7 +1936,7 @@ async fn control_loop(reader: &mut Reader, w: &mut Writer, state: &Arc<ServerSta
                     uptime_secs: now_secs().saturating_sub(state.started_at),
                     socket: transport::socket_path().display().to_string(),
                     active_requests: state.registry.active_count(),
-                    im_connections: active_im_connections(state).await,
+                    im_connections: active_im_connections(state),
                     draining: state.draining.load(Ordering::SeqCst),
                     channel_issues: channel_issue_infos(),
                     exe_path: state.exe_path.clone(),
@@ -4069,36 +4073,59 @@ fn spawn_confirm_popup_watchdog(entry: Arc<request::ConfirmEntry>) {
     });
 }
 
+/// Whether a live-update handoff has begun. No router may be started or kept from then on: the
+/// successor daemon owns the channels (Telegram's single poll offset above all).
+fn handoff_suspending(state: &ServerState) -> bool {
+    state
+        .recovery
+        .as_ref()
+        .is_some_and(|runtime| runtime.suspending.load(Ordering::SeqCst))
+}
+
+// The four `ensure_*_router` functions share one shape (see `conn_slot` for why):
+//   1. A live router is returned without waiting, even while another request is still connecting.
+//   2. Otherwise queue for the right to connect, re-check what the previous holder left, connect.
+//   3. Install the new router unless a handoff began or the slot was invalidated since this call
+//      arrived; a router that connected during a handoff is paused (before the gate is released)
+//      and the request gets no router.
+
 /// 取得（必要时惰性建连）钉钉 Router；连接已死则重连。失败返回 None。
 async fn ensure_dd_router(
     state: &Arc<ServerState>,
     client_id: &str,
     client_secret: &str,
 ) -> Option<Arc<DdRouter>> {
-    let mut guard = state.dd_router.lock().await;
-    if state
-        .recovery
-        .as_ref()
-        .is_some_and(|runtime| runtime.suspending.load(Ordering::SeqCst))
-    {
+    if handoff_suspending(state) {
         return None;
     }
-    if let Some(r) = guard.as_ref() {
-        if r.is_alive() {
-            return Some(r.clone());
-        }
+    if let Some(r) = state.dd_router.current().filter(|r| r.is_alive()) {
+        return Some(r);
+    }
+    let attempt = state.dd_router.begin_connect().await;
+    if let Some(r) = attempt.current().filter(|r| r.is_alive()) {
+        return Some(r);
+    }
+    if handoff_suspending(state) {
+        return None;
     }
     match DdRouter::connect(client_id, client_secret).await {
         Ok(r) => {
             log("dingtalk router connected");
             crate::channels::health::clear("dingding");
-            *guard = Some(r.clone());
-            Some(r)
+            match attempt.install(&r, || handoff_suspending(state)) {
+                Installed::Shared { .. } | Installed::Private => Some(r),
+                Installed::Suspended => {
+                    // The attempt still holds the gate here, so live-update preparation (which
+                    // reads the slot through `settled`) waits for this pause to finish.
+                    r.pause().await;
+                    None
+                }
+            }
         }
         Err(e) => {
             log(&format!("dingtalk router connect failed: {}", e));
             crate::channels::health::report("dingding", e);
-            *guard = None;
+            attempt.failed();
             None
         }
     }
@@ -4109,30 +4136,37 @@ async fn ensure_fs_router(
     state: &Arc<ServerState>,
     cfg: &crate::config::FeishuChannelConfig,
 ) -> Option<Arc<FsRouter>> {
-    let mut guard = state.fs_router.lock().await;
-    if state
-        .recovery
-        .as_ref()
-        .is_some_and(|runtime| runtime.suspending.load(Ordering::SeqCst))
-    {
+    if handoff_suspending(state) {
         return None;
     }
-    if let Some(r) = guard.as_ref() {
-        if r.is_alive() {
-            return Some(r.clone());
-        }
+    if let Some(r) = state.fs_router.current().filter(|r| r.is_alive()) {
+        return Some(r);
+    }
+    let attempt = state.fs_router.begin_connect().await;
+    if let Some(r) = attempt.current().filter(|r| r.is_alive()) {
+        return Some(r);
+    }
+    if handoff_suspending(state) {
+        return None;
     }
     match FsRouter::connect(cfg).await {
         Ok(r) => {
             log("feishu router connected");
             crate::channels::health::clear("feishu");
-            *guard = Some(r.clone());
-            Some(r)
+            match attempt.install(&r, || handoff_suspending(state)) {
+                Installed::Shared { .. } | Installed::Private => Some(r),
+                Installed::Suspended => {
+                    // The attempt still holds the gate here, so live-update preparation (which
+                    // reads the slot through `settled`) waits for this pause to finish.
+                    r.pause().await;
+                    None
+                }
+            }
         }
         Err(e) => {
             log(&format!("feishu router connect failed: {}", e));
             crate::channels::health::report("feishu", e);
-            *guard = None;
+            attempt.failed();
             None
         }
     }
@@ -4143,18 +4177,18 @@ async fn ensure_tg_router(
     state: &Arc<ServerState>,
     cfg: &crate::config::TelegramChannelConfig,
 ) -> Option<Arc<TgRouter>> {
-    let mut guard = state.tg_router.lock().await;
-    if state
-        .recovery
-        .as_ref()
-        .is_some_and(|runtime| runtime.suspending.load(Ordering::SeqCst))
-    {
+    if handoff_suspending(state) {
         return None;
     }
-    if let Some(r) = guard.as_ref() {
-        if r.is_alive() {
-            return Some(r.clone());
-        }
+    if let Some(r) = state.tg_router.current().filter(|r| r.is_alive()) {
+        return Some(r);
+    }
+    let attempt = state.tg_router.begin_connect().await;
+    if let Some(r) = attempt.current().filter(|r| r.is_alive()) {
+        return Some(r);
+    }
+    if handoff_suspending(state) {
+        return None;
     }
     let connected = match &state.recovery {
         Some(runtime) => {
@@ -4174,13 +4208,20 @@ async fn ensure_tg_router(
     match connected {
         Ok(r) => {
             log("telegram router connected");
-            *guard = Some(r.clone());
-            Some(r)
+            match attempt.install(&r, || handoff_suspending(state)) {
+                Installed::Shared { .. } | Installed::Private => Some(r),
+                Installed::Suspended => {
+                    // The attempt still holds the gate here, so live-update preparation (which
+                    // reads the slot through `settled`) waits for this pause to finish.
+                    r.pause().await;
+                    None
+                }
+            }
         }
         Err(e) => {
             log(&format!("telegram router connect failed: {}", e));
             crate::channels::health::report("telegram", e);
-            *guard = None;
+            attempt.failed();
             None
         }
     }
@@ -4191,30 +4232,37 @@ async fn ensure_sl_router(
     state: &Arc<ServerState>,
     cfg: &crate::config::SlackChannelConfig,
 ) -> Option<Arc<SlRouter>> {
-    let mut guard = state.sl_router.lock().await;
-    if state
-        .recovery
-        .as_ref()
-        .is_some_and(|runtime| runtime.suspending.load(Ordering::SeqCst))
-    {
+    if handoff_suspending(state) {
         return None;
     }
-    if let Some(r) = guard.as_ref() {
-        if r.is_alive() {
-            return Some(r.clone());
-        }
+    if let Some(r) = state.sl_router.current().filter(|r| r.is_alive()) {
+        return Some(r);
+    }
+    let attempt = state.sl_router.begin_connect().await;
+    if let Some(r) = attempt.current().filter(|r| r.is_alive()) {
+        return Some(r);
+    }
+    if handoff_suspending(state) {
+        return None;
     }
     match SlRouter::connect(cfg).await {
         Ok(r) => {
             log("slack router connected");
             crate::channels::health::clear("slack");
-            *guard = Some(r.clone());
-            Some(r)
+            match attempt.install(&r, || handoff_suspending(state)) {
+                Installed::Shared { .. } | Installed::Private => Some(r),
+                Installed::Suspended => {
+                    // The attempt still holds the gate here, so live-update preparation (which
+                    // reads the slot through `settled`) waits for this pause to finish.
+                    r.pause().await;
+                    None
+                }
+            }
         }
         Err(e) => {
             log(&format!("slack router connect failed: {}", e));
             crate::channels::health::report("slack", e);
-            *guard = None;
+            attempt.failed();
             None
         }
     }
@@ -5032,46 +5080,21 @@ enum WatchBtn {
 }
 
 /// 当前已建连且存活的 IM 长连接名（供 `daemon status` 展示）。
-async fn active_im_connections(state: &Arc<ServerState>) -> Vec<String> {
+///
+/// Synchronous on purpose: this answers `Status`, which must come back even while a router is
+/// still connecting, so it only reads what the slots already hold.
+fn active_im_connections(state: &ServerState) -> Vec<String> {
     let mut v = Vec::new();
-    if state
-        .dd_router
-        .lock()
-        .await
-        .as_ref()
-        .map(|r| r.is_alive())
-        .unwrap_or(false)
-    {
+    if state.dd_router.current().is_some_and(|r| r.is_alive()) {
         v.push("dingtalk".to_string());
     }
-    if state
-        .fs_router
-        .lock()
-        .await
-        .as_ref()
-        .map(|r| r.is_alive())
-        .unwrap_or(false)
-    {
+    if state.fs_router.current().is_some_and(|r| r.is_alive()) {
         v.push("feishu".to_string());
     }
-    if state
-        .tg_router
-        .lock()
-        .await
-        .as_ref()
-        .map(|r| r.is_alive())
-        .unwrap_or(false)
-    {
+    if state.tg_router.current().is_some_and(|r| r.is_alive()) {
         v.push("telegram".to_string());
     }
-    if state
-        .sl_router
-        .lock()
-        .await
-        .as_ref()
-        .map(|r| r.is_alive())
-        .unwrap_or(false)
-    {
+    if state.sl_router.current().is_some_and(|r| r.is_alive()) {
         v.push("slack".to_string());
     }
     v
@@ -5334,8 +5357,10 @@ fn cleanup_temp_dirs() {
 async fn on_config_changed(state: &Arc<ServerState>) {
     let new = crate::development::channel_safety::runtime_config(AppConfig::load());
     let old = { state.config.lock().unwrap().clone() };
-    invalidate_changed_routers(state, &old, &new).await;
+    // Publish before invalidating: a request that reads the configuration after the routers were
+    // invalidated must see the new credentials, never connect with the old ones.
     *state.config.lock().unwrap() = new.clone();
+    invalidate_changed_routers(state, &old, &new);
     // 缓存的 watch 传输客户端按旧凭据构建，凭据/开关可能已变 → 整体失效，用到时按新配置重建。
     state.watch.clients.lock().unwrap().clear();
     // 凭据/收件人变更已停掉旧入站监听（见 invalidate_changed_routers）；这里立即按新配置重建，
@@ -5383,12 +5408,12 @@ fn sync_daemon_login_item() {
 /// 入站监听单独处理：除凭据变更（连带 Router）外，**收件人 id 变更**（feishu open_id /
 /// dingding·slack user_id / telegram chat_id，即监听的 expected_sender）也需停旧监听——否则监听
 /// 仍用旧过滤条件绑在旧连接上，`on_config_changed` 随后会按新配置重建（`stop_listener` 释放认领）。
-async fn invalidate_changed_routers(state: &Arc<ServerState>, old: &AppConfig, new: &AppConfig) {
+fn invalidate_changed_routers(state: &Arc<ServerState>, old: &AppConfig, new: &AppConfig) {
     let dd_router_changed = !crate::app::is_dingding_active(new)
         || old.channels.dingding.client_id != new.channels.dingding.client_id
         || old.channels.dingding.client_secret != new.channels.dingding.client_secret;
     if dd_router_changed {
-        *state.dd_router.lock().await = None;
+        state.dd_router.invalidate();
     }
     if dd_router_changed || old.channels.dingding.user_id != new.channels.dingding.user_id {
         stop_listener(state, "dingding");
@@ -5404,7 +5429,7 @@ async fn invalidate_changed_routers(state: &Arc<ServerState>, old: &AppConfig, n
             &old.channels.feishu.app_id,
             &old.channels.feishu.app_secret,
         );
-        *state.fs_router.lock().await = None;
+        state.fs_router.invalidate();
     }
     if fs_router_changed || old.channels.feishu.open_id != new.channels.feishu.open_id {
         stop_listener(state, "feishu");
@@ -5414,7 +5439,7 @@ async fn invalidate_changed_routers(state: &Arc<ServerState>, old: &AppConfig, n
         || old.channels.telegram.bot_token != new.channels.telegram.bot_token
         || old.channels.telegram.api_base_url != new.channels.telegram.api_base_url;
     if tg_router_changed {
-        *state.tg_router.lock().await = None;
+        state.tg_router.invalidate();
     }
     if tg_router_changed || old.channels.telegram.chat_id != new.channels.telegram.chat_id {
         stop_listener(state, "telegram");
@@ -5424,7 +5449,7 @@ async fn invalidate_changed_routers(state: &Arc<ServerState>, old: &AppConfig, n
         || old.channels.slack.bot_token != new.channels.slack.bot_token
         || old.channels.slack.app_token != new.channels.slack.app_token;
     if sl_router_changed {
-        *state.sl_router.lock().await = None;
+        state.sl_router.invalidate();
     }
     if sl_router_changed || old.channels.slack.user_id != new.channels.slack.user_id {
         stop_listener(state, "slack");
@@ -5642,6 +5667,63 @@ mod tests {
         // A release that is not newer than this build never prompts, dismissed or not.
         state.latest_version = "0.0.1".into();
         assert!(!update_snapshot_from_state(&state).available);
+    }
+
+    /// `Status` lists the live IM connections. It used to queue behind the lock a router connect
+    /// held, so one hung Slack handshake after a live update made the whole daemon look dead. The
+    /// iOS gateway is built the same way and gets the same guarantee.
+    #[tokio::test]
+    async fn status_is_answered_while_a_channel_is_still_connecting() {
+        use crate::ipc::{ClientMsg, ServerMsg};
+        let dir = tempfile::tempdir().unwrap();
+        let state = super::test_state(dir.path());
+        // Connects that never finish: every attempt is held for the whole test.
+        let connecting = (
+            state.dd_router.begin_connect().await,
+            state.fs_router.begin_connect().await,
+            state.tg_router.begin_connect().await,
+            state.sl_router.begin_connect().await,
+            state.ios.begin_connect().await,
+        );
+        // Everything else that must never wait for a connect is a plain synchronous read, or an
+        // invalidation, so none of it can queue either.
+        assert!(super::ios_gateway(&state).is_none());
+        assert!(super::active_im_connections(&state).is_empty());
+        tokio::time::timeout(
+            std::time::Duration::from_secs(5),
+            super::stop_ios_gateway(&state),
+        )
+        .await
+        .expect("shutdown does not wait for a gateway that is still being built");
+
+        let (client, server) = tokio::io::duplex(64 * 1024);
+        let (server_read, server_write) = tokio::io::split(server);
+        let mut reader: super::Reader = Box::new(tokio::io::BufReader::new(server_read));
+        let mut writer: super::Writer = Box::new(server_write);
+        let (client_read, mut client_write) = tokio::io::split(client);
+        let mut client_read = tokio::io::BufReader::new(client_read);
+
+        let serving = super::control_loop(&mut reader, &mut writer, &state);
+        let asking = async {
+            crate::ipc::write_msg(&mut client_write, &ClientMsg::Status)
+                .await
+                .unwrap();
+            tokio::time::timeout(
+                std::time::Duration::from_secs(5),
+                crate::ipc::read_msg::<_, ServerMsg>(&mut client_read),
+            )
+            .await
+        };
+        let reply = tokio::select! {
+            _ = serving => panic!("the control loop ended without answering"),
+            reply = asking => reply,
+        };
+
+        match reply {
+            Ok(Ok(Some(ServerMsg::Status(info)))) => assert!(info.im_connections.is_empty()),
+            other => panic!("Status was not answered while a channel connected: {other:?}"),
+        }
+        drop(connecting);
     }
 
     #[test]

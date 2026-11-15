@@ -14,7 +14,7 @@ pub mod requests;
 mod support;
 mod tasks;
 #[cfg(test)]
-mod testkit;
+pub(crate) mod testkit;
 #[cfg(test)]
 mod tests;
 #[cfg(test)]

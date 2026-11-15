@@ -148,8 +148,8 @@ pub(super) fn has_tray_subs(state: &Arc<ServerState>) -> bool {
         .unwrap_or(false)
 }
 
-/// 构造一帧整合的 `TrayState`（含 IM 连接、agent 忙闲、更新态）。需 await（读 tokio Mutex）。
-pub(super) async fn build_tray_state(state: &Arc<ServerState>) -> ServerMsg {
+/// 构造一帧整合的 `TrayState`（含 IM 连接、agent 忙闲、更新态）。
+pub(super) fn build_tray_state(state: &Arc<ServerState>) -> ServerMsg {
     let u = { state.update.lock().unwrap().clone() };
     // Agent 子菜单摘要（spec agent-interject D7）：注册表活动会话 + 插话「待送达」标记。
     let mut agents = state.agents.tray_agent_infos();
@@ -171,7 +171,7 @@ pub(super) async fn build_tray_state(state: &Arc<ServerState>) -> ServerMsg {
         // Cards the daemon holds for the user are not waited for by a drain, but they are pending
         // questions all the same: the icon and the list below show them.
         active_requests: state.registry.in_flight_count(),
-        im_connections: active_im_connections(state).await,
+        im_connections: active_im_connections(state),
         draining: state.draining.load(Ordering::SeqCst),
         agents_working: state.agents.working_count(),
         agents_idle: state.agents.idle_count(),
@@ -198,7 +198,7 @@ pub(super) fn channel_issue_infos() -> Vec<ipc::ChannelIssueInfo> {
 }
 
 /// 向所有菜单栏宿主推送一帧 `TrayState`（顺带剔除已断开的发送端）。
-/// 因 `build_tray_state` 需 await 而本函数被大量同步调用点引用，故 spawn 一个任务异步构造并发送；
+/// 本函数被大量同步调用点引用，构造与发送放进一个 spawn 的任务里，不占用调用点的执行；
 /// 无订阅者时早退（廉价）。
 pub(super) fn broadcast_tray_state(state: &Arc<ServerState>) {
     if !has_tray_subs(state) {
@@ -206,7 +206,7 @@ pub(super) fn broadcast_tray_state(state: &Arc<ServerState>) {
     }
     let state = state.clone();
     tokio::spawn(async move {
-        let msg = build_tray_state(&state).await;
+        let msg = build_tray_state(&state);
         if let Ok(mut subs) = state.tray_subs.lock() {
             subs.retain(|tx| tx.send(msg.clone()).is_ok());
         }
@@ -234,7 +234,7 @@ pub(super) async fn handle_tray_sub(mut reader: Reader, w: Writer, state: &Arc<S
     if let Ok(mut subs) = state.tray_subs.lock() {
         subs.push(tx.clone());
     }
-    let _ = tx.send(build_tray_state(state).await);
+    let _ = tx.send(build_tray_state(state));
 
     // 读端仅用于探测断开；宿主正常不发消息。
     wait_cli_eof(&mut reader).await;

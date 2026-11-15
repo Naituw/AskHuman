@@ -912,16 +912,27 @@ impl Runtime {
         };
         let popup_connections = announce_popup_update(state, updating);
         broadcast_tray_state(state);
-        if let Some(router) = state.dd_router.lock().await.as_ref() {
+        // `suspending` is already raised, so a router that finishes connecting from here on is not
+        // installed: whoever connected it pauses it before letting go of its slot (see
+        // `conn_slot`). `settled` waits for connects that were already under way (bounded by their
+        // own timeouts), so once it returns every router there will be is installed and ours to
+        // pause. Connects that have not started yet see the flag and never begin.
+        let (dingtalk, feishu, telegram, slack) = tokio::join!(
+            state.dd_router.settled(),
+            state.fs_router.settled(),
+            state.tg_router.settled(),
+            state.sl_router.settled(),
+        );
+        if let Some(router) = dingtalk {
             router.pause().await;
         }
-        if let Some(router) = state.fs_router.lock().await.as_ref() {
+        if let Some(router) = feishu {
             router.pause().await;
         }
-        if let Some(router) = state.tg_router.lock().await.as_ref() {
+        if let Some(router) = telegram {
             router.pause().await;
         }
-        if let Some(router) = state.sl_router.lock().await.as_ref() {
+        if let Some(router) = slack {
             router.pause().await;
         }
         for entry in state.registry.in_flight_entries() {
@@ -970,9 +981,11 @@ impl Runtime {
                 .set_metadata("popup/host", &state.popup_inbox.lock().unwrap().saved())?;
             self.store
                 .set_metadata("popup/focus", &*state.popup_focus.lock().unwrap())?;
-            if let Some(gateway) = ios_gateway(state) {
-                gateway.suspend().await.map_err(anyhow::Error::msg)?;
-                state.ios.lock().unwrap().take();
+            // Waits for a gateway that is still being built (it finds the handoff under way and
+            // shuts itself down), then suspends the installed one.
+            if let Some(slot) = state.ios.settled().await {
+                slot.gateway.suspend().await.map_err(anyhow::Error::msg)?;
+                state.ios.invalidate();
             }
             anyhow::ensure!(
                 lifecycle::fingerprint_at(&target).same_as(&fingerprint),
@@ -1081,10 +1094,10 @@ impl Runtime {
         if *state.exit_intent.lock().unwrap() != super::super::handoff::Intent::Stop {
             state.draining.store(false, Ordering::SeqCst);
         }
-        *state.dd_router.lock().await = None;
-        *state.fs_router.lock().await = None;
-        *state.tg_router.lock().await = None;
-        *state.sl_router.lock().await = None;
+        state.dd_router.invalidate();
+        state.fs_router.invalidate();
+        state.tg_router.invalidate();
+        state.sl_router.invalidate();
         ensure_ios_gateway(state).await;
         let config = state.config_snapshot();
         for entry in state.registry.in_flight_confirm_entries() {

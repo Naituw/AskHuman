@@ -122,13 +122,11 @@ pub(super) async fn detect_dingtalk(
     if code.is_empty() {
         return Err(crate::i18n::tr(lang, "cmd.detectCodeInvalid").to_string());
     }
-    // 复用：已有同 client_id 的活动 Router → 观察现有连接（忽略表单 secret）。
-    let existing = {
-        let guard = state.dd_router.lock().await;
-        match guard.as_ref() {
-            Some(r) if r.is_alive() && r.client_id() == req.app_key.trim() => Some(r.observe_bot()),
-            _ => None,
-        }
+    // 复用：已有同 client_id 的活动 Router → 观察现有连接（忽略表单 secret）。`settled` 会等在途建连
+    // 结束再看：否则这里会另开一条同 client_id 的连接，与正在建的共享连接互相抢（平台只留一条）。
+    let existing = match state.dd_router.settled().await {
+        Some(r) if r.is_alive() && r.client_id() == req.app_key.trim() => Some(r.observe_bot()),
+        _ => None,
     };
     if let Some(mut rx) = existing {
         return wait_dd_code(&mut rx, &code, lang).await;
@@ -184,14 +182,10 @@ pub(super) async fn detect_feishu(
     if code.is_empty() {
         return Err(crate::i18n::tr(lang, "cmd.detectCodeInvalid").to_string());
     }
-    let existing = {
-        let guard = state.fs_router.lock().await;
-        match guard.as_ref() {
-            Some(r) if r.is_alive() && r.app_id() == req.app_key.trim() => {
-                Some(r.observe_message())
-            }
-            _ => None,
-        }
+    // See `detect_dingtalk` for why this waits for a connect in progress.
+    let existing = match state.fs_router.settled().await {
+        Some(r) if r.is_alive() && r.app_id() == req.app_key.trim() => Some(r.observe_message()),
+        _ => None,
     };
     if let Some(mut rx) = existing {
         return wait_fs_code(&mut rx, &code, lang).await;
@@ -248,14 +242,10 @@ pub(super) async fn detect_slack(
     if code.is_empty() {
         return Err(crate::i18n::tr(lang, "cmd.detectCodeInvalid").to_string());
     }
-    let existing = {
-        let guard = state.sl_router.lock().await;
-        match guard.as_ref() {
-            Some(r) if r.is_alive() && r.app_token() == req.app_key.trim() => {
-                Some(r.observe_message())
-            }
-            _ => None,
-        }
+    // See `detect_dingtalk` for why this waits for a connect in progress.
+    let existing = match state.sl_router.settled().await {
+        Some(r) if r.is_alive() && r.app_token() == req.app_key.trim() => Some(r.observe_message()),
+        _ => None,
     };
     if let Some(mut rx) = existing {
         return wait_sl_code(&mut rx, &code, lang).await;
