@@ -11,9 +11,11 @@
 // New Task window, Settings) in the last one, which removes this attribute.
 #![allow(dead_code, unused_imports)]
 
+mod host_config;
 mod launch;
 mod receipt;
 mod runtime;
+mod sidecar;
 
 pub use launch::{launch_status, resolve_launch, LaunchStatus, UnavailableReason};
 
