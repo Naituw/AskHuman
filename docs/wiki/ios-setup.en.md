@@ -28,7 +28,7 @@ Agent ─► AskHuman on the Mac ──MQTT (TLS)──► EMQX ──► AskHum
    2. Switch to the "Username" tab and add: the username from the previous step, topic `ah/<username>/#`, action "Publish & Subscribe", **Allow**. EMQX checks the account's own rules first and the "All users" rules after, so only its own topics get through.
 
    Afterwards you can check the isolation with `ios/Tools/broker-probe/acl-check.cjs` (it needs one account's username and password; run `npm install` in `ios/Tools/broker-probe` first and pass the password in the `AH_PROBE_PASSWORD` environment variable, see the notes at the top of the script).
-5. **Keep the spend cap at 0.** When the free quota is used up the service pauses; nothing is charged automatically. AskHuman warns you as you approach the quota (see "Traffic and cost").
+5. **Keep the spend cap at 0.** When the free quota is used up the service pauses; nothing is charged automatically. AskHuman tells you as this month's traffic gets close to each GB (see "Traffic and cost").
 
 > Sharing with a friend: create a separate username and password for each person and add one `ah/<username>/#` allow rule of their own (rule 2); leave the "All users" catch-all alone. They cannot see each other's topics.
 
@@ -108,7 +108,7 @@ Agent ─► AskHuman on the Mac ──MQTT (TLS)──► EMQX ──► AskHum
 ## Traffic and cost
 
 - EMQX China-site free tier: 1 million connection minutes and 1 GB of traffic (in plus out) a month; typical use (100 requests a day, one hour of live watching a day) stays far below 300 MB a month.
-- The Mac settings and the phone's Macs tab both show this month's traffic (counted locally; a message counts twice, published and delivered). **At 80% of the free quota it turns amber**, and red when it is probably gone. With the spend cap at 0 the broker then refuses connections and the app says so: "the broker refused the connection, this month's free allowance may be used up".
+- The Mac settings and the phone's Macs tab both show this month's traffic (counted locally; a message counts twice, published and delivered). **When this month's traffic gets close to each GB (from 0.8 GB by default) the Inbox says so once**: close the note at the top with its ✕ and it comes back only when the use gets close to the next GB. The "Data use reminders" option on the phone's Macs tab changes it to every 2 / 5 / 10 GB, or turns it off. The note only counts; it does not judge whether the free quota is used up, so a top-up or a plan change needs no action, and it starts over each month (UTC). With the spend cap at 0 the broker refuses connections once the quota is gone and the app says so: "the broker refused the connection, this month's free allowance may be used up".
 - The cloud function sees very few calls (roughly 1,000 to 20,000 a month); check your account's billing rules in the cost center before deploying so there is no surprise fixed fee.
 
 ## Troubleshooting
