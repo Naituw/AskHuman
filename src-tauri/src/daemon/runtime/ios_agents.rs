@@ -51,6 +51,11 @@ const PROJECT_TTL: Duration = Duration::from_secs(60);
 
 /// Resolved project of a working directory, remembered because the list is rebuilt every second
 /// and walking up to the git root touches the disk.
+///
+/// A miss reads a handful of small local files (the git root and its `.git/config`), once per
+/// working directory per [`PROJECT_TTL`]. That stays synchronous on purpose: `Host::agents` is a
+/// synchronous call, and a cached answer is what every other rebuild gets. The lock is never held
+/// across those reads.
 #[derive(Default)]
 pub(super) struct ProjectCache {
     by_cwd: Mutex<HashMap<String, (ProjectRef, Instant)>>,
@@ -65,17 +70,22 @@ impl ProjectCache {
                 repo: None,
             };
         }
-        let mut map = self.by_cwd.lock().unwrap();
-        if map.len() > 256 {
-            map.clear();
-        }
-        if let Some((project, at)) = map.get(cwd) {
-            if at.elapsed() < PROJECT_TTL {
-                return project.clone();
+        {
+            let mut map = self.by_cwd.lock().unwrap();
+            if map.len() > 256 {
+                map.clear();
+            }
+            if let Some((project, at)) = map.get(cwd) {
+                if at.elapsed() < PROJECT_TTL {
+                    return project.clone();
+                }
             }
         }
         let project = resolve_project(cwd, crate::todo_sync::service::is_enabled());
-        map.insert(cwd.to_string(), (project.clone(), Instant::now()));
+        self.by_cwd
+            .lock()
+            .unwrap()
+            .insert(cwd.to_string(), (project.clone(), Instant::now()));
         project
     }
 }
