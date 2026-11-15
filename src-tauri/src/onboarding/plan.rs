@@ -5,7 +5,8 @@
 //! actually created or modified with this table, so the preview cannot drift from the writers.
 
 use crate::integrations::agent_mode::Mode;
-use crate::integrations::agent_rules::AgentTarget;
+use crate::integrations::agent_rules::{AgentTarget, Variant};
+use crate::integrations::antigravity_plugin;
 use crate::onboarding::agents::AgentDef;
 use crate::paths;
 use serde::Serialize;
@@ -65,11 +66,19 @@ fn files_for(target: AgentTarget, mode: Mode) -> Vec<PathBuf> {
         (AgentTarget::Grok, Mode::Cli) => Vec::new(),
         (AgentTarget::Pi, Mode::Cli) => vec![paths::pi_agents_md(), paths::pi_extension_file()],
         (AgentTarget::Pi, Mode::Mcp) => Vec::new(),
-        (AgentTarget::Antigravity, Mode::Cli) => vec![paths::antigravity_rule_file()],
-        (AgentTarget::Antigravity, Mode::Mcp) => vec![
-            paths::antigravity_rule_file(),
-            paths::antigravity_mcp_config_json(),
-        ],
+        // One plugin carries the rules, the MCP declaration (MCP mode) and the lifecycle hooks
+        // (on by default). Its ownership record lives in AskHuman's own state directory.
+        (AgentTarget::Antigravity, Mode::Cli | Mode::Mcp) => {
+            antigravity_plugin::planned_files(antigravity_plugin::Request {
+                variant: if mode == Mode::Mcp {
+                    Variant::Mcp
+                } else {
+                    Variant::Cli
+                },
+                lifecycle: true,
+                stop: false,
+            })
+        }
     }
 }
 

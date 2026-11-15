@@ -36,7 +36,6 @@ pub enum HookEvent {
 
 impl HookEvent {
     /// The argument written into the plugin's `hooks.json` command line.
-    #[cfg(test)]
     pub fn as_str(self) -> &'static str {
         match self {
             HookEvent::SessionStart => "session-start",

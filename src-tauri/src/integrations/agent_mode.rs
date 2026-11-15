@@ -4,8 +4,10 @@
 //!
 //! - **Cli** 模式绑定：CLI 版 Rule + Guard + 超时 Hook（Codex 无超时 Hook）。
 //! - **Mcp** 模式绑定：MCP 版 Rule + Guard + MCP 配置（用户级全局）。
-//! - Mode changes reconcile the target bundle idempotently. Antigravity prepares config first
-//!   and conditionally restores it if its existing rule journal restores the previous rule.
+//! - Mode changes reconcile the target bundle idempotently. Antigravity is one managed plugin
+//!   (rules, MCP declaration and lifecycle hooks, see `antigravity_plugin`); the standalone rule
+//!   file and the global MCP entry of the earlier design are retired only after the plugin is in
+//!   place, and a leftover the user changed is reported, never overwritten.
 //!
 //! For Codex the "Rule" is no longer a managed `AGENTS.md` block: the interaction protocol is
 //! delivered by the mode-owned SessionStart hook (see `codex_protocol`), so delegated runs such as
@@ -20,7 +22,8 @@
 use crate::integrations::agent_rules::{self, AgentTarget, Variant};
 use crate::integrations::{
     agent_ask_question, agent_context_recovery, agent_lifecycle, agent_permission, agent_stop,
-    agent_subagent_guard, claude_hook, codex_protocol, cursor_hook, mcp_config, mutation_lock,
+    agent_subagent_guard, antigravity_plugin, claude_hook, codex_protocol, cursor_hook, mcp_config,
+    mutation_lock,
 };
 use anyhow::Result;
 
@@ -133,6 +136,13 @@ pub fn timeout_hook_open(target: AgentTarget) {
 /// 内置提示词版本演进而漂移，若以「正文是否精确等于当前 `mcp_reference()`」判定，一旦更新提示词，已装的
 /// 旧正文就会失配并被错判成 CLI（曾导致「装了 MCP、改版后却显示 CLI 且提示需更新」的 bug）。
 pub fn current(target: AgentTarget) -> Mode {
+    if target == AgentTarget::Antigravity {
+        // One plugin carries every Antigravity artifact, so the generic artifact walk below does
+        // not apply. Like the other lenient readers, an unreadable state reads as None.
+        return antigravity_status()
+            .map(|(mode, _, _)| mode)
+            .unwrap_or(Mode::None);
+    }
     let mcp = mcp_config::is_installed(target);
     if target == AgentTarget::Codex {
         // Codex has no timeout hook, and its protocol carrier (the SessionStart hook) is identical
@@ -201,6 +211,11 @@ struct ArtifactState {
 
 /// 逐产物计算当前模式下的过期 / 缺失情况。None 模式仅报告需要清理的残留 Permission Hook。
 pub fn artifact_updates(target: AgentTarget) -> ArtifactUpdates {
+    if target == AgentTarget::Antigravity {
+        return antigravity_status()
+            .map(|(_, updates, _)| updates)
+            .unwrap_or_default();
+    }
     let mode = current(target);
     let updates = artifact_updates_for(
         mode,
@@ -327,14 +342,7 @@ fn set_unlocked_with_env(
     env: &std::collections::BTreeMap<String, String>,
 ) -> Result<()> {
     if target == AgentTarget::Antigravity {
-        let config = mcp_config::prepare_antigravity_config(mode == Mode::Mcp)?;
-        let variant = if mode == Mode::Mcp {
-            Variant::Mcp
-        } else {
-            Variant::Cli
-        };
-        let context = agent_rules::antigravity_context_for_variant(variant);
-        return set_antigravity_prepared(&context, &config, mode);
+        return set_antigravity(mode);
     }
     match mode {
         Mode::None => uninstall_all_unlocked(target),
@@ -400,16 +408,74 @@ thread_local! {
         const { std::cell::RefCell::new(None) };
 }
 
+/// Publish (or remove) the AskHuman plugin, then retire what the earlier design left behind.
+///
+/// The plugin goes first: until it exists, the earlier rule and MCP entry keep Antigravity
+/// working, so a failure never leaves it without the protocol. Retiring the leftovers is a
+/// separate step that stops at anything the user changed and then reports it; the plugin is
+/// already in place by then.
+fn set_antigravity(mode: Mode) -> Result<()> {
+    match mode {
+        Mode::None => antigravity_plugin::uninstall()?,
+        Mode::Cli | Mode::Mcp => antigravity_plugin::install(antigravity_plugin::Request {
+            variant: if mode == Mode::Mcp {
+                Variant::Mcp
+            } else {
+                Variant::Cli
+            },
+            lifecycle: agent_lifecycle::tracking_wanted(crate::agents::AgentKind::Antigravity),
+            // The Stop confirmation joins the shared Stop hook in a later phase.
+            stop: false,
+        })?,
+    }
+    agent_lifecycle::reconcile_unlocked(crate::agents::AgentKind::Antigravity, mode, true)?;
+    retire_earlier_antigravity(mode)
+}
+
+/// Remove the standalone rule file and the global MCP entry of the earlier design. With neither
+/// present nothing is read or written, so an unrelated, malformed global MCP configuration never
+/// blocks the plugin.
+fn retire_earlier_antigravity(requested: Mode) -> Result<()> {
+    if !earlier_antigravity_left() {
+        return Ok(());
+    }
+    let retry = format!(
+        "retry explicitly: AskHuman agents mode antigravity {}",
+        requested.as_str()
+    );
+    let config = mcp_config::prepare_antigravity_config(false)?;
+    // The rule's variant does not matter for removal; the writer only needs its location.
+    let context = agent_rules::antigravity_context_for_variant(Variant::Cli);
+    set_antigravity_transaction(&context, &config, Mode::None, &retry).map_err(|error| {
+        anyhow::anyhow!(
+            "the AskHuman plugin is in place, but the earlier Antigravity rule or MCP entry could not be removed and may duplicate it: {error:#}"
+        )
+    })
+}
+
+/// The earlier design's transaction: the MCP configuration and the standalone rule are changed
+/// together, and the configuration is restored when the rule change fails. Only the retirement
+/// of the leftovers uses it now.
+#[cfg(test)]
 fn set_antigravity_prepared(
     context: &super::antigravity_rule::RuleContext,
     config: &mcp_config::PreparedAntigravityConfig,
     mode: Mode,
 ) -> Result<()> {
-    use super::antigravity_rule::{self, RuleState};
     let retry = format!(
         "retry explicitly: AskHuman agents mode antigravity {}",
         mode.as_str()
     );
+    set_antigravity_transaction(context, config, mode, &retry)
+}
+
+fn set_antigravity_transaction(
+    context: &super::antigravity_rule::RuleContext,
+    config: &mcp_config::PreparedAntigravityConfig,
+    mode: Mode,
+    retry: &str,
+) -> Result<()> {
+    use super::antigravity_rule::{self, RuleState};
     antigravity_rule::recover_unlocked(context).map_err(|error| anyhow::anyhow!(
         "Antigravity rule recovery failed: {error:#}; rule {}; ledger {}; MCP config {} unchanged; {retry}",
         context.target_path.display(), context.integration_state_file.display(), config.path().display()
@@ -503,6 +569,11 @@ pub fn update_artifact(target: AgentTarget, artifact: Artifact) -> Result<()> {
     let _lock = mutation_lock::IntegrationMutationLock::acquire()?;
     agent_rules::validate_status(target)?;
     let mode = mode_for_update(target)?;
+    if target == AgentTarget::Antigravity {
+        // The rules, the MCP declaration and the hooks are files of one plugin: refreshing any
+        // of them refreshes all of it.
+        return set_antigravity(mode);
+    }
     ensure_protocol_deliverable(target, mode)?;
     match (mode, artifact) {
         (Mode::Cli, Artifact::Rule) => {
@@ -562,14 +633,75 @@ pub(crate) fn kind_for_target(target: AgentTarget) -> crate::agents::AgentKind {
 }
 
 /// One strict snapshot for public mode/state views; do not re-read through lossy bool helpers.
+///
+/// The plugin is the integration. Without one, an integration of the earlier design (a
+/// standalone rule file and a global MCP entry) still defines the mode, with every strict error
+/// preserved, and is reported as due for migration.
 pub(crate) fn antigravity_status() -> Result<(Mode, ArtifactUpdates, bool)> {
+    let (mode, updates, rule_installed) = antigravity_artifact_status()?;
+    let lifecycle = agent_lifecycle::status_for_mode(crate::agents::AgentKind::Antigravity, mode);
+    Ok((
+        mode,
+        merge_lifecycle_update(updates, lifecycle.needs_update),
+        rule_installed,
+    ))
+}
+
+fn antigravity_artifact_status() -> Result<(Mode, ArtifactUpdates, bool)> {
+    let plugin = antigravity_plugin::snapshot()?;
+    plugin.manageable()?;
+    if plugin.present() {
+        return Ok(antigravity_plugin_status(
+            &plugin,
+            earlier_antigravity_left(),
+        ));
+    }
     let snapshot = agent_rules::antigravity_snapshot()?;
     let (mcp_installed, mcp_outdated) = mcp_config::antigravity_config_status()?;
-    Ok(antigravity_status_from_snapshot(
-        snapshot,
-        mcp_installed,
-        mcp_outdated,
-    ))
+    let (mode, mut updates, rule_installed) =
+        antigravity_status_from_snapshot(snapshot, mcp_installed, mcp_outdated);
+    if mode != Mode::None {
+        // The integration still lives in the earlier files; an update migrates it to the plugin.
+        updates.rule = true;
+        updates.mcp = mode == Mode::Mcp;
+    }
+    Ok((mode, updates, rule_installed))
+}
+
+/// Whether the earlier design left a standalone rule file or a global MCP entry behind. What
+/// cannot be read or proven to be AskHuman's counts as left behind: retiring it reports why.
+fn earlier_antigravity_left() -> bool {
+    agent_rules::antigravity_snapshot().map_or(true, |snapshot| {
+        snapshot.state != super::antigravity_rule::RuleState::Missing
+    }) || mcp_config::antigravity_config_status().is_ok_and(|(installed, _)| installed)
+}
+
+/// Status of an integration the plugin carries. The plugin is one artifact: whatever is stale in
+/// it is refreshed by the same update.
+fn antigravity_plugin_status(
+    plugin: &antigravity_plugin::Snapshot,
+    earlier_left: bool,
+) -> (Mode, ArtifactUpdates, bool) {
+    use antigravity_plugin::State;
+    let mode = match plugin.variant {
+        Some(Variant::Cli) => Mode::Cli,
+        Some(Variant::Mcp) => Mode::Mcp,
+        None => Mode::None,
+    };
+    let stale = plugin.state != State::OwnedCurrent;
+    let updates = if mode == Mode::None {
+        ArtifactUpdates::default()
+    } else {
+        ArtifactUpdates {
+            // Leftovers of the earlier design do not impair a current plugin, so they only make
+            // the integration "due for an update"; the MCP flag also gates task readiness.
+            rule: stale || earlier_left,
+            hook: false,
+            mcp: mode == Mode::Mcp && stale,
+        }
+    };
+    let rule_installed = matches!(plugin.state, State::OwnedCurrent | State::OwnedOutdated);
+    (mode, updates, rule_installed)
 }
 
 fn antigravity_status_from_snapshot(
@@ -888,7 +1020,9 @@ mod env_mode_tests {
 mod antigravity_capability_tests {
     use super::*;
     #[test]
-    fn advanced_adapters_remain_closed_except_mcp() {
+    fn advanced_adapters_remain_closed_except_mcp_and_lifecycle() {
+        // Lifecycle tracking is open (the plugin's hooks); its on-disk state is covered by the
+        // isolated-home tests below, so nothing here reads the real home directory.
         let kind = crate::agents::AgentKind::Antigravity;
         let target = AgentTarget::Antigravity;
         assert!(!timeout_hook_supported(target));
@@ -896,9 +1030,66 @@ mod antigravity_capability_tests {
         assert!(!agent_permission::supported(target));
         assert!(!agent_stop::supported(kind));
         assert!(!agent_ask_question::supported(kind));
-        let lifecycle = agent_lifecycle::status_for_mode(kind, Mode::Cli);
-        assert!(!lifecycle.supported && !lifecycle.enabled && !lifecycle.needs_update);
         assert!(!super::super::agent_launch::fork_readiness(kind).ready);
+    }
+
+    #[test]
+    fn plugin_status_reports_mode_and_what_needs_an_update() {
+        use super::antigravity_plugin::{Snapshot, State};
+        let snapshot = |state, variant, lifecycle| Snapshot {
+            state,
+            variant,
+            lifecycle,
+            reason: None,
+            location: std::path::PathBuf::from("/plugin"),
+        };
+        let none = ArtifactUpdates::default();
+        // A current plugin of either variant, with nothing left behind, needs nothing.
+        for (variant, mode) in [(Variant::Cli, Mode::Cli), (Variant::Mcp, Mode::Mcp)] {
+            let current = snapshot(State::OwnedCurrent, Some(variant), true);
+            assert_eq!(
+                antigravity_plugin_status(&current, false),
+                (mode, none, true)
+            );
+        }
+        // Whatever is stale in the plugin is one update: the rules, and the MCP declaration
+        // when the plugin carries one.
+        let outdated = |variant| snapshot(State::OwnedOutdated, Some(variant), true);
+        assert_eq!(
+            antigravity_plugin_status(&outdated(Variant::Cli), false),
+            (
+                Mode::Cli,
+                ArtifactUpdates {
+                    rule: true,
+                    hook: false,
+                    mcp: false
+                },
+                true
+            )
+        );
+        assert_eq!(
+            antigravity_plugin_status(&outdated(Variant::Mcp), false),
+            (
+                Mode::Mcp,
+                ArtifactUpdates {
+                    rule: true,
+                    hook: false,
+                    mcp: true
+                },
+                true
+            )
+        );
+        // A plugin whose files vanished keeps its mode, but its rules are not installed.
+        let repair = snapshot(State::NeedsRepair, Some(Variant::Cli), true);
+        let (mode, updates, installed) = antigravity_plugin_status(&repair, false);
+        assert_eq!(mode, Mode::Cli);
+        assert!(updates.rule && !installed);
+        // The earlier design's files, still present next to a current plugin, are due for
+        // removal, but they do not make the working MCP declaration stale.
+        let current = snapshot(State::OwnedCurrent, Some(Variant::Mcp), true);
+        let (mode, updates, installed) = antigravity_plugin_status(&current, true);
+        assert_eq!(mode, Mode::Mcp);
+        assert!(updates.rule && !updates.mcp && installed);
     }
 }
 
@@ -998,80 +1189,299 @@ mod antigravity_transition_tests {
         }
     }
 
-    #[test]
-    fn updates_restore_missing_cli_rules_and_preserve_strict_errors() {
-        const CHILD: &str = "ASKHUMAN_TEST_ANTIGRAVITY_UPDATE_CHILD";
-        if std::env::var_os(CHILD).is_none() {
-            let root = tempfile::tempdir().unwrap();
-            let home = root.path().canonicalize().unwrap();
-            let state = home.join("state");
-            std::fs::create_dir(&state).unwrap();
-            std::fs::set_permissions(&state, std::fs::Permissions::from_mode(0o700)).unwrap();
-            let output = std::process::Command::new(crate::development::routing::program_path().unwrap())
-                .args(["--exact", "integrations::agent_mode::antigravity_transition_tests::updates_restore_missing_cli_rules_and_preserve_strict_errors", "--nocapture"])
-                .env(CHILD, "1").env("HOME", &home).env("ASKHUMAN_HOME", &state)
-                .output().unwrap();
-            assert!(
-                output.status.success(),
-                "stdout: {}\nstderr: {}",
-                String::from_utf8_lossy(&output.stdout),
-                String::from_utf8_lossy(&output.stderr)
-            );
+    /// Runs `body` in a child process whose `HOME` and `ASKHUMAN_HOME` point into a fresh
+    /// directory: the plugin and the earlier artifacts live at fixed global locations.
+    fn in_isolated_home(test: &str, body: impl FnOnce()) {
+        const CHILD: &str = "ASKHUMAN_TEST_ANTIGRAVITY_ISOLATED_CHILD";
+        if std::env::var_os(CHILD).is_some() {
+            body();
             return;
         }
-        let target = AgentTarget::Antigravity;
-        let rule = crate::paths::antigravity_rule_file();
-        let config = crate::paths::antigravity_mcp_config_json();
-        let ledger = crate::paths::integration_state_file();
-        let files = [&rule, &config, &ledger];
-        let bytes = || files.map(|path| std::fs::read(path).ok());
-        for artifact_only in [true, false] {
-            set(target, Mode::Cli).unwrap();
-            std::fs::remove_file(&rule).unwrap();
-            let (mode, updates, installed) = antigravity_status().unwrap();
-            assert_eq!(mode, Mode::Cli);
-            assert!(updates.rule && !installed);
-            if artifact_only {
-                update_artifact(target, Artifact::Rule).unwrap();
-            } else {
-                update(target).unwrap();
+        let root = tempfile::tempdir().unwrap();
+        let home = root.path().canonicalize().unwrap();
+        let state = home.join("state");
+        std::fs::create_dir(&state).unwrap();
+        std::fs::set_permissions(&state, std::fs::Permissions::from_mode(0o700)).unwrap();
+        let output =
+            std::process::Command::new(crate::development::routing::program_path().unwrap())
+                .args([
+                    "--exact",
+                    &format!("integrations::agent_mode::antigravity_transition_tests::{test}"),
+                    "--nocapture",
+                ])
+                .env(CHILD, "1")
+                .env("HOME", &home)
+                .env("ASKHUMAN_HOME", &state)
+                .output()
+                .unwrap();
+        // A filter that matches nothing also exits successfully; insist that the one test ran.
+        assert!(
+            output.status.success() && String::from_utf8_lossy(&output.stdout).contains("1 passed"),
+            "stdout: {}\nstderr: {}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
+
+    fn plugin_dir() -> PathBuf {
+        crate::paths::antigravity_plugin_dir_in(&crate::paths::integration_home())
+    }
+
+    /// Every file below `dir`, by relative path.
+    fn tree(dir: &std::path::Path) -> std::collections::BTreeMap<String, Vec<u8>> {
+        fn walk(
+            base: &std::path::Path,
+            dir: &std::path::Path,
+            out: &mut std::collections::BTreeMap<String, Vec<u8>>,
+        ) {
+            let Ok(entries) = std::fs::read_dir(dir) else {
+                return;
+            };
+            for entry in entries {
+                let path = entry.unwrap().path();
+                if path.is_dir() {
+                    walk(base, &path, out);
+                } else {
+                    out.insert(
+                        path.strip_prefix(base)
+                            .unwrap()
+                            .to_string_lossy()
+                            .into_owned(),
+                        std::fs::read(&path).unwrap(),
+                    );
+                }
             }
-            let (mode, updates, installed) = antigravity_status().unwrap();
-            assert_eq!(mode, Mode::Cli);
-            assert!(installed && !updates.rule);
         }
+        let mut out = std::collections::BTreeMap::new();
+        walk(dir, dir, &mut out);
+        out
+    }
 
-        let managed_rule = std::fs::read(&rule).unwrap();
-        for invalid_config in [b"{".as_slice(), b"[]", b"{\"mcpServers\":[]}"] {
-            std::fs::write(&config, invalid_config).unwrap();
-            let before = bytes();
-            assert!(update(target).is_err());
-            assert!(update_artifact(target, Artifact::Rule).is_err());
-            assert_eq!(bytes(), before);
-        }
-        std::fs::write(&config, "{}").unwrap();
-        std::fs::write(&rule, b"user-edited rule").unwrap();
-        let before = bytes();
-        assert!(update(target).is_err());
-        assert!(update_artifact(target, Artifact::Rule).is_err());
-        assert_eq!(bytes(), before);
-        std::fs::write(&rule, managed_rule).unwrap();
+    /// The integration as the release before the plugin left it: a standalone rule file under
+    /// strict ownership and, for MCP, an entry in the global MCP configuration.
+    fn seed_earlier_integration(mode: Mode) {
+        let config = mcp_config::prepare_antigravity_config(mode == Mode::Mcp).unwrap();
+        let variant = if mode == Mode::Mcp {
+            Variant::Mcp
+        } else {
+            Variant::Cli
+        };
+        let context = agent_rules::antigravity_context_for_variant(variant);
+        set_antigravity_prepared(&context, &config, mode).unwrap();
+    }
 
-        let context = agent_rules::antigravity_context_for_variant(Variant::Mcp);
-        let failure = Failure::at("prepared", None);
-        assert!(antigravity_rule::install_unlocked(&context).is_err());
-        drop(failure);
-        let journal = ledger
-            .parent()
-            .unwrap()
-            .join(".antigravity-rule-state/.antigravity-rule.pending.json");
-        let before = bytes();
-        let pending = std::fs::read(&journal).unwrap();
-        assert!(update(target).is_err());
-        assert!(update_artifact(target, Artifact::Rule).is_err());
-        assert_eq!(bytes(), before);
-        assert_eq!(std::fs::read(journal).unwrap(), pending);
-        set(target, Mode::Cli).unwrap();
+    #[test]
+    fn plugin_updates_repair_missing_files_and_preserve_strict_errors() {
+        in_isolated_home(
+            "plugin_updates_repair_missing_files_and_preserve_strict_errors",
+            || {
+                let target = AgentTarget::Antigravity;
+                let dir = plugin_dir();
+                let rules = dir.join("rules/AGENTS.md");
+                let config = crate::paths::antigravity_mcp_config_json();
+                for artifact_only in [true, false] {
+                    set(target, Mode::Cli).unwrap();
+                    std::fs::remove_file(&rules).unwrap();
+                    let (mode, updates, installed) = antigravity_status().unwrap();
+                    assert_eq!(mode, Mode::Cli);
+                    assert!(updates.rule && !installed);
+                    if artifact_only {
+                        update_artifact(target, Artifact::Rule).unwrap();
+                    } else {
+                        update(target).unwrap();
+                    }
+                    let (mode, updates, installed) = antigravity_status().unwrap();
+                    assert_eq!(mode, Mode::Cli);
+                    assert!(installed && updates == ArtifactUpdates::default());
+                }
+
+                // The plugin does not depend on the global MCP configuration: a malformed one is
+                // neither read as AskHuman's nor rewritten.
+                for malformed in [b"{".as_slice(), b"[]", b"{\"mcpServers\":[]}"] {
+                    std::fs::write(&config, malformed).unwrap();
+                    let before = tree(&dir);
+                    assert_eq!(antigravity_status().unwrap().1, ArtifactUpdates::default());
+                    update(target).unwrap();
+                    update_artifact(target, Artifact::Rule).unwrap();
+                    assert_eq!(std::fs::read(&config).unwrap(), malformed);
+                    assert_eq!(tree(&dir), before);
+                }
+                std::fs::remove_file(&config).unwrap();
+
+                // A file someone else edited is a conflict that nothing touches.
+                let published = std::fs::read(&rules).unwrap();
+                std::fs::write(&rules, b"user-edited rules").unwrap();
+                let before = tree(&dir);
+                assert!(antigravity_status().is_err());
+                assert!(update(target).is_err());
+                assert!(update_artifact(target, Artifact::Rule).is_err());
+                assert!(set(target, Mode::Mcp).is_err());
+                assert!(set(target, Mode::None).is_err());
+                assert_eq!(tree(&dir), before);
+                std::fs::write(&rules, published).unwrap();
+                assert_eq!(antigravity_status().unwrap().1, ArtifactUpdates::default());
+            },
+        );
+    }
+
+    #[test]
+    fn the_earlier_integration_migrates_to_the_plugin_and_is_then_retired() {
+        in_isolated_home(
+            "the_earlier_integration_migrates_to_the_plugin_and_is_then_retired",
+            || {
+                use super::antigravity_plugin::State;
+                let target = AgentTarget::Antigravity;
+                let config = crate::paths::antigravity_mcp_config_json();
+                let earlier_rule =
+                    crate::paths::antigravity_rule_file_in(&crate::paths::integration_home());
+                std::fs::create_dir_all(config.parent().unwrap()).unwrap();
+                std::fs::write(
+                    &config,
+                    "{\n // keep comment\n \"mcpServers\": {\"other\": {\"command\":\"other\"}}, \"extra\":17\n}\n",
+                )
+                .unwrap();
+                seed_earlier_integration(Mode::Mcp);
+                assert!(earlier_rule.exists());
+                assert!(std::fs::read_to_string(&config)
+                    .unwrap()
+                    .contains("askhuman"));
+
+                // The earlier files still define the mode, and the missing plugin is due.
+                let (mode, updates, installed) = antigravity_status().unwrap();
+                assert_eq!(mode, Mode::Mcp);
+                assert!(installed && updates.rule && updates.mcp);
+                assert_eq!(
+                    antigravity_plugin::snapshot().unwrap().state,
+                    State::Missing
+                );
+
+                update(target).unwrap();
+
+                // The plugin carries everything now; nothing of the earlier design is left.
+                let plugin = antigravity_plugin::snapshot().unwrap();
+                assert_eq!(plugin.state, State::OwnedCurrent);
+                assert_eq!(plugin.variant, Some(Variant::Mcp));
+                assert!(plugin_dir().join("mcp_config.json").exists());
+                assert!(!earlier_rule.exists());
+                let text = std::fs::read_to_string(&config).unwrap();
+                assert!(text.contains("// keep comment") && !text.contains("askhuman"));
+                let value: serde_json::Value =
+                    jsonc_parser::parse_to_serde_value(&text, &Default::default()).unwrap();
+                assert_eq!(value["extra"], 17);
+                assert_eq!(value["mcpServers"]["other"]["command"], "other");
+                assert_eq!(
+                    antigravity_status().unwrap(),
+                    (Mode::Mcp, ArtifactUpdates::default(), true)
+                );
+
+                // A second update changes nothing.
+                let plugin_before = tree(&plugin_dir());
+                let config_before = std::fs::read(&config).unwrap();
+                update(target).unwrap();
+                assert_eq!(tree(&plugin_dir()), plugin_before);
+                assert_eq!(std::fs::read(&config).unwrap(), config_before);
+
+                // None removes the plugin and leaves the user's own configuration alone.
+                set(target, Mode::None).unwrap();
+                assert_eq!(
+                    antigravity_plugin::snapshot().unwrap().state,
+                    State::Missing
+                );
+                assert!(!plugin_dir().exists());
+                assert_eq!(antigravity_status().unwrap().0, Mode::None);
+                assert_eq!(std::fs::read(&config).unwrap(), config_before);
+            },
+        );
+    }
+
+    #[test]
+    fn an_earlier_rule_the_user_changed_is_reported_while_the_plugin_stays() {
+        in_isolated_home(
+            "an_earlier_rule_the_user_changed_is_reported_while_the_plugin_stays",
+            || {
+                use super::antigravity_plugin::State;
+                let target = AgentTarget::Antigravity;
+                let earlier_rule =
+                    crate::paths::antigravity_rule_file_in(&crate::paths::integration_home());
+                seed_earlier_integration(Mode::Cli);
+                std::fs::write(&earlier_rule, b"my own rules").unwrap();
+
+                // Without a plugin the earlier rule still defines the mode: its conflict is a
+                // strict status error and an update refuses to run.
+                assert!(antigravity_status().is_err());
+                assert!(update(target).is_err());
+                assert!(antigravity_plugin::snapshot().unwrap().state == State::Missing);
+
+                // An explicit mode change publishes the plugin, then stops at the changed rule.
+                let error = set(target, Mode::Cli).unwrap_err().to_string();
+                assert!(error.contains("plugin is in place"), "{error}");
+                assert_eq!(std::fs::read(&earlier_rule).unwrap(), b"my own rules");
+                assert_eq!(
+                    antigravity_plugin::snapshot().unwrap().state,
+                    State::OwnedCurrent
+                );
+                let (mode, updates, _) = antigravity_status().unwrap();
+                assert_eq!(mode, Mode::Cli);
+                assert!(updates.rule);
+
+                // Updating again reports it again and still touches neither file.
+                let plugin_before = tree(&plugin_dir());
+                assert!(update(target).is_err());
+                assert_eq!(std::fs::read(&earlier_rule).unwrap(), b"my own rules");
+                assert_eq!(tree(&plugin_dir()), plugin_before);
+
+                // Once the user removes it, the next update settles.
+                std::fs::remove_file(&earlier_rule).unwrap();
+                update(target).unwrap();
+                assert_eq!(antigravity_status().unwrap().1, ArtifactUpdates::default());
+            },
+        );
+    }
+
+    #[test]
+    fn the_lifecycle_switch_edits_the_plugin_hooks() {
+        in_isolated_home("the_lifecycle_switch_edits_the_plugin_hooks", || {
+            use crate::agents::AgentKind;
+            let kind = AgentKind::Antigravity;
+            let target = AgentTarget::Antigravity;
+            let hooks = plugin_dir().join("hooks.json");
+
+            // Without an integration there is nothing to carry the hooks.
+            assert!(agent_lifecycle::set_enabled(kind, true).is_err());
+            assert!(!agent_lifecycle::any_installed());
+
+            set(target, Mode::Mcp).unwrap();
+            let status = agent_lifecycle::status(kind);
+            assert!(status.supported && status.enabled && status.installed);
+            assert!(!status.needs_update && !status.cleanup_required);
+            assert!(hooks.exists());
+            assert!(agent_lifecycle::any_installed());
+            assert!(agent_lifecycle::tracking_installed(kind));
+
+            agent_lifecycle::set_enabled(kind, false).unwrap();
+            let status = agent_lifecycle::status(kind);
+            assert!(!status.enabled && status.preference_configured && !status.installed);
+            assert!(!status.needs_update);
+            assert!(!hooks.exists());
+            assert_eq!(current(target), Mode::Mcp);
+            assert!(!agent_lifecycle::any_installed());
+
+            // The preference survives an update of the integration.
+            update(target).unwrap();
+            assert!(!hooks.exists());
+            assert_eq!(antigravity_status().unwrap().1, ArtifactUpdates::default());
+
+            agent_lifecycle::set_enabled(kind, true).unwrap();
+            assert!(hooks.exists());
+            assert_eq!(antigravity_status().unwrap().1, ArtifactUpdates::default());
+
+            // Removing the integration removes the hooks with it and keeps the preference.
+            set(target, Mode::None).unwrap();
+            assert!(!hooks.exists());
+            let status = agent_lifecycle::status(kind);
+            assert!(!status.enabled && !status.installed && status.preference_configured);
+            assert_eq!(agent_lifecycle::preference(kind), Some(true));
+        });
     }
 
     #[test]

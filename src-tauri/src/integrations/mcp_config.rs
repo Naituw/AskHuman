@@ -378,6 +378,10 @@ pub fn supported(target: AgentTarget) -> bool {
 
 /// 配置展示路径（home 前缀折叠为 `~`）。
 pub fn display_path(target: AgentTarget) -> String {
+    if target == AgentTarget::Antigravity {
+        // The MCP server is declared inside the AskHuman plugin, not in the global configuration.
+        return collapse_home(&paths::antigravity_plugin_mcp_config_json());
+    }
     collapse_home(&config_path(target))
 }
 
@@ -385,6 +389,10 @@ pub fn display_path(target: AgentTarget) -> String {
 pub fn is_installed(target: AgentTarget) -> bool {
     if !supported(target) {
         return false;
+    }
+    if target == AgentTarget::Antigravity {
+        return super::agent_mode::antigravity_status()
+            .is_ok_and(|(mode, _, _)| mode == super::agent_mode::Mode::Mcp);
     }
     let path = config_path(target);
     match format_of(target) {
@@ -402,6 +410,10 @@ pub fn is_installed(target: AgentTarget) -> bool {
 pub fn needs_update(target: AgentTarget) -> bool {
     if !supported(target) {
         return false;
+    }
+    if target == AgentTarget::Antigravity {
+        return super::agent_mode::antigravity_status()
+            .is_ok_and(|(mode, updates, _)| mode == super::agent_mode::Mode::Mcp && updates.mcp);
     }
     if !is_installed(target) {
         return false;
@@ -479,7 +491,11 @@ fn write_entry(
     env: &std::collections::BTreeMap<String, String>,
 ) -> Result<()> {
     if target == AgentTarget::Antigravity {
-        return prepare_antigravity_config(true)?.apply();
+        // The server is declared by the AskHuman plugin; a second entry in the global
+        // configuration would show the host the same tool twice.
+        return Err(anyhow!(
+            "the Antigravity MCP server ships inside the AskHuman plugin"
+        ));
     }
     let exe = current_exe_string()?;
     let path = config_path(target);

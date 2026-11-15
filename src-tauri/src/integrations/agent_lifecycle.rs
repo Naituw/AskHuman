@@ -1,6 +1,7 @@
 //! Agent lifecycle tracking integration. Automatic integrations own their user-level lifecycle
-//! hooks; Pi carries the capability in its shared managed extension. Tracking can be disabled
-//! inside an active integration, while `Mode::None` never retains AskHuman lifecycle artifacts.
+//! hooks; Pi carries the capability in its shared managed extension and Antigravity in its managed
+//! plugin (`hooks.json`). Tracking can be disabled inside an active integration, while
+//! `Mode::None` never retains AskHuman lifecycle artifacts.
 //!
 //! 设计要点：
 //! - The timeout hook (`askhuman-timeout.sh`) remains independent. Lifecycle events use the
@@ -62,6 +63,8 @@ struct LifecyclePreferences {
     grok: Option<bool>,
     #[serde(default)]
     pi: Option<bool>,
+    #[serde(default)]
+    antigravity: Option<bool>,
 }
 
 impl LifecyclePreferences {
@@ -72,7 +75,7 @@ impl LifecyclePreferences {
             AgentKind::Cursor => self.cursor,
             AgentKind::Grok => self.grok,
             AgentKind::Pi => self.pi,
-            AgentKind::Antigravity => None,
+            AgentKind::Antigravity => self.antigravity,
         }
     }
 
@@ -83,7 +86,7 @@ impl LifecyclePreferences {
             AgentKind::Cursor => &mut self.cursor,
             AgentKind::Grok => &mut self.grok,
             AgentKind::Pi => &mut self.pi,
-            AgentKind::Antigravity => return,
+            AgentKind::Antigravity => &mut self.antigravity,
         };
         *slot = Some(value);
     }
@@ -223,6 +226,12 @@ pub(crate) fn preference(kind: AgentKind) -> Option<bool> {
     load_preferences().get(kind)
 }
 
+/// Whether an integration being published now should carry lifecycle tracking: the stored
+/// preference, or the default (on) for a new integration. Only meaningful in an active mode.
+pub(crate) fn tracking_wanted(kind: AgentKind) -> bool {
+    preference(kind).unwrap_or(true)
+}
+
 pub(crate) fn target_for_kind(kind: AgentKind) -> super::agent_rules::AgentTarget {
     match kind {
         AgentKind::Claude => super::agent_rules::AgentTarget::ClaudeCode,
@@ -275,6 +284,7 @@ pub fn any_installed() -> bool {
         AgentKind::Cursor,
         AgentKind::Grok,
         AgentKind::Pi,
+        AgentKind::Antigravity,
     ]
     .iter()
     .any(|k| disk_status(*k).installed)
@@ -289,13 +299,16 @@ pub(crate) fn tracking_installed(kind: AgentKind) -> bool {
     if kind == AgentKind::Pi {
         return super::pi_extension::status().lifecycle;
     }
+    if kind == AgentKind::Antigravity {
+        // The plugin's Stop hook is the shared Stop handler and always carries tracking.
+        return disk_status(kind).installed;
+    }
     let (path, shape) = match kind {
         AgentKind::Claude => (paths::claude_settings_json(), Shape::Nested),
         AgentKind::Codex => (paths::codex_hooks_json(), Shape::Nested),
         AgentKind::Cursor => (paths::cursor_hooks_json(), Shape::Flat),
         AgentKind::Grok => (paths::grok_hooks_json(), Shape::Nested),
-        AgentKind::Pi => unreachable!(),
-        AgentKind::Antigravity => return false,
+        AgentKind::Pi | AgentKind::Antigravity => unreachable!(),
     };
     let Some(root) = read_value(&path) else {
         return false;
@@ -361,10 +374,24 @@ pub fn status(kind: AgentKind) -> LifecycleStatus {
 
 fn disk_status(kind: AgentKind) -> DiskLifecycleStatus {
     if kind == AgentKind::Antigravity {
-        return DiskLifecycleStatus {
-            installed: false,
-            outdated: false,
-            supported: false,
+        use super::antigravity_plugin::{self, State};
+        // The hooks are part of the AskHuman plugin. Where the plugin cannot be read at all
+        // (an unsupported platform, an unreadable home) the integration status carries the
+        // reason, and the switch is not offered.
+        return match antigravity_plugin::snapshot() {
+            Ok(plugin) => {
+                let installed = plugin.present() && plugin.lifecycle;
+                DiskLifecycleStatus {
+                    installed,
+                    outdated: installed && plugin.state != State::OwnedCurrent,
+                    supported: true,
+                }
+            }
+            Err(_) => DiskLifecycleStatus {
+                installed: false,
+                outdated: false,
+                supported: false,
+            },
         };
     }
     if !supported() {
@@ -380,11 +407,7 @@ fn disk_status(kind: AgentKind) -> DiskLifecycleStatus {
         AgentKind::Codex => codex_status(),
         // Grok：全局 hooks 恒受信任，纯 JSON 状态即可（无 Codex 那种信任哈希校验）。
         AgentKind::Grok => json_status(kind, &paths::grok_hooks_json(), Shape::Nested),
-        AgentKind::Antigravity => DiskLifecycleStatus {
-            installed: false,
-            outdated: false,
-            supported: false,
-        },
+        AgentKind::Antigravity => unreachable!("handled above"),
         AgentKind::Pi => {
             let extension = super::pi_extension::status();
             DiskLifecycleStatus {
@@ -400,9 +423,6 @@ fn disk_status(kind: AgentKind) -> DiskLifecycleStatus {
 /// off in None mode is accepted as an idempotent cleanup; turning it on would create the invalid
 /// `None + lifecycle` state and is rejected.
 pub fn set_enabled(kind: AgentKind, value: bool) -> Result<String> {
-    if kind == AgentKind::Antigravity {
-        return Err(anyhow!("Antigravity lifecycle tracking is unsupported"));
-    }
     let _lock = super::mutation_lock::IntegrationMutationLock::acquire()?;
     let mode = super::agent_mode::current(target_for_kind(kind));
     if value && mode == super::agent_mode::Mode::None {
@@ -432,6 +452,11 @@ pub fn install(kind: AgentKind) -> Result<String> {
 }
 
 pub(crate) fn install_unlocked(kind: AgentKind) -> Result<String> {
+    if kind == AgentKind::Antigravity {
+        // The hooks are part of the AskHuman plugin and always carry the Stop handler.
+        super::antigravity_plugin::set_lifecycle(true)?;
+        return Ok(message("cmd.lifecycleInstalled"));
+    }
     let exe = exe_path()?;
     match kind {
         AgentKind::Claude => {
@@ -441,9 +466,7 @@ pub(crate) fn install_unlocked(kind: AgentKind) -> Result<String> {
         AgentKind::Codex => codex_install(&exe)?,
         AgentKind::Grok => json_install(kind, &exe, &paths::grok_hooks_json(), Shape::Nested)?,
         AgentKind::Pi => super::pi_extension::set_lifecycle_enabled(true)?,
-        AgentKind::Antigravity => {
-            return Err(anyhow!("Antigravity lifecycle tracking is unsupported"))
-        }
+        AgentKind::Antigravity => unreachable!("handled above"),
     }
     super::agent_stop::reconcile_current_mode_unlocked(kind)?;
     Ok(message("cmd.lifecycleInstalled"))
@@ -461,9 +484,6 @@ pub(crate) fn reconcile_unlocked(
     mode: super::agent_mode::Mode,
     adopt_default: bool,
 ) -> Result<()> {
-    if kind == AgentKind::Antigravity {
-        return Ok(());
-    }
     let original = load_preferences();
     let mut preferences = original.clone();
     let mut changed = false;
@@ -496,13 +516,17 @@ fn reconcile_artifact_unlocked(
 }
 
 pub(crate) fn uninstall_unlocked(kind: AgentKind) -> Result<String> {
+    if kind == AgentKind::Antigravity {
+        super::antigravity_plugin::set_lifecycle(false)?;
+        return Ok(message("cmd.lifecycleRemoved"));
+    }
     match kind {
         AgentKind::Claude => json_uninstall(kind, &paths::claude_settings_json(), Shape::Nested)?,
         AgentKind::Cursor => json_uninstall(kind, &paths::cursor_hooks_json(), Shape::Flat)?,
         AgentKind::Codex => codex_uninstall()?,
         AgentKind::Grok => json_uninstall(kind, &paths::grok_hooks_json(), Shape::Nested)?,
         AgentKind::Pi => super::pi_extension::set_lifecycle_enabled(false)?,
-        AgentKind::Antigravity => return Ok("Antigravity lifecycle tracking is unsupported".into()),
+        AgentKind::Antigravity => unreachable!("handled above"),
     }
     super::agent_stop::reconcile_current_mode_unlocked(kind)?;
     Ok(message("cmd.lifecycleRemoved"))

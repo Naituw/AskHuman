@@ -9,7 +9,9 @@
 //!   仅用于识别与迁移。
 //! - Pi：`~/.pi/agent/AGENTS.md` 内的托管区块。
 //!
-//! Antigravity delegates to an exclusive shared module with strict ownership and transactions.
+//! Antigravity's rules are a file of the managed AskHuman plugin (`antigravity_plugin`), so every
+//! query goes through `agent_mode::antigravity_status`. The strict standalone rule writer of the
+//! earlier design (`antigravity_rule`) only retires what that design left behind.
 //!
 //! 「更新」用于内置提示词随版本变化后，把已安装的旧正文覆盖为最新（仅替换区块内部）。
 //! Cursor 卸载时若区块外只剩 frontmatter / 空白则删除整个文件，否则保留用户内容。
@@ -107,7 +109,9 @@ impl AgentTarget {
             AgentTarget::Codex => paths::codex_agents_md(),
             AgentTarget::Grok => paths::grok_skill_md(),
             AgentTarget::Pi => paths::pi_agents_md(),
-            AgentTarget::Antigravity => paths::antigravity_rule_file(),
+            // The rules live inside the AskHuman plugin; the earlier standalone rule file is only
+            // ever touched by the migration cleanup.
+            AgentTarget::Antigravity => paths::antigravity_plugin_rules_file(),
         }
     }
 
@@ -246,13 +250,8 @@ pub fn is_managed_cursor_file(text: &str) -> bool {
 /// 该 Agent 的规则是否已安装（新格式托管区块，或 Cursor 旧格式头标记）。
 pub fn is_installed(agent: AgentTarget) -> bool {
     if agent == AgentTarget::Antigravity {
-        return super::antigravity_rule::probe(&antigravity_context()).is_ok_and(|s| {
-            matches!(
-                s.state,
-                super::antigravity_rule::RuleState::OwnedCurrent
-                    | super::antigravity_rule::RuleState::OwnedOutdated
-            )
-        });
+        return super::agent_mode::antigravity_status()
+            .is_ok_and(|(_, _, rule_installed)| rule_installed);
     }
     if agent.is_grok_skill() {
         return crate::integrations::grok_skill::is_installed();
@@ -283,8 +282,14 @@ pub fn needs_update(agent: AgentTarget) -> bool {
 /// Cursor 旧格式（头标记、无区块）一律视为需更新。Grok 委托 skill 比对（忽略 variant）。
 pub fn needs_update_variant(agent: AgentTarget, variant: Variant) -> bool {
     if agent == AgentTarget::Antigravity {
-        return super::antigravity_rule::probe(&antigravity_context_for_variant(variant))
-            .is_ok_and(|s| s.state == super::antigravity_rule::RuleState::OwnedOutdated);
+        use super::agent_mode::Mode;
+        let wanted = match variant {
+            Variant::Cli => Mode::Cli,
+            Variant::Mcp => Mode::Mcp,
+        };
+        return super::agent_mode::antigravity_status().is_ok_and(|(mode, updates, _)| {
+            mode != Mode::None && (updates.rule || mode != wanted)
+        });
     }
     if agent.is_grok_skill() {
         return crate::integrations::grok_skill::needs_update();
@@ -309,21 +314,12 @@ pub fn needs_update_variant(agent: AgentTarget, variant: Variant) -> bool {
 /// 漂移（旧版本提示词）时用结构性信号兜底（见 [`classify_body`]）。未安装返回 None。
 pub fn installed_variant(agent: AgentTarget) -> Option<Variant> {
     if agent == AgentTarget::Antigravity {
-        return super::antigravity_rule::probe(&antigravity_context())
-            .ok()
-            .filter(|s| {
-                matches!(
-                    s.state,
-                    super::antigravity_rule::RuleState::OwnedCurrent
-                        | super::antigravity_rule::RuleState::OwnedOutdated
-                )
-            })
-            .and_then(|s| s.ownership)
-            .and_then(|r| match r.variant.as_str() {
-                "cli" => Some(Variant::Cli),
-                "mcp" => Some(Variant::Mcp),
-                _ => None,
-            });
+        use super::agent_mode::Mode;
+        return match super::agent_mode::antigravity_status() {
+            Ok((Mode::Cli, _, true)) => Some(Variant::Cli),
+            Ok((Mode::Mcp, _, true)) => Some(Variant::Mcp),
+            _ => None,
+        };
     }
     if agent.is_grok_skill() {
         // Grok 只有 MCP 语义：装了 skill 即视为 Mcp 变体，未装为 None。
@@ -393,8 +389,9 @@ fn collapse_home(p: &Path) -> String {
 /// 安装指定变体的提示词（托管区块 upsert，保留区块外用户内容）。Grok 委托 skill（忽略 variant）。
 pub(crate) fn install_variant_unlocked(agent: AgentTarget, variant: Variant) -> Result<String> {
     if agent == AgentTarget::Antigravity {
-        super::antigravity_rule::install_unlocked(&antigravity_context_for_variant(variant))?;
-        return Ok(display_path(agent));
+        // The rules are one file of the AskHuman plugin, published as a unit by
+        // `agent_mode::set`; writing the earlier standalone rule file here would duplicate them.
+        anyhow::bail!("the Antigravity rules ship inside the AskHuman plugin");
     }
     if agent.is_grok_skill() {
         return crate::integrations::grok_skill::install();
@@ -437,8 +434,7 @@ fn write_rule(agent: AgentTarget, body: &str) -> Result<()> {
 /// 卸载：移除托管区块、保留区块外用户内容；Cursor 文件若区块外只剩 frontmatter / 空白则整文件删除。
 pub(crate) fn uninstall_unlocked(agent: AgentTarget) -> Result<String> {
     if agent == AgentTarget::Antigravity {
-        super::antigravity_rule::uninstall_unlocked(&antigravity_context())?;
-        return Ok(display_path(agent));
+        anyhow::bail!("the Antigravity rules ship inside the AskHuman plugin");
     }
     if agent.is_grok_skill() {
         return crate::integrations::grok_skill::uninstall();
@@ -544,7 +540,11 @@ fn installed_antigravity_variant() -> Variant {
             }
         }
     }
-    if crate::integrations::mcp_config::is_installed(AgentTarget::Antigravity) {
+    // Only the earlier global MCP entry counts here: this resolves the variant of the earlier
+    // standalone rule, and the plugin-aware accessors build on top of it.
+    if crate::integrations::mcp_config::antigravity_config_status()
+        .is_ok_and(|(installed, _)| installed)
+    {
         Variant::Mcp
     } else {
         Variant::Cli
@@ -558,7 +558,7 @@ fn installed_antigravity_variant() -> Variant {
 /// (`/home -> /var/home`, `/tmp -> /private/tmp`, a relocated or automounted home, a
 /// dotfiles-managed `~/.askhuman`). Only the root is resolved here: `.gemini/config/rules` below
 /// it stays strict, so a link planted inside the managed tree is still refused.
-fn physical_root(path: PathBuf) -> PathBuf {
+pub(super) fn physical_root(path: PathBuf) -> PathBuf {
     #[cfg(unix)]
     {
         // An unresolved `HOME` (".") must keep failing validation instead of anchoring in the cwd.
@@ -585,7 +585,20 @@ fn physical_root(path: PathBuf) -> PathBuf {
     path
 }
 
+/// The interaction rules the AskHuman plugin carries as `rules/AGENTS.md`. The plugin directory
+/// is owned as a whole and verified by digest, so the file needs no ownership header of its own.
+pub(crate) fn antigravity_rule_bytes(variant: Variant) -> Vec<u8> {
+    format!(
+        "{}\n{}\n{}\n",
+        BLOCK_BEGIN,
+        variant.body(AgentTarget::Antigravity),
+        BLOCK_END
+    )
+    .into_bytes()
+}
+
 /// Frozen context for the exclusive Antigravity writer. Production never accepts arbitrary paths.
+/// Since the plugin took over, only the migration cleanup of the earlier standalone rule uses it.
 pub(crate) fn antigravity_context() -> super::antigravity_rule::RuleContext {
     antigravity_context_for_variant(installed_antigravity_variant())
 }
@@ -636,7 +649,7 @@ pub(crate) fn antigravity_snapshot() -> Result<super::antigravity_rule::RuleSnap
 
 pub(crate) fn validate_status(agent: AgentTarget) -> Result<()> {
     if agent == AgentTarget::Antigravity {
-        antigravity_snapshot()?;
+        super::agent_mode::antigravity_status()?;
     }
     Ok(())
 }
