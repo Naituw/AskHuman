@@ -529,6 +529,10 @@ export const updateApply = () => invoke<void>("update_apply");
 
 export const updatePrepare = () => invoke<void>("update_prepare");
 
+/** Stop proactively prompting for one version (spec D9); a manual check clears the record. */
+export const updateDismiss = (version: string) =>
+  invoke<void>("update_dismiss", { version });
+
 export const restartSettings = () => invoke<void>("restart_settings");
 
 /** 渠道健康快照（R7）：各渠道最近未恢复的故障；daemon 未运行返回空。 */

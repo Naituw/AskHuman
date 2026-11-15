@@ -6,6 +6,7 @@ import {
   openSettings,
   popupUpdateState,
   updateApply,
+  updateDismiss,
   updateGetNotes,
 } from "../../lib/ipc";
 import { renderMarkdown, markdownReady } from "../../lib/markdown";
@@ -70,6 +71,21 @@ export function useUpdateState(deps: {
     }
   }
 
+  // 「忽略此版本」（spec D9）：落盘后 daemon 重载并向所有弹窗广播；这里先收起入口，
+  // 广播到达时给出同一个结果。失败时保留浮层，让用户看到原因并可重试。
+  async function dismissUpdateVersion() {
+    const version = updateLatest.value;
+    if (!version || updating.value || updateStarted.value) return;
+    updateError.value = "";
+    try {
+      await updateDismiss(version);
+      updatePopoverOpen.value = false;
+      updateAvailable.value = false;
+    } catch (e) {
+      updateError.value = String(e);
+    }
+  }
+
   let unlistenUpdate: UnlistenFn | null = null;
   let disposed = false;
 
@@ -113,6 +129,7 @@ export function useUpdateState(deps: {
     updateNotesHtml,
     toggleUpdatePopover,
     applyUpdateFromPopup,
+    dismissUpdateVersion,
     initUpdateState,
     disposeUpdateState,
   };

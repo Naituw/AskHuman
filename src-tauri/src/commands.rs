@@ -5182,6 +5182,15 @@ pub fn update_prepare() -> Result<(), String> {
     crate::update::spawn_manual_prepare().map_err(|error| error.to_string())
 }
 
+/// Stop proactively prompting for one version (spec D9). Settings still lists it and a manual
+/// check clears the record. The running daemon reloads the persisted state, so every open popup
+/// and the tray drop the prompt at once; a stopped daemon is not started for it.
+#[tauri::command]
+pub async fn update_dismiss(version: String) {
+    crate::update::state::dismiss(&version);
+    crate::client::notify_update_state_changed().await;
+}
+
 /// 设置内更新后「重启设置页面」：用新二进制重开设置进程，再退出当前设置窗。
 #[tauri::command]
 pub fn restart_settings(app: AppHandle) -> Result<(), String> {

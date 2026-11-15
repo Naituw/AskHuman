@@ -107,6 +107,27 @@ pub fn is_dismissed(version: &str) -> bool {
     load().dismissed_versions.iter().any(|item| item == version)
 }
 
+/// Stop proactively prompting for one version. Settings still lists it and can update to it; the
+/// next manual check clears every dismissal again. Dismissing twice, or an empty version, changes
+/// nothing.
+pub fn dismiss(version: &str) -> UpdateState {
+    dismiss_at(
+        &paths::update_state_file(),
+        &paths::update_state_lock(),
+        version,
+    )
+}
+
+fn dismiss_at(path: &Path, lock: &Path, version: &str) -> UpdateState {
+    // Stored versions are normalized like `latest_version`, which is what they are compared with.
+    let version = super::normalize_version(version);
+    mutate_at(path, lock, |state| {
+        if !version.is_empty() && !state.dismissed_versions.contains(&version) {
+            state.dismissed_versions.push(version);
+        }
+    })
+}
+
 /// Set or clear the pending-restart flag.
 pub fn set_pending(pending: bool) {
     mutate_at(
@@ -170,6 +191,46 @@ mod tests {
 
         let stored = record_check_at(&path, &lock, "0.9.4", "notes", true);
         assert_eq!(stored.latest_version, "0.9.4");
+        assert!(stored.dismissed_versions.is_empty());
+    }
+
+    #[test]
+    fn dismiss_records_each_version_once_in_its_normalized_form() {
+        let (_dir, path, lock) = test_paths();
+
+        let stored = dismiss_at(&path, &lock, "v0.9.4");
+        assert_eq!(stored.dismissed_versions, vec!["0.9.4"]);
+        // Dismissing the same version again, or nothing at all, leaves the record as it is.
+        dismiss_at(&path, &lock, "0.9.4");
+        dismiss_at(&path, &lock, "");
+        assert_eq!(load_at(&path).dismissed_versions, vec!["0.9.4"]);
+        // A later release is a different version and can be dismissed on its own.
+        let stored = dismiss_at(&path, &lock, "0.9.5");
+        assert_eq!(stored.dismissed_versions, vec!["0.9.4", "0.9.5"]);
+    }
+
+    #[test]
+    fn dismiss_keeps_the_rest_of_the_state_and_a_manual_check_resets_it() {
+        let (_dir, path, lock) = test_paths();
+        store_at(
+            &path,
+            &UpdateState {
+                latest_version: "0.9.4".to_string(),
+                release_notes: "notes".to_string(),
+                pending: true,
+                ..Default::default()
+            },
+        );
+
+        let stored = dismiss_at(&path, &lock, "0.9.4");
+        assert_eq!(stored.latest_version, "0.9.4");
+        assert_eq!(stored.release_notes, "notes");
+        assert!(stored.pending);
+
+        // An automatic check never resurrects the prompt; the manual one does (spec D9).
+        let stored = record_check_at(&path, &lock, "0.9.4", "notes", false);
+        assert_eq!(stored.dismissed_versions, vec!["0.9.4"]);
+        let stored = record_check_at(&path, &lock, "0.9.4", "notes", true);
         assert!(stored.dismissed_versions.is_empty());
     }
 

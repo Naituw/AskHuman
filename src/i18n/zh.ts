@@ -191,6 +191,8 @@ export default {
     update: {
       title: "发现新版本 {version}",
       button: "更新",
+      dismiss: "忽略此版本",
+      dismissHint: "不再主动提示此版本；设置中仍可查看并更新，手动检查更新会恢复提示。",
       updating: "更新中…",
       applyHint: "后台将自动更新，当前问题和输入会保留。",
       startedHint: "更新已开始，问题和输入会保留，连接将自动恢复。",

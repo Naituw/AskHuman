@@ -378,6 +378,7 @@ fn update(invoke: Invoke<Wry>) -> bool {
         crate::commands::update_get_version_notes,
         crate::commands::update_apply,
         crate::commands::update_prepare,
+        crate::commands::update_dismiss,
         crate::commands::restart_settings,
     ];
     handler(invoke)
@@ -408,6 +409,7 @@ mod tests {
         assert_eq!(group_for("fork_task_launch"), Group::Task);
         assert_eq!(group_for("new_task_options"), Group::Task);
         assert_eq!(group_for("update_apply"), Group::Update);
+        assert_eq!(group_for("update_dismiss"), Group::Update);
     }
 
     #[test]

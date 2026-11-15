@@ -5598,13 +5598,41 @@ mod tests {
     use super::{
         agent_kind_for_im, development_popup_enabled, marks_session_working,
         pending_launch_matches, popup_prewarm_requested, popup_should_dispatch, scoped_candidates,
-        select_im_delivery_candidates, task_workspace_options, with_ios, InboundRegistry,
-        PendingLaunchWatch,
+        select_im_delivery_candidates, task_workspace_options, update_snapshot_from_state,
+        with_ios, InboundRegistry, PendingLaunchWatch,
     };
     use crate::agents::AgentKind;
     use crate::config::AppConfig;
     use crate::i18n::Lang;
     use std::sync::Arc;
+
+    #[test]
+    fn the_update_prompt_skips_a_dismissed_version_but_not_a_newer_one() {
+        use crate::update::state::UpdateState;
+        // Far above any real release, so "newer than this build" holds whatever the crate version is.
+        let mut state = UpdateState {
+            latest_version: "99.0.0".into(),
+            ..Default::default()
+        };
+        assert!(update_snapshot_from_state(&state).available);
+
+        state.dismissed_versions = vec!["99.0.0".into()];
+        let dismissed = update_snapshot_from_state(&state);
+        assert!(
+            !dismissed.available,
+            "a dismissed version is not prompted for"
+        );
+        assert_eq!(dismissed.latest_version, "99.0.0", "Settings still sees it");
+
+        state.latest_version = "99.0.1".into();
+        assert!(
+            update_snapshot_from_state(&state).available,
+            "the next release prompts again"
+        );
+        // A release that is not newer than this build never prompts, dismissed or not.
+        state.latest_version = "0.0.1".into();
+        assert!(!update_snapshot_from_state(&state).available);
+    }
 
     #[test]
     fn explicit_channel_testing_never_succeeds_through_a_local_popup() {

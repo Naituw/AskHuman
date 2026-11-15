@@ -195,6 +195,9 @@ export default {
     update: {
       title: "New version {version} available",
       button: "Update",
+      dismiss: "Skip this version",
+      dismissHint:
+        "Stop prompting for this version. Settings still lists it and can update to it; checking for updates manually brings the prompt back.",
       updating: "Updating…",
       applyHint:
         "The background service updates automatically. Your questions and input are kept.",

@@ -41,6 +41,7 @@ const {
   updateNotesHtml,
   toggleUpdatePopover,
   applyUpdateFromPopup,
+  dismissUpdateVersion,
   onContentClick,
   pinned,
   togglePin,
@@ -172,6 +173,16 @@ usePopupWindowTitle(sessionTitle, popupActive);
             </p>
             <p v-if="updateError" class="up-error">{{ updateError }}</p>
             <div class="up-actions">
+              <button
+                class="btn"
+                type="button"
+                data-testid="update-dismiss"
+                :title="t('popup.update.dismissHint')"
+                :disabled="updating || updateStarted"
+                @click="dismissUpdateVersion"
+              >
+                {{ t("popup.update.dismiss") }}
+              </button>
               <button
                 class="btn btn-primary"
                 type="button"
