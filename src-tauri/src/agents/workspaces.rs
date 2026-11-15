@@ -147,11 +147,15 @@ pub fn forget(path: &str) -> Result<(), String> {
     save(&state).map_err(|e| e.to_string())
 }
 
-struct WorkspaceLock(crate::file_lock::FileLock);
+/// Holds the cross-process workspace lock until dropped.
+struct WorkspaceLock {
+    _guard: crate::file_lock::FileLock,
+}
 
 impl WorkspaceLock {
     fn acquire() -> std::io::Result<Self> {
-        crate::file_lock::FileLock::exclusive(&paths::agent_workspaces_lock()).map(Self)
+        crate::file_lock::FileLock::exclusive(&paths::agent_workspaces_lock())
+            .map(|guard| Self { _guard: guard })
     }
 }
 
@@ -361,6 +365,8 @@ pub(super) fn recover_cursor_project_key(encoded: &str) -> Vec<PathBuf> {
 /// Parse the unambiguous Windows key prefixes Cursor emits for drive paths. An explicit `UNC`
 /// prefix is also accepted for forward compatibility; current UNC workspaces are recovered from
 /// Cursor's exact database index before this lossy-key fallback is considered.
+// Only the Windows build calls this; it stays target-independent so its tests run everywhere.
+#[cfg_attr(target_os = "macos", allow(dead_code))]
 fn windows_cursor_key_root(encoded: &str) -> Option<(String, &str)> {
     let mut parts = encoded.splitn(2, '-');
     let first = parts.next()?;

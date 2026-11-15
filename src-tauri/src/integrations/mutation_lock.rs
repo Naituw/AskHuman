@@ -2,7 +2,10 @@
 
 use anyhow::{Context, Result};
 
-pub struct IntegrationMutationLock(crate::file_lock::FileLock);
+/// Holds the cross-process integration lock until dropped.
+pub struct IntegrationMutationLock {
+    _guard: crate::file_lock::FileLock,
+}
 
 /// The decision itself, apart from the process state it is read from.
 ///
@@ -90,7 +93,7 @@ impl IntegrationMutationLock {
         }
         let path = crate::paths::integrations_lock_file();
         crate::file_lock::FileLock::exclusive(&path)
-            .map(Self)
+            .map(|guard| Self { _guard: guard })
             .with_context(|| format!("failed to lock {}", path.display()))
     }
 }

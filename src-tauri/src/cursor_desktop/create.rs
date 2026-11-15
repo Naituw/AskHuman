@@ -73,6 +73,8 @@ pub struct DesktopPlan {
     /// `Some(false)`: Max is forced off and the chat is checked for it; `Some(true)`: the user
     /// allowed Max for a model that cannot run without it; `None`: Max is left to Cursor.
     pub max_mode: Option<bool>,
+    // Only tests read the full assessment behind the plan.
+    #[allow(dead_code)]
     pub assessment: Assessment,
 }
 

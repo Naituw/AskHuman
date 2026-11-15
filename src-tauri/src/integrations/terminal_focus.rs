@@ -6,12 +6,18 @@
 //! process identity, and Windows Terminal owner before asking the known-live named window to select
 //! tab 0; this prevents `wt.exe` from creating a replacement window for a stale identity.
 
+// Only the Windows build calls this; it stays target-independent so its tests run everywhere.
+#[cfg_attr(target_os = "macos", allow(dead_code))]
 const WINDOWS_TERMINAL_KIND: &str = "windows-terminal";
 
+// Only the Windows build calls this; it stays target-independent so its tests run everywhere.
+#[cfg_attr(target_os = "macos", allow(dead_code))]
 pub fn windows_terminal_kind() -> &'static str {
     WINDOWS_TERMINAL_KIND
 }
 
+// Only the Windows build calls this; it stays target-independent so its tests run everywhere.
+#[cfg_attr(target_os = "macos", allow(dead_code))]
 pub fn windows_terminal_identity(launch_id: &str) -> Result<(String, String), String> {
     let id = uuid::Uuid::parse_str(launch_id)
         .map_err(|_| "focus terminal: invalid registered launch identity".to_string())?
@@ -51,6 +57,8 @@ pub fn focus_agent_terminal(pid: Option<u32>, launch_id: Option<&str>) -> Result
     }
 }
 
+// Only the Windows build calls this; it stays target-independent so its tests run everywhere.
+#[cfg_attr(target_os = "macos", allow(dead_code))]
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct WindowCandidate {
     handle: isize,
@@ -60,6 +68,8 @@ struct WindowCandidate {
     process_id: u32,
 }
 
+// Only the Windows build calls this; it stays target-independent so its tests run everywhere.
+#[cfg_attr(target_os = "macos", allow(dead_code))]
 fn is_windows_terminal(candidate: &WindowCandidate) -> bool {
     candidate
         .executable
@@ -68,6 +78,8 @@ fn is_windows_terminal(candidate: &WindowCandidate) -> bool {
         .is_some_and(|name| name.eq_ignore_ascii_case("WindowsTerminal.exe"))
 }
 
+// Only the Windows build calls this; it stays target-independent so its tests run everywhere.
+#[cfg_attr(target_os = "macos", allow(dead_code))]
 fn select_registered_windows_terminal(
     candidates: &[WindowCandidate],
     expected_title: &str,

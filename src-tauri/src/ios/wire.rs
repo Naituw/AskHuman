@@ -4,6 +4,10 @@
 //! `ios/Packages/AskHumanKit/Sources/AHProtocol`; `ios/Fixtures/wire-v1/messages.json` holds one
 //! sample per message type that both implementations must decode and re-encode identically.
 
+// This file defines the whole protocol for both sides. The Mac does not use every constant or
+// message type (it only receives some, and tests round-trip all of them against the fixtures).
+#![allow(dead_code)]
+
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 

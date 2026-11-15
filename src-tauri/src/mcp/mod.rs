@@ -90,6 +90,8 @@ fn original_parent_alive(expected: &crate::agents::detect::ProcessIdentity) -> b
     process_instance_matches(expected, &current)
 }
 
+// Only the Windows build calls this; it stays target-independent so its tests run everywhere.
+#[cfg_attr(target_os = "macos", allow(dead_code))]
 fn process_instance_matches(
     expected: &crate::agents::detect::ProcessIdentity,
     current: &crate::agents::detect::ProcessIdentity,

@@ -4,8 +4,11 @@
 // 因此不设置 `windows_subsystem = "windows"`，以保证 Windows 上也能向终端写 stdout。
 // （代价是 GUI 模式在 Windows 上可能伴随控制台窗口，后续单独处理。）
 
-// 开发期：部分核心 API 在后续步骤（弹窗/设置/Telegram）才会接线，先放宽未使用告警。
-#![allow(dead_code)]
+// The dead-code lint is enforced on macOS, which CI checks with clippy `-D warnings`. It stays off
+// on Windows and Linux, where code reached only through another platform's cfg branches would be
+// reported dead. An item that only Windows or Linux uses carries
+// `#[cfg_attr(target_os = "macos", allow(dead_code))]` so macOS does not report it.
+#![cfg_attr(not(target_os = "macos"), allow(dead_code))]
 
 mod agents;
 mod annotations;

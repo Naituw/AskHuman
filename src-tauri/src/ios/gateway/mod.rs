@@ -402,6 +402,8 @@ impl IosGateway {
     }
 
     /// Connected to the broker with at least one active pairing: iOS can carry requests.
+    // Production code does not call this; tests wait on the combined readiness.
+    #[allow(dead_code)]
     pub fn is_ready(&self) -> bool {
         self.status.connected.load(Ordering::Relaxed)
             && self.status.has_active_phone.load(Ordering::Relaxed)

@@ -27,6 +27,8 @@ pub enum Loaded {
     Newer(u32),
     /// The file did not parse; it was renamed to `backup` (when that worked).
     Corrupt {
+        // Production only needs to know the file was set aside; tests read where it went.
+        #[allow(dead_code)]
         backup: Option<PathBuf>,
     },
 }

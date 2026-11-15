@@ -130,6 +130,11 @@ This installs a `pre-commit` hook that runs `cargo fmt --check` for staged chang
 `src-tauri/**/*.rs`. Git LFS hooks keep their separate role.
 
 CI enforces `cargo clippy --all-targets -- -D warnings` on Linux, Windows, and native macOS arm64.
+The `dead_code` lint is enforced on macOS only: `main.rs` relaxes it on other targets, where code
+reached only through another platform's `cfg` branches would be reported unused. An item that only
+Windows or Linux uses carries `#[cfg_attr(target_os = "macos", allow(dead_code))]` so the macOS
+build stays quiet; a symbol that no platform calls should be deleted, or gated by `#[cfg(test)]`
+when only tests need it.
 For local lint feedback, run `node scripts/machine-health.mjs` before Clippy.
 
 ```bash

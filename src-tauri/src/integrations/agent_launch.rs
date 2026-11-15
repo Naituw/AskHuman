@@ -2417,6 +2417,8 @@ fn is_executable(path: &Path) -> bool {
     path.is_file() && fs::metadata(path).is_ok_and(|m| m.permissions().mode() & 0o111 != 0)
 }
 
+// Only the Windows build calls this; it stays target-independent so its tests run everywhere.
+#[cfg_attr(target_os = "macos", allow(dead_code))]
 fn is_windows_launchable(path: &Path) -> bool {
     path.is_file()
         && path

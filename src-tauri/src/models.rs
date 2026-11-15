@@ -678,6 +678,9 @@ pub enum ChoiceFormInputVisibility {
 }
 
 impl ChoiceFormView {
+    // Planned adapter of a plain ask onto the shared choice form
+    // (docs/plans/agent-permission-approval.md); only its test calls it today.
+    #[allow(dead_code)]
     pub fn from_ask(request: &AskRequest, submit_label: impl Into<String>) -> Vec<Self> {
         let submit_label = submit_label.into();
         request

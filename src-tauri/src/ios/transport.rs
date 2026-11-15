@@ -68,6 +68,8 @@ pub trait BrokerTransport: Send + Sync {
     async fn unsubscribe(&self, topic: &str) -> Result<(), String>;
     /// Flushes pending publishes, disconnects cleanly (no last will) and stops reconnecting.
     async fn disconnect(&self);
+    // Nothing polls the connection state (the gateway follows `TransportEvent`s); tests do.
+    #[allow(dead_code)]
     fn is_connected(&self) -> bool;
 }
 

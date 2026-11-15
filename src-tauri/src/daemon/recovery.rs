@@ -200,6 +200,8 @@ pub struct Resumed {
     pub outcome: Option<Outcome>,
     pub decided: bool,
     pub cancelled: bool,
+    // Production re-derives delivery in SQL; only tests read this flag.
+    #[allow(dead_code)]
     pub delivered: bool,
 }
 

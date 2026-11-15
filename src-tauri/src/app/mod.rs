@@ -333,6 +333,8 @@ impl GuiBridge {
     }
 }
 
+// Windows and Linux place background popups themselves; macOS orders the native window instead.
+#[cfg_attr(target_os = "macos", allow(dead_code))]
 fn cascade_popup_position(win: &tauri::WebviewWindow, cascade_index: u32) {
     if cascade_index == 0 {
         return;

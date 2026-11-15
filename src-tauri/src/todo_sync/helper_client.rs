@@ -446,6 +446,8 @@ mod unix {
         }
 
         /// The helper's own bookkeeping (push registration, last tick, ...), for status displays.
+        // The helper's `status` op is covered by a fixture test; nothing calls it yet.
+        #[allow(dead_code)]
         pub fn status(&mut self) -> Result<Value, NetError> {
             self.handshake()?;
             self.call("status", json!({}), HELLO_LIMIT)
