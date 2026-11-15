@@ -69,6 +69,54 @@
     [rendererKey, ...guards.map(guard => guard.key)].map(key => restoreState(wc, key)),
   )).every(Boolean);
 
+  async function unwrapStallKernelV1(command) {
+    const scopes = async objectId => {
+      const props = await command("Runtime.getProperties", { objectId, ownProperties: true });
+      const listId = props.internalProperties?.find(item => item.name === "[[Scopes]]")?.value?.objectId;
+      if (!listId) return [];
+      const list = await command("Runtime.getProperties", { objectId: listId, ownProperties: true });
+      const out = [];
+      for (const item of list.result ?? []) {
+        if (item.value?.objectId && !/^Global\b/.test(item.value.description ?? "")) {
+          const sp = await command("Runtime.getProperties", { objectId: item.value.objectId, ownProperties: true });
+          out.push(Object.fromEntries((sp.result ?? []).map(p => [p.name, p.value])));
+        }
+      }
+      return out;
+    };
+    const intactId = (await command("Runtime.evaluate", {
+      expression: "globalThis.__ASKHUMAN_CURSOR_STALL_RENDERER_KERNEL_V1__?.intact", returnByValue: false,
+    }))?.result?.objectId;
+    if (!intactId) throw new Error("Previous Cursor window stall kernel is unavailable");
+    const intactScopes = await scopes(intactId);
+    const kernelScope = intactScopes.find(s => s.reader && s.warm && s.encoder && s.wrappedRunner);
+    const outerScope = intactScopes.find(s => s.binding);
+    const runnerScope = kernelScope ? (await scopes(kernelScope.wrappedRunner.objectId)).find(s => s.native) : undefined;
+    if (!kernelScope || !outerScope || !runnerScope) {
+      throw new Error("Previous Cursor window stall kernel could not be unwrapped");
+    }
+    await command("Runtime.callFunctionOn", {
+      objectId: outerScope.binding.objectId,
+      functionDeclaration: `function(runner, encoder, reader, warm, snapshots) {
+        this.setRunner(runner);
+        this.setEncoder(encoder);
+        Object.defineProperty(this.reader, "getStallDetectorTimeoutConfig", reader);
+        Object.defineProperty(this.host, "_noteTurnPrewarmTemplate", warm);
+        globalThis.__ASKHUMAN_CURSOR_STALL_RENDERER_SNAPSHOTS_V1__ = snapshots;
+        delete globalThis.__ASKHUMAN_CURSOR_STALL_RENDERER_KERNEL_V1__;
+        delete globalThis.__ASKHUMAN_CURSOR_STALL_V1__;
+      }`,
+      arguments: [
+        { objectId: runnerScope.native.objectId },
+        { objectId: kernelScope.encoder.objectId },
+        { objectId: kernelScope.reader.objectId },
+        { objectId: kernelScope.warm.objectId },
+        ...(kernelScope.snapshots?.objectId ? [{ objectId: kernelScope.snapshots.objectId }] : []),
+      ],
+      returnByValue: true,
+    });
+  }
+
   async function install(wc, guard = primary) {
     if (wc.debugger.isAttached() || wc.isDevToolsOpened()) throw new Error("Window debugger is in use");
     let attached = false, breakpoint, listener, oursPaused = false;
@@ -95,9 +143,18 @@
             if (guard.name === "stall") {
               const prior = await command("Debugger.evaluateOnCallFrame", {
                 callFrameId: frame.callFrameId,
-                expression: "!!globalThis.__ASKHUMAN_CURSOR_STALL_RENDERER_KERNEL_V1__", returnByValue: true,
+                expression: `(() => {
+                  const k = globalThis.__ASKHUMAN_CURSOR_STALL_RENDERER_KERNEL_V1__;
+                  if (!k) return "none";
+                  if (k.owner !== ${JSON.stringify(config.owner)}) return "foreign";
+                  if (k.contract === 2) return "ready";
+                  if (typeof k.unwrap === "function") return k.unwrap() ? "none" : "failed";
+                  return "v1";
+                })()`,
+                returnByValue: true,
               });
-              const binding = prior.result?.value ? "undefined" : await eval(config.stallDiscovery)(command).renderer(frame);
+              if (prior.result?.value === "v1") await unwrapStallKernelV1(command);
+              const binding = prior.result?.value === "ready" ? "undefined" : await eval(config.stallDiscovery)(command).renderer(frame);
               source = source.replace("__ASKHUMAN_STALL_BINDING__", () => binding);
             }
             const result = await command("Debugger.evaluateOnCallFrame", {
@@ -150,6 +207,7 @@
       record.guards = {};
       delete record.error;
       delete record.isolation;
+      delete record.isolationWaitSince;
     };
     record.destroy = () => windows.delete(wc.id);
     wc.on("did-start-loading", record.reload);
@@ -252,12 +310,17 @@
 
   async function refreshIsolation(record) {
     if (stopped || !enabled) return;
-    const pid = record.guards.stall?.status?.hostPid;
+    const stall = record.guards.stall?.status;
+    const pid = stall?.hostPid;
+    const extension = stall?.hostExtension === "cursor-always-local" ? "cursor-always-local" : "cursor-agent-host";
     if (!Number.isSafeInteger(pid)) {
-      record.isolation = record.guards.stall?.status?.state === "unavailable" || record.guards.stall?.error
+      record.isolationWaitSince ??= Date.now();
+      record.isolation = stall?.state === "unavailable" || record.guards.stall?.error ||
+        Date.now() - record.isolationWaitSince >= 10000
         ? {state: "unavailable", error: "Cursor has no verified local Agent Host"} : {state: "pending"};
       return;
     }
+    delete record.isolationWaitSince;
     const prior = isolationHosts.get(pid);
     if (prior && (prior.checkAt > Date.now() || prior.retryAt > Date.now())) {
       record.isolation = prior.status;
@@ -273,7 +336,7 @@
       }
       const attached = await attachStallHost.isolate(pid, lease, identity => {
         isolationHosts.set(pid, {identity, status: {state: "pending"}});
-      });
+      }, extension);
       attached.checkAt = Date.now() + 15000;
       isolationHosts.set(pid, attached);
       if (generation === record.generation) record.isolation = attached.status;

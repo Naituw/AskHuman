@@ -64,7 +64,7 @@
   }
   async function moduleLoader(activate) {
     let loader;
-    for (const scope of await scopes(activate)) {
+    for (const scope of (await scopes(activate)).reverse()) {
       // Node's non-paused scope mirrors are only enumerable through CDP, unlike the paused
       // renderer scope. The loader's own objects can then be inspected without invoking it.
       const found = (await properties(scope)).result.filter(item => item.value?.type === "function" &&
@@ -105,7 +105,7 @@
           source.includes("notifyResponseByteRead") ? [id] : [];
       });
     }`);
-    if (ids.length === 0 || ids.length > 8) throw new Error("Cursor HTTP/2 session module is missing or ambiguous");
+    if (ids.length > 8) throw new Error("Cursor HTTP/2 session module is missing or ambiguous");
     const candidates = [];
     for (const id of ids) {
       const cache = await moduleCache(loader, [id]).catch(() => undefined);
@@ -127,6 +127,21 @@
       });
       }`);
       candidates.push(...matches.map(binding => ({cache, exports, id, ...binding})));
+    }
+    if (!ids.length) {
+      for (const scope of await scopes(activate)) {
+        const fns = (await properties(scope)).result.filter(item =>
+          item.value?.type === "function" && item.value.objectId &&
+          (item.value.description ?? "").includes("http2SessionOptions") &&
+          (item.value.description ?? "").includes("registerRequest"));
+        if (!fns.length) continue;
+        if (fns.length > 8) throw new Error("Cursor HTTP/2 scope is ambiguous");
+        for (const item of fns) {
+          const ok = await call(item.value.objectId,
+            "function() { return typeof this.prototype?.notifyResponseByteRead === \"function\"; }");
+          if (ok) candidates.push({ objectId: item.value.objectId, name: item.name });
+        }
+      }
     }
     if (candidates.length !== 1) throw new Error("Cursor HTTP/2 manager export is missing or ambiguous");
     return candidates[0];

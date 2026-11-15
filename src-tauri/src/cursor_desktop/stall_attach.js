@@ -5,6 +5,7 @@
   const http = process.getBuiltinModule("http");
   const WebSocket = require("ws");
   const hostEntry = join(dirname(config.appPackage), "extensions", "cursor-agent-host", "dist", "main.js");
+  const alwaysLocalEntry = join(dirname(config.appPackage), "extensions", "cursor-always-local", "dist", "main.js");
   const inspected = new Map();
   const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
   const output = (file, args) => new Promise((resolve, reject) => {
@@ -61,7 +62,7 @@
   }
 
   async function connect(port) {
-    const socket = new WebSocket(await debuggerTarget(port), { handshakeTimeout: 900, maxPayload: 2 * 1024 * 1024 });
+    const socket = new WebSocket(await debuggerTarget(port), { handshakeTimeout: 900, maxPayload: 16 * 1024 * 1024 });
     const pending = new Map();
     let serial = 0, onPause;
     const terminate = error => {
@@ -107,6 +108,10 @@
       objectId, functionDeclaration: `function(key) { return ${source}.stage(Object.getOwnPropertyDescriptor(this, key)?.value); }`,
       arguments: [{value: key}], returnByValue: true,
     }).then(reply => reply.result?.value);
+    const stageValue = (objectId, source) => send("Runtime.callFunctionOn", {
+      objectId, functionDeclaration: `function() { return ${source}.stage(this); }`,
+      returnByValue: true,
+    }).then(reply => reply.result?.value);
     async function frame(cache, moduleId, key, expression) {
       const { result } = await send("Runtime.callFunctionOn", {
         objectId: cache, functionDeclaration: "function(id) { return this[id]?.exports; }",
@@ -150,7 +155,7 @@
         await send("Debugger.disable").catch(() => {});
       }
     }
-    return { evaluate, discover: eval(config.stallDiscovery)(send), frame, stageExport, close: () => socket.terminate() };
+    return { evaluate, discover: eval(config.stallDiscovery)(send), frame, stageExport, stageValue, close: () => socket.terminate() };
   }
 
   const closeCommand = "setTimeout(() => process.getBuiltinModule('inspector').close(), 30).unref(); true";
@@ -238,14 +243,16 @@
     inspected.set(pid, { identity: before, result });
     return result;
   }
-  attach.isolate = async (pid, lease, stagedHost) => {
+  attach.isolate = async (pid, lease, stagedHost, extension = "cursor-agent-host") => {
+    const entry = extension === "cursor-always-local" ? alwaysLocalEntry : hostEntry;
     const installer = `(${config.isolationHost})(${JSON.stringify(config.owner)},${JSON.stringify(lease)})`;
     const {before, result} = await inspect(pid, async peer => {
       const activate = await peer.evaluate(
-        `process.getBuiltinModule("module")._cache[${JSON.stringify(hostEntry)}]?.exports?.activate`, false);
+        `process.getBuiltinModule("module")._cache[${JSON.stringify(entry)}]?.exports?.activate`, false);
       if (!activate) throw new Error("Cursor has not loaded the Agent Host extension");
       const binding = await peer.discover.isolation(activate);
-      const staged = binding.direct ? await peer.stageExport(binding.exports, installer, binding.key) :
+      const staged = binding.objectId ? await peer.stageValue(binding.objectId, installer) :
+        binding.direct ? await peer.stageExport(binding.exports, installer, binding.key) :
         await peer.frame(binding.cache, binding.id, binding.key, `${installer}.stage(${binding.name})`);
       if (staged !== true) throw new Error("Cursor HTTP/2 manager could not be staged");
       stagedHost(await identity(pid));

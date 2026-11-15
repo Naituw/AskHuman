@@ -518,14 +518,22 @@ IPC 消息类型没有改动（状态经 Tauri 命令 `cursor_desktop_status` �
 验证包括 Node 回归、设置页 22 项测试、Rust 定向 46 项测试（另 1 项隔离实例测试按条件跳过），
 以及安装过程的完整前端类型检查和打包。此次未复测真实 IDE 窗口或真实网络停滞，原有自然样本待办继续保留。
 
+### 8.5 Legacy 拓扑（未启用 `cursor_agent_host`）兼容（2026-11-16）
+
+当 Cursor 的 `CursorAgentHostEnablementService.isCursorAgentHostEnabled()` 为 `false`（如 `cursor_agent_host` 特性门关闭）时，`ExtensionRunningLocationTracker` 会过滤掉 `anysphere.cursor-agent-host`，窗口走 `LegacyAgentHostService`：
+
+- **停滞与重试（§8）**：回合循环与停滞检测直接在窗口渲染器内经 `AgentCompatService` 与 `turn-runner` 执行，不经过扩展宿主。渲染器检测到 `usesAgentHost() === false` 时无需等待 `anysphere.cursor-agent-host` 宿主配对，直接启用渲染器本地快照（300 秒单次停滞阈值与 600 秒连续停滞重试窗口），不向 protobuf 写入宿主标记。
+- **HTTP/2 连接隔离（§9）**：Legacy 拓扑下 `/agent.v1.AgentService/Run` 走窗口级 `AIConnectRequestService.transport()`，由本机扩展宿主中的 `anysphere.cursor-always-local` 提供同一套 `NodeHttp2SessionManager` 连接池。渲染器上报 `cursor-always-local` 扩展宿主 PID，隔离挂载器在 Webpack 作用域提升至入口包时从 `exports.activate` 闭包作用域发现并阶段化 `NodeHttp2SessionManager`，完成相同的回环预检与独占连接池挂载。
+- **在线升级**：已挂载旧版 `kernelContract === 1` 的运行中窗口，在新版 bridge 接入时先将旧内核包装原地还原为原生函数（保留在途 `snapshots`），再无损升级至 `kernelContract === 2`，无需重载 Cursor 窗口。
+
 ## 9. 并行 Agent 的 HTTP/2 连接隔离
 
-沿用「Cursor 会话防护（实验）」开关。在 macOS 本地 Agent Host 里，每条新发起的 HTTP/2
+沿用「Cursor 会话防护（实验）」开关。在 macOS 本地 Agent Host（或 Legacy 拓扑下的 `anysphere.cursor-always-local` 扩展宿主）里，每条新发起的 HTTP/2
 `agent.v1.AgentService/Run` 在拨号前取得一条独占连接，直到流关闭才允许复用。启用时已经建立的原生流自然收尾，
 短 RPC、HTTP/1.1 与 WebSocket 按 Cursor 原生路径传输。单条连接发生故障时，其它独占连接仍能继续，
 故障回合仍由 Cursor 判断是否续跑并计量用量。
 
-- 从已加载模块发现原生会话管理器，先在回环环境验证并行请求和独立关闭，再挂接其请求入口。
+- 从已加载模块（或 Webpack 作用域提升的 `activate` 闭包）发现原生会话管理器，先在回环环境验证并行请求和独立关闭，再挂接其请求入口。
   版本号仅用于测试和诊断。识别失败时保留原生行为，设置页与 `doctor` 单独报告此项。
 - 独占管理器继承 Cursor 为该目的地使用的连接选项，包括代理、TLS 和保活。收到 GOAWAY 的连接退出复用；
   全宿主最多留四条空闲连接，空闲超过 60 秒回收。在途连接由原生宿主生命周期管理。
