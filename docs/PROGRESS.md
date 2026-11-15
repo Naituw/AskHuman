@@ -14,7 +14,8 @@
   P1 一律没做这些（登记按「每个会话独立」，MCP 绑定取根会话）。定案后补夹具驱动的测试（T2 时序必须成为回归测试）与 V23。
 - [ ] 过渡规则（P4 做完 YOLO 后删除）：全局权限提示固定为 YOLO 时，Antigravity 显示「不可启动」并说明原因，不静默降级。
 - [ ] P1 没验到的：全局插件在 App / `agy` **会话**里的触发与「改写真实全局插件目录」的影响（V22，G2 在没有在途 `ask` 时做）；
-  设置页与控制台的肉眼验收（只验了注册表与命令行）；`agy` 的 MCP `_meta` 键名（合成宿主用的是 App 的键名，G4）；Linux（V13）；退出 App 才能验的 V1、V16。
+  设置页与控制台的肉眼验收（只验了注册表与命令行；agent 这边做不了：Computer Use 截不到也读不到 AskHuman GUI host 的窗口，shell 的 `screencapture` 没有屏幕录制权限，
+  而且日常 GUI host 要等没有窗口时才换成新二进制，所以要用户自己看）；`agy` 的 MCP `_meta` 键名（合成宿主用的是 App 的键名，G4）；Linux（V13）；退出 App 才能验的 V1、V16。
 - [ ] 用户升级后第一次执行 `AskHuman agents mode antigravity …` / `agents update antigravity` 才会把旧的共享规则迁移成插件（没有自动迁移）；本机现在显示「CLI（需更新）」。迁移时用户的 App 若有会话在跑，先看规格 §6.5 与 V22。
   迁移本身已在真实目录的副本上演练过（规格附录 A.3：旧规则退役、`config.json` 不变、`mcp` / `cli` / `none` 互转与幂等都正常），没有验的只是它对**在途会话**的影响。
 - [ ] 清理（规格与计划被接受后）：仓库外的实验目录 `~/agy-hook-lab/`、`/private/tmp/agy-*`、`/tmp/agy-impl`、`/tmp/agy-p1`。
