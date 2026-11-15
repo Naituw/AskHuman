@@ -437,7 +437,7 @@ fn grok_first_query(path: &Path) -> Option<String> {
 }
 
 /// 提取 `<tag>…</tag>` 之间的内层文本（找不到成对标签返回 `None`）。
-fn unwrap_tag(text: &str, tag: &str) -> Option<String> {
+pub(super) fn unwrap_tag(text: &str, tag: &str) -> Option<String> {
     let open = format!("<{tag}>");
     let close = format!("</{tag}>");
     let start = text.find(&open)? + open.len();
@@ -458,7 +458,7 @@ fn antigravity_title(session_id: &str) -> Option<String> {
 /// `~/.gemini/<surface>/brain/<conversation id>/.system_generated/logs/transcript_full.jsonl`.
 /// The id arrives from a hook or from MCP metadata, so only its canonical UUID form is ever joined
 /// into a path.
-fn antigravity_transcript_in(home: &Path, session_id: &str) -> Option<PathBuf> {
+pub(super) fn antigravity_transcript_in(home: &Path, session_id: &str) -> Option<PathBuf> {
     let id = uuid::Uuid::parse_str(session_id)
         .ok()?
         .hyphenated()
@@ -518,9 +518,9 @@ pub(crate) fn transcript_path(kind: AgentKind, session_id: &str) -> Option<PathB
         return None;
     }
     match kind {
-        // Its conversation log is only read for the title; the activity and transcript views have
-        // no parser for it.
-        AgentKind::Antigravity => None,
+        // The conversation log of the App or of `agy`, found by the id a hook or MCP reported;
+        // the activity, latest-text and transcript views all read it.
+        AgentKind::Antigravity => antigravity_transcript_in(&paths::integration_home(), session_id),
         // ~/.cursor/projects/*/agent-transcripts/<sid>/<sid>.jsonl
         AgentKind::Cursor => {
             let projects = paths::cursor_dir().join("projects");
