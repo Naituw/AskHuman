@@ -335,6 +335,20 @@ const messageUnderHeader = (id: AgentId) =>
     </button>
 
     <p v-if="a.id === 'antigravity'" class="card-desc">{{ t("settings.integration.antigravityScope") }}</p>
+    <p
+      v-if="a.id === 'antigravity' && !modeReadError?.[a.id] && modes[a.id].hostPluginDisabled"
+      class="result err"
+      data-testid="antigravity-plugin-disabled"
+    >
+      {{ t("settings.integration.antigravityPluginDisabled") }}
+    </p>
+    <p
+      v-else-if="a.id === 'antigravity' && !modeReadError?.[a.id] && modes[a.id].mcpGrant === false"
+      class="card-desc agent-hint"
+      data-testid="antigravity-grant-hint"
+    >
+      {{ t("settings.integration.antigravityGrantHint") }}
+    </p>
     <button v-if="modeReadError?.[a.id]" type="button" class="btn" @click="refreshMode(a.id)">{{ t("settings.integration.retryStatus") }}</button>
 
     <div
@@ -899,7 +913,7 @@ const messageUnderHeader = (id: AgentId) =>
         </label>
       </div>
       <p class="card-desc agent-hint">
-        {{ t(a.id === 'antigravity' ? "settings.integration.antigravityLifecycleUnsupported" : "settings.integration.lifecycleHint") }}
+        {{ t(a.id === 'antigravity' ? "settings.integration.antigravityLifecycleHint" : "settings.integration.lifecycleHint") }}
       </p>
 
       <CodexDesktopSettings v-if="isMac && a.id === 'codex'" />

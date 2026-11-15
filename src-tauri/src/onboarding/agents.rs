@@ -60,7 +60,9 @@ const ALL: [AgentDef; 6] = [
         target: AgentTarget::Antigravity,
         cli: true,
         mcp: true,
-        recommended: Mode::Cli,
+        // The App's default sandbox keeps the CLI mode from reaching the daemon; MCP works in
+        // the App and in `agy`.
+        recommended: Mode::Mcp,
     },
     AgentDef {
         id: "pi",

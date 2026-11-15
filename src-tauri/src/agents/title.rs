@@ -21,6 +21,8 @@ const MAX_TITLE_CHARS: usize = 80;
 /// 扫描 jsonl 的行数上限。
 const MAX_LINES: usize = 4000;
 const MAX_NAME_TAIL_BYTES: u64 = 1024 * 1024;
+/// How much of an Antigravity conversation log is read to find its first request.
+const MAX_ANTIGRAVITY_HEAD_BYTES: u64 = 4 * 1024 * 1024;
 const MAX_PI_HEADER_BYTES: u64 = 64 * 1024;
 const MAX_PI_SESSION_FILES: usize = 4096;
 
@@ -62,7 +64,7 @@ pub fn resolve_title(kind: AgentKind, session_id: &str) -> Option<String> {
         AgentKind::Claude => claude_title(session_id),
         AgentKind::Grok => grok_title(session_id),
         AgentKind::Pi => pi_title(session_id),
-        AgentKind::Antigravity => None,
+        AgentKind::Antigravity => antigravity_title(session_id),
     }?;
     Some(clean_title(&raw))
 }
@@ -90,6 +92,7 @@ pub(crate) fn resolve_popup_title(
             .and_then(|path| grok_session_name(&path))
             .map(Some),
         AgentKind::Pi => pi_session_file(session_id).and_then(|path| pi_session_name(&path)),
+        // A conversation has no name of its own; the fallback below uses its first request.
         AgentKind::Antigravity => None,
     };
     // Pi records an explicit empty name when the user clears it. Do not resurrect a cached name.
@@ -442,6 +445,67 @@ fn unwrap_tag(text: &str, tag: &str) -> Option<String> {
     Some(text[start..end].to_string())
 }
 
+// ── Antigravity ──
+
+/// Antigravity has no title the console can read, so a conversation is named after what the person
+/// first asked.
+fn antigravity_title(session_id: &str) -> Option<String> {
+    let path = antigravity_transcript_in(&paths::integration_home(), session_id)?;
+    antigravity_first_request(&path)
+}
+
+/// Where the App (`antigravity`) and `agy` (`antigravity-cli`) keep a conversation's step log:
+/// `~/.gemini/<surface>/brain/<conversation id>/.system_generated/logs/transcript_full.jsonl`.
+/// The id arrives from a hook or from MCP metadata, so only its canonical UUID form is ever joined
+/// into a path.
+fn antigravity_transcript_in(home: &Path, session_id: &str) -> Option<PathBuf> {
+    let id = uuid::Uuid::parse_str(session_id)
+        .ok()?
+        .hyphenated()
+        .to_string();
+    paths::antigravity_brain_dirs_in(home)
+        .into_iter()
+        .map(|brain| {
+            brain
+                .join(&id)
+                .join(".system_generated/logs/transcript_full.jsonl")
+        })
+        .find(|path| path.is_file())
+}
+
+/// The first request the person typed: the first `USER_INPUT` step the user wrote, with the
+/// `<USER_REQUEST>` wrapper the host puts around it removed. A conversation started by another
+/// one (a subagent) begins with a system message instead and has no such step.
+fn antigravity_first_request(path: &Path) -> Option<String> {
+    let file = fs::File::open(path).ok()?;
+    let reader = BufReader::new(file.take(MAX_ANTIGRAVITY_HEAD_BYTES));
+    for (index, line) in reader.lines().enumerate() {
+        if index >= MAX_LINES {
+            break;
+        }
+        let Ok(line) = line else { break };
+        if !line.contains("USER_INPUT") {
+            continue;
+        }
+        let Ok(step) = serde_json::from_str::<Value>(&line) else {
+            continue;
+        };
+        if step.get("type").and_then(Value::as_str) != Some("USER_INPUT")
+            || step.get("source").and_then(Value::as_str) != Some("USER_EXPLICIT")
+        {
+            continue;
+        }
+        let Some(content) = step.get("content").and_then(Value::as_str) else {
+            continue;
+        };
+        let request = unwrap_tag(content, "USER_REQUEST").unwrap_or_else(|| content.to_string());
+        if !request.trim().is_empty() {
+            return Some(request.trim().to_string());
+        }
+    }
+    None
+}
+
 // ── transcript 文件定位（供 activity.rs 复用）──
 
 /// 按 `session_id` 定位某家 agent 的 transcript（jsonl）文件路径。取不到返回 `None`。
@@ -454,6 +518,8 @@ pub(crate) fn transcript_path(kind: AgentKind, session_id: &str) -> Option<PathB
         return None;
     }
     match kind {
+        // Its conversation log is only read for the title; the activity and transcript views have
+        // no parser for it.
         AgentKind::Antigravity => None,
         // ~/.cursor/projects/*/agent-transcripts/<sid>/<sid>.jsonl
         AgentKind::Cursor => {
@@ -808,6 +874,154 @@ mod tests {
             claude_session_name(&path).as_deref(),
             Some("Latest automatic name")
         );
+    }
+
+    /// A conversation log below `home` for the given surface (`antigravity` or `antigravity-cli`).
+    fn antigravity_log(home: &Path, surface: &str, id: &str, lines: &[&str]) -> PathBuf {
+        let dir = home
+            .join(".gemini")
+            .join(surface)
+            .join("brain")
+            .join(id)
+            .join(".system_generated/logs");
+        fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("transcript_full.jsonl");
+        fs::write(&path, lines.join("\n")).unwrap();
+        path
+    }
+
+    const AGY_USER_STEP: &str = r#"{"step_index":0,"source":"USER_EXPLICIT","type":"USER_INPUT","status":"DONE","created_at":"2026-11-15T18:06:23Z","content":"<USER_REQUEST>\nStep 1: call the lab_echo tool once.\nStep 2: reply with done.\n</USER_REQUEST>\n<ADDITIONAL_METADATA>\nThe current local time is later.\n</ADDITIONAL_METADATA>"}"#;
+    const AGY_REPLY_STEP: &str = r#"{"step_index":1,"source":"MODEL","type":"PLANNER_RESPONSE","status":"DONE","content":"done"}"#;
+    /// What a subagent's log starts with: a message from the parent, not something the user typed.
+    const AGY_SUBAGENT_STEP: &str = r#"{"step_index":0,"source":"SYSTEM","type":"SYSTEM_MESSAGE","status":"DONE","content":"The following is a <SYSTEM_MESSAGE> not sent by the user. USER_INPUT is not here."}"#;
+
+    #[test]
+    fn antigravity_conversation_is_named_after_its_first_request() {
+        let home = tempfile::tempdir().unwrap();
+        let id = "b9fee8f0-784e-4a24-8b56-fb29c435e8bd";
+        let path = antigravity_log(
+            home.path(),
+            "antigravity",
+            id,
+            &[AGY_USER_STEP, AGY_REPLY_STEP],
+        );
+        assert_eq!(
+            antigravity_transcript_in(home.path(), id).as_deref(),
+            Some(path.as_path())
+        );
+        // The wrapper and the metadata after it are not part of what the person asked.
+        let request = antigravity_first_request(&path).unwrap();
+        assert_eq!(
+            request,
+            "Step 1: call the lab_echo tool once.\nStep 2: reply with done."
+        );
+        assert_eq!(
+            clean_title(&request),
+            "Step 1: call the lab_echo tool once. Step 2: reply with done."
+        );
+    }
+
+    #[test]
+    fn antigravity_cli_conversations_are_found_next_to_the_apps() {
+        let home = tempfile::tempdir().unwrap();
+        let (app_id, cli_id) = (
+            "b9fee8f0-784e-4a24-8b56-fb29c435e8bd",
+            "0d1bf56b-618e-4476-b7df-04ae3ff77a3a",
+        );
+        let app = antigravity_log(home.path(), "antigravity", app_id, &[AGY_USER_STEP]);
+        let cli = antigravity_log(home.path(), "antigravity-cli", cli_id, &[AGY_USER_STEP]);
+        assert_eq!(
+            antigravity_transcript_in(home.path(), app_id).as_deref(),
+            Some(app.as_path())
+        );
+        assert_eq!(
+            antigravity_transcript_in(home.path(), cli_id).as_deref(),
+            Some(cli.as_path())
+        );
+        assert_eq!(
+            antigravity_transcript_in(home.path(), "c2c12c86-2d21-47d7-97a8-552e6c1aec81"),
+            None
+        );
+    }
+
+    #[test]
+    fn only_a_canonical_uuid_ever_becomes_part_of_an_antigravity_path() {
+        let home = tempfile::tempdir().unwrap();
+        let id = "b9fee8f0-784e-4a24-8b56-fb29c435e8bd";
+        let path = antigravity_log(home.path(), "antigravity", id, &[AGY_USER_STEP]);
+        // Another spelling of the same UUID names the same directory.
+        for same in [
+            "B9FEE8F0-784E-4A24-8B56-FB29C435E8BD",
+            "b9fee8f0784e4a248b56fb29c435e8bd",
+        ] {
+            assert_eq!(
+                antigravity_transcript_in(home.path(), same).as_deref(),
+                Some(path.as_path()),
+                "{same}"
+            );
+        }
+        for bad in [
+            "",
+            "not-a-uuid",
+            "../antigravity/brain/b9fee8f0-784e-4a24-8b56-fb29c435e8bd",
+            "b9fee8f0-784e-4a24-8b56-fb29c435e8bd/..",
+            "/etc/passwd",
+        ] {
+            assert_eq!(antigravity_transcript_in(home.path(), bad), None, "{bad:?}");
+        }
+    }
+
+    #[test]
+    fn antigravity_titles_skip_what_the_person_did_not_type() {
+        let home = tempfile::tempdir().unwrap();
+        let id = "0d1bf56b-618e-4476-b7df-04ae3ff77a3a";
+        let first = |lines: &[&str]| {
+            let path = antigravity_log(home.path(), "antigravity", id, lines);
+            antigravity_first_request(&path)
+        };
+        // A subagent's log starts with a message from its parent, so it stays unnamed.
+        assert_eq!(first(&[AGY_SUBAGENT_STEP, AGY_REPLY_STEP]), None);
+        assert_eq!(first(&[]), None);
+        // Steps that only mention the type, are not JSON, or are cut off are passed over.
+        assert_eq!(
+            first(&[
+                r#"{"step_index":0,"source":"MODEL","type":"PLANNER_RESPONSE","content":"USER_INPUT"}"#,
+                "USER_INPUT but not JSON",
+                r#"{"step_index":1,"source":"USER_EXPLICIT","type":"USER_INPUT","content":"<USER_REQUEST>\n \n</USER_REQUEST>"}"#,
+                r#"{"step_index":2,"source":"USER_EXPLICIT","type":"USER_INPUT"}"#,
+                r#"{"step_index":3,"source":"USER_EXPLICIT","type":"USER_INPUT","content":"plain text, no wrapper"}"#,
+                AGY_USER_STEP,
+            ])
+            .as_deref(),
+            Some("plain text, no wrapper")
+        );
+        // The first request wins over a later one.
+        assert_eq!(
+            first(&[
+                AGY_REPLY_STEP,
+                AGY_USER_STEP,
+                r#"{"step_index":9,"source":"USER_EXPLICIT","type":"USER_INPUT","content":"<USER_REQUEST>\nlater\n</USER_REQUEST>"}"#,
+            ])
+            .as_deref(),
+            Some("Step 1: call the lab_echo tool once.\nStep 2: reply with done.")
+        );
+    }
+
+    #[test]
+    fn an_oversized_antigravity_log_is_not_read_past_its_byte_budget() {
+        let home = tempfile::tempdir().unwrap();
+        let id = "b9fee8f0-784e-4a24-8b56-fb29c435e8bd";
+        let padding = format!(
+            r#"{{"step_index":0,"source":"MODEL","type":"PLANNER_RESPONSE","content":"{}"}}"#,
+            "x".repeat(MAX_ANTIGRAVITY_HEAD_BYTES as usize)
+        );
+        let path = antigravity_log(
+            home.path(),
+            "antigravity",
+            id,
+            &[padding.as_str(), AGY_USER_STEP],
+        );
+        assert_eq!(antigravity_first_request(&path), None);
     }
 
     #[test]

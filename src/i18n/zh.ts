@@ -678,7 +678,12 @@ export default {
       manualTitle: "手动集成",
       manualLifecycleHint:
         "手动提示词和 MCP 示例不会安装生命周期追踪；Agent 状态、插话与任务启动需要使用下方自动集成并开启追踪。",
-      antigravityScope: "家族共享规则；CLI 指 AskHuman 调用方式。各客户端能力需分别验收。",
+      antigravityScope:
+        "AskHuman 以一个 Antigravity 插件的形式安装（规则、MCP 与生命周期 hooks），App 与 agy 共用，可在 Antigravity 里整体停用。App 的默认沙箱里 CLI 变体连不上 AskHuman，推荐 MCP。",
+      antigravityPluginDisabled:
+        "插件在 Antigravity 中已停用，它的 hooks 与 MCP 不会运行。请在 Antigravity 里重新启用。",
+      antigravityGrantHint:
+        "Antigravity App 第一次调用会询问一次权限，请选「始终允许」（或在其权限设置里添加 mcp(askhuman_mcp/*)）。",
       retryStatus: "重新读取状态",
       /** Agent 卡标题行下的折叠入口：其余各行（规则、Hook、权限、生命周期等）收在这里。 */
       details: "详情",
@@ -771,7 +776,8 @@ export default {
         "Codex 无法延长 CLI 工具的超时，长时间等待可能被取消；如需可靠的长等待请改用 MCP 模式。",
       capabilityUnsupported: "当前不支持",
       antigravityRecoveryUnsupported: "Antigravity 当前未接入上下文恢复 Hook；CLI 集成不会安装此 Hook。",
-      antigravityLifecycleUnsupported: "Antigravity 当前未接入生命周期追踪，无法在此启用。",
+      antigravityLifecycleHint:
+        "通过插件 hooks 追踪 App 与 agy 的会话状态与标题，显示在控制台；插话、Watch 与任务启动尚未开放。关闭后 AskHuman 提问仍可使用。",
       contextRecoveryHookLabel: "上下文恢复 Hook",
       protocolLabel: "协议（SessionStart Hook）",
       codexProtocolHint:
@@ -1499,7 +1505,7 @@ export default {
     pendingCount: "待送达 {n} 条",
     pendingAttachments: "{n} 个附件",
     revoke: "撤回",
-    antigravityHint: "Antigravity 插话和生命周期跟踪尚未开放",
+    antigravityHint: "Antigravity 插话与空闲消息尚未开放",
     grokHint: "Grok 不支持发送消息",
     idleHint: "消息通道当前不可用，请在 Agent 中打开原会话继续。",
     endedHint: "消息通道当前不可用，请在 Agent 中打开原会话继续。",

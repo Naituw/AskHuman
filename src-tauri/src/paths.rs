@@ -438,6 +438,13 @@ pub fn antigravity_config_dir_in(home_dir: &Path) -> PathBuf {
     home_dir.join(".gemini/config")
 }
 
+/// The directories in which the App (`antigravity`) and `agy` (`antigravity-cli`) keep their
+/// conversations, one subdirectory per conversation id.
+pub fn antigravity_brain_dirs_in(home_dir: &Path) -> [PathBuf; 2] {
+    ["antigravity", "antigravity-cli"]
+        .map(|surface| home_dir.join(".gemini").join(surface).join("brain"))
+}
+
 /// The directory of the AskHuman plugin below an explicit home directory.
 pub fn antigravity_plugin_dir_in(home_dir: &Path) -> PathBuf {
     antigravity_config_dir_in(home_dir).join("plugins/askhuman")

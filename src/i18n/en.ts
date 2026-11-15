@@ -691,7 +691,12 @@ export default {
       manualTitle: "Manual integration",
       manualLifecycleHint:
         "Manual prompts and MCP examples do not install lifecycle tracking. Agent status, interject, and task launch require Automatic integration with tracking enabled below.",
-      antigravityScope: "Shared family rules; CLI is the AskHuman transport. Client capabilities require separate validation.",
+      antigravityScope:
+        "AskHuman installs as one Antigravity plugin (rules, MCP and lifecycle hooks) that the app and agy share, and that can be switched off as a whole inside Antigravity. The app's default sandbox keeps the CLI variant from reaching AskHuman, so MCP is recommended.",
+      antigravityPluginDisabled:
+        "The plugin is switched off in Antigravity, so its hooks and MCP server do not run. Switch it on in Antigravity.",
+      antigravityGrantHint:
+        "The Antigravity app asks once for permission on the first call. Choose \"Always allow\" (or add mcp(askhuman_mcp/*) in its permission settings).",
       retryStatus: "Retry reading status",
       /** The fold under an Agent card's header: the remaining rows (rules, hooks, permissions, lifecycle…) live here. */
       details: "Details",
@@ -786,7 +791,8 @@ export default {
         "Codex can't extend a CLI tool's timeout, so long waits may be cancelled. Use MCP mode for reliable long waits.",
       capabilityUnsupported: "Currently unsupported",
       antigravityRecoveryUnsupported: "Antigravity context recovery hooks are not implemented; CLI integration does not install this hook.",
-      antigravityLifecycleUnsupported: "Antigravity lifecycle tracking is not implemented and cannot be enabled here.",
+      antigravityLifecycleHint:
+        "Tracks the status and title of app and agy sessions through the plugin's hooks and shows them in the console; interject, Watch and task launch are not available yet. AskHuman questions still work when it is off.",
       contextRecoveryHookLabel: "Context recovery hook",
       protocolLabel: "Protocol (SessionStart hook)",
       codexProtocolHint:
@@ -1523,7 +1529,7 @@ export default {
     pendingCount: "{n} queued",
     pendingAttachments: "{n} attachment(s)",
     revoke: "Revoke",
-    antigravityHint: "Antigravity messaging and lifecycle tracking are not available yet",
+    antigravityHint: "Antigravity interjection and idle messages are not available yet",
     grokHint: "Grok does not support messaging",
     idleHint: "The message channel is unavailable. Open the original session in the Agent to continue.",
     endedHint: "The message channel is unavailable. Open the original session in the Agent to continue.",

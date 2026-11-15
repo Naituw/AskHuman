@@ -9,7 +9,7 @@ use crate::integrations::agent_rules::AgentTarget;
 use crate::integrations::codex_protocol::{self, Delivery};
 use crate::integrations::{
     agent_delegated, agent_lifecycle, agent_mode, agent_permission, agent_rules, agent_stop,
-    claude_hook, cursor_hook, mcp_config,
+    antigravity_plugin, claude_hook, cursor_hook, mcp_config,
 };
 use serde_json::Value;
 use std::process::exit;
@@ -215,6 +215,7 @@ fn mode_cmd(args: &[String], lang: Lang) -> Result<(), String> {
                 mode_label(mode, lang),
                 upd
             ));
+            print_antigravity_notes(target, mode, lang);
             Ok(())
         }
         // 切换：先卸非目标产物，再装目标产物（底层幂等）。
@@ -234,8 +235,31 @@ fn mode_cmd(args: &[String], lang: Lang) -> Result<(), String> {
                 cfgio::t(lang, "mode set to", "模式已设为"),
                 mode_label(mode, lang)
             ));
+            print_antigravity_notes(target, mode, lang);
             Ok(())
         }
+    }
+}
+
+/// What Antigravity's own settings say about the plugin, for the lines a person reads after a
+/// mode query or change. Silent for every other agent.
+fn print_antigravity_notes(target: AgentTarget, mode: agent_mode::Mode, lang: Lang) {
+    if target != AgentTarget::Antigravity || mode == agent_mode::Mode::None {
+        return;
+    }
+    let host = antigravity_plugin::host_view();
+    if host.plugin_disabled {
+        print_line(&cfgio::t(
+            lang,
+            "  ! The plugin is switched off in Antigravity, so its hooks and MCP server do not run. Switch it on there.",
+            "  ! 插件在 Antigravity 中已停用，它的 hooks 与 MCP server 不会运行。请在 Antigravity 里重新启用。",
+        ));
+    } else if mode == agent_mode::Mode::Mcp && !host.mcp_allowed {
+        print_line(&cfgio::t(
+            lang,
+            "  Note: the first call in the Antigravity app asks once for permission. Choose \"Always allow\" (or add mcp(askhuman_mcp/*) in its permission settings).",
+            "  提示：Antigravity App 里第一次调用会询问一次权限，请选「始终允许」（或在其权限设置里添加 mcp(askhuman_mcp/*)）。",
+        ));
     }
 }
 
@@ -835,6 +859,7 @@ fn show(args: &[String], lang: Lang) -> Result<(), String> {
             cfgio::t(lang, "lifecycle tracking", "生命周期追踪"),
             lc
         ));
+        print_antigravity_notes(target, mode, lang);
         print_line("");
     }
     Ok(())
@@ -867,7 +892,7 @@ fn help(lang: Lang) -> String {
   Modes: cli = rules + runtime + lifecycle where supported; mcp = rules/skill + MCP + lifecycle where supported; none = remove.\n\
   Grok only supports none | mcp (skill + MCP config); it has no CLI mode and no timeout hook.\n\
   Pi only supports none | cli; its runtime artifact is a managed Extension and Stop defaults on.\n\
-  Antigravity supports none | cli | mcp on Unix; CLI is recommended; advanced capabilities remain unsupported.\n\
+  Antigravity supports none | cli | mcp on Unix as one AskHuman plugin shared by the app and agy; MCP is recommended; lifecycle tracking uses the plugin's hooks.\n\
   Codex receives its protocol from a SessionStart hook (no AGENTS.md block); delegated runs such as `codex exec` stay silent unless `agents delegated codex on`.\n\
   Legacy install/uninstall and per-artifact write flags have been removed.",
         "AskHuman agents —— agent 状态 + 集成（cursor | claude | codex | grok | pi | antigravity）\n\
@@ -886,7 +911,7 @@ fn help(lang: Lang) -> String {
   模式: cli = 规则 + runtime + 受支持的生命周期；mcp = 规则/skill + MCP + 受支持的生命周期；none = 移除。\n\
   Grok 仅支持 none | mcp（skill + MCP 配置）；无 CLI 模式、无超时 hook。\n\
   Pi 仅支持 none | cli；运行时产物为托管 Extension，Stop 默认开启。\n\
-  Antigravity 在 Unix 支持 none | cli | mcp；推荐 CLI，高级能力仍不支持。\n\
+  Antigravity 在 Unix 支持 none | cli | mcp，以一个 AskHuman 插件的形式供 App 与 agy 共用；推荐 MCP；生命周期追踪走插件的 hooks。\n\
   Codex 通过 SessionStart hook 注入协议（不再写 AGENTS.md 区块）；委派运行（如 codex exec）默认静默，可用 `agents delegated codex on` 放行。\n\
   旧 install/uninstall 与逐产物写 flags 已移除。",
     )

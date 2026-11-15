@@ -279,6 +279,62 @@ pub fn planned_files(request: Request) -> Vec<PathBuf> {
         .unwrap_or_default()
 }
 
+/// What Antigravity's own configuration says about AskHuman.
+///
+/// `config.json` holds the user's private settings. AskHuman only reads it, never writes it, and
+/// nothing depends on the answer: it feeds status hints.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct HostView {
+    /// The user switched the plugin off inside Antigravity (`plugins.askhuman.enabled == false`),
+    /// so its hooks and MCP server do not run.
+    pub plugin_disabled: bool,
+    /// The user's "always allow" list covers AskHuman's MCP tool. The format is private, so a
+    /// grant AskHuman does not recognise only means the hint is shown.
+    pub mcp_allowed: bool,
+}
+
+const HOST_CONFIG_MAX_BYTES: u64 = 4 << 20;
+
+/// The host view of the current user. A missing, unreadable or unparseable file reads as the
+/// default: not disabled, no grant seen.
+pub fn host_view() -> HostView {
+    host_view_at(
+        &crate::paths::antigravity_config_dir_in(&crate::paths::integration_home())
+            .join("config.json"),
+    )
+}
+
+fn host_view_at(path: &Path) -> HostView {
+    use std::io::Read;
+    let Ok(file) = std::fs::File::open(path) else {
+        return HostView::default();
+    };
+    let mut bytes = Vec::new();
+    if file
+        .take(HOST_CONFIG_MAX_BYTES + 1)
+        .read_to_end(&mut bytes)
+        .is_err()
+        || bytes.len() as u64 > HOST_CONFIG_MAX_BYTES
+    {
+        return HostView::default();
+    }
+    let Ok(config) = serde_json::from_slice::<Value>(&bytes) else {
+        return HostView::default();
+    };
+    let server = format!("{PLUGIN_NAME}_mcp");
+    let allowed = |grant: &str| {
+        grant == "mcp(*)"
+            || grant == format!("mcp({server}/*)")
+            || grant == format!("mcp({server}/ask)")
+    };
+    HostView {
+        plugin_disabled: config["plugins"][PLUGIN_NAME]["enabled"] == Value::Bool(false),
+        mcp_allowed: config["userSettings"]["globalPermissionGrants"]["allow"]
+            .as_array()
+            .is_some_and(|grants| grants.iter().filter_map(Value::as_str).any(allowed)),
+    }
+}
+
 fn executable() -> Result<String> {
     Ok(crate::development::routing::program_path()
         .context("failed to resolve the AskHuman executable")?
@@ -1612,5 +1668,70 @@ mod tests {
             b"r"
         )
         .is_ok());
+    }
+
+    fn host(config: &str) -> HostView {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("config.json");
+        std::fs::write(&path, config).unwrap();
+        host_view_at(&path)
+    }
+
+    #[test]
+    fn the_host_config_is_read_for_the_switch_and_the_grant_and_nothing_else() {
+        let neither = HostView::default();
+        // Nothing to read: no file, unreadable content, the wrong shape, an unrelated plugin.
+        assert_eq!(
+            host_view_at(Path::new("/nonexistent/askhuman/config.json")),
+            neither
+        );
+        for config in [
+            "",
+            "not json",
+            "[]",
+            "null",
+            r#"{"plugins":[],"userSettings":3}"#,
+            r#"{"plugins":{"swarm":{"enabled":false}}}"#,
+            r#"{"plugins":{"askhuman":{"enabled":true}}}"#,
+            r#"{"plugins":{"askhuman":{}}}"#,
+            r#"{"plugins":{"askhuman":{"enabled":"false"}}}"#,
+            r#"{"userSettings":{"globalPermissionGrants":{"allow":["command(AskHuman)","command(ls)"]}}}"#,
+            r#"{"userSettings":{"globalPermissionGrants":{"allow":"mcp(*)"}}}"#,
+            r#"{"userSettings":{"globalPermissionGrants":{"allow":["mcp(other_mcp/*)",7,null]}}}"#,
+            r#"{"userSettings":{"globalPermissionGrants":{"allow":["mcp(askhuman_mcp/other)"]}}}"#,
+        ] {
+            assert_eq!(host(config), neither, "{config}");
+        }
+
+        // The switch is only what a literal `false` says.
+        assert_eq!(
+            host(r#"{"plugins":{"askhuman":{"enabled":false}}}"#),
+            HostView {
+                plugin_disabled: true,
+                mcp_allowed: false
+            }
+        );
+        // Any grant that covers the plugin's MCP tool counts, wherever it sits in the list.
+        for grant in ["mcp(*)", "mcp(askhuman_mcp/*)", "mcp(askhuman_mcp/ask)"] {
+            let config = format!(
+                r#"{{"userSettings":{{"globalPermissionGrants":{{"allow":["command(ls)","{grant}"]}}}}}}"#
+            );
+            assert_eq!(
+                host(&config),
+                HostView {
+                    plugin_disabled: false,
+                    mcp_allowed: true
+                },
+                "{grant}"
+            );
+        }
+    }
+
+    #[test]
+    fn an_oversized_host_config_is_not_trusted() {
+        let padding = "x".repeat(HOST_CONFIG_MAX_BYTES as usize);
+        let config =
+            format!(r#"{{"plugins":{{"askhuman":{{"enabled":false}}}},"pad":"{padding}"}}"#);
+        assert_eq!(host(&config), HostView::default());
     }
 }

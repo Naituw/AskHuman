@@ -11,7 +11,7 @@ use crate::integrations::agent_rules::AgentTarget;
 use crate::integrations::codex_protocol::{self, Delivery};
 use crate::integrations::{
     agent_delegated, agent_lifecycle, agent_mode, agent_permission, agent_rules,
-    agent_subagent_guard, claude_hook, cursor_hook, mcp_config,
+    agent_subagent_guard, antigravity_plugin, claude_hook, cursor_hook, mcp_config,
 };
 
 fn daemon_login_ready() -> bool {
@@ -318,6 +318,20 @@ fn render_text(
         } else {
             out.push_str(&line);
             out.push('\n');
+            // The plugin can be switched off inside Antigravity; its hooks and MCP then never run.
+            if target == AgentTarget::Antigravity
+                && mode != agent_mode::Mode::None
+                && antigravity_plugin::host_view().plugin_disabled
+            {
+                out.push_str(&format!(
+                    "  ! antigravity {}\n",
+                    cfgio::t(
+                        lang,
+                        "plugin: switched off in Antigravity — hooks and MCP do not run",
+                        "插件：在 Antigravity 中已停用 —— hooks 与 MCP 不会运行",
+                    )
+                ));
+            }
         }
     }
 
@@ -548,6 +562,15 @@ fn render_json(
                     None
                 },
                 "mcp": { "installed": mcp_config::is_installed(target), "needsUpdate": mcp_config::needs_update(target) },
+                // Antigravity only: what the host's own settings say about the plugin.
+                "host": (target == AgentTarget::Antigravity && mode != agent_mode::Mode::None)
+                    .then(|| {
+                        let host = antigravity_plugin::host_view();
+                        serde_json::json!({
+                            "pluginDisabled": host.plugin_disabled,
+                            "mcpAllowed": host.mcp_allowed,
+                        })
+                    }),
                 "permission": permission,
                 "lifecycle": {
                     "enabled": lc.enabled,

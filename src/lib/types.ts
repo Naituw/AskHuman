@@ -1541,6 +1541,10 @@ export interface AgentModeStatus {
   agentVersion: string | null;
   minimumVersion: string | null;
   versionSupported: boolean;
+  /** Antigravity only: the user switched the AskHuman plugin off inside Antigravity. */
+  hostPluginDisabled: boolean;
+  /** Antigravity MCP mode only: whether the "always allow" list covers the MCP tool; null = n/a. */
+  mcpGrant: boolean | null;
 }
 
 /** 接管 Claude 内置 AskUserQuestion 的开关状态（仅 Claude Code 支持）。 */

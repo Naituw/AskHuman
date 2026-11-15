@@ -3747,7 +3747,7 @@ pub fn agent_rule_open(agent: String) -> Result<(), String> {
 
 use crate::integrations::{
     agent_ask_question, agent_context_recovery, agent_delegated, agent_mode, agent_permission,
-    agent_stop, mcp_config,
+    agent_stop, antigravity_plugin, mcp_config,
 };
 
 /// 某家 Agent 的模式聚合状态（驱动设置页三态分段控件 + 产物清单）。
@@ -3791,6 +3791,12 @@ pub struct AgentModeStatus {
     agent_version: Option<String>,
     minimum_version: Option<String>,
     version_supported: bool,
+    /// Antigravity only: the user switched the AskHuman plugin off inside Antigravity, so it does
+    /// not run. Read from the host's configuration; nothing here writes it.
+    host_plugin_disabled: bool,
+    /// Antigravity MCP mode only: whether the user's "always allow" list covers the MCP tool
+    /// (`None` when the question does not apply). A hint, since the host's format is private.
+    mcp_grant: Option<bool>,
 }
 
 #[tauri::command]
@@ -3817,6 +3823,8 @@ fn agent_mode_status_sync(agent: &str) -> Result<AgentModeStatus, String> {
     let recovery = agent_context_recovery::status(a, mode);
     let permission_needs_update = permission.needs_update;
     let mcp_supported = mcp_config::supported(a);
+    let host = (a == agent_rules::AgentTarget::Antigravity && mode != agent_mode::Mode::None)
+        .then(antigravity_plugin::host_view);
     Ok(AgentModeStatus {
         mode: mode.as_str().to_string(),
         needs_update: updates.rule || updates.hook || updates.mcp,
@@ -3854,6 +3862,10 @@ fn agent_mode_status_sync(agent: &str) -> Result<AgentModeStatus, String> {
         agent_version: None,
         minimum_version: None,
         version_supported: true,
+        host_plugin_disabled: host.is_some_and(|host| host.plugin_disabled),
+        mcp_grant: host
+            .filter(|_| mode == agent_mode::Mode::Mcp)
+            .map(|host| host.mcp_allowed),
     })
 }
 
