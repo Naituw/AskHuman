@@ -101,6 +101,7 @@ fn run_inner(agent: Option<&str>) -> Option<String> {
         stop_confirmation: false,
         agent_kind: Some(crate::agents::AgentKind::Claude.as_str().to_string()),
         agent_session_id: session_id,
+        agent_session_candidate: None,
         mcp_instance_id: None,
         agent_pid: None,
         caller_pid: std::process::id(),

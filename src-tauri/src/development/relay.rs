@@ -452,6 +452,7 @@ async fn forward(
         stop_confirmation: false,
         agent_kind: None,
         agent_session_id: None,
+        agent_session_candidate: None,
         mcp_instance_id: None,
         agent_pid: None,
         caller_pid: 0,

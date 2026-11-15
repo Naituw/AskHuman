@@ -203,6 +203,12 @@ pub struct TaskRequest {
     /// 调用方 Agent 会话 ID（从 env 取，见 spec D21）。
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub agent_session_id: Option<String>,
+    /// Conversation id an Antigravity process claims through its environment. It is only a
+    /// candidate: an inherited environment can name any conversation, so the daemon adopts it as
+    /// `agent_session_id` only when a lifecycle hook has already registered that conversation as
+    /// live. An older daemon ignores the field and keeps binding by family alone.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub agent_session_candidate: Option<String>,
     /// AskHuman MCP server 进程级随机实例 ID。仅作为拿不到真实 Agent session 时的弱隔离键；
     /// 普通 CLI 与旧 MCP server 不带 → None。
     #[serde(default, skip_serializing_if = "Option::is_none")]

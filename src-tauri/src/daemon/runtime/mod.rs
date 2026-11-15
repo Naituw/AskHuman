@@ -2866,6 +2866,34 @@ fn marks_session_working(auto: bool, from_mcp: bool, native_request_id: Option<&
         && !cursor_reports::is_report(native_request_id)
 }
 
+/// An Antigravity process's environment only names a conversation. The name becomes the caller's
+/// session when a lifecycle hook has registered that conversation and it has not ended; any other
+/// value is dropped and the call keeps its family alone, as it did before the hooks existed.
+fn adopt_antigravity_session_candidate(task: &mut TaskRequest, agents: &AgentRegistry) {
+    let candidate = task.agent_session_candidate.take();
+    if let Some(session) = antigravity_session_from_candidate(
+        task.agent_kind.as_deref(),
+        task.agent_session_id.as_deref(),
+        candidate.as_deref(),
+        agents,
+    ) {
+        task.agent_session_id = Some(session);
+    }
+}
+
+fn antigravity_session_from_candidate(
+    agent_kind: Option<&str>,
+    session_id: Option<&str>,
+    candidate: Option<&str>,
+    agents: &AgentRegistry,
+) -> Option<String> {
+    let candidate = candidate?;
+    (session_id.is_none()
+        && agent_kind == Some(AgentKind::Antigravity.as_str())
+        && agents.has_active_session(AgentKind::Antigravity, candidate))
+    .then(|| candidate.to_string())
+}
+
 /// CLI 提交一次任务：建请求、spawn GUI Helper、流式回结果；CLI 断开则取消。
 async fn handle_submit(
     task: TaskRequest,
@@ -2904,6 +2932,7 @@ async fn handle_submit_recoverable(
         .await;
         return;
     }
+    adopt_antigravity_session_candidate(&mut task, &state.agents);
     // 性能埋点关联 id（CLI 透传；空=关闭）。daemon 自身启动时无 ASKHUMAN_PERF env，
     // 故各阶段标记一律以本字段非空为开关（见 perf 模块说明）。
     let project = crate::project::for_session(
@@ -5811,6 +5840,39 @@ mod tests {
         assert!(!marks_session_working(true, false, Some(&card)));
         let feedback = crate::agents::failure::feedback_id("result");
         assert!(!marks_session_working(true, false, Some(&feedback)));
+    }
+
+    #[test]
+    fn an_environment_conversation_is_adopted_only_when_a_hook_registered_it() {
+        use super::antigravity_session_from_candidate as adopt;
+        use crate::agents::registry::AgentRegistry;
+        const LIVE: &str = "3f1c2a9e-8d4b-4a7e-9c1d-5b6e7f8a9b0c";
+        const INHERITED: &str = "9a8b7c6d-5e4f-4a3b-8c2d-1e0f9a8b7c6d";
+        let agents = AgentRegistry::new();
+        agents.upsert_working(
+            AgentKind::Antigravity,
+            LIVE,
+            None,
+            Some("/work/project".into()),
+        );
+        let kind = Some("antigravity");
+
+        assert_eq!(
+            adopt(kind, None, Some(LIVE), &agents).as_deref(),
+            Some(LIVE)
+        );
+        // A conversation the hooks never saw (an inherited variable, a hook-less install) is not
+        // a session: the call keeps its family alone.
+        assert_eq!(adopt(kind, None, Some(INHERITED), &agents), None);
+        assert_eq!(adopt(kind, None, None, &agents), None);
+        // The same id registered for another family says nothing about this one.
+        let other = AgentRegistry::new();
+        other.upsert_working(AgentKind::Codex, LIVE, None, None);
+        assert_eq!(adopt(kind, None, Some(LIVE), &other), None);
+        assert_eq!(adopt(Some("codex"), None, Some(LIVE), &agents), None);
+        assert_eq!(adopt(None, None, Some(LIVE), &agents), None);
+        // A session the caller already has authority for is never replaced by a candidate.
+        assert_eq!(adopt(kind, Some(INHERITED), Some(LIVE), &agents), None);
     }
 
     #[test]

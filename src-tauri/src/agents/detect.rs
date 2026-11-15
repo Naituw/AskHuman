@@ -110,6 +110,18 @@ pub fn session_id_from_env_map(kind: AgentKind, env: &HashMap<String, String>) -
         .filter(|s| !s.is_empty())
 }
 
+/// The conversation an Antigravity tool process names in its environment.
+///
+/// The host sets it for the tools it runs, but a process started from such a tool inherits it
+/// unchanged, so it is not authority by itself. Callers pass it on as a candidate and the daemon
+/// accepts it only for a conversation its lifecycle hooks have registered as live.
+pub fn antigravity_session_candidate(env: &HashMap<String, String>) -> Option<String> {
+    let value = env.get(session_id_env_var(AgentKind::Antigravity))?.trim();
+    uuid::Uuid::parse_str(value)
+        .ok()
+        .map(|id| id.hyphenated().to_string())
+}
+
 /// A copy of this process's environment. Entries that are not valid Unicode are skipped:
 /// `std::env::vars()` panics on them, and release builds abort on panic.
 pub(crate) fn env_snapshot() -> HashMap<String, String> {

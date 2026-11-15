@@ -427,6 +427,7 @@ pub(crate) fn build_task(
         stop_confirmation: true,
         agent_kind: Some(kind.as_str().to_string()),
         agent_session_id: Some(session_id.to_string()),
+        agent_session_candidate: None,
         mcp_instance_id: None,
         agent_pid: None,
         caller_pid: std::process::id(),
