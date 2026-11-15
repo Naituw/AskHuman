@@ -104,7 +104,9 @@ fn development_peer_matches(
     expected: crate::daemon::lifecycle::Fingerprint,
 ) -> bool {
     status.development_verification_version == crate::development::CAPABILITY_VERSION
-        && status.fingerprint == Some(expected)
+        && status
+            .fingerprint
+            .is_some_and(|fingerprint| fingerprint.same_as(&expected))
 }
 
 async fn require_development_peer() -> std::io::Result<()> {
@@ -1269,6 +1271,10 @@ mod tests {
             &status,
             crate::daemon::lifecycle::Fingerprint { size: 1, hash: 3 }
         ));
+        // Two unreadable binaries compare equal but identify nothing: not "this exact build".
+        let unknown = crate::daemon::lifecycle::Fingerprint::UNKNOWN;
+        status.fingerprint = Some(unknown);
+        assert!(!development_peer_matches(&status, unknown));
     }
 
     #[test]

@@ -71,7 +71,8 @@ pub fn replacement_compatible() -> bool {
     let fingerprint = crate::daemon::lifecycle::fingerprint_at(&binary);
     let mut checked = CHECKED.lock().unwrap_or_else(|e| e.into_inner());
     if let Some((previous, compatible)) = *checked {
-        if previous == fingerprint {
+        // A binary that could not be read is not the binary that was checked before.
+        if previous.same_as(&fingerprint) {
             return compatible;
         }
     }

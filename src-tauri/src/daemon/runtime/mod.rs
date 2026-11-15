@@ -211,7 +211,8 @@ fn run_cmd(background: bool, wait_for_gui_handoff: bool) -> i32 {
                 })
                 .is_some_and(|s| {
                     !s.draining
-                        && s.fingerprint == Some(lifecycle::current_fingerprint())
+                        && s.fingerprint
+                            .is_some_and(|fp| fp.same_as(&lifecycle::current_fingerprint()))
                         && s.protocol_version == ipc::PROTOCOL_VERSION
                 }) {
                     super::handoff::healthy(lifecycle::current_fingerprint());
@@ -953,8 +954,9 @@ fn check_pending_update(state: &Arc<ServerState>) {
     if state.closing.load(Ordering::SeqCst) {
         return;
     }
+    // An unreadable binary is not a changed one: only two real measurements can differ.
     let now_fp = lifecycle::launch_fingerprint();
-    if now_fp == state.startup_fp {
+    if !now_fp.differs_from(&state.startup_fp) {
         return;
     }
     if !crate::development::routing::replacement_compatible() {
@@ -1041,6 +1043,11 @@ async fn serve(
         exe_path,
         startup_fp.short(),
     ));
+    if startup_fp.is_unknown() {
+        // Every comparison against an unmeasured binary says "no evidence", so this process cannot
+        // tell that the installed binary changed until it is restarted.
+        log("could not measure the daemon binary at startup; update detection is off for this process");
+    }
     #[cfg(target_os = "macos")]
     if super::spawn::is_macos_headless() {
         log("running headless outside the Aqua launchd job");
@@ -1764,10 +1771,13 @@ async fn control_loop(reader: &mut Reader, w: &mut Writer, state: &Arc<ServerSta
                 let now_fp = lifecycle::launch_fingerprint();
                 // 指纹按「内容哈希」比对（与路径/mtime 无关）：
                 // 自身盘上二进制内容被换 / 客户端二进制内容不一致 / 协议不一致 → 过时，让位换新。
-                let own_changed = now_fp != state.startup_fp;
+                // A side that could not be measured (unreadable file, fd exhaustion) is no evidence
+                // of a change, so it never makes the daemon give way.
+                let own_changed = now_fp.differs_from(&state.startup_fp);
                 let protocol_differs = hello.protocol_version != ipc::PROTOCOL_VERSION;
-                let mut stale =
-                    own_changed || hello.fingerprint != state.startup_fp || protocol_differs;
+                let mut stale = own_changed
+                    || hello.fingerprint.differs_from(&state.startup_fp)
+                    || protocol_differs;
                 let auto_restart = std::env::var("ASKHUMAN_DAEMON_AUTORESTART")
                     .map(|v| v != "0")
                     .unwrap_or(true)

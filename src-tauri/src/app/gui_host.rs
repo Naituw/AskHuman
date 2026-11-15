@@ -2496,7 +2496,7 @@ fn update_binary_stale(app: &AppHandle) {
     let Some(state) = app.try_state::<HostState>() else {
         return;
     };
-    let stale = host_disk_fingerprint(&state) != state.startup_fp;
+    let stale = host_disk_fingerprint(&state).differs_from(&state.startup_fp);
     if state.binary_stale.swap(stale, Ordering::SeqCst) != stale {
         refresh_tray(app);
     }
@@ -2511,7 +2511,8 @@ fn maybe_refresh_binary(app: &AppHandle) {
         return;
     }
     // 以「自身盘上二进制内容是否变化」为准（pending 仅作提示）；新实例会捕获新指纹，不会循环。
-    if host_disk_fingerprint(&state) == state.startup_fp {
+    // An unreadable binary is not a changed one (see `Fingerprint::differs_from`).
+    if !host_disk_fingerprint(&state).differs_from(&state.startup_fp) {
         return;
     }
     restart_host(app);

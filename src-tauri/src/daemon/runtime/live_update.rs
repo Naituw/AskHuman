@@ -235,7 +235,7 @@ impl Runtime {
             || state.closing.load(Ordering::SeqCst)
             || state.draining.load(Ordering::SeqCst)
             || state.registry.active_count() != 0
-            || lifecycle::launch_fingerprint() != state.startup_fp
+            || !lifecycle::launch_fingerprint().same_as(&state.startup_fp)
         {
             return false;
         }
@@ -861,6 +861,11 @@ impl Runtime {
         }
         let target = crate::executable::launch_path()?;
         let fingerprint = lifecycle::fingerprint_at(&target);
+        // The commit step proves the target did not change since this measurement; a target that
+        // cannot even be measured now has nothing to compare against.
+        if fingerprint.is_unknown() {
+            return Ok(false);
+        }
         let mut command = tokio::process::Command::new(&target);
         crate::development::clear_client_context(command.as_std_mut());
         command.arg("--recovery-capabilities");
@@ -970,7 +975,7 @@ impl Runtime {
                 state.ios.lock().unwrap().take();
             }
             anyhow::ensure!(
-                lifecycle::fingerprint_at(&target) == fingerprint,
+                lifecycle::fingerprint_at(&target).same_as(&fingerprint),
                 "update target changed during handoff"
             );
             anyhow::ensure!(

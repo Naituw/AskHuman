@@ -226,7 +226,9 @@ pub async fn check_peer() -> Result<(), String> {
         .ok_or("the formal daemon is not running; start the formal instance before remote verification")?;
     if status.protocol_version != crate::ipc::PROTOCOL_VERSION
         || status.development_verification_version != super::CAPABILITY_VERSION
-        || status.fingerprint != Some(crate::daemon::lifecycle::current_fingerprint())
+        || !status
+            .fingerprint
+            .is_some_and(|fp| fp.same_as(&crate::daemon::lifecycle::current_fingerprint()))
         || status.draining
     {
         return Err("the formal relay requires a compatible running formal daemon; no replacement was attempted".into());
