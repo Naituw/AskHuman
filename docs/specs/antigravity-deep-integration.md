@@ -114,9 +114,12 @@
 - `agy` 上，**工作区级**插件的 hooks 只在工作区被信任时才载入：不信任时 CLI 日志是 `hooks_manager.go:54] loaded 0 named hooks from 0 hooks.json file(s)`，
   用 `--settings '{"trustedWorkspaces":[…]}'` 信任后变成 `loaded 1 … from 1 …`，**并且会话里真的触发**（T1c：`SessionStart`、`PreInvocation` ×3、`Stop(NO_TOOL_CALL, fullyIdle:true)`）；
   这行日志是免费的载入诊断。〔`agy` 实测，G1〕
+  信任列表按**符号链接解析后的路径**比较：macOS 上写 `/tmp/x` 不生效（工作目录被解析成 `/private/tmp/x`，日志仍是 `loaded 0 …`），要写 `/private/tmp/x`。〔`agy` 实测，P1〕
   `agy` 的 hook 进程：父进程是该会话自己的 `agy`；环境带 `ANTIGRAVITY_CONVERSATION_ID`、`ANTIGRAVITY_LS_ADDRESS`、`PLUGIN_ROOT`；`transcriptPath` 在 `~/.gemini/antigravity-cli/brain/<会话>/.system_generated/logs/`；
   `Stop` 触发时 transcript 已含最终回复。〔`agy` 实测，G1 T1c〕
-  **全局**插件的 hooks 在 `agy` 上是否载入、触发〔未验证，V3；预期与工作区级是同一个载入器，P1 的真实验证里确认〕。
+  **全局**插件：隔离 HOME 里 `agy plugin list` 能识别 AskHuman 生成的全局插件（`askhuman (enabled)`，`1 rule, 1 MCP server, 1 hook`）；它的 hooks 在**会话**里是否触发没验——
+  P1 的会话实测用的是同内容的工作区级副本（V3、V22；附录 A.3）〔未验证〕。
+  `agy plugin disable askhuman` / `enable askhuman` 写 `config.json` 的 `plugins.askhuman.enabled`（`false` / `true`），AskHuman 的只读检测读的正是这个键。〔`agy` 实测，P1〕
 - `timeout: 86400` 被接受，阻塞 40 秒被如实等待。〔实测〕整 24 小时〔未验证〕。
 
 载荷（stdin，camelCase）：公共字段 `conversationId`、`workspacePaths`、`cwd`（Agent 的工作目录，不是 hook 进程的）、`transcriptPath`、
@@ -269,6 +272,8 @@ Antigravity App / agy
 
 宿主会把插件里的 MCP server 命名为 `askhuman_mcp`（`<插件名>_<server>`，实施时以实测为准），授权写作 `mcp(askhuman_mcp/*)`。
 手动放进 `plugins/` 的目录无需登记就会被 App 热加载〔实测〕，`agy plugin list` 能列出〔实测〕。
+P1 实测：`rules/AGENTS.md` 不带 frontmatter 也被识别——AskHuman 生成的全局插件在 `agy plugin list` 里是 `askhuman (enabled)`、`1 rule, 1 MCP server, 1 hook`；
+同一道题（「你的规则里是否要求调用 `ask` MCP 工具」），插件没载入时模型答「否」，载入后答「是」（附录 A.3）。
 
 ### 6.2 模式与 hooks 内容
 
@@ -281,14 +286,16 @@ Antigravity App / agy
 ```json
 {
   "askhuman": {
-    "SessionStart": [{"type": "command", "command": "'/abs/AskHuman' __agent-hook antigravity session-start"}],
-    "PreInvocation": [{"type": "command", "command": "'/abs/AskHuman' __agent-hook antigravity pre-invocation", "timeout": 86400}],
-    "Stop": [{"type": "command", "command": "'/abs/AskHuman' __agent-hook antigravity stop", "timeout": 86400}]
+    "SessionStart": [{"type": "command", "command": "\"/abs/AskHuman\" __agent-hook antigravity session-start"}],
+    "PreInvocation": [{"type": "command", "command": "\"/abs/AskHuman\" __agent-hook antigravity pre-invocation", "timeout": 86400}],
+    "Stop": [{"type": "command", "command": "\"/abs/AskHuman\" __stop-hook antigravity track", "timeout": 86400}]
   }
 }
 ```
 
-（子命令名为拟定；`command` 经 `sh -c`，路径用 POSIX 单引号转义。`PreInvocation` 要 86400 秒，是因为插话的「composer 打开」会阻塞等待提交（§10.1）。）
+（P1 已按此形态落地。`command` 经 `sh -c`；可执行文件路径含引号、`$`、反引号、反斜杠、换行或不是绝对路径时拒绝生成。
+`Stop` 用既有的共享处理器 `__stop-hook`（`track` 表示只追踪、不弹确认卡），而不是 `__agent-hook … stop`，这样 Stop 确认与生命周期共用一个处理器（[生命周期 D16](agent-lifecycle-tracking.md)）；
+P3 开启确认时这条命令多一个 `confirm` 参数，`hooks.json` 随之重写（内容变了才写；重写不打断在途 `ask`，V14）。`PreInvocation` 要 86400 秒，是因为插话的「composer 打开」会阻塞等待提交（§10.1）；P1 的处理器从不阻塞，插话启用只改 daemon 的裁决、不改这个文件。）
 
 ### 6.3 所有权与写入
 
@@ -610,7 +617,8 @@ Agents 页的 Antigravity 卡新增：集成模式（None / CLI / MCP）、生�
 | --- | --- | --- | --- |
 | V1 | App 冷启动时 sidecar 是否随之启动、≈30 秒是否够；登录失效时 `new-conversation` 的失败形态 | §12.5 | 需退出用户的 App，先征得同意；或在用户自然重启时观察 |
 | V2 | Stop 续跑上限（`max_stop_hook_continuations`）默认值与达到上限后的行为 | §9 | P3 第一步实测；若很小则另行设计降级 |
-| V3 | `agy` 上：**全局**插件 hooks 是否载入并在会话里触发（不触发则 hooks 改装全局 `hooks.json`，§6.2）、Stop `continue`、`PreInvocation` 注入、取消 / Ctrl-C、`send-message` 能否唤醒 `agy` 会话。**部分已验（G1，含 T1c）**：工作区级插件的 hooks 在受信任的工作区会被载入**并在会话里触发**，不信任则不载入（§4.1）；全局插件、`continue`、注入、取消、`send-message` 没验 | P1、P3、P4 | P1：先用免费的 `hooks_manager` 载入日志探针（不起会话）确认全局插件被载入；会话行为用 `agy` + Flash 低档逐项最小实测。**`agy` 实验的提示必须写明「不要运行 AskHuman」**（见附录 A.2） |
+| V3 | `agy` 上：**全局**插件 hooks 是否载入并在会话里触发（不触发则 hooks 改装全局 `hooks.json`，§6.2）、Stop `continue`、`PreInvocation` 注入、取消 / Ctrl-C、`send-message` 能否唤醒 `agy` 会话。**部分已验（G1，含 T1c）**：工作区级插件的 hooks 在受信任的工作区会被载入**并在会话里触发**，不信任则不载入（§4.1）。**P1 又验了**：AskHuman 自己生成的插件（工作区级副本）在 `agy` 会话里触发 `SessionStart` / `PreInvocation` / `Stop(fullyIdle:true)`，由 AskHuman 的处理器接住，会话进注册表（附录 A.3）；
+全局插件在会话里的触发、`continue`、注入、取消、`send-message` 没验 | P1、P3、P4 | 全局插件的会话触发并入 V22（G2）；`continue` / 注入等随 P3 逐项最小实测（`agy` + Flash 低档）。**`agy` 实验的提示必须写明「不要运行 AskHuman」**（见附录 A.2） |
 | V4 | MCP 缺省超时（无 `timeoutSeconds`）与整 24 小时等待 | `ask` 长等待 | 无法真等 24 小时；沿用既有口径 |
 | V5 | **已验（App，G1）**：子会话触发 hooks，载荷无父字段；MCP `_meta` 带 `parent_conversation_id`（§4.1、§4.2、§7）。**`agy` 的 MCP `_meta` 字段仍未验** | §7 | `agy` 那半留到 G4 |
 | V6 | **已验（G1）**：`Stop` 触发时 `transcript_full.jsonl` 已含最终回复（App 三个会话：根 `done`、子 `ok`、T3 `done`；`agy` 的 T1c：`ok`；均为最后一个 `PLANNER_RESPONSE`、`DONE`） | §9 卡片正文与标记去重 | — |
@@ -629,7 +637,7 @@ Agents 页的 Antigravity 卡新增：集成模式（None / CLI / MCP）、生�
 | V19 | 用户的全局「始终允许」授权（`userSettings.globalPermissionGrants.allow`）是否对 sidecar 项目生效（只知道预设会继承） | §12.4 白名单的实际范围 | 与 V18 同一次实验里加一个对照动作 |
 | V20 | `agentapi --model=<id>` 对清单里其它 id 与别名 `flash_lite` / `flash` / `pro` 的接受情况及各自对应的模型；`agy --model <id>`（含 `=` 写法）是否生效 | §12.9 启动映射与别名回退 | 只用 Flash 低价档各试一次（`-low` / `-medium` / `-high`）；Pro 级与 Claude 级只在你批准后各试一次，且用一句话任务 |
 | V21 | `agy models` 未登录、未完成首次引导、网络失败时的输出与退出码；清单是否随账号 / 套餐变化 | §12.9 清单降级 | 一次只读实测（不产生模型调用） |
-| V22 | 在用户真实会话运行时改写 / 新增**全局**插件目录：MCP server 是否重启、hooks 是否立刻对在跑的会话生效 | §6.3、§6.5 迁移 | G2：用真正的 AskHuman 插件，在没有在途 `ask` 的时刻验证 |
+| V22 | 在用户真实会话运行时改写 / 新增**全局**插件目录：MCP server 是否重启、hooks 是否立刻对在跑的会话生效；全局插件的 hooks 在 `agy` / App **会话**里是否触发。P1 没有发布到用户真实的全局目录，只在隔离 HOME 里验证了 `agy plugin list` 识别（附录 A.3） | §6.3、§6.5 迁移 | G2：用真正的 AskHuman 插件，在没有在途 `ask` 的时刻验证 |
 | V23 | D17 方案的可行性：父 transcript 里 `invoke_subagent` 结果的格式是否稳定；根会话的 Stop hook 阻塞等待子孙空闲时，子会话的 `send_message` 是排队还是丢失；根被阻塞期间唤醒是否重复出卡 | §8 L4、§9 | D17 定案后：P1 夹具 + G3 里带子 Agent 的一轮 Flash 实测 |
 
 ## 18. 验收
@@ -649,7 +657,9 @@ Agents 页的 Antigravity 卡新增：集成模式（None / CLI / MCP）、生�
 - 测试：解析器、hooks 输出、注册表映射、sidecar 清单与 `config.json` 编辑器、回执状态机用夹具与假 `agentapi` / 假 sidecar 覆盖；**测试不启动真实 Antigravity 模型**。真实验证只用 Antigravity、优先 Flash 低档，受各门的任务数预算、隔离与停止条件约束（§1.2：不再逐项授权），**不使用 Cursor**。
 - 子会话（待 D17 定案后补）：登记归并、去噪与「整棵树空闲」判定的验收条目。
 
-## 19. 对既有文档的影响（落地时更新，本次不改）
+## 19. 对既有文档的影响（随各期落地时更新）
+
+P1 已更新：`antigravity.md`（按插件重写）、`mcp.md`、`docs/overview.md`（Antigravity 的插件、会话身份与标题）、两份 wiki（`antigravity-setup`）、两份 README、`docs/PROGRESS.md`；下列其余各项随对应阶段落地时更新。
 
 - [antigravity.md](antigravity.md)：§4、§5–§6、§7 由本规格取代；§2–§3 的 CLI / MCP 语义保留。[MCP 模式规格](mcp.md)：增加 Antigravity 的 `_meta` 会话绑定。
 - `docs/overview.md`：生命周期 / 插话 / Stop / 启动能力描述里「Antigravity 不支持」的几处，以及 Antigravity 集成的规则路径与 MCP 路径；若全局地图与不变量变化再改，局部细节放 `overview-<topic>.md`。
@@ -710,6 +720,24 @@ T1c（`agy`，受信任目录，补测 V3-a；用户离开期间我按计划里�
 `agy` 的数据目录与 `default-cli-project.json`、实验插件、两个实验 MCP 进程都已清理；用户自己的会话与项目没有碰。
 App 的私有摘要库里还留着那三个已删会话的条目，由 App 自己在下次整理时丢弃；在那之前会话列表里可能还看得到。
 实验原始记录（脱敏前的 hook 日志、transcript、sidecar 事件）保存在本机 `~/agy-hook-lab/g1/`（仓库外），P1 夹具从它脱敏生成；规格与计划被接受后删除。
+
+### 附录 A.3：P1 实测（2026-11-16；只用 Antigravity，未使用 Cursor）
+
+安装的是 P1 的日常版（`./scripts/install.sh`）；实验用 `ASKHUMAN_HOME` 指向实验目录的 AskHuman 实例（daemon、配置、账本与用户的完全分开；实验实例的离开模式打开，防止任何意外的提问弹窗或阻塞）。
+
+| 主题 | 结果 |
+| --- | --- |
+| 免费探针（隔离 HOME，0 次模型请求） | `HOME`、`ASKHUMAN_HOME` 都指向实验目录时，`AskHuman agents mode antigravity mcp` 生成整个插件；`agy plugin list` → `askhuman (enabled)`、`Components: 1 rule, 1 MCP server, 1 hook`；`agy mcp list` 只列用户配置的 server，不列插件里的。`agy plugin disable askhuman` 在 `config.json` 写入 `plugins.askhuman.enabled=false`，`agents mode antigravity` 与 `doctor` 随即给出「插件在 Antigravity 中已停用」；`enable` 后提示消失 |
+| 隔离 HOME 跑不了会话 | 隔离 HOME 里 `agy models` 报 `Please sign in`：登录态不随 HOME 走，认证又不能复制，所以会话实测只能用真实 HOME（`agy` 自带的登录）+ 实验目录 + 上面的实验实例 |
+| 信任路径 | 第一次 `trustedWorkspaces` 写了 `/tmp/…`，被当作未信任（`loaded 0 …`），白跑了一个任务（§4.1）。改成 `/private/tmp/…` 后，免费探针（不带 `-i`）确认 `loaded 1 named hooks from 1 hooks.json file(s)` |
+| 会话实测（1 个有效任务） | 工作区级的插件副本，hooks 命令前加了 `ASKHUMAN_HOME=…`（只为让实验 daemon 接收；App 的 hook 进程环境极简——G1 记录里只有 `HOME`、`LANG`、`PWD`、`SHELL`、`USER` 与 `AGY_*`、`ANTIGRAVITY_CONVERSATION_ID`；`agy` 是否继承自己的环境没有单独验）。注册表：启动后 3.6 秒出现 `antigravity` 会话、`pid` 是该 `agy` 进程、`working`；8.5 秒 `idle`，`lastTurnResult` = `completed`（来源 hook）；标题是第一条请求；终止 `agy` 约 20 秒后标 `ended`。模型答「是」：规则已载入（§6.1） |
+| 手动喂载荷 | 真实形状的 `SessionStart` / `PreInvocation` / `Stop` 载荷经安装版 `__agent-hook`、`__stop-hook` 喂给实验 daemon：`Stop(fullyIdle:false)` 仍是 `working`，`Stop(fullyIdle:true)` 变 `idle`；载荷里的原文提示没有出现在注册表任何字段。标题由 daemon 按会话 ID 去读 transcript：daemon 与会话的 `HOME` 不同时标题为空（生产里二者相同） |
+| 网络 | 有一次首个模型请求在启动后约 1 分钟才发出（日志里一串 `TLS handshake timeout`）；`agy` 从启动到首个 hook 事件在网络差时可达分钟级。P4 的启动观察窗口要留够 |
+| 首次引导 | 引导屏（配色 → 数据使用同意）会吞掉输入，期间发 `/exit` 不退出；会话任务本身照常执行（V12） |
+| 对用户真实 `~/.gemini` 的影响 | 会话实测在真实 HOME 里创建了 `~/.gemini/antigravity-cli/`（含 3 个实验会话）和 `config/projects/default-cli-project.json`，已全部删除；目录清单与实验前逐项相同，`config.json`、`mcp_config.json` 的哈希不变；没有写真实的全局插件目录，没有碰用户的 App 会话 |
+
+用量（如实）：3 次 `agy` 启动、约 5 次 Flash 低档模型请求（第 1 次 2 次，信任路径写错、白跑；第 2 次 1 次，网络慢、被我的 60 秒超时终止；第 3 次 2 次，有效）；探针与手动喂载荷 0 次。
+还原：实验 daemon 与 GUI 宿主进程已停止，实验 launchd 条目已移除。原始记录在本机 `/tmp/agy-p1/evidence/`（仓库外），与 G1 的实验目录一起，规格与计划被接受后删除。
 
 ## 20. 反馈记录
 

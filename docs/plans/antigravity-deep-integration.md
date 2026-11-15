@@ -65,7 +65,7 @@
 | `cli/mod.rs` `caller_context_from_env` | MCP 来源的 Antigravity 丢弃会话 ID | 保留 `MCP_AGENT_SESSION_ID_ENV`；直接 CLI 把环境 ID 作候选 | P1 |
 | `mcp/ask.rs` `resolve_direct_binding`、`configure_child` | 只认 Codex `threadId` 与令牌；子进程环境清单 | 加 Antigravity `_meta`（UUID，取根会话）；清单加 Antigravity | P1 |
 | `agents/result.rs` `observation` | 无 Antigravity 分支 | `terminationReason` → `TurnOutcome`（`NO_TOOL_CALL`=完成、`ERROR`=失败、`MAX_*`=未完成、`USER_CANCELED`=中断，其余未知） | P1 |
-| `agents/title.rs`（三处按家族取原生标题） | Antigravity 返回 `None` | **保持**（原生名在私有库，本版不读）；标题回退取 `lastUserInput` 首行，开工时核对回退链 | P1 |
+| `agents/title.rs`（三处按家族取原生标题） | Antigravity 返回 `None` | 原生名在私有库，本版不读；回退读会话 transcript（`~/.gemini/<表面>/brain/<ID>/.system_generated/logs/transcript_full.jsonl`）的首个用户输入步骤、去掉 `<USER_REQUEST>` 外壳（P1 落地；hook 载荷的 `lastUserInput` 原文不能过生命周期 IPC，所以不用它） | P1 |
 | `integrations/agent_lifecycle.rs`：`LifecyclePreferences::get/set`、`events`、`disk_status`、`set_enabled`、`install`、`uninstall_unlocked`、`reconcile_unlocked`、`json` 状态检查 | 一律「不支持」/ 空事件集 | 偏好加 `antigravity`；产物状态取 `antigravity_plugin::status().lifecycle`（同 Pi）；安装 / 卸载走 `set_lifecycle_enabled` | P1 |
 | `integrations/agent_mode.rs` Antigravity 分支、`antigravity_rule.rs`、`agent_rules.rs`、`mcp_config.rs` | 单文件规则 + 全局 MCP 条目 | 插件目录事务与迁移 | P1 |
 | `commands.rs` `collaboration_style_apply_integrations` | 先读 `antigravity_status()` | 改写插件里的规则（内容变才写，V14） | P1 |
@@ -97,7 +97,7 @@
      `Operation` 含 `Create`、`Sidecars`（列表，带在线状态）、`RemoveSidecar`、`RemoveAllSidecars`、`SetRules`；daemon 是 sidecar 与 `config.json` 的**唯一写者**，所以设置页的操作也走它。
   2. sidecar ↔ daemon 的长连接：`ClientMsg::AntigravitySidecar`（报到、命令结果）与 `ServerMsg::AntigravitySidecar`（`new_conversation`、`send_message` 命令），以接管连接的方式处理（同 `Control::Recover` 的做法，开工时核对 `Control` 的写法）。
   同步 overview「IPC 协议号」历史与 `daemon-graceful-drain.md` §8，并审计全部发送点与广播。P1、P3、P4 复用既有 `ClientMsg::AgentEvent`（`transcript_path`、`hint_pid`、`launch_id`、`interject_poll`、`failed`、`observation`），**不动枚举**；新增字段一律 `#[serde(default)]`。
-- **hook 契约**：`__agent-hook antigravity <event>` 永远退出码 0；除非要应答（Stop 继续、`PreInvocation` 注入），stdout 为空；daemon 不可达 / 超时 / 解析失败一律 fail-open；热路径不拉起 daemon（规格 §8）。
+- **hook 契约**：`__agent-hook antigravity <event>` 永远退出码 0；除非要应答（Stop 继续、`PreInvocation` 注入），stdout 为空；daemon 不可达 / 超时 / 解析失败一律 fail-open。上报复用 `client::report_agent_event`，与其它 Agent 的生命周期 hook 一样会按需确保 daemon 在跑（P1 落地时更正了「热路径不拉起 daemon」的旧表述）；只有 P2 的 sidecar 进程不拉起 daemon。
 - **登记表**：`~/.askhuman/antigravity-sidecars.json`（id、目录、种类、用户追加的授权规则、创建与最近使用时间）是授权规则的**唯一来源**，`sidecar.json` 由它确定性生成；每个 sidecar 目录里放 `.askhuman-managed`。登记表丢失时，从带标记的目录重建只读视图，不据此改写任何东西。
 - **所有权与账本**：沿用 [antigravity.md](../specs/antigravity.md) §5（路径、摘要、uid、实例账本）；用户改过的内容一律视为冲突，不覆盖、不删除、报告。`antigravity_rule.rs` 里能复用的所有权 / 账本 / 原子写 / JSONC 编辑抽成共享函数，不复制。
 - **配置**：`AppConfig` 新增 `antigravity_desktop: { launchPreference（desktop 默认 / terminal）, manageSidecars（默认 false） }`，键名按现有 `cursor_desktop` 的风格（规格里的 `antigravity.launchPreference` 是拟定名，以此为准并回写规格）；登记到 `overview-configuration.md`；`AskHuman config set` 按 `AppConfig` 的路径通用处理，新键自动可设，无需改键表（是否要像 `cursor_desktop::configured` 那样在设置后确保 daemon 在跑，开工时核对，预期不需要：sidecar 按需创建）。
@@ -140,7 +140,7 @@
    - **目录事务设计**（规格 §6.3 留给本计划的问题）：首次安装在同一文件系统的私有临时目录里**整体写好**，再用一次 `rename` 发布，宿主永远看不到半成品插件；更新已有插件时**逐文件**原子替换（临时文件 + `rename`、0600、不跟随符号链接）、**只重写内容变了的文件**（避免 V14），
      顺序固定为 `rules/AGENTS.md` → `mcp_config.json` → `hooks.json` → `.askhuman-managed`（账本最后写）；中途崩溃时账本与文件不符，下一次对账幂等修复，错误信息写明保留状态与显式重试命令。
      G1 的 V14 结论：重写文件不会重启 MCP server、不会打断在途 `ask`（工作区级插件；全局目录留 G2 验证，V22）；**但 `mcp_config.json` 的改动要等 server 重启才作用于已运行的进程**，所以「更新」的回执里要写明这一点（例如改 `timeoutSeconds` 后需重启 Antigravity）。
-   - `hooks.json` 里三个事件在 P1 就按最终形态写（`PreInvocation` 与 `Stop` 的 `timeout` 都是 86400）：P1 的 `PreInvocation` 处理器从不阻塞，但先写好，P3 启用插话与 Stop 确认时就不必再改文件、也就不会触发插件重载。
+   - `hooks.json` 里三个事件在 P1 就按最终形态写（`PreInvocation` 与 `Stop` 的 `timeout` 都是 86400）：P1 的 `PreInvocation` 处理器从不阻塞，但先写好，P3 启用插话时就不必再改文件。**更正（P1 落地时）**：Stop 确认开启时 `Stop` 命令多一个 `confirm` 参数（`__stop-hook antigravity track confirm`），`hooks.json` 会随之重写（内容变了才写；V14：重写不打断在途 `ask`）。
    - **迁移顺序**（规格 §6.5）：先发布插件，再清理旧共享规则 `rules/askhuman-antigravity.md` 与全局 `mcp_config.json` 里的托管条目；任一步证明不了所有权就保留、报告冲突、停止清理。
    - 「插件已被用户停用」只读检测 `config.json` 的 `plugins.askhuman.enabled`，**绝不写**；V3 若显示 `agy` 不触发插件 hooks，则 hooks 改装全局 `hooks.json`（同样的所有权规则；该分支只在 G1 结论要求时实现）。
    - 协作风格变更（`collaboration_style_apply_integrations`）改写插件里的 `rules/AGENTS.md`，内容变才写。
@@ -255,3 +255,20 @@ F 权限接管与 Fork（规格 §13）；H 上下文恢复 Hook 与原生 `ask_
   **意外**：T1c 的 `agy` 会话遵守用户的全局 AskHuman 规则，真的调用了 `AskHuman --whats-next`，在用户的 AskHuman 历史里留下 1 条 `away` 记录（规格附录 A.2）；今后 `agy` 实验的提示必须写明「不要运行 AskHuman」。
 - 2026-11-16 规格与计划文档提交为 `864aacad`（只含这两个文件，本地、未推送）。主工作区此时干净（另一个会话的改动已由它自己提交为 `bcf77897`）。**尚未写代码；下一步开工 P1。**
   已更新：规格 §1.2、§4.1–§4.3、§4.6、§6.3、§7–§9、§17（V3 / V5 / V6 / V12 / V14 更新，新增 V22 / V23）、§18、附录 A.2、§20；本计划的硬约束 2、验证门、P1 步骤 1 / 5 / 8–9、风险表。
+- 2026-11-16 **P1 完成**（全部本地提交，未推送；主工作区另有他人的改动已提交，开工和装机时树内没有别人的未提交改动）：
+  ① `e917d9d0` hook 上报器；② `1c780140` 可信会话身份；③ `27c33441` 插件、所有权、迁移与生命周期后端；④ `ec940649` 设置页、`agents` / `doctor` 提示与会话标题；⑤ 本次文档回写。
+  每次提交前 `cargo fmt --check`、`cargo clippy --all-targets -D warnings`、全量 `cargo test` 与前端 `vitest`、`vue-tsc` 都通过；提交 ④ 时 Rust 3153 通过（基线 3103，增 50）、前端 1846 通过。`./scripts/install.sh` 装机（`machine-health` ok）；生产 daemon 经换代接班，已是 P1 版。
+  **与计划不同的地方（都是在用户离开时我按「不改计划、只做不依赖 D17 的部分」的口径定的）**：
+  1. hook 上报复用 `client::report_agent_event`，所以会像其它 Agent 的生命周期 hook 一样按需确保 daemon 在跑；计划与规格里「热路径不拉起 daemon」的旧表述已更正（只有 P2 的 sidecar 不拉起）。
+  2. 标题回退读会话 transcript 的第一个用户输入步骤（去掉 `<USER_REQUEST>` 外壳），不用 hook 载荷的 `lastUserInput`：原文提示不能过生命周期 IPC（只带 `prompt_sha256`）。
+  3. 迁移：先发布插件、再清理旧共享规则与全局 `mcpServers.askhuman`；用户改过的保留并报告；无关的全局 MCP 配置损坏不阻塞；`mcp` 更新标志忽略遗留物，规则在遗留物还在时显示「需更新」。
+  4. 插件规则文件不带 frontmatter（真实 `agy` 已验证会载入，规格 §6.1）；Windows 一律明确不支持（`require_platform`）；Antigravity 在引导 / `agents` 里推荐 MCP。
+  5. 宿主授权检测 `mcp_allowed` 认 `mcp(*)`、`mcp(askhuman_mcp/*)`、`mcp(askhuman_mcp/ask)` 三种写法；`agents`、`doctor` 与设置页的相关行只是提示。
+  6. Stop 确认开启时 `Stop` 命令多一个 `confirm` 参数，`hooks.json` 会重写（更正了步骤 5 里「P3 不必再改文件」的说法）。
+  7. **D17 相关一律没做**：根 / 子分组与降噪、「整棵树空闲」的完成判定（规格 §8 L3 / L4）、P3 Stop 卡的等待、相关验收项与 V23；P1 的登记与生命周期按「每个会话独立」写，MCP 绑定取根会话。
+  **真实验证**（规格附录 A.3）：只用 Antigravity，没碰 Cursor、没碰用户的 App 会话、没写用户真实的全局插件目录。因为认证不能复制、隔离 HOME 里 `agy` 要重新登录，所以分两部分：
+  免费部分（隔离 HOME，0 次请求）——生成的全局插件被 `agy plugin list` 识别（1 条规则 / 1 个 MCP server / 1 个 hook），`agy plugin disable` 写的键正是 AskHuman 读的键，`agents` 与 `doctor` 随即提示、`enable` 后消失；
+  会话部分——真实 HOME 的 `agy` + 实验目录 + 实验用 AskHuman 实例，工作区级的同内容插件副本：会话在注册表里出现（pid 是 `agy`）、`working` → `idle`（completed）、标题取自第一条请求、终止后标 `ended`，模型答出规则已载入。
+  **没验到的**（如实）：全局插件在 App / `agy` 会话里的触发（V22）、`show-last` 按会话（只有单元测试，没人可答真实 ask）、MCP 的 `agy` `_meta`（留到 G4）、设置页与控制台的肉眼验收（只验了注册表与命令行）、D17 相关。
+  **用量**：3 次 `agy` 启动、约 5 次 Flash 低档请求（信任路径写成 `/tmp/…` 白跑 2 次、网络慢被我的超时终止 1 次、有效 2 次）；对用户真实 `~/.gemini` 的临时改动（`antigravity-cli/`、`default-cli-project.json`）已删除并与实验前逐项核对。
+  **下一步**：按计划，阶段之间要向用户报告并经批准再开 P2（先发门 G2 的验证计划）；D17 仍待用户决定。

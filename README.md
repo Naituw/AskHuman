@@ -96,7 +96,7 @@ To make your agent call `AskHuman` on its own when finishing or needing confirma
 - **Manual integration** — copy the reference prompt and add it to your agent's global instructions yourself (e.g. Cursor Rules / `AGENTS.md` / `CLAUDE.md`).
 - **Automatic integration** — select the integration mode for each supported agent. CLI mode installs that agent's instruction artifact and, where available, a timeout Hook that keeps a detected `AskHuman` call from being canceled while you reply. MCP mode installs the appropriate instruction artifact and an MCP server configuration instead.
 
-Antigravity supports **None**, **CLI**, and **MCP** on Unix, with **CLI recommended** and **MCP selectable**. Its integration writes one shared rule for the Antigravity family; whether a particular Antigravity client discovers that rule and can run the selected transport depends on the client. Windows Antigravity integration changes are currently rejected. See [Antigravity setup](docs/wiki/antigravity-setup.en.md) for the configuration paths, session limits, and unsupported features.
+Antigravity supports **None**, **CLI**, and **MCP** on Unix, with **MCP recommended** and **CLI selectable**. Its integration installs one Antigravity plugin (the interaction rules, the MCP server and lifecycle hooks) that the app and `agy` share, and sessions show up in the Agent console; whether a particular Antigravity client discovers the rules and can run the selected transport depends on the client. Windows Antigravity integration changes are currently rejected. See [Antigravity setup](docs/wiki/antigravity-setup.en.md) for the configuration paths, session limits, and unsupported features.
 
 ### 4. Set up communication channels
 

@@ -3,6 +3,22 @@
 记录需要跨会话保留的未完成 / 延期事项和明确下一步。任务 / 需求完成后删除其 section
 （历史留在 git）。
 
+## 进行中：Antigravity 深度集成（P1 已完成并装为日常版，等用户审阅后进 P2）
+
+规格 [antigravity-deep-integration.md](specs/antigravity-deep-integration.md)，计划 [plans/antigravity-deep-integration.md](plans/antigravity-deep-integration.md)
+（实施记录在计划末尾，P1 的真实验证在规格附录 A.3）。P1（插件、hooks、可信会话身份、生命周期）已提交为 `e917d9d0` → `1c780140` → `27c33441` → `ec940649` 与一次文档回写，本地、未推送。
+计划要求阶段之间向用户报告并经批准再开下一期：
+
+- [ ] 用户审阅 P1 后批准进入 P2；开工前先发门 G2 的验证计划（V18 / V19 / V20 / V8 / V9 / V7，≤6 个任务，只用 Antigravity、严禁 Cursor）。
+- [ ] **D17 待用户决定**：如何对待子 Agent 会话（A 树状追踪，推荐 / B 不处理 / C 只降噪）。它决定根 / 子分组与降噪、「整棵树空闲」的完成判定（规格 §8 L3 / L4）、P3 Stop 卡的等待与验收项；
+  P1 一律没做这些（登记按「每个会话独立」，MCP 绑定取根会话）。定案后补夹具驱动的测试（T2 时序必须成为回归测试）与 V23。
+- [ ] 过渡规则（P4 做完 YOLO 后删除）：全局权限提示固定为 YOLO 时，Antigravity 显示「不可启动」并说明原因，不静默降级。
+- [ ] P1 没验到的：全局插件在 App / `agy` **会话**里的触发与「改写真实全局插件目录」的影响（V22，G2 在没有在途 `ask` 时做）；`show-last` 按会话（只有单元测试）；
+  设置页与控制台的肉眼验收（只验了注册表与命令行）；`agy` 的 MCP `_meta` 字段（G4）；Linux（V13）；退出 App 才能验的 V1、V16。
+- [ ] 用户升级后第一次执行 `AskHuman agents mode antigravity …` / `agents update antigravity` 才会把旧的共享规则迁移成插件（没有自动迁移）；本机现在显示「CLI（需更新）」。迁移时用户的 App 若有会话在跑，先看规格 §6.5 与 V22。
+- [ ] 清理（规格与计划被接受后）：仓库外的实验目录 `~/agy-hook-lab/`、`/private/tmp/agy-*`、`/tmp/agy-impl`、`/tmp/agy-p1`。
+  G1 的 T1c 在用户的 AskHuman 历史里留下 1 条来自实验目录的 `away` 记录（没有改用户的历史文件，用户想删再说）。
+
 ## 待决定：2026-11-15 daemon 卡死事故修复刻意没做的部分
 
 事故与已做的修复见 [优雅排空 §9](specs/daemon-graceful-drain.md#9-渠道建连卡住时-daemon-仍然应答2026-11-15-事故补充)

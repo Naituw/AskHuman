@@ -220,13 +220,14 @@ AskHuman/
         agent_permission.rs  Claude/Codex 权限审批集成
         cursor_hook.rs       Cursor 超时 Hook 管理
         claude_hook.rs       Claude Code 超时 Hook 管理
-        agent_lifecycle.rs   五家已适配 Agent 的生命周期管理（原生 Hook + Pi Extension；Antigravity 不支持）
+        agent_lifecycle.rs   六家 Agent 的生命周期管理（原生 Hook、Pi Extension、Antigravity 托管插件里的 hooks）
         agent_launch.rs      Agent readiness、一次性启动记录与 Terminal.app / Windows Terminal helper
         agent_start.rs       「这家 Agent 现在能不能启动任务」的唯一判定（CLI 就绪，或 Codex 桌面 App / Cursor Agents 窗口路线可用），手机 / IM / 向导 / 文字向导 / 设置页共用，并给出不能启动时的原因
         agent_rules.rs       Agent 全局 Rules 管理
         agent_subagent_guard.rs  Claude/Codex SubagentStart 提示 Hook
         agent_context_recovery.rs  集成 mode 托管的压缩恢复/会话绑定 Hook
-        antigravity_rule.rs Antigravity 共享规则的严格所有权、恢复日志与 Unix 写入
+        antigravity_plugin.rs Antigravity 托管插件（规则 + MCP + hooks）：实例账本所有权、一次 rename 发布、逐文件原子更新；只读检测宿主是否停用插件
+        antigravity_rule.rs  更早版本的 Antigravity 共享规则（严格所有权、恢复日志）；现在只用于迁移时清理
         codex_protocol.rs    Codex 协议载体（SessionStart Hook）的状态、版本门槛与旧 AGENTS.md 区块迁移
         agent_delegated.rs   「允许被委派的 Codex 运行使用 AskHuman」偏好（delegated-preferences.json）
         grok_skill.rs        Grok interaction-protocol skill 管理
@@ -285,7 +286,7 @@ AskHuman/
         control.rs           原会话消息的一次性回执与 Pi 控制连接
         context_recovery.rs  压缩后提示、MCP token 注入与 Grok pending 上报；Codex 协议注入决策
         delegated.rs         Codex 委派运行判定（信号、有界探测、会话标记）与静默策略
-        title.rs             五家会话标题解析
+        title.rs             会话标题解析（五家取原生标题；Antigravity 没有可读的原生标题，取会话 transcript 里的首条用户请求）
         session_info.rs      原生工作区 / 模型 / 上下文与 Hook 私有快照
         activity.rs          transcript 尾部活动解析
         session_paths.rs     Pi 自定义 sessionDir transcript 路径校验与缓存
@@ -509,8 +510,10 @@ Daemon 里的又一个渠道：手机上的 AskHuman App 回答问题、看 / �
   才安装交互接管产物，None 隐藏对应设置并卸载其 active 能力。Lifecycle 也是 mode 拥有的可选
   capability：默认开、可显式关闭、None 卸载而保留偏好。Grok 仅 None/MCP 且不支持 stop/interject；
   Pi 仅 None/CLI、不提供 MCP 或内置权限模式，最低支持版本为 0.82.0。Antigravity 在 Unix 支持
-  None/CLI/MCP，推荐 CLI；Windows 集成变更明确不支持，且 Antigravity 不提供 lifecycle、Stop、
-  permission、recovery、interject 或 launch/fork 能力。详见 `docs/specs/antigravity.md`。
+  None/CLI/MCP，推荐 MCP，三种模式都安装同一个托管插件（规则、hooks，MCP 模式另带 MCP server），
+  生命周期走插件 hooks；Windows 集成变更明确不支持，Stop、permission、recovery、interject 与 launch/fork
+  暂不提供（Stop 确认、插话、Watch、新建任务按 `docs/specs/antigravity-deep-integration.md` 分期实施）。
+  详见 `docs/specs/antigravity.md`。
 - 上下文恢复 Hook 由当前 mode 独立托管，不依赖可关闭的 lifecycle tracking；CLI/MCP
   提示严格只指向用户当前选中的入口，缺失/过期并入当前 Hook 或 MCP 产物的更新状态。
   Codex 的这条 SessionStart Hook 同时是交互协议的**唯一载体**（`~/.codex/AGENTS.md` 不再写 AskHuman
@@ -531,11 +534,12 @@ Daemon 里的又一个渠道：手机上的 AskHuman App 回答问题、看 / �
 - `ask` 入参为 message/questions/files；输出为 CLI 同款结果区块文本（原样透传，无 output schema / structuredContent）加图片 ImageContent。MCP 取消会终止子 CLI，并通过 socket EOF 取消 Daemon 请求。
 - Agent 自动集成通常是 None/CLI/MCP 互斥；Grok 仅 None/MCP，其 MCP 产物是 skill + config；Pi 仅 None/CLI，其 CLI 产物是 Rules + 单个受管 Extension，自动集成 UI 不展示 MCP。
 - Codex、Grok、Claude 分别写适配自身的长超时配置；Cursor MCP 超时不可配置，推荐 CLI 模式。
-- Antigravity 在 Unix 支持 None/CLI/MCP，CLI 推荐、MCP 可选；共享规则位于
-  `~/.gemini/config/rules/askhuman-antigravity.md`，MCP 配置位于
-  `~/.gemini/config/mcp_config.json` 并写 `timeoutSeconds=86400`。Antigravity 没有可信原生
-  session：CLI `show-last` 拒绝项目级回退，MCP 只能回退到 instance + project。Windows 集成
-  变更明确不支持；MCP server 本身跨平台不等于 Antigravity 集成已获 Windows 验收。详见
+- Antigravity 在 Unix 支持 None/CLI/MCP，MCP 推荐、CLI 可选；产物是一个托管插件
+  `~/.gemini/config/plugins/askhuman/`（`rules/AGENTS.md`、MCP 模式的 `mcp_config.json` 写
+  `timeoutSeconds=86400`、`hooks.json`），App 与 `agy` 共用，用户可在 Antigravity 里整体停用（AskHuman 只读检测）。
+  会话身份是根会话 UUID：MCP 取宿主注入 `_meta` 里的会话，CLI 把环境里的会话 ID 当候选、仅在生命周期 hook 已登记时采信；
+  都没有时 CLI `show-last` 拒绝项目级回退，MCP 回退到 instance + project。更早版本的共享规则与全局 MCP 条目在发布插件后迁移清理。
+  Windows 集成变更明确不支持；MCP server 本身跨平台不等于 Antigravity 集成已获 Windows 验收。详见
   `docs/specs/antigravity.md`。
 - MCP 没有通用的 Agent session 字段：Codex 使用每调用 `_meta.threadId`，Claude/Cursor
   使用 schema 隐藏的短命一次性 token，Grok 只在进程+项目分区内参数指纹候选唯一时认领；
