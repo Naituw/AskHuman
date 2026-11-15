@@ -89,18 +89,131 @@ async fn write_operation(
     .await
 }
 
+/// What one Status probe says about the daemon.
+#[derive(Debug, PartialEq, Eq)]
+enum Probe {
+    /// It answered.
+    Alive,
+    /// Nothing is listening (absent, or refusing because it is out of room to accept).
+    Absent,
+    /// It accepted the connection and did not answer in time: alive but wedged.
+    Silent,
+    /// Anything else (permission denied, a malformed reply): starting another daemon would not help.
+    Unknown,
+}
+
+fn classify(result: &std::io::Result<Option<crate::ipc::StatusInfo>>) -> Probe {
+    match result {
+        Ok(Some(_)) => Probe::Alive,
+        Ok(None) => Probe::Absent,
+        Err(error) if error.kind() == ErrorKind::TimedOut => Probe::Silent,
+        Err(_) => Probe::Unknown,
+    }
+}
+
+/// Which daemon instance owns the endpoint, as far as `daemon.json` can say: process id and start
+/// time. A replaced or restarted daemon has a different one.
+type Identity = Option<(u32, u64)>;
+
+fn daemon_identity() -> Identity {
+    lifecycle::read_meta().map(|meta| (meta.pid, meta.started_at))
+}
+
+/// Whether the daemon that was diagnosed is still the one in front of us. Without an identity
+/// there is nothing to compare, so the answer is no.
+fn same_instance(diagnosed: Identity, now: Identity) -> bool {
+    diagnosed.is_some() && diagnosed == now
+}
+
 /// Recovery bootstraps through Status, so an older surviving CLI never asks a newer daemon to
 /// replace itself merely because their executable fingerprints differ.
 pub(crate) async fn start_if_missing() {
-    if !matches!(request_status_result().await, Ok(None)) {
+    let diagnosed = daemon_identity();
+    let first = classify(&request_status_result().await);
+    restore(first, diagnosed).await;
+}
+
+/// `available`, but a daemon that accepts connections and does not answer gets the chance to be
+/// replaced before the caller settles for another transport (or gives up on this one).
+pub(crate) async fn available_or_restore() -> bool {
+    let diagnosed = daemon_identity();
+    match request_status_result().await {
+        Ok(Some(status)) => status.recovery_version == VERSION,
+        Err(error) if error.kind() == ErrorKind::TimedOut => {
+            restore(Probe::Silent, diagnosed).await;
+            available().await
+        }
+        _ => false,
+    }
+}
+
+/// Act on a first probe that found no usable daemon.
+///
+/// A daemon that does not answer is not left alone forever, but replacing one is destructive, so
+/// it takes more than one bad moment: the second probe happens under the cross-process spawn lock
+/// (siblings queue instead of racing, and the holder waits for readiness before releasing it), the
+/// lock must really be held, and `daemon.json` must still name the instance that was diagnosed, so
+/// a successor a sibling just started is never mistaken for the wedged one. Two silent probes in a
+/// row replace it; so does a job that is alive yet stays unreachable after a start. The spawn
+/// ladder of `ensure_running` does the same for the Hello path, which this one cannot use because
+/// it must not send a Hello.
+async fn restore(first: Probe, diagnosed: Identity) {
+    if matches!(first, Probe::Alive | Probe::Unknown) {
         return;
     }
-    let _guard = acquire_spawn_lock().await;
-    if matches!(request_status_result().await, Ok(None)) {
-        if let Err(error) = spawn::spawn_detached(spawn::SpawnPolicy::ReuseAlive).await {
-            eprintln!("askhuman: waiting to restore the daemon: {error}");
+    let guard = acquire_spawn_lock().await;
+    let second = classify(&request_status_result().await);
+    match second {
+        Probe::Alive | Probe::Unknown => {}
+        Probe::Absent => {
+            if let Err(error) = spawn::spawn_detached(spawn::SpawnPolicy::ReuseAlive).await {
+                eprintln!("askhuman: waiting to restore the daemon: {error}");
+                return;
+            }
+            if !wait_for_status(Duration::from_secs(5)).await
+                && guard.is_some()
+                && same_instance(diagnosed, daemon_identity())
+            {
+                replace().await;
+            }
+        }
+        Probe::Silent => {
+            if first == Probe::Silent
+                && guard.is_some()
+                && same_instance(diagnosed, daemon_identity())
+            {
+                replace().await;
+            }
         }
     }
+}
+
+/// Tear the wedged daemon down and start a fresh one. Only a platform service manager can do that
+/// (launchd on macOS); elsewhere a second daemon would just lose the single-instance lock, so the
+/// caller keeps retrying instead.
+async fn replace() {
+    if !cfg!(target_os = "macos") {
+        return;
+    }
+    eprintln!("askhuman: the daemon does not answer; replacing it");
+    match spawn::spawn_detached(spawn::SpawnPolicy::Replace).await {
+        Ok(()) => {
+            wait_for_status(Duration::from_secs(5)).await;
+        }
+        Err(error) => eprintln!("askhuman: cannot replace the daemon: {error}"),
+    }
+}
+
+/// Poll Status until the daemon answers or `max` elapses.
+async fn wait_for_status(max: Duration) -> bool {
+    let start = Instant::now();
+    while start.elapsed() < max {
+        if matches!(request_status_result().await, Ok(Some(_))) {
+            return true;
+        }
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    }
+    false
 }
 
 pub(super) async fn run(
@@ -299,5 +412,56 @@ pub(crate) async fn run_owned_observed(
             }
         }
         tokio::time::sleep(Duration::from_secs(1)).await;
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn status() -> crate::ipc::StatusInfo {
+        serde_json::from_value(serde_json::json!({
+            "pid": 1, "version": "x", "protocolVersion": 1,
+            "uptimeSecs": 0, "socket": "s", "activeRequests": 0
+        }))
+        .unwrap()
+    }
+
+    #[test]
+    fn a_probe_tells_a_silent_daemon_from_an_absent_one() {
+        assert_eq!(classify(&Ok(Some(status()))), Probe::Alive);
+        // Nothing listening: start one.
+        assert_eq!(classify(&Ok(None)), Probe::Absent);
+        // Accepted and never answered: replace it, do not start a second one next to it.
+        assert_eq!(
+            classify(&Err(Error::new(ErrorKind::TimedOut, "no answer"))),
+            Probe::Silent
+        );
+        // A daemon we cannot talk to for another reason is not fixed by starting or replacing it.
+        for kind in [
+            ErrorKind::PermissionDenied,
+            ErrorKind::InvalidData,
+            ErrorKind::UnexpectedEof,
+            ErrorKind::Other,
+        ] {
+            assert_eq!(
+                classify(&Err(Error::from(kind))),
+                Probe::Unknown,
+                "{kind:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_daemon_is_only_the_diagnosed_one_if_daemon_json_still_names_it() {
+        let old = Some((100, 1_000));
+        assert!(same_instance(old, old));
+        // A successor a sibling started has another pid, or at least another start time.
+        assert!(!same_instance(old, Some((200, 1_000))));
+        assert!(!same_instance(old, Some((100, 2_000))));
+        // No identity on either side is no evidence, however equal the two nothings are.
+        assert!(!same_instance(None, None));
+        assert!(!same_instance(old, None));
+        assert!(!same_instance(None, old));
     }
 }

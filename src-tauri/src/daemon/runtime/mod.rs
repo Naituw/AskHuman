@@ -5488,6 +5488,23 @@ fn stop_cmd(force: bool) -> i32 {
     restart_guard::clear();
     block_on(async {
         if !client::request_stop(force).await {
+            // `false` is also what a daemon that accepts the connection and never answers gives,
+            // and that one is running: only a status probe that finds nothing listening says
+            // "not running".
+            if client::request_status_result()
+                .await
+                .is_err_and(|error| error.kind() == std::io::ErrorKind::TimedOut)
+            {
+                eprintln!(
+                    "askhuman daemon: running but not answering, so it cannot be asked to stop{}",
+                    if cfg!(target_os = "macos") {
+                        "; `AskHuman daemon restart` replaces it"
+                    } else {
+                        ""
+                    }
+                );
+                return 1;
+            }
             println!("askhuman daemon: not running");
             return 0;
         }

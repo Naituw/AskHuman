@@ -11,6 +11,37 @@ pub fn dispatch(args: &[String]) -> i32 {
     }
 }
 
+/// What one Status probe says about a daemon that may still hold the installed executable open.
+#[cfg(any(windows, test))]
+#[derive(Debug)]
+enum Daemon {
+    /// Nothing there that could be asked to stop: nothing listens, or the exchange failed in a way
+    /// that leaves no daemon to talk to.
+    Gone,
+    /// It answered, with this many requests still in flight.
+    Answering { active_requests: usize },
+    /// It accepted the connection and did not answer in time. It is alive, so it may well hold
+    /// the executable open, yet it cannot be asked to stop. Reading that as `Gone` would report
+    /// readiness for a replacement that then fails on a locked file.
+    Silent,
+}
+
+#[cfg(any(windows, test))]
+fn daemon_from(probe: std::io::Result<Option<crate::ipc::StatusInfo>>) -> Daemon {
+    match probe {
+        Ok(Some(status)) => Daemon::Answering {
+            active_requests: status.active_requests,
+        },
+        Err(error) if error.kind() == std::io::ErrorKind::TimedOut => Daemon::Silent,
+        Ok(None) | Err(_) => Daemon::Gone,
+    }
+}
+
+#[cfg(windows)]
+async fn probe_daemon() -> Daemon {
+    daemon_from(crate::client::request_status_result().await)
+}
+
 #[cfg(windows)]
 fn prepare() -> i32 {
     let runtime = match tokio::runtime::Builder::new_current_thread()
@@ -28,25 +59,39 @@ fn prepare() -> i32 {
         let kind = crate::update::detect_install_kind();
         let current_exe = std::env::current_exe().ok();
 
-        if crate::client::request_status().await.is_some() {
-            if !crate::client::request_stop(false).await {
-                eprintln!("AskHuman update prepare: failed to request a graceful daemon stop");
+        match probe_daemon().await {
+            Daemon::Gone => {}
+            Daemon::Silent => {
+                eprintln!(
+                    "AskHuman update prepare: the daemon accepts connections but does not answer, \
+                     so it cannot be asked to stop; end its process and retry"
+                );
                 return 1;
             }
-            eprintln!("AskHuman update prepare: waiting for the daemon to drain…");
-            let mut last_progress = Instant::now() - Duration::from_secs(30);
-            loop {
-                let Some(status) = crate::client::request_status().await else {
-                    break;
-                };
-                if last_progress.elapsed() >= Duration::from_secs(30) {
-                    eprintln!(
-                        "AskHuman update prepare: {} active request(s) remaining…",
-                        status.active_requests
-                    );
-                    last_progress = Instant::now();
+            Daemon::Answering { .. } => {
+                if !crate::client::request_stop(false).await {
+                    eprintln!("AskHuman update prepare: failed to request a graceful daemon stop");
+                    return 1;
                 }
-                tokio::time::sleep(Duration::from_secs(1)).await;
+                eprintln!("AskHuman update prepare: waiting for the daemon to drain…");
+                let mut last_progress = Instant::now() - Duration::from_secs(30);
+                loop {
+                    let progress = match probe_daemon().await {
+                        Daemon::Gone => break,
+                        Daemon::Answering { active_requests } => {
+                            format!("{active_requests} active request(s) remaining…")
+                        }
+                        // Alive, so it still has to exit before the executable can be replaced.
+                        Daemon::Silent => {
+                            "the daemon is not answering; still waiting for it to exit…".to_string()
+                        }
+                    };
+                    if last_progress.elapsed() >= Duration::from_secs(30) {
+                        eprintln!("AskHuman update prepare: {progress}");
+                        last_progress = Instant::now();
+                    }
+                    tokio::time::sleep(Duration::from_secs(1)).await;
+                }
             }
         }
 
@@ -76,9 +121,21 @@ fn prepare() -> i32 {
 
         // A concurrent caller could have started the daemon while the Host was closing. Never
         // report readiness while a process that may lock the installed executable is reachable.
-        if crate::client::request_status().await.is_some() {
-            eprintln!("AskHuman update prepare: the daemon restarted during preparation; retry");
-            return 1;
+        match probe_daemon().await {
+            Daemon::Gone => {}
+            Daemon::Answering { .. } => {
+                eprintln!(
+                    "AskHuman update prepare: the daemon restarted during preparation; retry"
+                );
+                return 1;
+            }
+            Daemon::Silent => {
+                eprintln!(
+                    "AskHuman update prepare: a daemon is running but does not answer; \
+                     end its process and retry"
+                );
+                return 1;
+            }
         }
 
         println!("AskHuman update prepare: ready");
@@ -110,8 +167,39 @@ fn prepare() -> i32 {
 
 #[cfg(test)]
 mod tests {
+    use super::*;
+    use std::io::{Error, ErrorKind};
+
     #[test]
     fn unknown_subcommand_is_rejected() {
         assert_eq!(super::dispatch(&["unknown".to_string()]), 1);
+    }
+
+    #[test]
+    fn a_daemon_that_accepts_and_stays_silent_is_not_gone() {
+        assert!(matches!(
+            daemon_from(Err(Error::new(ErrorKind::TimedOut, "no answer"))),
+            Daemon::Silent
+        ));
+        // Nothing listens: nothing can hold the executable open.
+        assert!(matches!(daemon_from(Ok(None)), Daemon::Gone));
+        // Any other failed exchange keeps the long-standing reading: no daemon to talk to.
+        assert!(matches!(
+            daemon_from(Err(Error::new(ErrorKind::ConnectionReset, "reset"))),
+            Daemon::Gone
+        ));
+        let status: crate::ipc::StatusInfo = serde_json::from_value(serde_json::json!({
+            "pid": 7,
+            "version": "test",
+            "protocolVersion": 1,
+            "uptimeSecs": 0,
+            "socket": "daemon.sock",
+            "activeRequests": 2,
+        }))
+        .unwrap();
+        assert!(matches!(
+            daemon_from(Ok(Some(status))),
+            Daemon::Answering { active_requests: 2 }
+        ));
     }
 }

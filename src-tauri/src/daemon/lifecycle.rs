@@ -499,6 +499,12 @@ pub fn write_meta(meta: &DaemonMeta) -> std::io::Result<()> {
     std::fs::write(meta_path(), data)
 }
 
+/// What the running daemon wrote about itself at startup (`daemon.json`), if it can be read.
+/// After a crash the file can be stale, so it identifies an instance only together with a probe.
+pub fn read_meta() -> Option<DaemonMeta> {
+    serde_json::from_slice(&std::fs::read(meta_path()).ok()?).ok()
+}
+
 /// 持有期间代表「本进程为唯一 Daemon」。Drop 时系统文件锁自动释放。
 pub type LockGuard = crate::file_lock::FileLock;
 
