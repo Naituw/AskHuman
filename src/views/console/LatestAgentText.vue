@@ -58,7 +58,7 @@ onBeforeUnmount(() => {
         {{ t("console.observation.fragment") }}
       </span>
       <span class="action-spacer" />
-      <button v-if="hasNewContent && (reading || expanded)" type="button" class="new-content" @click="updateNow">
+      <button v-if="hasNewContent && reading" type="button" class="new-content" @click="updateNow">
         {{ t("console.observation.newContent") }}
       </button>
     </div>

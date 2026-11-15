@@ -32,22 +32,67 @@ describe("stable latest Agent text", () => {
     pane.unmount();
   });
 
-  it("keeps expanded reading stable while tools refresh and updates on request", async () => {
+  // Opening the text only makes it taller (2026-11-15; it used to hold the words until it was closed, which made "New
+  // content" the only way to see what the Agent said next). The words are held for the moment after the click, as after a
+  // pointer, and then the next text replaces them by itself like it does a closed one.
+  it("replaces an opened text by itself after the moment that follows opening it, and keeps it open", async () => {
     const pane = mountPane();
+    await vi.advanceTimersByTimeAsync(11000);
     await pane.get(".text-actions button").trigger("click");
     const next = frame("Next thought");
     next.steps = [{ kind: "read", object: "camera.swift", state: "running" }];
     await pane.setProps({ frame: next });
-    await vi.advanceTimersByTimeAsync(20000);
     expect(pane.get(".thought").text()).toBe("First thought");
     expect(pane.get(".steps").text()).toContain("camera.swift");
+    await vi.advanceTimersByTimeAsync(2900);
+    expect(pane.get(".thought").text()).toBe("First thought");
+    await vi.advanceTimersByTimeAsync(200);
+    expect(pane.get(".thought").text()).toBe("Next thought");
+    expect(pane.get(".text-actions button").attributes("aria-expanded")).toBe("true");
+    expect(pane.find(".new-content").exists()).toBe(false);
+    pane.unmount();
+  });
+
+  it("waits no longer than the replacement interval for an opened text that nothing touches", async () => {
+    const pane = mountPane();
+    await vi.advanceTimersByTimeAsync(1000);
+    await pane.get(".text-actions button").trigger("click");
+    await vi.advanceTimersByTimeAsync(4000);
+    await pane.setProps({ frame: frame("Next thought") });
+    expect(pane.find(".new-content").exists()).toBe(false);
+    await vi.advanceTimersByTimeAsync(4900);
+    expect(pane.get(".thought").text()).toBe("First thought");
+    await vi.advanceTimersByTimeAsync(200);
+    expect(pane.get(".thought").text()).toBe("Next thought");
+    pane.unmount();
+  });
+
+  it("holds an opened text while a pointer is on it, and a tap on \"New content\" keeps it open", async () => {
+    const pane = mountPane();
+    await pane.get(".text-actions button").trigger("click");
+    await pane.get(".text-body").trigger("pointerdown");
+    await pane.setProps({ frame: frame("Next thought") });
+    await vi.advanceTimersByTimeAsync(30000);
+    expect(pane.get(".thought").text()).toBe("First thought");
     await pane.get(".new-content").trigger("click");
     expect(pane.get(".thought").text()).toBe("Next thought");
     expect(pane.get(".text-actions button").attributes("aria-expanded")).toBe("true");
-    await pane.setProps({ frame: frame("New prose", "assistant") });
-    await vi.advanceTimersByTimeAsync(10000);
-    expect(pane.get(".thought").text()).toBe("Next thought");
+    pane.unmount();
+  });
+
+  it("shows the newest text at once when an opened text is closed", async () => {
+    const pane = mountPane();
     await pane.get(".text-actions button").trigger("click");
+    await pane.setProps({ frame: frame("Next thought") });
+    expect(pane.get(".thought").text()).toBe("First thought");
+    await pane.get(".text-actions button").trigger("click");
+    expect(pane.get(".thought").text()).toBe("Next thought");
+    expect(pane.get(".text-actions button").attributes("aria-expanded")).toBe("false");
+    expect(pane.find(".new-content").exists()).toBe(false);
+    await pane.setProps({ frame: frame("New prose", "assistant") });
+    await vi.advanceTimersByTimeAsync(9900);
+    expect(pane.get(".thought").text()).toBe("Next thought");
+    await vi.advanceTimersByTimeAsync(200);
     expect(pane.get(".markdown").text()).toBe("New prose");
     pane.unmount();
   });

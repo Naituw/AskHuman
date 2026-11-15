@@ -9,8 +9,9 @@ export const TEXT_READING_LEASE_MS = 3_000;
 /**
  * A fixed throttle window keeps dense updates from starving the next visible paragraph. Reading holds the text as a
  * lease (docs/specs/agent-observation-latest-text.md §4): a pointer on the text holds it, and so does the lease
- * after the pointer left, which a pointer that comes back renews. An opened text holds until it is closed or the
- * newest is asked for.
+ * after the pointer left, which a pointer that comes back renews. Opening the text only makes it taller (it holds
+ * nothing of its own, apart from the lease after the click), so what the Agent says next replaces an opened text by
+ * itself too.
  */
 export function useLatestAgentText() {
   const displayed = shallowRef<LatestAgentText | null>(null);
@@ -20,7 +21,7 @@ export function useLatestAgentText() {
   const touching = ref(false);
   /** The pointer has left the text, but only moments ago. */
   const leased = ref(false);
-  /** The text is held for somebody who is reading it (an opened text holds by itself: see `expanded`). */
+  /** The text is held for somebody who is reading it. Being open is not being held. */
   const reading = computed(() => touching.value || leased.value);
   let lastShown = 0;
   let timer: ReturnType<typeof setTimeout> | undefined;
@@ -62,7 +63,7 @@ export function useLatestAgentText() {
 
   /** The pending text waits for the replacement interval, counted from the last replacement, and for the lease. */
   function schedule() {
-    if (reading.value || expanded.value || timer || !hasNewContent.value) return;
+    if (reading.value || timer || !hasNewContent.value) return;
     const delay = Math.max(0, TEXT_UPDATE_INTERVAL_MS - (Date.now() - lastShown));
     if (delay === 0) showLatest();
     else timer = setTimeout(() => {
@@ -102,11 +103,19 @@ export function useLatestAgentText() {
     if (!touching.value) startLease();
   }
 
+  /**
+   * Opens or closes the text. Opening holds the words for the lease after the click, as after a pointer: the paragraph
+   * that was just chosen for reading in full is not replaced a moment later because its replacement happened to be due.
+   * After that the text is replaced by itself like a closed one. Closing goes back to the overview, which shows the newest.
+   */
   function toggleExpanded() {
     expanded.value = !expanded.value;
     endLease();
-    if (expanded.value) cancelTimer();
-    else showLatest();
+    if (expanded.value) {
+      if (!touching.value) startLease();
+    } else {
+      showLatest();
+    }
   }
 
   function updateNow() {
