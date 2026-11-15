@@ -9,7 +9,7 @@ use serde_json::{json, Value};
 use tokio::net::TcpStream;
 use tokio::time::{self, Instant, Interval};
 use tokio_tungstenite::tungstenite::Message;
-use tokio_tungstenite::{connect_async, MaybeTlsStream, WebSocketStream};
+use tokio_tungstenite::{MaybeTlsStream, WebSocketStream};
 
 pub const TOPIC_BOT_MESSAGE: &str = "/v1.0/im/bot/messages/get";
 pub const TOPIC_CARD_CALLBACK: &str = "/v1.0/card/instances/callback";
@@ -267,10 +267,9 @@ async fn open_ws(
         .and_then(|t| t.as_str())
         .ok_or(DingTalkError::BadResponse)?;
     let url = format!("{}?ticket={}", endpoint, ticket);
-    let (ws, _resp) = connect_async(url)
+    crate::channels::health::connect_websocket(url)
         .await
-        .map_err(|e| DingTalkError::Network(format!("WebSocket connection failed: {}", e)))?;
-    Ok(ws)
+        .map_err(DingTalkError::Network)
 }
 
 #[cfg(test)]

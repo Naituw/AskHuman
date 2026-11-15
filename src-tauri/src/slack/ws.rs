@@ -15,7 +15,7 @@ use serde_json::{json, Value};
 use std::time::Duration;
 use tokio::net::TcpStream;
 use tokio_tungstenite::tungstenite::Message;
-use tokio_tungstenite::{connect_async, MaybeTlsStream, WebSocketStream};
+use tokio_tungstenite::{MaybeTlsStream, WebSocketStream};
 
 type Ws = WebSocketStream<MaybeTlsStream<TcpStream>>;
 
@@ -46,9 +46,9 @@ impl SlackWs {
     /// 建立 Socket Mode 连接：取 wss url → 连 wss → 拆分读写。
     pub async fn connect(http: reqwest::Client, app_token: &str) -> Result<Self, SlackError> {
         let url = open_socket_url(&http, app_token).await?;
-        let (ws, _resp) = connect_async(url)
+        let ws = crate::channels::health::connect_websocket(url)
             .await
-            .map_err(|e| SlackError::Network(format!("WebSocket connection failed: {}", e)))?;
+            .map_err(SlackError::Network)?;
         let (write, read) = ws.split();
         Ok(Self {
             http,
@@ -201,9 +201,7 @@ impl SlackWs {
         let url = open_socket_url(&self.http, &self.app_token)
             .await
             .map_err(|e| e.to_string())?;
-        let (ws, _) = connect_async(url)
-            .await
-            .map_err(|e| format!("WebSocket connection failed: {e}"))?;
+        let ws = crate::channels::health::connect_websocket(url).await?;
         let (write, read) = ws.split();
         self.write = write;
         self.read = read;
