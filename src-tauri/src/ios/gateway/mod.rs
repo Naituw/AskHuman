@@ -409,10 +409,6 @@ impl IosGateway {
             && self.status.has_active_phone.load(Ordering::Relaxed)
     }
 
-    pub fn is_connected(&self) -> bool {
-        self.status.connected.load(Ordering::Relaxed)
-    }
-
     /// At least one phone is paired: requests have somewhere to go (even if the broker is down,
     /// the push path may still work).
     pub fn has_active_phone(&self) -> bool {
@@ -541,7 +537,9 @@ impl IosGateway {
         })));
     }
 
-    /// The request reached a terminal state somewhere (answered, cancelled, expired).
+    /// The request reached a terminal state somewhere (answered, cancelled, expired). Fire and
+    /// forget; production waits for the phones through [`Self::resolve_and_wait`].
+    #[cfg(test)]
     pub fn resolve(&self, request_id: &str, resolution: Resolution) {
         let _ = self.cmd.send(Cmd::Resolve {
             request_id: request_id.to_string(),

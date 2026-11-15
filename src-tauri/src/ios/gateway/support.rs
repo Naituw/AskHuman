@@ -2,7 +2,6 @@
 //! ordered outbound queue.
 
 use std::collections::{HashSet, VecDeque};
-use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -88,16 +87,11 @@ enum Out {
 #[derive(Clone)]
 pub struct Outbox {
     tx: UnboundedSender<Out>,
-    queued: Arc<AtomicUsize>,
-    failed: Arc<AtomicUsize>,
 }
 
 impl Outbox {
     pub fn spawn(transport: Arc<dyn BrokerTransport>) -> Self {
         let (tx, mut rx) = unbounded_channel::<Out>();
-        let queued = Arc::new(AtomicUsize::new(0));
-        let failed = Arc::new(AtomicUsize::new(0));
-        let (queued_task, failed_task) = (queued.clone(), failed.clone());
         tokio::spawn(async move {
             let mut bucket = TokenBucket::new(PUBLISH_RATE_PER_SEC, PUBLISH_BURST);
             while let Some(item) = rx.recv().await {
@@ -112,14 +106,10 @@ impl Outbox {
                         if !wait.is_zero() {
                             tokio::time::sleep(wait).await;
                         }
-                        if transport
+                        // A publish the transport refuses (not connected, not authorized) is dropped.
+                        let _ = transport
                             .publish_with_traffic(&topic, payload, retain, announce)
-                            .await
-                            .is_err()
-                        {
-                            failed_task.fetch_add(1, Ordering::Relaxed);
-                        }
-                        queued_task.fetch_sub(1, Ordering::Relaxed);
+                            .await;
                     }
                     Out::Flush(done) => {
                         let _ = done.send(());
@@ -127,7 +117,7 @@ impl Outbox {
                 }
             }
         });
-        Self { tx, queued, failed }
+        Self { tx }
     }
 
     pub fn send(&self, topic: String, payload: Vec<u8>, retain: bool) {
@@ -135,7 +125,6 @@ impl Outbox {
     }
 
     pub fn send_with_traffic(&self, topic: String, payload: Vec<u8>, retain: bool, announce: bool) {
-        self.queued.fetch_add(1, Ordering::Relaxed);
         let _ = self.tx.send(Out::Publish {
             topic,
             payload,
@@ -150,15 +139,6 @@ impl Outbox {
         if self.tx.send(Out::Flush(done_tx)).is_ok() {
             let _ = tokio::time::timeout(Duration::from_secs(5), done_rx).await;
         }
-    }
-
-    pub fn queued(&self) -> usize {
-        self.queued.load(Ordering::Relaxed)
-    }
-
-    /// Publishes that the transport refused (not connected, not authorized).
-    pub fn failed(&self) -> usize {
-        self.failed.load(Ordering::Relaxed)
     }
 }
 

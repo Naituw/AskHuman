@@ -481,6 +481,7 @@ impl Store {
         }
     }
 
+    #[cfg(test)]
     pub fn journal_len(&self) -> usize {
         self.journal.entries.len()
     }
