@@ -469,6 +469,65 @@ pub(super) fn grok_catalog(listing: Listing) -> AgentCatalog {
     }
 }
 
+// ---------------------------------------------------------------- Antigravity
+
+/// The `--model` aliases `agentapi new-conversation` documents. They are offered only on a
+/// machine without `agy`, where no listing can be read; each stands for a model Antigravity picks
+/// (docs/specs/antigravity-deep-integration.md §12.9).
+const ANTIGRAVITY_ALIASES: [(&str, &str); 3] = [
+    ("flash_lite", "Flash Lite"),
+    ("flash", "Flash"),
+    ("pro", "Pro"),
+];
+
+/// Output of `agy models`, stdout then stderr:
+///
+/// ```text
+/// gemini-3.8-flash-low<TAB>Gemini 3.8 Flash (Low)
+/// claude-sonnet-5-5-medium<TAB>Claude Sonnet 5.5 (Medium)
+/// Fetching available models...
+/// ```
+///
+/// One `id<TAB>display name` per line. The progress line and an error such as `Please sign in`
+/// hold no tab, so they never become models. The effort is part of the id and the name, and a few
+/// entries do not follow that pattern, so nothing is split into a model and an effort and no entry
+/// is marked as the default: the listing says neither (spec D15).
+pub(super) fn parse_antigravity_models(text: &str) -> Listing {
+    let mut models = Vec::new();
+    for line in text.lines() {
+        let Some((id, label)) = line.split_once('\t') else {
+            continue;
+        };
+        let id = id.trim();
+        if !valid_model_id(id) {
+            continue;
+        }
+        models.push(ModelEntry::plain(id, label));
+    }
+    Listing::finish(models, None)
+}
+
+pub(super) fn antigravity_catalog(listing: Listing) -> AgentCatalog {
+    AgentCatalog {
+        speed: None,
+        models: listing.models,
+        default: DefaultInfo::default(),
+        listed_default: None,
+    }
+}
+
+/// What the App route can offer without `agy`: the documented aliases.
+pub(super) fn antigravity_alias_catalog() -> AgentCatalog {
+    let models = ANTIGRAVITY_ALIASES
+        .iter()
+        .map(|(id, label)| ModelEntry {
+            note: Some("Antigravity 别名".to_string()),
+            ..ModelEntry::plain(id, label)
+        })
+        .collect();
+    antigravity_catalog(Listing::finish(models, None))
+}
+
 // ---------------------------------------------------------------- Pi
 
 /// The default model `~/.pi/agent/settings.json` names.
@@ -573,6 +632,7 @@ mod tests {
     const CURSOR_LIST: &str = include_str!("fixtures/cursor-list.txt");
     const PI_LIST: &str = include_str!("fixtures/pi-list.txt");
     const GROK_MODELS: &str = include_str!("fixtures/grok-models.txt");
+    const ANTIGRAVITY_MODELS: &str = include_str!("fixtures/antigravity-models.txt");
     const CODEX_PAGE_1: &str = include_str!("fixtures/codex-model-list-1.json");
     const CODEX_PAGE_2: &str = include_str!("fixtures/codex-model-list-2.json");
     const CLAUDE_SETTINGS: &str = include_str!("fixtures/claude-settings.json");
@@ -589,6 +649,10 @@ mod tests {
 
     fn ids(listing: &Listing) -> Vec<&str> {
         listing.models.iter().map(|m| m.id.as_str()).collect()
+    }
+
+    fn ids_of(catalog: &AgentCatalog) -> Vec<&str> {
+        catalog.models.iter().map(|m| m.id.as_str()).collect()
     }
 
     fn codex_entries() -> Vec<Value> {
@@ -837,6 +901,76 @@ mod tests {
         // A default that is not listed is not kept.
         let listing = parse_grok_models("Default model: ghost\nAvailable models:\n  - model-a\n");
         assert_eq!(listing.default_id, None);
+    }
+
+    // ------------------------------------------------------------ Antigravity
+
+    #[test]
+    fn the_antigravity_list_is_flat_with_the_effort_folded_into_the_id() {
+        let listing = parse_antigravity_models(ANTIGRAVITY_MODELS);
+        assert_eq!(listing.models.len(), 18);
+        assert_eq!(listing.models[0].id, "gemini-4-argon-medium");
+        assert_eq!(
+            listing.label_of("gemini-3.8-flash-low").as_deref(),
+            Some("Gemini 3.8 Flash (Low)")
+        );
+        // The entries that do not follow the `<model>-<effort>` pattern are kept as they are.
+        assert_eq!(
+            listing
+                .label_of("gemini-pro-orchestrator-g1-pro")
+                .as_deref(),
+            Some("Orchestrator (Argon)")
+        );
+        assert_eq!(
+            listing.label_of("gpt-oss-120b-medium").as_deref(),
+            Some("GPT-OSS 120B (Medium)")
+        );
+        // No effort row and no default: the listing says neither.
+        assert!(listing.models.iter().all(|m| m.efforts.is_empty()));
+        assert_eq!(listing.default_id, None);
+        let catalog = antigravity_catalog(listing);
+        assert_eq!(catalog.default, DefaultInfo::default());
+        assert_eq!(catalog.listed_default, None);
+        assert!(catalog.speed.is_none());
+    }
+
+    #[test]
+    fn the_antigravity_progress_line_and_errors_are_not_models() {
+        // stdout and stderr are joined: only a line with a tab can be an entry.
+        let unauthenticated = "Fetching available models...\nError: Please sign in to view available models. Launch the CLI without arguments to sign in.\n";
+        assert_eq!(
+            parse_antigravity_models(unauthenticated),
+            Listing::default()
+        );
+        assert_eq!(parse_antigravity_models(""), Listing::default());
+        assert_eq!(
+            ids(&parse_antigravity_models(
+                "Fetching available models...\nok-1\tOne\n"
+            )),
+            ["ok-1"]
+        );
+    }
+
+    #[test]
+    fn the_antigravity_list_drops_ids_that_could_pass_for_a_flag_and_duplicates() {
+        let text = "--yolo\tNot a model\n\tNo id\nok-1\tFirst\nok-1\tSecond\n bad id\tSpaced\n-x\tDash\nok-2\t\n";
+        let listing = parse_antigravity_models(text);
+        assert_eq!(ids(&listing), ["ok-1", "ok-2"]);
+        assert_eq!(listing.label_of("ok-1").as_deref(), Some("First"));
+        // An entry without a display name shows its id.
+        assert_eq!(listing.label_of("ok-2").as_deref(), Some("ok-2"));
+    }
+
+    #[test]
+    fn a_machine_without_agy_is_offered_the_three_documented_aliases() {
+        let catalog = antigravity_alias_catalog();
+        assert_eq!(ids_of(&catalog), ["flash_lite", "flash", "pro"]);
+        assert_eq!(catalog.model("flash_lite").unwrap().label, "Flash Lite");
+        assert!(catalog
+            .models
+            .iter()
+            .all(|m| m.note.as_deref() == Some("Antigravity 别名") && m.efforts.is_empty()));
+        assert_eq!(catalog.default, DefaultInfo::default());
     }
 
     // ------------------------------------------------------------ Codex

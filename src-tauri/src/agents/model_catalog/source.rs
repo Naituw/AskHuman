@@ -11,8 +11,9 @@ use std::time::Duration;
 use serde_json::Value;
 
 use super::parse::{
-    claude_catalog, claude_catalog_with, codex_catalog, codex_default, cursor_catalog,
-    cursor_default, grok_catalog, parse_claude_settings, parse_codex_config, parse_codex_models,
+    antigravity_alias_catalog, antigravity_catalog, claude_catalog, claude_catalog_with,
+    codex_catalog, codex_default, cursor_catalog, cursor_default, grok_catalog,
+    parse_antigravity_models, parse_claude_settings, parse_codex_config, parse_codex_models,
     parse_cursor_config, parse_cursor_list, parse_grok_models, parse_pi_list, parse_pi_settings,
     pi_catalog, pi_default,
 };
@@ -99,7 +100,16 @@ pub fn load_with(probes: &dyn Probes, source: &CatalogSource) -> Result<AgentCat
         }
     };
     match source.kind {
-        AgentKind::Antigravity => Err("Antigravity does not support model discovery".to_string()),
+        AgentKind::Antigravity if exe.is_empty() => {
+            // No `agy` on this machine, so there is nothing to list: the App route can still name
+            // one of the tiers `agentapi` documents, and nothing is run.
+            Ok(antigravity_alias_catalog())
+        }
+        AgentKind::Antigravity => {
+            non_empty(antigravity_catalog(parse_antigravity_models(&listing(&[
+                "models",
+            ])?)))
+        }
         AgentKind::Claude => {
             // Claude Code has no list command: the aliases are fixed, `--help` only tells whether
             // the newest one exists in this version.
@@ -240,11 +250,13 @@ fn read_small_file(path: &Path) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::agents::model_catalog::DefaultInfo;
     use std::cell::RefCell;
 
     const CURSOR_LIST: &str = include_str!("fixtures/cursor-list.txt");
     const PI_LIST: &str = include_str!("fixtures/pi-list.txt");
     const GROK_MODELS: &str = include_str!("fixtures/grok-models.txt");
+    const ANTIGRAVITY_MODELS: &str = include_str!("fixtures/antigravity-models.txt");
     const CODEX_PAGE_1: &str = include_str!("fixtures/codex-model-list-1.json");
     const CODEX_PAGE_2: &str = include_str!("fixtures/codex-model-list-2.json");
     const CLAUDE_SETTINGS: &str = include_str!("fixtures/claude-settings.json");
@@ -312,11 +324,54 @@ mod tests {
     }
 
     #[test]
-    fn antigravity_does_not_probe_for_models() {
-        let probes = Scripted::default();
+    fn antigravity_lists_its_models_with_one_command_and_names_no_default() {
+        let probes = Scripted {
+            listing: Some(ANTIGRAVITY_MODELS.to_string()),
+            ..Scripted::default()
+        };
+        let catalog = load_with(&probes, &source(AgentKind::Antigravity)).unwrap();
+        assert_eq!(catalog.models.len(), 18);
+        assert_eq!(catalog.default, DefaultInfo::default());
+        assert!(catalog.models.iter().all(|m| m.efforts.is_empty()));
+        assert_eq!(*probes.asked.borrow(), ["/opt/bin/antigravity models"]);
+        // Nothing is read from a configuration file, so refreshing "Default" changes nothing.
+        let refreshed = refresh_default_with(&probes, &source(AgentKind::Antigravity), &catalog);
+        assert_eq!(refreshed, catalog);
+    }
+
+    #[test]
+    fn antigravity_without_a_signed_in_agy_offers_no_models() {
+        // `agy models` prints a progress line and then an error that has no tab.
+        let probes = Scripted {
+            listing: Some(
+                "Fetching available models...\nError: Please sign in to view available models.\n"
+                    .to_string(),
+            ),
+            ..Scripted::default()
+        };
         let error = load_with(&probes, &source(AgentKind::Antigravity)).unwrap_err();
-        assert!(error.contains("does not support model discovery"));
+        assert!(error.contains("offered no usable models"), "{error}");
+        // A command that could not be run at all is its own error.
+        let silent = Scripted::default();
+        let error = load_with(&silent, &source(AgentKind::Antigravity)).unwrap_err();
+        assert!(error.contains("gave no answer"), "{error}");
+    }
+
+    #[test]
+    fn antigravity_without_agy_gets_the_three_aliases_and_runs_nothing() {
+        let probes = Scripted::default();
+        let no_agy = CatalogSource {
+            executable: String::new(),
+            ..source(AgentKind::Antigravity)
+        };
+        let catalog = load_with(&probes, &no_agy).unwrap();
+        assert_eq!(ids(&catalog), ["flash_lite", "flash", "pro"]);
         assert!(probes.asked.borrow().is_empty());
+        // The alias list has its own cache slot, apart from the one for a real `agy`.
+        assert_ne!(
+            no_agy.cache_key(),
+            source(AgentKind::Antigravity).cache_key()
+        );
     }
 
     #[test]
