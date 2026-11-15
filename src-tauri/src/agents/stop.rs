@@ -30,8 +30,15 @@ struct LastAssistantMessage {
 /// Entry point for `AskHuman __stop-hook <agent> [track] [confirm]`.
 /// Stdout always contains exactly one JSON object.
 pub fn run(args: &[String]) {
-    let output = run_inner(args).unwrap_or_else(|| json!({}));
-    println!("{output}");
+    let antigravity =
+        args.first().and_then(|value| AgentKind::parse(value)) == Some(AgentKind::Antigravity);
+    match run_inner(args) {
+        Some(output) => println!("{output}"),
+        // Antigravity's contract is an empty stdout for "no decision" (spec §8); `{}` is not
+        // verified there.
+        None if antigravity => {}
+        None => println!("{}", json!({})),
+    }
 }
 
 fn run_inner(args: &[String]) -> Option<Value> {
@@ -41,6 +48,16 @@ fn run_inner(args: &[String]) -> Option<Value> {
     }
     let track = args.get(1).is_some_and(|value| value == "track");
     let confirm = args.iter().skip(1).any(|value| value == "confirm");
+    if kind == AgentKind::Antigravity {
+        // Lifecycle only for now: whether the whole conversation went idle decides if this Stop is a
+        // turn end, which the reporter knows. Stop confirmation is a later phase.
+        if track || confirm {
+            if let Some(input) = super::report::read_stdin_json() {
+                super::antigravity_hook::report(super::antigravity_hook::HookEvent::Stop, &input);
+            }
+        }
+        return None;
+    }
     let env = super::detect::env_snapshot();
     if super::report::should_skip(kind, &env) {
         return None;
@@ -208,7 +225,8 @@ pub(super) fn turn_failed(kind: AgentKind, input: &Value) -> bool {
         // `aborted` is the user pressing stop, not a failure.
         AgentKind::Cursor => text("status") == Some("error"),
         AgentKind::Pi => text("stop_reason") == Some("error"),
-        AgentKind::Codex | AgentKind::Antigravity => false,
+        AgentKind::Antigravity => super::antigravity_hook::stop_failed(input),
+        AgentKind::Codex => false,
     }
 }
 

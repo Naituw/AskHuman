@@ -164,6 +164,20 @@ pub fn observation(
         AgentKind::Claude | AgentKind::Codex | AgentKind::Grok if name == "stop" => {
             (TurnOutcome::Completed, None)
         }
+        // Only a `Stop` with `fullyIdle` reaches here (the reporter sends it as the turn end).
+        AgentKind::Antigravity => match text("terminationReason") {
+            Some("NO_TOOL_CALL") => (TurnOutcome::Completed, None),
+            Some("ERROR") => (TurnOutcome::Failed, Some("runtime_error")),
+            Some("MAX_INVOCATIONS") => (TurnOutcome::Incomplete, Some("max_invocations")),
+            Some("MAX_FORCED_INVOCATIONS") => {
+                (TurnOutcome::Incomplete, Some("max_forced_invocations"))
+            }
+            Some("MAX_TOKEN_BUDGET_EXCEEDED") => {
+                (TurnOutcome::Incomplete, Some("max_token_budget_exceeded"))
+            }
+            Some("USER_CANCELED") => (TurnOutcome::Interrupted, Some("user_interrupt")),
+            _ => (TurnOutcome::Unknown, Some("unknown")),
+        },
         _ => (TurnOutcome::Unknown, Some("unknown")),
     };
     observation.result = Some(TurnResult {
@@ -183,6 +197,12 @@ pub fn observation(
             text("error_details")
                 .or_else(|| text("errorDetails"))
                 .or_else(|| text("reasonDetails"))
+                // Antigravity's Stop payload carries the error text in `error` ("" otherwise).
+                .or_else(|| {
+                    (kind == AgentKind::Antigravity)
+                        .then(|| text("error"))
+                        .flatten()
+                })
                 .or_else(|| {
                     if name == "stopfailure" {
                         text("last_assistant_message").or_else(|| text("lastAssistantMessage"))
@@ -237,6 +257,61 @@ mod tests {
             assert_eq!(result.outcome, TurnOutcome::Interrupted);
             assert!(!result.outcome.needs_attention());
         }
+    }
+
+    #[test]
+    fn an_antigravity_stop_maps_its_termination_reason_to_one_outcome() {
+        let outcome = |reason: &str, error: &str| {
+            let input = json!({
+                "hookEventName": "Stop", "fullyIdle": true,
+                "terminationReason": reason, "error": error,
+            });
+            observation(
+                AgentKind::Antigravity,
+                super::super::LifecycleEvent::TurnEnd,
+                Some(&input),
+            )
+            .result
+            .unwrap()
+        };
+        assert_eq!(outcome("NO_TOOL_CALL", "").outcome, TurnOutcome::Completed);
+        let failed = outcome("ERROR", "model overloaded");
+        assert_eq!(failed.outcome, TurnOutcome::Failed);
+        assert_eq!(failed.summary.as_deref(), Some("model overloaded"));
+        assert_eq!(outcome("ERROR", "").summary, None);
+        for (reason, expected) in [
+            ("MAX_INVOCATIONS", "max_invocations"),
+            ("MAX_FORCED_INVOCATIONS", "max_forced_invocations"),
+            ("MAX_TOKEN_BUDGET_EXCEEDED", "max_token_budget_exceeded"),
+        ] {
+            let result = outcome(reason, "");
+            assert_eq!(result.outcome, TurnOutcome::Incomplete, "{reason}");
+            assert_eq!(result.reason.as_deref(), Some(expected));
+            assert!(result.outcome.needs_attention());
+        }
+        let cancelled = outcome("USER_CANCELED", "");
+        assert_eq!(cancelled.outcome, TurnOutcome::Interrupted);
+        assert!(!cancelled.outcome.needs_attention());
+        // Terminal steps and hooks, injected responses and future reasons stay unknown.
+        for reason in [
+            "TERMINAL_STEP_TYPE",
+            "TERMINAL_CUSTOM_HOOK",
+            "INJECTED_RESPONSE",
+            "NEW",
+        ] {
+            assert_eq!(
+                outcome(reason, "").outcome,
+                TurnOutcome::Unknown,
+                "{reason}"
+            );
+        }
+        // Only the turn end carries a result; other events never claim one.
+        let activity = observation(
+            AgentKind::Antigravity,
+            super::super::LifecycleEvent::Activity,
+            Some(&json!({"hookEventName": "Stop", "fullyIdle": false})),
+        );
+        assert!(activity.result.is_none() && !activity.subagent);
     }
 
     #[test]

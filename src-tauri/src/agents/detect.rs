@@ -1525,6 +1525,13 @@ mod antigravity_detection_tests {
         process.comm = "sh".into();
         process.command = "sh -c echo agy".into();
         assert!(!matches_agent(&process, AgentKind::Antigravity));
+        // The App runs hooks under one language server shared by all of its conversations, so no
+        // process id may be bound to a single conversation (the registry falls back to its TTL).
+        process.comm = "language_server_macos_arm".into();
+        process.command =
+            "/Applications/Antigravity.app/Contents/Resources/app/bin/language_server_macos_arm --lsp"
+                .into();
+        assert!(!matches_agent(&process, AgentKind::Antigravity));
         let env = HashMap::from([("ANTIGRAVITY_CONVERSATION_ID".into(), "not-authority".into())]);
         assert_eq!(session_id_from_env_map(AgentKind::Antigravity, &env), None);
     }

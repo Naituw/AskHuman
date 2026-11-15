@@ -2044,10 +2044,9 @@ async fn control_loop(reader: &mut Reader, w: &mut Writer, state: &Arc<ServerSta
                     .await;
                     return Control::PassiveClosed;
                 }
-                if let (Some(kind), Some(ev)) = (
-                    AgentKind::parse(&agent).filter(|kind| *kind != AgentKind::Antigravity),
-                    LifecycleEvent::parse(&event),
-                ) {
+                if let (Some(kind), Some(ev)) =
+                    (AgentKind::parse(&agent), LifecycleEvent::parse(&event))
+                {
                     if !crate::development::session::native_binding_allowed(kind, &session_id) {
                         return Control::Closed;
                     }
