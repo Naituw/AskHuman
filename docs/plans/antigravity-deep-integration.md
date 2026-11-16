@@ -150,7 +150,7 @@
    `AskHuman agents` 与 `doctor` 同步；`src/views/settings/{IntegrationTab.vue,useIntegration.ts}`、i18n、`vitest`。
 8. **测试**：载荷解析与事件映射（含自醒回合、取消无事件、`fullyIdle:false`）；hook 输出（空 stdout、退出码 0、daemon 缺席 fail-open）；注册表（App `pid=None`、`agy` 有 pid）；MCP 绑定（根会话 ID、环境 ID 与登记不一致）；
    插件生成 / 所有权 / 迁移 / 冲突 / 幂等 / 用户改过 / 临时 HOME；`config.json` 只读检测；偏好与 lifecycle 安装卸载往返；Dev Instance 守卫。
-   **子会话（L3 / L4，D17 待定）**：P1 的登记与生命周期按「每个会话独立」写；hook 上报器里**不**做根 / 子判断，也不用 `lastUserInput` 为空去猜；D17 定案后再接线，并补夹具驱动的测试（T2 时序必须成为一条回归测试）。
+   **子会话（L3 / L4，D17）**：P1 的登记与生命周期按「每个会话独立」写；hook 上报器里**不**做根 / 子判断，也不用 `lastUserInput` 为空去猜；D17 定案后再接线，并补夹具驱动的测试（T2 时序必须成为一条回归测试）。（后来用户选了 A「归并成树」，P3 已接线并有回归测试。）
 9. **P1 完成判定**：规格 §18 中的迁移、hooks、身份、生命周期四条在测试里全部成立；`./scripts/install.sh` 装机（主工作区里有别人的未提交改动时先问用户，见「开工前」1）；在**日常版**上做最小真实验证（只用 Antigravity，一个临时目录、一个 Flash 低价档的一句话任务）：
    会话出现在 Agent 控制台并正确转换「工作中 / 空闲」，`show-last` 按会话工作，插件可在 Antigravity 里停用并被检测到。
 
@@ -254,7 +254,7 @@ F 权限接管与 Fork（规格 §13）；H 上下文恢复 Hook 与原生 `ask_
 - 2026-11-16 基线（HEAD `7e5887cc`，主工作区含另一个会话的未提交 Cursor Desktop 改动）：`machine-health` ok；`cargo fmt --check` 通过；`cargo clippy --all-targets -D warnings` 通过（只有 vendored `tao` 的警告）；`cargo test` 3103 通过、0 失败、12 忽略。
 - 2026-11-16 门 G1 验证计划经用户批准（回答：只用 Antigravity、不需要逐项授权、严禁使用 Cursor；批准后马上做）。
 - 2026-11-16 门 G1 完成：4 个真实任务、约 31 次 Flash 低档请求（T2 24 次，超出估计，原因见规格附录 A.2）；V3-a、V5、V6、V14 已验，V12 部分已验；临时 sidecar / 项目 / 会话 / 插件 / MCP 进程已清理（`config.json` 除该 sidecar 的键外与实验前相同）。
-  **发现设计缺口**：根会话的最后一个 `Stop` 可能是 `fullyIdle:false`、之后没有 `fullyIdle:true`（规格 §4.1、§8 L4），子会话认不出来（L3）。**D17 待用户决定**（报告时用户已开启离开模式，未答复）。
+  **发现设计缺口**：根会话的最后一个 `Stop` 可能是 `fullyIdle:false`、之后没有 `fullyIdle:true`（规格 §4.1、§8 L4），子会话认不出来（L3）。**D17 待用户决定**（报告时用户已开启离开模式，未答复；后来用户选了 A「归并成树」，见下文）。
   **意外**：T1c 的 `agy` 会话遵守用户的全局 AskHuman 规则，真的调用了 `AskHuman --whats-next`，在用户的 AskHuman 历史里留下 1 条 `away` 记录（规格附录 A.2）；今后 `agy` 实验的提示必须写明「不要运行 AskHuman」。
 - 2026-11-16 规格与计划文档提交为 `864aacad`（只含这两个文件，本地、未推送）。主工作区此时干净（另一个会话的改动已由它自己提交为 `bcf77897`）。**尚未写代码；下一步开工 P1。**
   已更新：规格 §1.2、§4.1–§4.3、§4.6、§6.3、§7–§9、§17（V3 / V5 / V6 / V12 / V14 更新，新增 V22 / V23）、§18、附录 A.2、§20；本计划的硬约束 2、验证门、P1 步骤 1 / 5 / 8–9、风险表。

@@ -676,7 +676,7 @@ Agents 页的 Antigravity 卡新增：集成模式（None / CLI / MCP）、生�
 ## 19. 对既有文档的影响（随各期落地时更新）
 
 P1 已更新：`antigravity.md`（按插件重写）、`mcp.md`、`docs/overview.md`（Antigravity 的插件、会话身份与标题）、两份 wiki（`antigravity-setup`）、两份 README、`docs/PROGRESS.md`。
-P2–P4 的回写在 2026-11-16 完成：`antigravity.md`（§1、§4、§7、新增 §7.1）、`docs/overview.md`（模块地图、协议号说明、插话 / Stop / 集成段落）、`overview-configuration.md`（`antigravityDesktop.*`）、`cli-config.md`（`agents sidecars` 与内部入口）、`ios-task-model.md`、`gui-agent-task-launch.md`、`im-agent-task-launch.md`、`agent-lifecycle-results-and-recovery.md`、`agent-stop-confirmation.md`、`agent-interject.md`、`agent-observation-latest-text.md`、两份 wiki、两份 README、`docs/PROGRESS.md`；下面的清单保留为影响范围的记录。
+P2–P4 的回写在 2026-11-16 完成：`antigravity.md`（§1、§4、§7、新增 §7.1）、`docs/overview.md`（模块地图、协议号说明、插话 / Stop / 集成段落）、`overview-configuration.md`（`antigravityDesktop.*`）、`cli-config.md`（`agents sidecars` 与内部入口）、`ios-task-model.md`、`gui-agent-task-launch.md`、`im-agent-task-launch.md`、`agent-lifecycle-results-and-recovery.md`、`agent-stop-confirmation.md`、`agent-interject.md`、`agent-observation-latest-text.md`、两份 wiki、两份 README、`docs/PROGRESS.md`；收尾时按「Antigravity 没有 / 不支持 / 暂不」逐条查过其余文档，又改了四处过时描述：`settings-agents-channels-cards.md`（D10）、`agent-failure-confirmation.md`（Antigravity 一行）、`onboarding.md`（示意图与 `agent_start`）、`special-replies.md`（N5）；下面的清单保留为影响范围的记录。
 
 - [antigravity.md](antigravity.md)：§4、§5–§6、§7 由本规格取代；§2–§3 的 CLI / MCP 语义保留。[MCP 模式规格](mcp.md)：增加 Antigravity 的 `_meta` 会话绑定。
 - `docs/overview.md`：生命周期 / 插话 / Stop / 启动能力描述里「Antigravity 不支持」的几处，以及 Antigravity 集成的规则路径与 MCP 路径；若全局地图与不变量变化再改，局部细节放 `overview-<topic>.md`。

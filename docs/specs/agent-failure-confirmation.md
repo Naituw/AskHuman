@@ -105,7 +105,7 @@ Codex Desktop 的桥每 15 秒跟上最近更新的 24 个线程，daemon 每 2 
 | Cursor CLI | `stop.status=error` | 当前没有接入空闲原会话控制 | 可报错，先提供 F6 的确认卡 |
 | Pi | 扩展 settled 后本轮 `stopReason=error` | 已有扩展控制与 `pi.sendUserMessage` | 复用同会话／代际控制 |
 | Grok | `StopFailure` | 首版不接入接续 | 仅错误卡与 F6，正常结束确认仍不支持 |
-| Antigravity | 当前无可靠生命周期／最终失败适配器 | 当前无控制适配器 | 不宣称可以检测或发卡；无事件来源与无接续能力是两个不同限制 |
+| Antigravity | `Stop` hook 的 `terminationReason == ERROR`，且是整棵会话树空闲之后的那一条（2026-11-16 起，[Antigravity 深度集成 §9](antigravity-deep-integration.md)）；只有装了 AskHuman 插件 hooks 的 App / `agy` 会话才有 | 空闲消息通道：sidecar 的 `send-message`，需要「管理 sidecar」开关与 App 可用（[结果与恢复 §5.3](agent-lifecycle-results-and-recovery.md)） | 可报错；有消息通道时可「要求继续」，否则只有「知道了」。`ERROR` 这个取值来自宿主文档，真实环境里没有诱发过，只有夹具与单测覆盖 |
 
 这里的「可报错」仍以用户开启共享开关、受支持版本及事件确实送达为前提。
 原生最终结果不可得时不能凭长时间无输出或 working backstop 合成失败。
@@ -155,7 +155,7 @@ Codex `--no-daemon`、自定义远端／独立 app-server 等不能仅凭安装�
 ## 6. 验收要点
 
 1. 最终失败恰一张卡；中间重试、工具错误、用户取消、未知空闲和关闭开关不发卡。
-2. 电脑创建与手机创建行为一致；委派／子代理遵守原规则；Grok 仅错误、Antigravity 不误报支持。
+2. 电脑创建与手机创建行为一致；委派／子代理遵守原规则；Grok 仅错误；Antigravity 只在 `Stop` 的 `ERROR` 上报错，不凭别的信号合成失败。
 3. 支持接续与仅知道了两种卡片；纯文字、继续附言、知道了带文字、关闭和到期的映射正确。
 4. 手机收件箱、空闲门槛、Popup／IM 首答胜出，以及与结果通知不重复。
 5. 旧回合迟到、电脑抢先继续、错误卡与空闲自由消息竞争、双击、回执丢失和 daemon 重启不重复发送。
