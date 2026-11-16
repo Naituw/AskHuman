@@ -69,6 +69,10 @@ pub struct Host<T> {
     focus: Option<String>,
     recovery_pid: Option<u32>,
     recovery_birth: Option<String>,
+    /// The host of the current lease was restored from the previous image across a live update
+    /// ([`Host::restore`]), so it was started by an older build than this daemon. Cleared when the
+    /// next lease begins.
+    adopted: bool,
     /// Ends the host process this daemon holds for the lease that is still `Starting`; fired when
     /// the daemon gives that lease up before the host authenticated, dropped when it does. Present
     /// only while `phase` is `Starting` with a host this daemon owns: one it started itself, or a
@@ -87,6 +91,7 @@ impl<T> Default for Host<T> {
             focus: None,
             recovery_pid: None,
             recovery_birth: None,
+            adopted: false,
             owned_child: None,
         }
     }
@@ -99,8 +104,16 @@ impl<T: Clone> Host<T> {
             recovery_pid: Some(saved.pid),
             recovery_birth: saved.birth,
             recovered: false,
+            adopted: true,
             ..Self::default()
         }
+    }
+
+    /// Whether the current host was kept across a live update, whether or not it has reconnected
+    /// yet. Such a host outlives the update only for the requests it held: what it runs is older
+    /// than this daemon, so once it is idle it is replaced instead of kept warm.
+    pub fn adopted(&self) -> bool {
+        self.adopted && !matches!(self.phase, Phase::Absent)
     }
 
     /// Makes giving up the restored lease end its host process, by running `end`. For a host that
@@ -164,6 +177,7 @@ impl<T: Clone> Host<T> {
         self.phase = Phase::Starting(lease.clone());
         self.recovery_pid = None;
         self.recovery_birth = None;
+        self.adopted = false;
         self.owned_child = Some(Owned::Spawned(Default::default()));
         Some(lease)
     }
@@ -743,6 +757,41 @@ mod tests {
         host.end_when_abandoned(end);
         host.disconnected(7, Instant::now(), false);
         assert_eq!(times(&count), 0);
+    }
+
+    /// A host kept across a live update was started by an older image than the daemon holding it.
+    /// It is marked for as long as that lease lasts; a host started afterwards is this daemon's own.
+    #[test]
+    fn a_host_kept_across_an_update_is_adopted_until_its_lease_ends() {
+        let mut host = restored(7);
+        assert!(host.adopted(), "waiting for it to reconnect");
+        let (tx, _rx) = tokio::sync::mpsc::unbounded_channel();
+        host.connect("saved", tx).unwrap();
+        assert!(host.adopted(), "reconnected, still the previous image's");
+
+        assert!(host.retire_idle(7));
+        assert!(!host.adopted(), "no lease, no host");
+        let Launch::Started(next) = host.launch(Instant::now()) else {
+            panic!("a host is started for the next lease");
+        };
+        assert_eq!(next.generation, 8);
+        assert!(!host.adopted(), "the next host is this daemon's own");
+
+        let mut started = Host::<()>::default();
+        started.start().unwrap();
+        assert!(!started.adopted());
+        assert!(!Host::<()>::default().adopted());
+    }
+
+    #[test]
+    fn replacing_a_lost_adopted_host_starts_one_that_is_not() {
+        let mut host = restored(7);
+        host.enqueue("r".into(), 1, ());
+        let Recovery::Restart(next) = host.host_exited(7, Instant::now(), false) else {
+            panic!("a request waiting for the lost host needs another one");
+        };
+        assert_eq!(next.generation, 8);
+        assert!(!host.adopted());
     }
 
     #[test]

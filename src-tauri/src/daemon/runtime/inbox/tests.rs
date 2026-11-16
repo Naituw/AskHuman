@@ -1123,6 +1123,57 @@ async fn prewarmed_idle_host_retires_after_drain_without_reconnecting() {
     assert!(state.popup_inbox.lock().unwrap().generation().is_none());
 }
 
+/// A host kept across a live update runs the previous image's windows. It outlives the update for
+/// the requests it held; once it is idle it is not kept warm: it retires and one of this image
+/// takes its place, so the update reaches the window too.
+#[tokio::test]
+async fn a_host_kept_across_a_live_update_is_not_kept_warm_once_it_is_idle() {
+    let state = state();
+    state.draining.store(false, Ordering::SeqCst);
+    state.config.lock().unwrap().general.popup_prewarm = true;
+    // Whatever replaces the host must not become a real process in a test.
+    state.closing.store(true, Ordering::SeqCst);
+    *state.popup_inbox.lock().unwrap() = Host::restore(SavedHost {
+        lease: Lease {
+            generation: 7,
+            token: "saved".into(),
+        },
+        pid: std::process::id(),
+        birth: None,
+    });
+    let (server, client) = tokio::io::duplex(8192);
+    let (read, write) = tokio::io::split(server);
+    let run_state = state.clone();
+    let handler = tokio::spawn(async move {
+        handle_popup_host("saved".into(), BufReader::new(read), write, &run_state).await;
+    });
+    let (read, mut write) = tokio::io::split(client);
+    let mut reader = ipc::MessageReader::new(BufReader::new(read));
+    assert!(matches!(
+        next(&mut reader).await,
+        ServerMsg::PopupHostAccepted { .. }
+    ));
+    assert!(matches!(
+        next(&mut reader).await,
+        ServerMsg::UpdateState { .. }
+    ));
+
+    ipc::write_msg(&mut write, &ClientMsg::PopupHostIdle { generation: 7 })
+        .await
+        .unwrap();
+    assert!(matches!(
+        next(&mut reader).await,
+        ServerMsg::PopupHostIdleAck {
+            generation: 7,
+            keep_warm: false
+        }
+    ));
+    handler.await.unwrap();
+    let host = state.popup_inbox.lock().unwrap();
+    assert_ne!(host.generation(), Some(7), "the old host's lease is gone");
+    assert!(!host.adopted(), "a replacement is this daemon's own host");
+}
+
 #[test]
 fn an_old_popup_connection_cannot_detach_the_reconnected_window() {
     let state = state();

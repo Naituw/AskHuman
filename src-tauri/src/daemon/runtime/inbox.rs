@@ -898,22 +898,32 @@ pub(super) async fn handle_popup_host_supported<R, W>(
                 generation: requested,
             } if requested == generation => {
                 prune_inbox(state);
-                let keep_warm = warm_mode_enabled(state, crate::config::PopupWindowMode::Merged)
+                let warm = warm_mode_enabled(state, crate::config::PopupWindowMode::Merged)
                     && !state.draining.load(Ordering::SeqCst);
-                let empty = {
+                let (answered, keep_warm) = {
                     let mut host = state.popup_inbox.lock().unwrap();
                     let empty = host.requests().is_empty();
+                    // A host kept across a live update runs the previous image's windows. It
+                    // outlives the update for the requests it held; once it is idle it is not
+                    // kept warm but retired, and `prewarm_inbox` below puts one of this image in
+                    // its place.
+                    let keep_warm = warm && !host.adopted();
                     if empty && !keep_warm {
                         retired = host.retire_idle(generation);
                     }
-                    empty && (keep_warm || retired)
+                    (empty && (keep_warm || retired), keep_warm)
                 };
-                if empty {
+                if answered {
                     let _ = tx.send(ServerMsg::PopupHostIdleAck {
                         generation,
                         keep_warm,
                     });
                     if retired {
+                        if warm {
+                            log(&format!(
+                                "popup host generation={generation} was kept across a live update and is idle; replacing it"
+                            ));
+                        }
                         break "idle_retirement".to_owned();
                     }
                 }
@@ -1078,6 +1088,9 @@ pub(super) async fn handle_popup_host_supported<R, W>(
     drop(tx);
     if retired {
         let _ = write_task.await;
+        // A host retired while warm mode is on was a kept one (see the idle report above): the
+        // next one comes from this image. Cold mode and draining start none.
+        prewarm_inbox(state);
     } else if !state
         .recovery
         .as_ref()
