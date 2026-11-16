@@ -529,6 +529,90 @@ fn request(
     (entry, rx)
 }
 
+/// What the daemon does when the CLI caller of a request disconnects (`cli disconnected;
+/// cancelling` in `daemon.log`).
+fn cancel_as_caller_disconnect(state: &ServerState, entry: &RequestEntry) {
+    entry.coordinator.cancel_request("Caller".into(), "caller");
+    state.registry.remove(&entry.request_id);
+}
+
+/// The host table holds the requests a host has to show. A request nobody is waiting for any more
+/// leaves it whichever way it ended: left in, a host that connects later is shown a question that
+/// cannot be answered, and the host counts as busy for as long as it lives (so a live update
+/// keeps it, still running the previous image's windows, and a configuration change cannot
+/// recycle it).
+#[tokio::test]
+async fn a_request_leaves_the_host_table_whichever_way_it_ended() {
+    for caller_disconnected in [false, true] {
+        let state = state();
+        let (entry, _result) = request(&state);
+        if caller_disconnected {
+            cancel_as_caller_disconnect(&state, &entry);
+        } else {
+            entry.coordinator.submit(ChannelResult::cancel("popup"));
+        }
+        prune_inbox(&state);
+        assert!(
+            state.popup_inbox.lock().unwrap().requests().is_empty(),
+            "caller_disconnected={caller_disconnected}"
+        );
+    }
+}
+
+#[tokio::test]
+async fn a_host_that_connects_later_is_not_shown_a_request_its_caller_abandoned() {
+    let state = state();
+    let (entry, _result) = request(&state);
+    cancel_as_caller_disconnect(&state, &entry);
+
+    // What `handle_popup_host_supported` does for a host that has just authenticated.
+    let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
+    prune_inbox(&state);
+    for request in state.popup_inbox.lock().unwrap().requests() {
+        show_entry(&request.value, &tx, &state);
+    }
+    assert!(
+        rx.try_recv().is_err(),
+        "no question for a request nobody awaits"
+    );
+}
+
+/// The host ends a card once, on the first `Cancel` it hears. The popup channel's own, which keeps
+/// the draft (spec `popup-draft-on-cancel`), has to come first; the table's, sent when it drops
+/// the request, is then a no-op for the host.
+#[tokio::test]
+async fn an_abandoned_request_is_cancelled_with_its_draft_kept_before_the_table_drops_it() {
+    let state = state();
+    let (entry, _result) = request(&state);
+    let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
+    let lease = state.popup_inbox.lock().unwrap().start().unwrap();
+    state
+        .popup_inbox
+        .lock()
+        .unwrap()
+        .connect(&lease.token, tx.clone())
+        .unwrap();
+    show_entry(&InteractionEntry::Ask(entry.clone()), &tx, &state);
+
+    cancel_as_caller_disconnect(&state, &entry);
+    prune_inbox(&state);
+
+    let mut cancels = Vec::new();
+    while let Ok(message) = rx.try_recv() {
+        if let ServerMsg::Cancel {
+            request_id,
+            keep_draft,
+            ..
+        } = message
+        {
+            assert_eq!(request_id, entry.request_id);
+            cancels.push(keep_draft);
+        }
+    }
+    assert_eq!(cancels, [true, false]);
+    assert!(state.popup_inbox.lock().unwrap().requests().is_empty());
+}
+
 #[tokio::test]
 async fn each_popup_refreshes_renamed_sessions_even_with_a_cached_title() {
     let state = state();

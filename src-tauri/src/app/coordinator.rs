@@ -486,6 +486,13 @@ impl Coordinator {
         for ch in &inner.channels {
             ch.interrupt_abandoned(&reason);
         }
+        // Like `submit` and the no-surface failure, this is a first terminal, so the request stops
+        // counting as in flight: the popup host table drops it, a live update does not carry it
+        // over, nothing coalesces onto it or attaches a card to it. It is set only now: the host
+        // table is pruned on this flag, and the `Cancel` it then sends (without `keep_draft`)
+        // must come after the popup channel's own, which keeps the draft; the host ends a card on
+        // the first `Cancel` it hears.
+        self.finalizing.store(true, Ordering::SeqCst);
     }
 
     /// Wait for interrupted IM channels to finish their terminal card updates.
@@ -845,6 +852,69 @@ mod tests {
             trace.lock().unwrap().as_slice(),
             ["history", "abandoned:popup", "abandoned:feishu"]
         );
+    }
+
+    /// Notes whether the coordinator already counted as finalizing when the channel heard of an
+    /// abandonment.
+    struct FinalizingProbe {
+        id: &'static str,
+        coordinator: std::sync::Weak<Coordinator>,
+        seen: Arc<Mutex<Vec<(String, bool)>>>,
+    }
+
+    impl Channel for FinalizingProbe {
+        fn id(&self) -> &str {
+            self.id
+        }
+
+        fn start(
+            &self,
+            _request: &AskRequest,
+            _origin: &ConversationOrigin,
+            _sink: Arc<Coordinator>,
+        ) {
+        }
+
+        fn interrupt(&self, _reason: &Interruption) {}
+
+        fn interrupt_abandoned(&self, _reason: &Interruption) {
+            let finalizing = self.coordinator.upgrade().unwrap().is_finalizing();
+            self.seen
+                .lock()
+                .unwrap()
+                .push((self.id.to_string(), finalizing));
+        }
+    }
+
+    /// A caller that went away ends the request like any other first terminal, so the daemon stops
+    /// counting it as in flight (popup host table, coalescing, update handoff). It only does so once
+    /// every channel has heard of it: the popup host table is pruned on this flag, and what the
+    /// table then tells the host (`Cancel` without `keep_draft`) must not overtake the popup
+    /// channel's own `Cancel` that keeps the draft (spec `popup-draft-on-cancel` D4).
+    #[tokio::test]
+    async fn a_caller_cancellation_is_finalizing_once_every_channel_has_heard_of_it() {
+        let coordinator = coordinator_without_history();
+        let seen = Arc::new(Mutex::new(Vec::new()));
+        for id in ["popup", "feishu"] {
+            coordinator.register(Arc::new(FinalizingProbe {
+                id,
+                coordinator: Arc::downgrade(&coordinator),
+                seen: seen.clone(),
+            }));
+        }
+        assert!(!coordinator.is_finalizing());
+
+        coordinator.cancel_request("Caller".into(), "caller");
+
+        assert_eq!(
+            seen.lock().unwrap().as_slice(),
+            [("popup".to_string(), false), ("feishu".to_string(), false)],
+            "no channel hears of the cancellation after the request counts as ended"
+        );
+        assert!(coordinator.is_finalizing());
+        // A second cancellation changes nothing.
+        coordinator.cancel_request("Caller".into(), "caller");
+        assert_eq!(seen.lock().unwrap().len(), 2);
     }
 
     /// A person's decision is not an abandonment: the channels that lost the race are interrupted
