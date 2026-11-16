@@ -38,6 +38,7 @@
 | Cursor | `--model <id>` | **没有单独开关**：强度 / Fast / 上下文已折进模型 id（本机约 270 个） | `cursor-agent --list-models`（等价于 `models` 子命令） |
 | Grok | `--model <id>` | `--reasoning-effort <档位>`（别名 `--effort`） | `grok models`（M15；Grok 另有 `~/.grok/models_cache.json`，本期不读）；输出格式未知，见探测记录 |
 | Pi | `--model <provider/id>` | `--thinking off / minimal / low / medium / high / xhigh / max` | `pi --list-models`（表格，含 `thinking yes/no` 列） |
+| Antigravity | 终端 `agy --model <id>`（也接受 `--model=<id>`）；App 路线 `agentapi new-conversation --model=<id>` | **没有单独开关**：强度折在模型 id 里（`-low` / `-medium` / `-high`） | `agy models`（只列清单，不起会话、不产生模型调用） |
 
 - **「实际在用的模型」**：`agents::session_info::resolve(kind, sessionId)` 已能从各家会话记录里读出 `model` 与 `reasoning`（只读头尾各 ≤ 1 MB）。
   现在只给 Mac 端 GUI 的悬浮卡用；每帧都读太重，需要按会话缓存。
@@ -197,6 +198,7 @@ P2 开工前（2026-10-27，用户经 AskHuman 回答）：
 | Cursor | `cursor-agent --list-models`（已解析的可执行文件 + 固定参数，走现有的登录 shell 探测通道，超时放宽到 8 秒）；去掉零宽字符与 `(default)` 标记 | 无（M8） | `cli-config.json` 的 `model.displayName`（只作副标题） |
 | Grok | `grok models`（M15，同 Cursor 的通道）：`Available models:` 标题下的 `*` / `-` 项目符号行，id 即显示名；`Default model:` 一行给出「默认所指」 | **本期没有强度行**（M20）：样本不带档位，CLI 也不公布合法值，猜一个固定集合会把 Agent 不认的档位传下去；之后拿到带档位的输出再加 | `Default model:` 一行，其次 `config.toml` 的 `[models] default` |
 | Pi | `pi --list-models`（同 Cursor 的通道）；模型 id 取 `provider/model` | 仅 `thinking = yes` 的模型有：`low / medium / high`（M17） | `settings.json` 的 `defaultProvider` + `defaultModel` |
+| Antigravity | `agy models`（同 Cursor 的通道）；平铺清单，不分组（antigravity-deep-integration D15）；没有 `agy` 的机器只剩 `agentapi` 文档里的别名 `flash_lite` / `flash` / `pro`（仅 App 路线认） | 无（档位折在 id 里） | 没有可靠来源：`agy models` 不标默认；App 路线不传模型时实测落在 `gemini-3.8-flash-tiered` |
 
 通用规则：
 
@@ -218,6 +220,7 @@ P2 开工前（2026-10-27，用户经 AskHuman 回答）：
 | Cursor | `--model <id>` | — |
 | Grok | `--model <id>` | `--reasoning-effort <档位>` |
 | Pi | `--model <provider/id>` | `--thinking <档位>` |
+| Antigravity | App 路线 `agentapi new-conversation --model=<id>`；终端路线 `agy --model <id>` | — |
 
 - 手机只选强度、模型留「默认」：只加强度开关（`defaultModel.efforts` 里有这一档才允许，M9）。
 - M10 的触发条件：强度留「默认」、模型是明确选的、该模型声明了档位、而 Agent 配置里的默认强度不在其中 → 显式传该模型的 `defaultReasoningEffort`。

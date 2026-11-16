@@ -79,7 +79,35 @@ AskHuman 用 Antigravity 宿主给出的**根会话 ID** 区分会话：
 
 - MCP 模式下，每次工具调用都带宿主注入的会话信息，`show_last` 与历史按会话作用域，子会话归到根会话。
 - CLI 模式下，环境里的会话 ID 只作候选，AskHuman 仅在该会话已由生命周期 hook 登记为活会话时才采信；否则 `AskHuman --caller-agent antigravity --show-last` 会拒绝项目级回退，请让人类重新确认此前问答。
-- 子 Agent 暂时各自作为一个会话出现，标题为空；如何归并还在决定中。
+- 带子 Agent 的任务只显示根会话一行：AskHuman 从父会话的记录里认出子 Agent，把它们的活动并进根会话；结束确认与插话也都对根会话生效。
+
+## 结束确认、插话与 Watch
+
+- **结束时确认**：设置 → Agents → Antigravity 里打开，或 `AskHuman agents stop antigravity on`；默认关闭。Agent 自然结束一轮时，AskHuman 弹出确认卡：继续（可附一段后续指令）或结束；出错、取消或 24 小时无人答复都按结束处理。带子 Agent 的任务要等整棵任务都结束后才问一次，子 Agent 自己不会弹卡。App 与 `agy` 通用；改这个开关会重写插件文件（规则文件随之重新生成）。
+- **插话**：对工作中的会话（App 与 `agy`），在 Mac 控制台、托盘、手机或 IM 的 `/msg` 里发消息，会在 Agent 下一次调用模型之前送达；Agent 正在跑一个很长的工具调用时要等它结束。对空闲或已结束的 App 会话发消息，经 AskHuman 的 sidecar 送进原会话；`agy` 会话没有这条通道。
+- **Watch**：手机与 Mac 控制台实时显示会话里的回复和工具步骤。部分模型带有「思考」文字，目前不显示。
+
+## 创建任务
+
+Antigravity 也出现在新任务入口里（手机、IM `/new`、Mac 新任务窗口）。有两条路线，**设置 → Agents → Antigravity** 里的「默认运行方式」只决定先用哪一条，用不了时用另一条：
+
+- **App**（仅 macOS）：任务在 Antigravity App 里创建并自动发送。App 没有「在指定文件夹里新建会话」的公开入口，所以 AskHuman 用 App 自己的 **sidecar** 机制：每个文件夹一个小帮手，登记在 `~/.gemini/config/sidecars/`，名字都以 `askhuman-` 开头，在 App 里显示为各自的项目。需要先在设置里**一次性允许「AskHuman 管理 Antigravity sidecar」**；没允许时会明确拒绝，不会偷偷创建。
+- **agy（终端）**：打开系统终端，运行 `agy -i <任务>`。`agy` 只对你信任过的目录报告工作目录，没信任的目录里会话仍会出现，但不知道所在文件夹。
+
+权限：
+
+- **Agent 默认**（App 路线）：任务只能做该文件夹 sidecar 里已允许的操作——AskHuman 自己的工具，以及你在设置里为该文件夹添加的规则，其余自动拒绝。你在 Antigravity 里已有的授权不会被改动。
+- **YOLO**：App 路线为该文件夹建一个名字带「YOLO」的宽授权 sidecar（命令、读写文件、联网与 MCP 都不再询问），设置页标为「宽授权」，可以一键移除；`agy` 路线加 `--dangerously-skip-permissions`。
+
+管理 sidecar：设置页的 sidecar 列表（连接状态、规则、移除），或命令行：
+
+```bash
+AskHuman agents sidecars
+AskHuman agents sidecars remove <id>
+AskHuman agents sidecars remove --all
+```
+
+最多保留 20 个。Antigravity 里已经创建的会话由 Antigravity 管理，AskHuman 不会替你删除。任务入口里的模型清单就是 `agy models` 的列表（没装 `agy` 时只有 Flash Lite / Flash / Pro 三个别名）。
 
 ## 平台与客户端范围
 
@@ -91,14 +119,10 @@ AskHuman 用 Antigravity 宿主给出的**根会话 ID** 区分会话：
 
 Antigravity 目前没有以下 AskHuman 集成：
 
-- Stop 结束确认
-- 插话与空闲消息
-- Watch
 - 原生权限拦截
 - 上下文恢复 Hook
-- 手机 / IM 新建任务与 Fork
-
-当前可用的是提问、按会话恢复历史、生命周期追踪（控制台状态与标题）以及下一任务交接。Stop 确认、插话、Watch 与新建任务已有设计，分期实现。
+- Fork
+- Windows，以及 Linux 上的 App 新建任务（App 路线仅 macOS）
 
 ## 安全切换模式与迁移
 

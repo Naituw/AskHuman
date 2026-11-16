@@ -1,6 +1,6 @@
 # Agent 插话（Interject）：工作中主动向 agent 发消息
 
-> 状态：已实现（Claude Code / Codex / Cursor / Pi；Grok 不支持）。
+> 状态：已实现（Claude Code / Codex / Cursor / Pi / Antigravity；Grok 不支持）。
 > 实现计划见 `docs/plans/agent-interject.md`。
 
 > **实现期补充（2026-07）**：GUI composer、状态窗口、托盘和 IM `/msg` 均已接入；发送入口收敛为
@@ -17,6 +17,16 @@
 > **Pi 补充（2026-08-19）**：受管 Pi Extension 在 `tool_call` 调用同一 `__agent-hook pi activity`
 > 轮询，daemon 的 deny 结果转换为 Pi 原生 `{block:true, reason}`。其队列、等待、附件和阅读回执语义
 > 与其它支持家族相同；完整设计见 `docs/plans/pi-agent-integration.md`。
+
+> **Antigravity 补充（2026-11-16）**：注入点是插件的 `PreInvocation` hook（每次模型调用前，不是工具前）。
+> 队列里有消息，hook 就输出 `{"injectSteps":[{"userMessage":…}]}`，消息在下一次模型调用前进入会话；composer
+> 打开时 hook 阻塞等待（`timeout` 86400 秒，实测暂停 38 秒后消息完整送达）。粒度是下一次模型调用，一条长工具
+> 调用期间不送达。注入文本沿用本规格的 `[USER INTERJECTION]` 包装，transcript 里是 `SYSTEM_SDK` 的 `USER_INPUT`，模型在
+> 下一步里回应（G3、G4 实测）。App 与 `agy` 会话的工作中注入行为一致；App 的空闲／已结束会话改走 sidecar 的
+> `agentapi send-message`（[结果与恢复 §5.3–5.4](agent-lifecycle-results-and-recovery.md)），宿主把这条内容当
+> `SYSTEM_MESSAGE` 交给模型，所以前面另加固定的 `[USER MESSAGE]` 包装；`agy` 会话没有空闲通道。
+> 带子 Agent 的会话只有根一行，消息排给根（D17）。完整设计与证据见
+> [Antigravity 深度集成](antigravity-deep-integration.md) §10。
 
 ## 1. 需求
 

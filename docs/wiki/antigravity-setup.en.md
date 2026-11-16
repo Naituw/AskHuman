@@ -79,7 +79,35 @@ AskHuman tells sessions apart by the **root conversation ID** the Antigravity ho
 
 - In MCP mode every tool call carries the conversation the host injects, so `show_last` and history are scoped to the conversation, and a sub-agent belongs to its root.
 - In CLI mode the conversation ID in the environment is only a candidate. AskHuman trusts it only for a conversation a lifecycle hook has registered as live; otherwise `AskHuman --caller-agent antigravity --show-last` refuses a project-wide fallback, so ask the human to confirm the earlier exchange again.
-- Sub-agents currently appear as sessions of their own, without a title. How to group them is still being decided.
+- A task with sub-agents shows one row, for the root conversation: AskHuman recognises the sub-agents from the parent's transcript and folds their activity into the root, and Stop confirmation and interjection apply to the root too.
+
+## Stop confirmation, interjection and Watch
+
+- **Confirm on finish**: switch it on in Settings → Agents → Antigravity, or with `AskHuman agents stop antigravity on`; it is off by default. When the agent finishes a turn on its own, AskHuman raises a confirmation card: continue (optionally with a follow-up instruction) or end. An error, a cancellation or 24 hours without an answer all count as end. A task with sub-agents is asked once, after the whole task has finished; a sub-agent never raises a card of its own. It works in the app and in `agy`, and changing the switch rewrites the plugin files (the rules file is regenerated with it).
+- **Interjection**: for a working conversation (app and `agy`), a message sent from the Mac console, the tray, the phone or IM `/msg` reaches the agent before its next model call; while the agent is running one long tool call it waits for that call to finish. A message to an idle or finished app conversation goes through an AskHuman sidecar into the original conversation; `agy` conversations have no such path.
+- **Watch**: the phone and the Mac console show the conversation's replies and tool steps live. Some models carry "thinking" text, which is not shown yet.
+
+## Creating tasks
+
+Antigravity also appears in the new-task entry points (the phone, IM `/new`, the Mac New Task window). There are two routes, and "Default launch method" in **Settings → Agents → Antigravity** only chooses which is tried first; when it cannot be used, the other one is taken:
+
+- **App** (macOS only): the task is created in the Antigravity app and sent automatically. The app has no public way to open a conversation in a folder of our choosing, so AskHuman uses the app's own **sidecar** mechanism: one small helper per folder, registered under `~/.gemini/config/sidecars/` with names starting `askhuman-`, which the app shows as projects of their own. You first have to **allow "AskHuman manages Antigravity sidecars" once** in Settings; until then AskHuman refuses clearly and creates nothing in secret.
+- **agy (terminal)**: opens the system terminal and runs `agy -i <task>`. `agy` reports its working directory only for folders you trusted; in an untrusted folder the session still shows up, but without its folder.
+
+Permissions:
+
+- **Agent default** (App route): the task can only do what the folder's sidecar allows — AskHuman's own tools plus the rules you add for that folder in Settings; everything else is refused automatically. Grants you already made inside Antigravity are not touched.
+- **YOLO**: on the App route AskHuman creates a wide-grant sidecar for the folder whose name carries "YOLO" (commands, file reads and writes, network and MCP are no longer asked about), marked "wide grant" in Settings and removable with one click; on the `agy` route it adds `--dangerously-skip-permissions`.
+
+Manage sidecars from the sidecar list in Settings (connection state, rules, remove), or from the command line:
+
+```bash
+AskHuman agents sidecars
+AskHuman agents sidecars remove <id>
+AskHuman agents sidecars remove --all
+```
+
+At most 20 are kept. Conversations already created inside Antigravity belong to Antigravity, and AskHuman does not delete them for you. The model list in the entry points is the list of `agy models` (without `agy` it is just the three aliases Flash Lite / Flash / Pro).
 
 ## Platform and client scope
 
@@ -91,14 +119,10 @@ AskHuman tells sessions apart by the **root conversation ID** the Antigravity ho
 
 Antigravity currently has no AskHuman integration for:
 
-- Stop confirmation
-- interjection and idle messages
-- Watch
 - native permission interception
 - context recovery hooks
-- task creation from the phone or IM, and Fork
-
-The integration can ask, recover history by conversation, track lifecycle (console status and title), and hand off the next task. Stop confirmation, interjection, Watch and task creation are designed and will arrive in phases.
+- Fork
+- Windows, and App task creation on Linux (the App route is macOS only)
 
 ## Switching modes safely, and migration
 

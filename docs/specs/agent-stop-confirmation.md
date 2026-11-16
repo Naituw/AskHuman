@@ -10,6 +10,15 @@
 > `pi.sendUserMessage`。错误、取消、过期裁决和 session/generation 不匹配均 fail-open。Pi 没有 MCP
 > mode，preference 仅在 CLI mode 激活；完整设计见 `docs/plans/pi-agent-integration.md`。
 
+> **Antigravity 补充（2026-11-16）**：Antigravity（App 与 `agy` 共用一个托管插件）的 `Stop` hook
+> （`__stop-hook antigravity track`，开关打开时再加 `confirm`）在根会话、`terminationReason == NO_TOOL_CALL`、
+> `fullyIdle == true` 时发确认卡。带子 Agent 的会话按 D17 归并成一棵树：根在整棵树都空闲且没有未读的跨会话
+> 消息后才算结束，hook 在门上等到那时（`stop_gate` 查询，见 [Antigravity 深度集成](antigravity-deep-integration.md)
+> §8–§9）。继续 = 输出 `{"decision":"continue","reason":…}`，宿主把 `reason` 当系统消息注入；一个会话里连续继续 8 次
+> 都被接受。开关 `AskHuman agents stop antigravity [on|off]`，默认关，改它会重写插件 hooks。Stop hook 契约是
+> 退出码 0 + 空 stdout = 不干预，所以任何错误或 24 小时无人答复都放行（fail-open）。卡片没人回答时，被杀掉的 hook
+> 不会再报回合结束，registry 保持「工作中」，直到 30 分钟的 working 兜底降为空闲（真机 V24）。
+
 > **2026-11-02 扩展**：原有开关现统一为「结束／出错时确认」，最终失败卡由 daemon 的普通 Ask 服务处理；
 > 用户已确认的行为、各家错误能力和接续边界见 [最终失败确认](agent-failure-confirmation.md)。
 > 下文正常 Stop 的原生裁决语义不因此扩展到错误 Hook。
@@ -36,8 +45,9 @@
 | Cursor | `stop`，输入含 `status`、`loop_count`，通用字段含 `transcript_path` | 返回 `followup_message`；`loop_limit: null` 可取消次数上限 | Hook 会收到 `aborted/error`，但 `followup_message` 仅在 `completed` 时消费 | 支持自然完成 |
 | Grok | `Stop` 是被动事件 | stdout 被忽略；只有 `PreToolUse` 可阻塞 | `StopFailure` 同样被动 | 首期明确不支持 |
 | Pi | Extension `agent_end` + `agent_settled` | `pi.sendUserMessage` | 只接受 `stopReason="stop"`；其它原因放行 | 支持自然完成 |
+| Antigravity | `Stop`，载荷含 `terminationReason`、`fullyIdle`、`executionNum`，不含最后一条回复（读 transcript） | 输出 `decision: "continue"` + `reason`（作为系统消息注入） | `ERROR` 走最终失败卡；`MAX_*` 走「未完成」；其余静默 | 支持自然完成（整棵会话树空闲后） |
 
-当前在 **Claude Code / Codex / Cursor / Pi 的自然完成**时发确认卡。
+当前在 **Claude Code / Codex / Cursor / Pi / Antigravity 的自然完成**时发确认卡。
 正常 Stop handler 不对错误或用户取消输出 continuation，也不尝试外部 `resume`。最终失败另由统一错误卡处理；事件来源沿用生命周期与已接入的原生终态：
 
 - Claude `StopFailure → turn-end`，立即置空闲；
@@ -58,7 +68,7 @@
 
 ### 3.1 开关与支持范围
 
-- Claude Code / Codex / Cursor 各自一个“结束时确认”开关且默认关闭；Pi 同样有独立开关，默认开启。
+- Claude Code / Codex / Cursor / Antigravity 各自一个“结束时确认”开关且默认关闭；Pi 同样有独立开关，默认开启。
 - Stop preference 在产品语义上独立于 lifecycle preference 和权限审批，并跨 integration mode 切换
   保留；但 active confirmation 只在 CLI/MCP mode 安装，None 下暂停并隐藏，重新集成时按原
   preference 恢复。Lifecycle 自身是自动集成拥有的可选 capability，不允许脱离 active mode 安装。

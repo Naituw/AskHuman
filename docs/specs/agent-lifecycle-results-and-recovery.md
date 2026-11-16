@@ -140,7 +140,8 @@ Codex 保留 `turn_id`，Grok 保留 `promptId`；ID 是会话内不透明标识
 | Cursor Desktop | 扩展用户私有控制桥，调用原会话原生消息提交 | 安装文件存在 `composerChatService.submitChatMaybeAbortCurrent`；仍需版本契约、窗口／会话归属和原子空闲检查；不是现成已验证功能。空闲与「已结束」的聊天都可发送，Mac 控制台也能直发（§5.4） |
 | Pi | 受管扩展增加空闲时的消息接收，用原生 `pi.sendUserMessage` | 扩展以真实 session/generation 注册连接；会话关闭／切换时撤销，重连不能重复提交 |
 | 普通 Codex／Claude／Cursor／Grok 终端会话 | 首版保留状态与结果观察 | 现有工具前插话无法唤醒空闲进程；没有接入通道时显示原因 |
-| Antigravity | 首版无控制入口 | 尚无 AskHuman 生命周期／控制适配器 |
+| Antigravity App | 全局 sidecar 的 `agentapi send-message`（任一在线 sidecar 都能送；没有在线 sidecar 时现建无授权的 `askhuman-ctl` 并拉起 App） | 会话属于 App；registry 为空闲／已结束时才走这条（工作中走 `PreInvocation` 注入）；宿主把 `send-message` 的内容当 `SYSTEM_MESSAGE` 交给模型，所以内容前另加固定的 `[USER MESSAGE]` 包装；自己项目的 sidecar 约 0.1 秒送达，现建控制 sidecar 约 4 秒；只在 macOS、App 已安装、用户已允许 AskHuman 管理 sidecar（`antigravityDesktop.manageSidecars`）时提供，不满足时不能发送并说明原因（antigravity-deep-integration §10.2） |
+| Antigravity `agy`（终端） | 无控制入口 | 没有可寻址的通道；工作中仍可经 `PreInvocation` 注入，空闲时显示原因 |
 
 Cursor 的公开 SDK 具有独立持久化和 resume 能力，不能据此认定能接管已打开的 IDE 聊天。
 首版不另开 CLI／SDK 进程替代原桌面会话，也不向终端盲打按键。Cursor 消息控制不应依赖
@@ -160,7 +161,7 @@ Cursor Desktop 聊天没有会退出的进程：registry 把它标为「已结�
 - **Mac 控制台**：具备原生续聊通道的会话（空闲或已结束）此前只提示「回到原始 Agent 界面发送」——控制台的输入框走的是
   「排队等下一次工具调用」，空闲聊天没有下一次。现在 daemon 给订阅快照里可发的聊天标 `canMessage: true`
   （手机使用同一能力判定生成的 `canInterject`，现有 App 可直接显示输入栏），控制台经 `agents_message`（`ClientMsg::AgentMessage`）
-  把消息直接送进原聊天，支持 Codex Desktop、Cursor Desktop 与在线 Pi Extension。
+  把消息直接送进原聊天，支持 Codex Desktop、Cursor Desktop、在线 Pi Extension 与 Antigravity App 会话（经 sidecar）。
   发送者在回执里记为 `mac-console`，手机网关对它没有反应。
 - **IM**：显式编号、唯一关注直发、目标选择卡和一次性输入卡采用同一能力校验，允许通道可用的空闲／
   已结束会话。原生发送先显示提交中，再回最终结果；操作来源为 `im:<channel>`。工作中 Hook 消息保留队列与已阅读回执。

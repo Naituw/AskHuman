@@ -95,7 +95,7 @@ AskHuman --history    # 打开回复历史（加 --all 看全部项目）
 - **手动集成**：复制参考提示词，自行加入你的 Agent 全局提示词（如 Cursor Rules / `AGENTS.md` / `CLAUDE.md`）。
 - **自动集成**：为每个受支持的 Agent 选择集成模式。CLI 模式安装该 Agent 对应的指令产物，并在可用时安装超时 Hook，避免等待你回应期间被取消；MCP 模式改为安装对应指令产物与 MCP server 配置。
 
-Antigravity 在 Unix 上支持 **未集成**、**CLI**、**MCP** 三种互斥模式，推荐 **MCP**，也可选择 **CLI**。集成会安装一个 Antigravity 插件（交互规则、MCP server 与生命周期 hooks），App 与 `agy` 共用，会话会出现在 Agent 控制台；具体客户端是否读取规则、能否执行所选调用方式，仍取决于该客户端。Windows 上目前会明确拒绝 Antigravity 集成变更。配置路径、会话限制和未支持能力见 [Antigravity 集成](docs/wiki/antigravity-setup.md)。
+Antigravity 在 Unix 上支持 **未集成**、**CLI**、**MCP** 三种互斥模式，推荐 **MCP**，也可选择 **CLI**。集成会安装一个 Antigravity 插件（交互规则、MCP server 与生命周期 hooks），App 与 `agy` 共用，会话会出现在 Agent 控制台，并支持结束确认、插话、Watch，以及从手机、IM 或新任务窗口创建任务（App 经 AskHuman 管理的 sidecar，或在终端用 `agy`）；具体客户端是否读取规则、能否执行所选调用方式，仍取决于该客户端。Windows 上目前会明确拒绝 Antigravity 集成变更。配置路径、会话限制和未支持能力见 [Antigravity 集成](docs/wiki/antigravity-setup.md)。
 
 ### 四、配置沟通渠道
 

@@ -1,8 +1,8 @@
 # Antigravity 深度集成：生命周期、Stop 确认、插话、Watch 与手机 / IM 新建任务
 
-> 状态：2026-11-16 起草，经用户两轮审阅后**规格已定**：§3.2 的默认决策整体确认（P1–P11、P13、P15），其余由 D11–D16 确认或取代（§3.1、§20）。
-> 实施计划（`docs/plans/antigravity-deep-integration.md`）已批准；门 G1 的真实验证已完成（附录 A.2），暴露的子会话设计缺口 **D17 待用户决定**（§8 L4）。
-> 本文只含规格与调研结论，不含代码，也不改变现有行为。
+> 状态：2026-11-16 起草，经用户两轮审阅后**规格已定**：§3.2 的默认决策整体确认（P1–P11、P13、P15），其余由 D11–D17 确认或取代（§3.1、§20）。
+> 实施计划（`docs/plans/antigravity-deep-integration.md`）已批准，**P1–P4 已实现**，门 G1–G4 的真实验证已做完（附录 A.2–A.6）；子会话缺口按 **D17 = A「归并成树」**实现（§8 L3 / L4）。
+> 仍未验证的项见 §17，需要你在电脑前亲自验收的项见 §18。本文是规格与调研结论，不含代码；标有「实现」「实测」的段落与代码保持一致。
 > 范围：Antigravity App（macOS）与 Antigravity CLI（`agy`）。
 > 落地后取代 [antigravity.md](antigravity.md) 的 §4（无可信会话身份）、§5–§6（共享规则所有权与模式切换，改为插件所有权）与
 > §7（支持边界）；该文其余约束（三模式互斥、MCP `timeoutSeconds`、配置文件的链接与所有者策略）继续有效。
@@ -74,6 +74,7 @@
 | D14 | YOLO 确认（2026-11-16） | **不加二次确认**：只用 `/new` 现有的权限卡（YOLO 项自带危险样式与说明）；YOLO sidecar 的显示名带「YOLO」，设置页标注宽授权并可一键移除（§12.4） |
 | D15 | 模型清单形态（2026-11-16） | 平铺列表（同 Cursor）：`agy models` 的全部条目，超过 12 项手机端自带搜索，不出强度行；不从 id 后缀猜「模型 + 档位」分组（§12.9） |
 | D16 | IM 的模型步骤（2026-11-16） | 沿用现状：IM `/new` 不选模型（所有 Agent 一致），IM 创建的 Antigravity 任务用默认档；给所有 Agent 的 IM 加模型步骤以后另开一项（§12.9） |
+| D17 | 带子 Agent 的会话（2026-11-16） | **A 归并成树**（用户选了我推荐的项）：子会话不是独立会话，归并进启动它的根会话；根会话的回合在整棵树都 `Stop(fullyIdle:true)` 且没有未读的跨会话消息时才算结束；Stop 确认卡由根出，Stop 的 hook 在门上等到那时（§8 L3 / L4、§9）。已实现（P3） |
 
 ### 3.2 默认决策（我据调研提出）
 
@@ -117,10 +118,12 @@
   信任列表按**符号链接解析后的路径**比较：macOS 上写 `/tmp/x` 不生效（工作目录被解析成 `/private/tmp/x`，日志仍是 `loaded 0 …`），要写 `/private/tmp/x`。〔`agy` 实测，P1〕
   `agy` 的 hook 进程：父进程是该会话自己的 `agy`；环境带 `ANTIGRAVITY_CONVERSATION_ID`、`ANTIGRAVITY_LS_ADDRESS`、`PLUGIN_ROOT`；`transcriptPath` 在 `~/.gemini/antigravity-cli/brain/<会话>/.system_generated/logs/`；
   `Stop` 触发时 transcript 已含最终回复。〔`agy` 实测，G1 T1c〕
-  **全局**插件：隔离 HOME 里 `agy plugin list` 能识别 AskHuman 生成的全局插件（`askhuman (enabled)`，`1 rule, 1 MCP server, 1 hook`）；它的 hooks 在**会话**里是否触发没验——
-  P1 的会话实测用的是同内容的工作区级副本（V3、V22；附录 A.3）〔未验证〕。
+  **全局**插件：隔离 HOME 里 `agy plugin list` 能识别 AskHuman 生成的全局插件（`askhuman (enabled)`，`1 rule, 1 MCP server, 1 hook`）；**它的 hooks 在 `agy` 会话里也触发**——
+  G4 里 `SessionStart`、`PreInvocation`、`Stop` 都由 AskHuman 的处理器接住，会话进注册表、带 `agy` 进程的 pid（V3、V22；附录 A.6）。〔`agy` 实测，G4〕
+  **`agy` 在没有信任的目录里不报目录**：G4 里载荷的 `cwd` 是空串、`workspacePaths` 是空数组（`agy` 自己摘要库里该会话的 `workspace_uris` 也为空）；在 git 仓库里、没信任时一样（注册表拿不到目录）；
+  用 `--settings` 的 `trustedWorkspaces` 信任后，`cwd` 是解析后的 `/private/tmp/…` 路径。所以 `agy` 会话的目录不能只靠 hook，AskHuman 启动的任务由启动 id 补上（§12.8）。〔`agy` 实测，G4〕
   `agy plugin disable askhuman` / `enable askhuman` 写 `config.json` 的 `plugins.askhuman.enabled`（`false` / `true`），AskHuman 的只读检测读的正是这个键。〔`agy` 实测，P1〕
-- `timeout: 86400` 被接受，阻塞 40 秒被如实等待。〔实测〕整 24 小时〔未验证〕。
+- `timeout: 86400` 被接受，阻塞 40 秒被如实等待；Stop 确认卡让 hook 空等了 267 秒（无人应答，V24）仍在等，直到被手动结束。〔实测〕整 24 小时〔未验证〕。
 
 载荷（stdin，camelCase）：公共字段 `conversationId`、`workspacePaths`、`cwd`（Agent 的工作目录，不是 hook 进程的）、`transcriptPath`、
 `artifactDirectoryPath`、`modelName`、`lastUserInput`、`hookEventName`；`PreInvocation` / `PostInvocation` 另有 `invocationNum`、
@@ -155,13 +158,15 @@
 | `Stop` | 无操作（会话正常结束） | `{"decision":"continue","reason":"…"}` 让会话继续，`reason` 以系统消息注入（transcript 里是 `SYSTEM_MESSAGE`），`executionNum` 递增；退出码 1 被忽略 |
 
 `allow`、`permissionOverrides`、`overwrite` 都不会预先批准原生权限提示（§13）。
-续跑次数有上限：执行器配置里有 `max_stop_hook_continuations`（来自 LS 二进制字符串，**未见文档**，默认值未知，〔私有〕，V2）。
+续跑次数有上限：执行器配置里有 `max_stop_hook_continuations`（来自 LS 二进制字符串，**未见文档**，〔私有〕）。**G3 实测（V2）：连续 8 次 `continue` 都被接受（`executionNum` 0–7），第 9 次是实验 hook 自己没再续，没碰到上限**；
+续跑期间每次 `Stop` 的 `continuationActive` 都是 `false`，不能拿它判断「这是续跑」。
+`agy` 对这两种输出的处理与 App 相同〔`agy` 实测，G4〕：Stop `continue` 的 `reason` 在 transcript 里是 `SYSTEM_MESSAGE`（`Stop hook blocked termination: …`），模型随即再答一次，`executionNum` 递增；`PreInvocation` 注入的消息是 `SYSTEM_SDK` 的 `USER_INPUT`（`[USER INTERJECTION] …`），模型在下一步里回应。
 
 ### 4.2 MCP、会话元数据与进程环境
 
 - MCP `tools/call` 的 `params._meta` 带 `antigravity.google/conversation_id`、`…/root_conversation_id`、`…/artifacts_dir`、`progressToken`。〔App 实测〕
   子会话的调用另带 `…/parent_conversation_id`：`conversation_id` 是子会话自己，`parent_conversation_id` 与 `root_conversation_id` 指向父 / 根（T2 里两者相同）。〔App 实测，G1〕
-  `agy` 的同类字段〔文档：CLI 1.4.4 起带 root id；未实测，V5〕。
+  `agy` 的调用同样带这些键〔文档：CLI 1.4.4 起带 root id〕：G4 里 `agy` 会话中模型自己调了一次 `whats_next`，AskHuman 的历史把这次提问记到该 `agy` 会话 ID 与它的目录（V5）。〔`agy` 实测，G4〕
 - 插件里的 MCP server **以工作区为单位启动，不随会话结束**：T2 的会话一开始就启动，T3 的新会话复用同一个进程（父进程是共享的 `language_server`）。
   `initialize` 里宿主自称 `antigravity-client` v1.0.0、协议 `2025-11-25`，并声明 `elicitation`（form / url）能力。server 启动时宿主写
   `~/.gemini/antigravity/mcp/<插件>_<server>/<tool>.json`（工具发现文件），server 退出后文件仍留着。〔App 实测，G1〕
@@ -192,11 +197,16 @@
   `send-message [--title=] <recipient_id> <content>`。`new-conversation` **立即**返回 `{"response":{"newConversation":{"conversationId":"…"}}}`；
   会话的工作区就是该 sidecar 的 `workspace_uris`；不传 `--model` 时实测用的模型是占位 ID M322，与显式指定的 `gemini-3.8-flash-low`（M320）同属 Flash 族
   （LS 二进制里二者映射到同一个基础模型〔私有〕），据此推断是 Gemini 3.8 Flash 的另一个档位，而不是 `agy models` 清单里排在前面的 Gemini 4 / Claude 系列。〔实测 + 推断〕
+  **G2 实测**（以 hook 报告的 `modelName` 为准，AskHuman 的会话信息里能看到）：不传 `--model` → `gemini-3.8-flash-tiered`；别名 `flash` → `gemini-3.8-flash-tiered`，`flash_lite` → `gemini-3.5-flash-lite`；
+  显式 id `gemini-3.8-flash-low` / `-medium` / `-high` 与 Pro 级的 `gemini-4-hydrogen-low` 都被接受，`modelName` 与所选 id 一致；`pro` 别名没试（对应 Pro 级，计费高）。
+  热注册（清单写入到 sidecar 报到）0.2–7 秒不等，从发起创建到拿到会话 ID 约 2–3.4 秒（G2 的 6 次创建）。〔实测〕
   调用 `agentapi` 本身不需要任何 `access_grants`。〔实测〕
   `agentapi` 离开 sidecar 的环境就不能用：直接在终端运行 `agentapi get-conversation-metadata <id>` 得到 `Unauthenticated: missing CSRF token`
   （sidecar 环境里带着宿主发的受限令牌，AskHuman 不读不记）。`ANTIGRAVITY_AGENTAPI_EXE` 指向的是 `language_server` 本体，要用 PATH 里的 `agentapi`。
   sidecar 事件文件 `sidecar_data/<id>/events/*.json` 里的 `commandInvocationTimestampMs` 是 sidecar **进程的启动时间**（同一进程的各事件值相同），不是每条命令的时间。〔实测，G1〕
 - 任意 sidecar 的 `send-message` 能唤醒**另一个 sidecar 创建的**空闲会话（跨项目）。〔实测〕用户自建会话与 `agy` 会话〔未验证，V11〕；对工作中会话的语义〔未验证，V10〕。
+  **G3 实测**：AskHuman 的载体顺序（会话自己目录的 sidecar → `askhuman-ctl`（按需建）→ 任意在线 sidecar）下，有自己的 sidecar 时约 0.1 秒送达，没有可用 sidecar 时现建控制 sidecar 再送达约 4 秒。
+  **Antigravity 把 `send-message` 的内容当 `SYSTEM_MESSAGE` 交给模型**（原文写着 not actually sent by the user），模型分不清是不是用户本人说的，所以 AskHuman 在内容前加固定的 `[USER MESSAGE] The user sent you the message below…` 包装（`prompts.rs`）。〔实测〕
 - `allows_user_interactions:false` 时，未被授权的动作自动拒绝。〔实测〕宽授权（`command(*)`、`read_file(*)`、`write_file(*)`、`read_url(*)`、`mcp(*)`）的 sidecar
   无人值守跑通了一个联网命令。〔实测〕
 - `config.json` 同时被 App 写入。用**非原子**方式（截断再写）改它，LS 日志出现过两次瞬时的 `failed to parse user config`。〔实测〕
@@ -214,11 +224,12 @@
 - hook 的父进程就是该会话自己的 `agy` 进程（可做存活判断）；hooks 继承启动它的环境，launch-id 环境变量能传到 hook。〔实测〕
 - CLI 的终端沙箱默认关闭，`run_command` 能连 daemon socket 并运行 AskHuman。〔实测，`--dangerously-skip-permissions` 下〕
 - `agy acp`（ACP 服务）与交互里的 `/fork` 存在。〔文档〕取消 / Ctrl-C 的 hook 行为〔未验证，V3〕。
+- `agy -i '-reply …'`：以 `-` 开头的任务文本是 `-i` 的值（单个 argv），完整到达模型（V15，G4）。首次引导屏（配色 → 数据使用同意）出现时，`-i` 的任务照常执行；引导屏会吞掉输入，期间发 `/exit` 只会走到下一屏，要靠终止进程收场。AskHuman 与实验都没有替用户点同意。〔`agy` 实测〕
 - **`agy models`** 只列清单、不起会话：stdout 每行「id、制表符、显示名」（本机 18 行，如 `gemini-4-argon-high` ↔ `Gemini 4 Argon (High)`、`gemini-3.8-flash-low` ↔ `Gemini 3.8 Flash (Low)`、
   `claude-sonnet-5-5-medium` ↔ `Claude Sonnet 5.5 (Medium)`、`gpt-oss-120b-medium` ↔ `GPT-OSS 120B (Medium)`），stderr 一行 `Fetching available models...`，没有「默认」标记，约 4 秒，会联网取清单。〔实测〕未登录时的表现〔未验证，V21〕。
   强度档位（Low / Medium / High / XHigh）已折在 id 与显示名里，没有独立的强度开关；个别条目不符合这个规律（`gemini-pro-orchestrator-g1-pro`、只有 Medium 的 `gpt-oss-120b-medium`）。〔实测〕
   清单是否随账号与套餐而变〔推断，未验证〕。运行任何 `agy` 命令（包括 `agy models`）都会建 `~/.gemini/antigravity-cli/`（缓存、日志、内置技能副本）与 `~/.gemini/config/projects/default-cli-project.json`。〔实测〕
-  hook 载荷的 `modelName` 与这里的 id 是同一命名空间（实测值 `gemini-3.8-flash-low`），`agentapi --model=gemini-3.8-flash-low` 被接受。〔实测〕`agy --model <id>` 的写法与效果〔未验证，V20〕。
+  hook 载荷的 `modelName` 与这里的 id 是同一命名空间（实测值 `gemini-3.8-flash-low`），`agentapi --model=gemini-3.8-flash-low` 被接受。〔实测〕`agy --model <id>` 与 `agy --model=<id>` 都生效（G4：载荷的 `modelName` 就是所选 id）。〔`agy` 实测，V20〕
 
 ### 4.5 沙箱与权限
 
@@ -227,6 +238,7 @@
 - 授权语法 `action(target)`：`command`、`read_file`、`write_file`、`read_url`、`execute_url`、`download_url`、`mcp`；`mcp(server/tool)`、`mcp(server/*)`、`mcp(*)`；
   `(*)` 通配整个 action；`write_file` 蕴含 `read_file`；`read_url` 的域名会编进沙箱出站白名单，`read_file` / `write_file` 路径进沙箱文件系统白名单。〔文档〕
 - App 预设 Request Review / Default / Auto / Turbo；sidecar 项目继承全局预设。〔文档〕
+- **G2 / G4 实测的授权效果**：用户全局的「始终允许」（`command(AskHuman)`）对白名单 sidecar 项目生效（V19，§17）；没授权的带 `BypassSandbox` 的命令被自动拒绝；沙箱内的命令不需要授权。宽授权（YOLO）sidecar 项目里，带 `BypassSandbox` 的 `curl https://example.com` 返回 200、`AskHuman agents sidecars list` 连上了 daemon（V9，G4）。
 
 ### 4.6 transcript 与本地数据
 
@@ -236,7 +248,7 @@
   `GENERIC`（工具结果）、`SYSTEM_MESSAGE`）、`status`、`created_at`、`content` 或 `tool_calls[{name,args}]`、token 计数。
   模型的正文是 `PLANNER_RESPONSE.content`（可与 `tool_calls` 并存）；用户输入包在 `<USER_REQUEST>` 里；PreInvocation 注入的用户消息来源是 `SYSTEM_SDK`
   （`send-message` 注入的消息来源未核对）。〔实测〕
-- 没有观察到公开的思考文本（样本模型是 Flash 低档）。〔实测；高思考模型〔未验证，V17〕〕
+- 思考文本：Flash 的非低档（默认的 `flash-tiered`、`-medium`、`-high`、`flash-lite`）的 `PLANNER_RESPONSE` 带 `thinking` 字符串（模型的思考文本）；`-low` 档与 Pro 级的 `gemini-4-hydrogen-low` 没有。Watch 目前不显示它（§11；是否显示是待你决定的产品取舍，§20）。〔实测，V17〕
 - 每个产品各有私有的 `conversation_summaries.db`（标题、预览、步数、状态、workspace…）。〔私有〕本规格最多只读用于「最近目录冷启动」（§12.6），不依赖它。
   G1 里只读看了表结构：`conversation_summaries` 有 `parent_conversation_id`、`nesting_depth`、`status`（如 `CASCADE_RUN_STATUS_IDLE`）、`not_fully_idle`、`project_id` 等列，
   即 App 自己有「整棵会话树是否空闲」的记录，但它是私有库，D4 不批准依赖；仅记录，供以后若宿主把它公开时参考。
@@ -348,7 +360,7 @@ App 里 MCP 工具默认「询问」（§4.2）。第一次调用 AskHuman 时�
   2. sidecar 的 `agentapi get-conversation-metadata <id>`：`parentConversationId` / `rootConversationId` / `nestingDepth`（文档化命令，只有 sidecar 在线时可用）；
   3. 子会话的 MCP `_meta`（只有它调用 MCP 工具时才有）；
   4. 弱信号：子会话 `SessionStart` / `PreInvocation(0)` 的 `lastUserInput` 为空串（从未收到用户输入；首步是父会话的 `SYSTEM_MESSAGE`，带 `sender=<父会话 ID>`，私有文本格式，不依赖）。只作辅助，不单独裁决。
-  怎么用这些来归并子会话、去噪、判断「整棵树空闲」，见 §8 L3 / L4，**待用户决定（D17）**；在此之前 P1 的登记按「每个会话独立」写，不接线根 / 子判断。
+  怎么用这些来归并子会话、去噪、判断「整棵树空闲」，见 §8 L3 / L4（D17 = A，已实现：来源 1 是主依据，来源 2 与 3 不依赖；解析失败退化为「没有子会话」）。
 
 ## 8. B：生命周期追踪
 
@@ -373,14 +385,14 @@ App 里 MCP 工具默认「询问」（§4.2）。第一次调用 AskHuman 时�
 
 - **L1** 用户取消不产生 Stop，状态最多滞后到 30 分钟兜底；其间手机发来的插话会排队而不被送达，直到状态降为空闲后改走空闲消息。这与 Claude 用户中断同类（[Stop 确认 §2](agent-stop-confirmation.md)），本版接受。
 - **L2** App 会话没有结束事件，只靠 1 小时 TTL 变「已结束」。
-- **L3** 子会话会触发 hooks（G1 已证实，V5），而 hooks 里认不出它：在做父子归并之前，它会多出一行，其 `Stop(fullyIdle:true)` 会出一张 Stop 卡（§7、L4、D17）。
-- **L4** 带子 Agent 的会话，根会话的最后一个 `Stop` 可能是 `fullyIdle:false`，之后没有 `fullyIdle:true` 的根 `Stop`（§4.1 的时序）。按上表「`fullyIdle:false` 不置空闲」，
-  这样的会话会一直显示「工作中」直到 30 分钟兜底，也不出 Stop 确认卡。解法需要把子会话归并成树（登记结构、「整棵树空闲」的判定、Stop 卡由谁在哪个 hook 里出），**待用户决定（D17）**。
+- **L3**（已由 D17 = A 解决）子会话会触发 hooks（G1 已证实，V5），而 hooks 里认不出它。daemon 从父会话的 transcript 认出子会话并折进根：子会话不是独立会话，注册表忽略它的事件，它的活动只让根保持存活，它的 `Stop(fullyIdle:true)` 不出卡（G3：两个带子 Agent 的真实会话里只有根一行）。
+- **L4**（已由 D17 = A 解决）带子 Agent 的会话，根会话的最后一个 `Stop` 可能是 `fullyIdle:false`，之后没有 `fullyIdle:true` 的根 `Stop`（§4.1 的时序）。
+  现在的做法：根的回合在**整棵树的每个会话都报过自己的最终 `Stop`、且没有未读的跨会话消息**时才算结束（transcript 里的 `send_message` 与读取记录可查）；Stop 确认的 hook 在「门」上等到那时再问人，或被告知不必问（根会在未读消息到来时被再次唤醒）。树只在内存里，重启后在下一条事件时从 transcript 重建。G3 实测：根的 `Stop(false)` 被阻塞 30 秒期间，子会话的 `Stop(true)` 与 `send_message` 照常发生，阻塞结束后根被唤醒并以 `Stop(true)` 收尾，没有丢消息、没有重复的根 `Stop`（V23）。
 
 ## 9. C：Stop 结束确认与最终失败
 
 出普通 Stop 确认卡须同时满足：「结束时确认」开关开启；根会话；`terminationReason == NO_TOOL_CALL`；`fullyIdle == true`。
-（带子 Agent 的会话见 §8 L3 / L4：根会话可能永远等不到 `fullyIdle:true`，子会话又认不出来，**待用户决定（D17）**。）
+（带子 Agent 的会话按 D17 = A 处理，见 §8 L3 / L4：根会话在整棵树空闲之后才出卡，子会话不出卡。）
 
 | `terminationReason` | 处理 |
 | --- | --- |
@@ -391,11 +403,11 @@ App 里 MCP 工具默认「询问」（§4.2）。第一次调用 AskHuman 时�
 | `USER_CANCELED`、`TERMINAL_STEP_TYPE`、`TERMINAL_CUSTOM_HOOK`、`INJECTED_RESPONSE` | 静默 |
 
 - **卡片正文**：Stop 载荷没有最后回复，从 `transcriptPath` 读最后一个带 `content` 的 `PLANNER_RESPONSE`（路径须规范化并落在 `~/.gemini/antigravity{,-cli}/brain/<conv>/.system_generated/logs/` 下，同 Cursor transcript 的约束）。
-  读取失败显示降级占位，不影响裁决。Stop 触发时 transcript 是否已含最终回复〔未验证，V6〕。
+  读取失败显示降级占位，不影响裁决。Stop 触发时 transcript 已含最终回复（V6 已验）。
 - **继续**：输出 `{"decision":"continue","reason":"<续跑提示词>"}`。因为 `reason` 以**系统消息**注入（不是用户消息），提示词采用 Claude 那一类的结构化包裹（有后续指令：`[USER CONTINUATION]` + `<user_message>`；无指令：三家共用的 meta 提示）。文案仍只放 `prompts.rs`。
 - **结束 / 关窗 / 超时 / 基础设施失败**：fail-open，空 stdout 退出码 0；Stop 的 hook `timeout` 与客户端等待都是 86400 秒（沿用 [Stop 确认 §3.4](agent-stop-confirmation.md)）。
 - **去重**：沿用 `[user_confirmed_end_turn]` 标记：在 transcript 最后回复里任意位置出现即静默放行并剥离；读不到 transcript 时退化为再发一张卡（安全方向）。
-- **上限**：续跑次数受执行器 `max_stop_hook_continuations` 约束，默认值未知（V2）。实现第一步先实测；若上限很小，另行设计降级（不在本规格预设）。
+- **上限**：续跑次数受执行器 `max_stop_hook_continuations` 约束；G3 实测至少 8 次都被接受（V2），上限不是问题，不需要降级设计。
 - 每次用户选择继续后，下一次 `fullyIdle:true` 的 Stop 仍再发确认卡；`continuationActive` 只作信息，不用来抑制确认（这里是人在回路里，不是自动循环）。
 
 ## 10. D：插话与空闲消息
@@ -417,8 +429,8 @@ App 里 MCP 工具默认「询问」（§4.2）。第一次调用 AskHuman 时�
 - 通道：daemon 经一个在线 sidecar（目录 sidecar 或 `askhuman-ctl`）执行 `agentapi send-message <conversationId> <内容>`。**没有可用 sidecar 时该能力不可用**，显示原因；这是新增「允许管理 sidecar」之后才有的能力。
 - 前置：注册表状态为空闲 / 已结束（工作中走 §10.1）；目标是 App 会话。**绝不**对工作中会话调用 `send-message`——它对运行中会话的语义〔未验证，V10〕，可能排队也可能打断，
   且 `agentapi` 没有原子「仅当空闲」检查。竞态（注册表落后于真实状态）是已知残余风险。
-- 范围：只验证过 sidecar 创建的会话（§4.3）。P3 先实测 V11：用户自建的 App 会话能被唤醒则对所有 App 会话开放，否则只对 sidecar 创建的会话开放；
-  `agy` 会话验证前一律 `agent_control::can_send` 返回「通道不可用」并显示原因。
+- 范围（实现）：对所有 App 会话开放，`agy` 会话一律不提供（`message::available()` 与 `agent_control::can_send` 返回「通道不可用」并显示原因）。
+  依据：跨项目唤醒已实测（§4.3），`send-message` 以会话 ID 寻址；但**用户在 App 里自建的会话没能实测**（V11，需要你在电脑前新开一个会话），所以这条范围是推断，已列入验收。
 - 回执沿用 [结果与恢复 §5.4](agent-lifecycle-results-and-recovery.md)：`accepted`（观察到新回合开始，即 `PreInvocation(0)`）、`rejected`、`unknown`（可能已发出，不自动重发）。
 - 手机、Mac 控制台、IM `/msg` 共用同一能力判定。
 
@@ -429,7 +441,7 @@ App 里 MCP 工具默认「询问」（§4.2）。第一次调用 AskHuman 时�
   - **最新正文** = 最后一个带 `content` 的 `PLANNER_RESPONSE`（同一步骤带 `tool_calls` 时 `content` 仍是候选）；`status == DONE` 才算定稿。
   - **工具** = `tool_calls[]`：`run_command` 取 `CommandLine`，`call_mcp_tool` 取 `ServerName/ToolName`，其余取 `name`；完成状态取其后的 `GENERIC` 结果步骤。
   - 用户输入 = `USER_INPUT`（剥掉 `<USER_REQUEST>`）；`SYSTEM_MESSAGE` 与注入的消息不当正文。
-  - **没有思考**（§4.6）。
+  - **思考文本目前不显示**：部分档位的 transcript 带 `thinking` 字符串（§4.6），解析器忽略它；要不要像 Codex / Cursor 那样显示成带标签的思考，是产品取舍，待你决定（§20）。
 - 降级：读取失败保留最后内容并单独表达读取状态；`transcriptPath` 越界或缺失则该会话不可 Watch，并显示原因。
 - 可用性：会话已被 hook 登记且 transcript 可读。App 与 `agy` 同格式，共用解析器。
 
@@ -478,28 +490,29 @@ App 里 MCP 工具默认「询问」（§4.2）。第一次调用 AskHuman 时�
 
 - **白名单（`ws`，D7 默认）**：`allows_user_interactions:false`，`access_grants` 只含 AskHuman 自己的 MCP `mcp(askhuman_mcp/*)` 与任务附件目录的只读授权（路径实施时定），再加用户在设置页给该目录追加的规则。
   未授权的动作自动拒绝（§4.3）；是否免询问放行由全局预设决定。因此「Agent 默认行为」在 Antigravity App 路径上的含义是**白名单 sidecar**，不是你在 Mac 上逐项点过的授权的原样延续
-  （你的全局「始终允许」授权是否对 sidecar 项目生效〔未验证，V19〕）。
+  （你的全局「始终允许」授权**对 sidecar 项目生效**〔G2 实测，V19〕：白名单 sidecar 里的 Agent 也能执行你已永久放行的命令；没放行、要在沙箱外跑的命令被自动拒绝。）
 - **规则编辑**：设置页按目录编辑，每条须是合法 `action(target)`；全局通配 `(*)` 不允许出现在白名单里（要放开就用 YOLO）。
 - **YOLO（`yolo`）**：另一组 sidecar，`access_grants` 为 `command(*)`、`read_file(*)`、`write_file(*)`、`read_url(*)`、`mcp(*)`（`read_url` 用于放开沙箱出站网络，实测联网命令需要它）。
   沿用 `/new` 的权限卡与全局 `permissionPrompt` 设置，风险说明写明「放开命令、文件读写与联网，不再逐项询问」。
   **不再追加二次确认**（D14）：权限卡就是每次选 YOLO 时的显式确认。区别于别的 Agent 的一次性启动参数：这里的 YOLO sidecar 会在 App 里留下一个长期存在的宽授权项目，
   之后在 App 里手动打开它开聊也不会再询问，所以做两点缓解：sidecar 的显示名带「YOLO」、`description` 写明宽授权；设置页把它标成「宽授权」并提供一键移除。
-- 白名单需要预授权的 MCP 在 sidecar 会话里真正生效〔未验证，V18〕——P2 第一步用一次 Flash 调用核对；若不成立，默认授权集要重新设计。
-- 宽授权是否真的让命令跑在沙箱之外、以及此时能否连 daemon socket〔未验证，V9〕。
+- 白名单预授权的 MCP 在 sidecar 会话里真正生效〔G2 实测，V18〕。
+- **YOLO 的实现与实测（P4 / G4，V9）**：`permission = yolo` 时 `ensure_folder(Kind::Yolo)` 按需建 `askhuman-yolo-<h8>` sidecar（与白名单 sidecar 同一套创建、认领、清理流程；`/new` 的权限卡仍是唯一的确认，D14）；P2–P3 期间「Antigravity 暂不支持 YOLO 启动」的过渡规则已删除。G4 实测：YOLO sidecar 项目里的任务，带 `BypassSandbox` 的命令无人批准就执行了——`curl https://example.com` 返回 200（联网）、`AskHuman agents sidecars list` 连上 daemon 并列出「5 / 20」；对照白名单 sidecar 里同样带 `BypassSandbox` 的 `date` 被自动拒绝（G2）。
 
 ### 12.5 App 未运行
 
 - 路径整体可用但 App 没在运行：后台启动 App（`open -g`，不抢前台），等该 sidecar 报到，**最多约 30 秒**（与创建新 sidecar 共用同一预算）。超时或失败 → 回退 CLI（若整体可用）或报错说明。
-- App 冷启动时 sidecar 是否随之启动、登录失效时 `new-conversation` 的失败形态〔未验证，V1〕。需要退出用户的 App 才能测，须先征得同意。
+- **冷启动实测（Q3，V1）**：App 退出（对主进程发 SIGTERM）后，所有 App 进程与 sidecar 进程随之消失，daemon 同一秒把 sidecar 标为离线；之后第一次 `create` 拉起 App，主进程约 0.3 秒出现，五个 sidecar 约 2.4 秒内全部重新上线，任务随即发出，整个调用 2.4 秒，远小于 30 秒预算。只有 `agy` 在跑时不会有 sidecar（V16）。登录失效时 `new-conversation` 的失败形态仍〔未验证，V1〕：要先让 App 退出登录。
 
 ### 12.6 最近目录
 
 沿用 [IM 创建任务 §5](im-agent-task-launch.md) 的 `~/.askhuman/agent-workspaces.json`：hooks 登记的会话增量更新（`source: lifecycle`），手动添加始终可用。
 **冷启动种子（P4，可选）**：只读各产品 `conversation_summaries.db` 的 `workspace_uris` 作为首次候选；私有格式、读取失败静默、不依赖。
+实现：`agents/antigravity_workspaces.rs` 以 SQLite `immutable=1` 只读打开 App 与 `agy` 的摘要库（带 WAL 的库在没有 `-shm` 时 `mode=ro` 会打不开，所以不用它），取每个会话的目录（`file://` 解析与百分号解码、去重、按最近修改时间排序），并入「最近目录」的扫描结果；库不存在、被锁、表结构不符都静默返回空。
 
 ### 12.7 CLI 路径
 
-- 经既有终端启动桥（[IM 创建任务 §7–§8](im-agent-task-launch.md)）：新增 `agy` 适配器，固定 argv `agy [--dangerously-skip-permissions] -i <任务文本>`（任务文本是单个 argv；以 `-` 开头的文本是否安全〔未验证，V15〕），
+- 经既有终端启动桥（[IM 创建任务 §7–§8](im-agent-task-launch.md)）：新增 `agy` 适配器，固定 argv `agy [--dangerously-skip-permissions] [--model <id>] -i <任务文本>`（任务文本是 `-i` 的值、单个 argv；以 `-` 开头也安全〔V15 已验〕；P4 已实现），
   一次性 `LaunchRecord`、helper `__agent-launch <token>`、launch-id 环境变量沿用；hook 带回 launch id 即可与 `LaunchRecord` 配对（已验证环境继承）。
 - 权限映射：Agent 默认 → 不加 flag；YOLO → `--dangerously-skip-permissions`（补进 [IM 创建任务 §6.3](im-agent-task-launch.md) 的 YOLO 表）。
 - `agy` 首次引导与新目录的信任提示会出现在 Terminal 里，AskHuman 不代答〔V12〕；IM 回执提示「若终端停在引导页，请在电脑上完成」。
@@ -507,7 +520,7 @@ App 里 MCP 工具默认「询问」（§4.2）。第一次调用 AskHuman 时�
 
 ### 12.8 配对、Watch 与回执
 
-- App 路径按 `conversationId` **精确配对**（不用 60 秒匹配窗口）；CLI 路径按 launch id。
+- App 路径按 `conversationId` **精确配对**（不用 60 秒匹配窗口）；CLI 路径按 launch id：hook 带回 launch id（环境继承已验证）即可配对，**单凭 id 就够**——`agy` 在未信任的目录里不报目录（§4.1），所以不能再要求目录一致；带了目录时仍须一致。没有 id 时才退回「目录 + 首条提示词的哈希」。`agy` 没报目录的会话，注册表用启动记录里的目录补上。（P4 的实测发现，G4。）
 - 60 秒内没有收到该会话的任何 hook → 任务仍算创建成功，来源 IM 明确告警「未能自动 watch（可能插件被停用或 hooks 未生效）」（沿用 [D22](im-agent-task-launch.md)）。
 - 来源渠道活跃槽、默认 watch 与 `/watch` 的行为不变。
 
@@ -521,11 +534,11 @@ App 里 MCP 工具默认「询问」（§4.2）。第一次调用 AskHuman 时�
     不从 id 后缀或显示名里猜「模型 + 档位」的分组：`gemini-pro-orchestrator-g1-pro`、只有 Medium 的 `gpt-oss-120b-medium` 不符合规律，猜错会把一个不存在的 id 传下去，
     且「某模型不选档位时用哪一档」没有 Antigravity 自己声明的默认值可依。当前 18 项，超过 12 项时手机端自带搜索。
   - **没装 `agy` 的机器**：App 路径仍能建任务，清单退回 `agentapi` 文档公开的三个别名 `flash_lite` / `flash` / `pro`（显示名 Flash Lite / Flash / Pro，副标题注明「Antigravity 别名」）。
-    别名只在 App 路径有效，各自对应的具体模型〔未验证，V20〕；CLI 路径本来就需要 `agy`，不受影响。
+    别名只在 App 路径有效；G2 实测 `flash` → `gemini-3.8-flash-tiered`、`flash_lite` → `gemini-3.5-flash-lite`（`pro` 没试）；CLI 路径本来就需要 `agy`，不受影响。
   - **「默认」**：不传 `--model`，由 Antigravity 决定（[M7](ios-task-model.md)：「默认」= 不传任何开关，argv 与今天逐字节相同）。「默认所指」无从得知——`agy models` 没有标记，
-    `config.json` 里也没有默认模型——所以手机显示「Antigravity 自己的设置」。**App 路径不传时，实测用的是 Flash 族的一个档位**（§4.3），`agy` 路径的默认另算，二者可能不同；
+    `config.json` 里也没有默认模型——所以手机显示「Antigravity 自己的设置」。**App 路径不传时，实测用的是 `gemini-3.8-flash-tiered`**（§4.3），`agy` 路径的默认另算，二者可能不同；
     IM 与手机上留「默认」的任务就是这个结果（D16）。
-  - **启动映射**：只对新任务。App 路径 `agentapi new-conversation --model=<id> …`（等号写法，值不会被当成开关）；CLI 路径 `agy --model <id> -i <任务>`〔写法与效果未验证，V20〕。
+  - **启动映射**：只对新任务。App 路径 `agentapi new-conversation --model=<id> …`（等号写法，值不会被当成开关）；CLI 路径 `agy --model <id> -i <任务>`（G4 验证 `--model <id>` 与 `--model=<id>` 都生效，AskHuman 用空格写法）。
     `id` 须符合既有净化规则（`valid_model_id`）并与**当前清单**某一项完全相等，否则 `modelUnavailable`、什么都不启动（[M9](ios-task-model.md)）；`effort` 一律拒绝
     （同 Cursor：没有独立的强度开关）。
   - **显示实际模型（[M4](ios-task-model.md)）**：详情页取 hook 载荷的 `modelName`（`SessionStart` 与每次 `PreInvocation` 都带，中途换模型会更新）；进度页显示所选。
@@ -573,7 +586,7 @@ Agents 页的 Antigravity 卡新增：集成模式（None / CLI / MCP）、生�
 | 插件被用户停用 | 只读检测并显示；生命周期 / Stop 停止；手机 / IM 的 Antigravity 任务不可用 |
 | 用户取消 | 无事件；状态滞后到 30 分钟兜底（L1） |
 | Stop 触发时 transcript 未就绪 / 读取失败 | 卡片显示降级占位；标记检测退化为再发一张卡 |
-| 续跑被执行器上限拒绝 | 见 V2；本规格不预设降级 |
+| 续跑被执行器上限拒绝 | 实测 8 次之内不会发生（V2）；超出则由宿主拒绝、会话正常结束，不另设降级 |
 | sidecar 未在 ≈30 秒内报到 | 回退 CLI（若可用）或报错并说明原因；已写入的 sidecar 保留在设置页 |
 | `config.json` 写入冲突 / 失败 | 重读重试至多 3 次，仍失败则报错，不强写，不改其它键 |
 | sidecar 总数达到上限 | `/new` 拒绝创建，指向设置页移除 |
@@ -596,6 +609,7 @@ Agents 页的 Antigravity 卡新增：集成模式（None / CLI / MCP）、生�
 | P4 CLI 路径 + YOLO + 种子 | `agy` 终端适配器（§12.7，含 `--model`）、YOLO sidecar、最近目录冷启动种子（§12.6） | P1–P2；先核对 V3、V12、V15、V20 的 `agy` 部分 |
 
 每期落地前，先写 `docs/plans/antigravity-deep-integration.md` 实施计划并经你确认。
+**状态（2026-11-16）**：P1–P4 已实现并经 G1–G4 验证；提交清单与偏差见实施计划的「实施记录」，实测见附录 A.3–A.6。
 
 ### 16.2 代码触点（已读到的位置）
 
@@ -615,30 +629,30 @@ Agents 页的 Antigravity 卡新增：集成模式（None / CLI / MCP）、生�
 
 | 编号 | 未验证 | 影响 | 怎么验 |
 | --- | --- | --- | --- |
-| V1 | App 冷启动时 sidecar 是否随之启动、≈30 秒是否够；登录失效时 `new-conversation` 的失败形态 | §12.5 | 需退出用户的 App，先征得同意；或在用户自然重启时观察 |
-| V2 | Stop 续跑上限（`max_stop_hook_continuations`）默认值与达到上限后的行为 | §9 | P3 第一步实测；若很小则另行设计降级 |
-| V3 | `agy` 上：**全局**插件 hooks 是否载入并在会话里触发（不触发则 hooks 改装全局 `hooks.json`，§6.2）、Stop `continue`、`PreInvocation` 注入、取消 / Ctrl-C、`send-message` 能否唤醒 `agy` 会话。**部分已验（G1，含 T1c）**：工作区级插件的 hooks 在受信任的工作区会被载入**并在会话里触发**，不信任则不载入（§4.1）。**P1 又验了**：AskHuman 自己生成的插件（工作区级副本）在 `agy` 会话里触发 `SessionStart` / `PreInvocation` / `Stop(fullyIdle:true)`，由 AskHuman 的处理器接住，会话进注册表（附录 A.3）；
-全局插件在会话里的触发、`continue`、注入、取消、`send-message` 没验 | P1、P3、P4 | 全局插件的会话触发并入 V22（G2）；`continue` / 注入等随 P3 逐项最小实测（`agy` + Flash 低档）。**`agy` 实验的提示必须写明「不要运行 AskHuman」**（见附录 A.2） |
+| V1 | **部分已验（Q3，你授权我退出 App）**：对 App 主进程发 SIGTERM，1.1 秒内整个 App 与五个 sidecar 进程都消失，daemon 在同一秒把五个 sidecar 标为离线；之后 `create` 一次：`appStarted:true`、`status:started`，整个调用 2.4 秒（App 主进程在约 0.3 秒时出现），daemon 日志里五个 sidecar 在同一秒全部重新上线、紧接着发出创建命令。**冷启动远在约 30 秒预算之内**（§12.5）。**没验到**：登录失效时 `new-conversation` 的失败形态（要先让 App 退出登录，我不动你的账号） | §12.5 | 需要你在电脑前：退出登录后在手机上建一个任务（§18） |
+| V2 | **已验（G3）**：用实验 hook 对同一会话连续答 `continue` 8 次（`executionNum` 0–7，`reason` 是一句固定指令），8 次都被接受、各让会话多答一次；第 9 次 `Stop`（`executionNum` 8）没有续，会话正常结束。**没碰到上限**（`max_stop_hook_continuations` 至少大于 8）。续跑期间每次 `Stop` 载荷的 `continuationActive` 都是 `false`，不能拿它判断「这是续跑」 | §9 | — |
+| V3 | **已验（G1、P1、G4）**：`agy` 上，工作区级插件的 hooks 在受信任的工作区载入并在会话里触发（不信任则不载入，§4.1）；**全局**插件（AskHuman 自己生成的）的 hooks 在 `agy` 会话里触发，由 AskHuman 的处理器接住，会话进注册表（G4，附录 A.6）；Stop `continue` 与 `PreInvocation` 注入在 `agy` 上与 App 行为相同（G4，§4.1）；`agy` 进程被终止后注册表标 `ended`。**没验到**：取消 / Ctrl-C 的 hook 行为（交互界面里没有可靠的无人值守触发方式）；`send-message` 能否唤醒 `agy` 会话（见 V11）。**`agy` 实验的提示必须写明「不要运行 AskHuman、不要调用任何 MCP 工具」**（附录 A.2、A.6：插件的规则在时，模型会自己去调 `whats_next`，弹出没人认领的卡） | P1、P3、P4 | — |
 | V4 | MCP 缺省超时（无 `timeoutSeconds`）与整 24 小时等待 | `ask` 长等待 | 无法真等 24 小时；沿用既有口径 |
-| V5 | **已验（App，G1）**：子会话触发 hooks，载荷无父字段；MCP `_meta` 带 `parent_conversation_id`（§4.1、§4.2、§7）。**`agy` 的 MCP `_meta` 字段仍未验** | §7 | `agy` 那半留到 G4 |
+| V5 | **已验**：App（G1）子会话触发 hooks，载荷无父字段；MCP `_meta` 带 `parent_conversation_id`（§4.1、§4.2、§7）。`agy`（G4）：MCP 调用同样带会话键，AskHuman 把提问记到该 `agy` 会话与它的目录（§4.2）。`agy` 子会话的 `_meta` 没测 | §7 | — |
 | V6 | **已验（G1）**：`Stop` 触发时 `transcript_full.jsonl` 已含最终回复（App 三个会话：根 `done`、子 `ok`、T3 `done`；`agy` 的 T1c：`ok`；均为最后一个 `PLANNER_RESPONSE`、`DONE`） | §9 卡片正文与标记去重 | — |
-| V7 | sidecar 创建的会话在 App 里的可见位置、是否隐藏于会话列表 | 用户在电脑上接手任务 | 看 App 界面与 `hideFromConversationList` 归属 |
-| V8 | 重建同名**全局** sidecar 时 App 是否认领孤儿项目（插件 sidecar 已见到） | §12.3 历史归属 | 删除再重建同名 sidecar 后看项目与会话归属 |
-| V9 | 宽授权是否真让命令跑在沙箱之外，以及此时能否连 daemon socket | YOLO 在 CLI 模式下的可用性 | 对照实验一次 |
+| V7 | **部分已验**：App 自己的摘要库里，sidecar 建的会话是普通会话行（`source` 为空、没有父会话），按各自 sidecar 的项目归档——每个 sidecar 一个 `project_id`、`workspace_uris` 是它的目录，同一个 id 重建后仍归原项目（V8）；`agy` 会话则是 `CORTEX_TRAJECTORY_SOURCE_CLI` 加 `default-cli-project`。摘要库里没有看到「隐藏」列。**没验到**：它们在 App 左侧列表里实际显示在哪、是否出现（我看不到屏幕；摘要库是私有的，只读看了结构） | 用户在电脑上接手任务 | 需要你在电脑前看一眼（§18） |
+| V8 | **已验（G2）**：用同一个 id 重建全局 sidecar，App 认领原来的项目（`projectId` 不变），会话仍归在该项目下 | §12.3 历史归属 | — |
+| V9 | **已验（G4，YOLO sidecar）**：宽授权 sidecar 的任务里，带 `BypassSandbox` 的命令无人批准就在沙箱之外执行：`curl` 取得 HTTP 200（联网），也能连上 daemon 的 socket。所以宽授权在 App 路线里的实际含义就是「不再询问、不受沙箱限制」（§12.4） | §12.4 | — |
 | V10 | `send-message` 对工作中会话是排队还是打断 | §10.2 目前一律禁止 | 若要放开才测 |
-| V11 | 用户自建 App 会话、`agy` 会话能否被 sidecar `send-message` 唤醒 | §10.2 范围 | 最小实测 |
-| V12 | `agy` 首次引导与新目录信任提示在 IM 启动时的表现。**部分已验（G1）**：首次运行先显示引导（配色、数据使用同意），`-i` 任务仍被发出并执行（起了 2 次模型请求）；未信任的目录里工作区级插件 hooks 不载入。**没看到**新目录的信任提示本身（实验用 `--settings` 的 `trustedWorkspaces` 绕开了它） | §12.7 | G4 在一个新目录里用 `agy -i` 看一次 |
+| V11 | **部分已验（G3）**：sidecar 创建的 App 会话在空闲时能被 `send-message` 唤醒并回答——自己项目的 sidecar 约 0.1 秒，现建的控制 sidecar 约 4 秒（含建 sidecar）；`send-message` 跨项目唤醒（附录 A）。**没验到**：你在 App 界面里自己新建的会话（我不能替你在 App 里点；产品对「App 里有 transcript 的会话」一视同仁，这是推断）、`agy` 会话（设计上没有通道，§10.2） | §10.2 范围 | 需要你在电脑前：在 App 里自建一个会话、让它空闲，再从手机发一条消息（§18） |
+| V12 | **部分已验（G1、G4）**：`agy` 首次运行先显示引导（配色 → 数据使用同意），`-i` 任务仍被发出并执行；在未信任的目录（有无 git 都一样）里任务照常执行、hooks 触发，只是载荷不报目录（§4.1）。**没看到**新目录的信任提示本身：引导没完成时它不出现，而完成引导就是替你同意数据使用，我没有做 | §12.7 | 需要你在电脑前：在一个新目录里用 `agy -i` 看一次（§18） |
 | V13 | Linux / Windows | §14 | 各自平台实测 |
 | V14 | **已验（工作区级插件，G1 T3）**：改写插件文件不重启 MCP server、不打断在途调用，新 `mcp_config.json` 也不作用于已运行的 server（§6.3）。全局插件目录另验，见 V22 | §6.3 | — |
-| V15 | `agy -i` 对以 `-` 开头的任务文本在固定 argv 下是否安全 | §12.7 | 一次最小实测 |
-| V16 | App 窗口没开、只有 `agy` 在跑时 sidecar 是否运行 | §12.1 的「App 路径可用」口径 | 一次最小实测 |
-| V17 | 高思考模型的 transcript 是否含思考文本 | §11 | 换模型看一次 |
-| V18 | 预授权 `mcp(askhuman_mcp/*)` 在 sidecar 会话里调用插件 MCP 时是否生效 | §12.4 白名单默认授权集 | P2 第一步，一次 Flash 调用 |
-| V19 | 用户的全局「始终允许」授权（`userSettings.globalPermissionGrants.allow`）是否对 sidecar 项目生效（只知道预设会继承） | §12.4 白名单的实际范围 | 与 V18 同一次实验里加一个对照动作 |
-| V20 | `agentapi --model=<id>` 对清单里其它 id 与别名 `flash_lite` / `flash` / `pro` 的接受情况及各自对应的模型；`agy --model <id>`（含 `=` 写法）是否生效 | §12.9 启动映射与别名回退 | 只用 Flash 低价档各试一次（`-low` / `-medium` / `-high`）；Pro 级与 Claude 级只在你批准后各试一次，且用一句话任务 |
+| V15 | **已验（G4-1）**：`agy --model gemini-3.8-flash-low -i '-reply with the single word OK…'`——任务是 `-i` 的值（单个 argv），开头的 `-` 没被当成开关，完整到达模型（transcript 的 `<USER_REQUEST>` 与原文逐字相同），答 `OK`。适配器因此不加 `--` | §12.7 | — |
+| V16 | **已验（Q3）**：App 完全退出（没有任何 App 进程、没有 sidecar 进程）时运行 `agy`（免费探针，不带 `-i`）约 25 秒，**没有出现任何 sidecar 进程**：sidecar 只由 App 启动，`agy` 不会起它。所以「App 路径可用」以 App 在运行、或能被拉起为前提（§12.1、§12.5）；只有 `agy` 在跑的机器上走终端路线 | §12.1 | — |
+| V17 | **部分已验（G2、G3）**：Pro 级 id `gemini-4-hydrogen-low`（App 路径）的 transcript 里只有最终的 `PLANNER_RESPONSE`，没有思考文本。**更正 §4.6 的说法**：Flash 的非低档（默认的 `flash-tiered`、`-medium`、`-high`、`flash-lite`）的 `PLANNER_RESPONSE` 带 `thinking` 字符串（模型的思考文本），`-low` 与 hydrogen-low 没有。Watch 现在不显示它（与 §11 一致）；要不要显示是新的产品取舍，待你决定（§20） | §11 | — |
+| V18 | **已验（G2）**：sidecar 的 `mcp(askhuman_mcp/*)` 让插件 MCP 的 `show_last` 在 sidecar 会话里被执行——返回的是工具自己的「没有已完成的提问」，不是权限拒绝 | §12.4 白名单默认授权集 | — |
+| V19 | **已验（G2）**：用户全局的「始终允许」（`command(AskHuman)`）对 sidecar 项目**生效**：带 `BypassSandbox` 的 `AskHuman --version` 无人批准也执行了（退出码 0），而没授权的 `date`（同样带 `BypassSandbox`）被自动拒绝（`user denied permission`，因为 `allows_user_interactions:false`）。沙箱内的命令（`ls`、工作区里的 `touch`）本来就不需授权；沙箱内的 `AskHuman --version` 被沙箱挡（`operation not permitted`，提示改用 `BypassSandbox`） | §12.4 白名单的实际范围 | — |
+| V20 | **已验（G2、G4）**：见 §4.3（App 的默认模型、别名与 `-low` / `-medium` / `-high` 的映射）与 §4.4（`agy --model` 两种写法）。**没验到**：`pro` 别名（Pro 级，计费高）、Claude 级模型 | §12.9 | — |
 | V21 | `agy models` 未登录、未完成首次引导、网络失败时的输出与退出码；清单是否随账号 / 套餐变化 | §12.9 清单降级 | 一次只读实测（不产生模型调用） |
-| V22 | 在用户真实会话运行时改写 / 新增**全局**插件目录：MCP server 是否重启、hooks 是否立刻对在跑的会话生效；全局插件的 hooks 在 `agy` / App **会话**里是否触发。P1 没有发布到用户真实的全局目录，只在隔离 HOME 里验证了 `agy plugin list` 识别（附录 A.3） | §6.3、§6.5 迁移 | G2：用真正的 AskHuman 插件，在没有在途 `ask` 的时刻验证 |
-| V23 | D17 方案的可行性：父 transcript 里 `invoke_subagent` 结果的格式是否稳定；根会话的 Stop hook 阻塞等待子孙空闲时，子会话的 `send_message` 是排队还是丢失；根被阻塞期间唤醒是否重复出卡 | §8 L4、§9 | D17 定案后：P1 夹具 + G3 里带子 Agent 的一轮 Flash 实测 |
+| V22 | **部分已验（G2、G4）**：AskHuman 自己的全局插件在 App 与 `agy` 的会话里都触发 hooks（§4.1、附录 A.4、A.6）；G2 里在没有在途 `ask` 的时刻写入 / 改写全局插件目录没有出问题。**没验到**：用户真实会话运行时、有在途 `ask` 的情况下改写全局插件目录（V14 在工作区级插件上证明不会打断，全局的没单独做） | §6.3、§6.5 迁移 | — |
+| V23 | **已验（G3）**：①子会话的 `SessionStart` / `PreInvocation` / `Stop` 与 `invoke_subagent` 结果都按 G1 的格式出现，AskHuman 把子会话折进根（两个带子 Agent 的真实会话）；②根的 `Stop(fullyIdle:false)` 被实验 hook 阻塞 30 秒期间，子会话 `Stop(fullyIdle:true)` 与它的 `send_message` 照常发生，阻塞结束后根被唤醒（`PreInvocation(0)`，晚约 0.5 秒）并以 `Stop(fullyIdle:true)` 收尾——**消息排队不丢失，也没有重复的根 `Stop`**。Stop 确认卡本身的点击没测（V24） | §8 L4、§9 | — |
+| V24 | **部分已验（Stop 确认卡，真实 App 会话）**：开关打开后，会话答完时 `Stop` 的 hook 阻塞并让 daemon 出卡（历史里记到该会话与目录，正文是最后一条回复，问题「Agent 准备结束本轮对话，接下来怎么做？」，选项「继续对话」（推荐）/「结束对话」）；267 秒无人应答，hook 一直在等；结束 hook 进程后卡被取消（daemon 日志 `cli disconnected; cancelling`），会话正常结束（fail-open，没有续跑）。回合结束只在卡有了结论之后才上报，所以被手动结束的 hook 会让注册表停在「工作中」，直到 30 分钟兜底降级（与其它 Agent 的「Stop 被杀」同一条路径）。**真人点「继续对话」（带一句话）→ 会话续跑 → 第二张卡 →「结束对话」这条路径没测到**：你答复「现在就能配合」后我做了两次（12:24 等了约 4.5 分钟、12:42 等了 12 分钟），两次都没人应答——当时你不在电脑前（Mac 已空闲约 81 分钟）。两次都以我结束 hook、关掉开关收尾（附录 A.6） | §9 | 需要你在电脑前或用手机点一次（§18） |
 
 ## 18. 验收
 
@@ -655,18 +669,21 @@ Agents 页的 Antigravity 卡新增：集成模式（None / CLI / MCP）、生�
 - 模型：手机与 Mac 窗口出现 Antigravity 的「模型」行、没有「强度」行；选「默认」时 argv / sidecar 命令与不接入模型管线时逐字节相同；选定模型时 argv 精确含 `--model`（CLI）或 `--model=`（App），断言组装出的命令而不真的启动；伪造或已不在清单里的 id → `modelUnavailable` 且不启动任何东西；`agy` 缺失时退回三个别名；清单命令失败 / 超时 → 只剩「默认」；解析器用合成夹具（含脏行与不规律条目）验证。
 - 配置写入：`config.json` 只出现 `sidecars.askhuman-*` 的变化，保持 0600 与未知键；并发写入不破坏文件（用假 App 写入者测试）。
 - 测试：解析器、hooks 输出、注册表映射、sidecar 清单与 `config.json` 编辑器、回执状态机用夹具与假 `agentapi` / 假 sidecar 覆盖；**测试不启动真实 Antigravity 模型**。真实验证只用 Antigravity、优先 Flash 低档，受各门的任务数预算、隔离与停止条件约束（§1.2：不再逐项授权），**不使用 Cursor**。
-- 子会话（待 D17 定案后补）：登记归并、去噪与「整棵树空闲」判定的验收条目。
+- 子会话（D17 = A）：只有根会话一行，子会话不出卡也不单独进控制台；根在整棵树空闲且没有未读的跨会话消息后才出 Stop 卡；根 `Stop(false)` 期间子会话收尾并唤醒根时不丢消息、不重复根 `Stop`（夹具与假 transcript 覆盖；G3 做过真实验证）。
+- **需要你在电脑前验收（我没能做）**：Stop 确认卡的真人点击路径（V24：两次试验都没人应答）；sidecar 创建的会话在 App 左侧列表里的位置（V7）；你自己在 App 里新建的会话能否被「发给空闲会话」唤醒（V11）；`agy` 在新目录里的信任提示（V12）；App 登录失效时建任务的失败形态（V1）；设置页与控制台的肉眼验收；手机 / IM `/new` 与 Mac 窗口的真实点击；GUI 终端路由启动 `agy`；`agy` 的取消 / Ctrl-C（V3）；Linux（V13）。
+- **需要你决定**：Watch 要不要显示 Antigravity 的 `thinking` 文本（§4.6、§11、§20）。
 
 ## 19. 对既有文档的影响（随各期落地时更新）
 
-P1 已更新：`antigravity.md`（按插件重写）、`mcp.md`、`docs/overview.md`（Antigravity 的插件、会话身份与标题）、两份 wiki（`antigravity-setup`）、两份 README、`docs/PROGRESS.md`；下列其余各项随对应阶段落地时更新。
+P1 已更新：`antigravity.md`（按插件重写）、`mcp.md`、`docs/overview.md`（Antigravity 的插件、会话身份与标题）、两份 wiki（`antigravity-setup`）、两份 README、`docs/PROGRESS.md`。
+P2–P4 的回写在 2026-11-16 完成：`antigravity.md`（§1、§4、§7、新增 §7.1）、`docs/overview.md`（模块地图、协议号说明、插话 / Stop / 集成段落）、`overview-configuration.md`（`antigravityDesktop.*`）、`cli-config.md`（`agents sidecars` 与内部入口）、`ios-task-model.md`、`gui-agent-task-launch.md`、`im-agent-task-launch.md`、`agent-lifecycle-results-and-recovery.md`、`agent-stop-confirmation.md`、`agent-interject.md`、`agent-observation-latest-text.md`、两份 wiki、两份 README、`docs/PROGRESS.md`；下面的清单保留为影响范围的记录。
 
 - [antigravity.md](antigravity.md)：§4、§5–§6、§7 由本规格取代；§2–§3 的 CLI / MCP 语义保留。[MCP 模式规格](mcp.md)：增加 Antigravity 的 `_meta` 会话绑定。
 - `docs/overview.md`：生命周期 / 插话 / Stop / 启动能力描述里「Antigravity 不支持」的几处，以及 Antigravity 集成的规则路径与 MCP 路径；若全局地图与不变量变化再改，局部细节放 `overview-<topic>.md`。
 - [iOS 新建任务模型与强度](ios-task-model.md)（「清单从哪来」表加 Antigravity 行、「怎么启动」表加 `--model`）、[Mac GUI 新建任务](gui-agent-task-launch.md)（G5 不再排除 Antigravity）。
 - [IM 创建任务](im-agent-task-launch.md)（Agent 列表、readiness、YOLO 表）、[结果与恢复 §5.3](agent-lifecycle-results-and-recovery.md)（空闲消息能力表）、
   [Stop 确认 §2](agent-stop-confirmation.md)（能力表）、[插话 D1](agent-interject.md)（范围）、[观察最新正文](agent-observation-latest-text.md)（新增来源）。
-- `docs/PROGRESS.md`：本规格确认并开工后登记（P15）。
+- `docs/PROGRESS.md`：已登记（P15）；长期未验项（V1 的登录失效部分、V7、V11、V12、V13、V24）见该文件。
 
 ## 附录 A：实测记录
 
@@ -702,7 +719,7 @@ P1 已更新：`antigravity.md`（按插件重写）、`mcp.md`、`docs/overview
 | --- | --- |
 | 工作区级插件（App） | 放在 sidecar 项目的工作区 `.agents/plugins/<名>/` 里即热加载：规则、MCP（`<插件>_<server>`）、hooks 都生效；hook 进程环境带 `ANTIGRAVITY_CONVERSATION_ID`、`PLUGIN_ROOT` |
 | 子 Agent | 子会话触发 `SessionStart` / `PreInvocation` / `Stop`，载荷无父字段、`lastUserInput` 为空；MCP `_meta` 带 `parent_conversation_id`；子→父 `send_message` 唤醒空闲的父会话（§4.1） |
-| 根会话的 `fullyIdle` | 根最后一次 `Stop(fullyIdle:false)` 之后没有根 `Stop`；`fullyIdle:true` 只来自子会话，晚 0.3 秒（§4.1、§8 L4）。**设计缺口，待 D17** |
+| 根会话的 `fullyIdle` | 根最后一次 `Stop(fullyIdle:false)` 之后没有根 `Stop`；`fullyIdle:true` 只来自子会话，晚 0.3 秒（§4.1、§8 L4）。**设计缺口，已由 D17 = A 解决（P3）** |
 | `Stop` 时的 transcript | 已含最终回复（V6） |
 | 在途 MCP 调用期间改写插件文件 | server 不重启、调用不被打断、新 `mcp_config.json` 不作用于已运行的 server；删除插件目录也不停 server（V14，§6.3） |
 | `agy` 载入并触发 hooks | 工作区级插件：未信任 → 0 个文件，信任 → 1 个；免费日志 `hooks_manager.go:54`（§4.1）。T1c：受信任目录里 `SessionStart`、`PreInvocation` ×3、`Stop(fullyIdle:true)` 都触发，hook 父进程是 `agy`，Stop 时 transcript 已含最终回复。全局插件没验（V3） |
@@ -740,6 +757,51 @@ App 的私有摘要库里还留着那三个已删会话的条目，由 App 自�
 
 用量（如实）：3 次 `agy` 启动、约 5 次 Flash 低档模型请求（第 1 次 2 次，信任路径写错、白跑；第 2 次 1 次，网络慢、被我的 60 秒超时终止；第 3 次 2 次，有效）；探针与手动喂载荷 0 次。
 还原：实验 daemon 与 GUI 宿主进程已停止，实验 launchd 条目已移除。原始记录在本机 `/tmp/agy-p1/evidence/`（仓库外），与 G1 的实验目录一起，规格与计划被接受后删除。
+
+### 附录 A.4：门 G2 实测（2026-11-16；只用 Antigravity，未使用 Cursor）
+
+安装的是 P2 的日常版；按你的决定（ask 917468 的 Q1 = B）临时切到 MCP 模式并打开「允许 AskHuman 管理 Antigravity sidecar」，结束后还原（附录 A.6）。会话都建在 `/private/tmp/agy-g23/` 下的临时目录里。
+
+| 主题 | 结果 |
+| --- | --- |
+| 任务与用量 | 6 个任务（上限 6）、19 次模型请求，全部 Flash 档：权限 ×2、`bypass` 的 `-medium`、`-high`、别名 `flash_lite`、别名 `flash` |
+| sidecar 创建与热注册 | 创建操作 2–3.4 秒返回；新建 sidecar 被 App 热注册并上线用了 0.2–7 秒；用同一个 id 重建，App 认领原来的项目（V8） |
+| 模型映射 | 不传 `--model` → `gemini-3.8-flash-tiered`；别名 `flash` → `gemini-3.8-flash-tiered`，`flash_lite` → `gemini-3.5-flash-lite`；`-low` / `-medium` / `-high` 的 id 按字面生效（§4.3、V20） |
+| 白名单权限 | `mcp(askhuman_mcp/*)` 让插件 MCP 在 sidecar 会话里执行（V18）；你全局的「始终允许」`command(AskHuman)` 对 sidecar 项目生效，没授权的命令被自动拒绝（V19） |
+| 全局插件 hooks（App） | AskHuman 自己的全局插件在 App 会话里触发 `SessionStart` / `PreInvocation` / `Stop`，会话进注册表（V22） |
+| 意外 | 两次模型自己去调用 `whats_next`，弹出没人认领的卡（请求 `16682e2a`、`73f29b42`，约 11:36）；已在发现后取消。原因应该是插件规则要求模型结束前调用它，而当时的提示没有明确禁止（推断，没有逐个核对） |
+
+### 附录 A.5：门 G3 实测（2026-11-16；只用 Antigravity，未使用 Cursor）
+
+| 主题 | 结果 |
+| --- | --- |
+| 任务与用量 | 7 个任务（上限 12）、31 次模型请求（含两个子会话共 4 次）；其中 1 个 Pro 级任务（`gemini-4-hydrogen-low`，1 次请求，你批准的那一个），其余都是 Flash 低档 |
+| 工作中插话 | `PreInvocation` 注入的消息在下一步送达，文本完整；composer 打开期间 hook 阻塞，实测暂停 38 秒后消息送达 |
+| 空闲消息 | 自己项目的 sidecar 约 0.1 秒送达；没有可用 sidecar 时现建控制 sidecar 约 4 秒（含建 sidecar）；`send-message` 的内容被宿主当 `SYSTEM_MESSAGE`，所以内容前加固定的 `[USER MESSAGE]` 包装（发现 F1，§10.2） |
+| D17 = A 归并成树 | 两个带子 Agent 的真实会话里，控制台只有根一行；子会话的 `Stop(fullyIdle:true)` 不出卡；根 `Stop(false)` 期间子会话收尾并唤醒根，消息不丢、没有重复的根 `Stop`（V23） |
+| Stop `continue` 上限 | 连续 `continue` 8 次都被接受，第 9 次没有续，会话正常结束（V2） |
+| Pro 级任务 | transcript 里只有最终的 `PLANNER_RESPONSE`，没有思考文本（V17） |
+| Stop 确认卡 | 卡片弹出的行为见 V24；真人点击没测到 |
+
+### 附录 A.6：门 G4、Stop 卡点击与 App 冷启动实测（2026-11-16；只用 Antigravity，未使用 Cursor）
+
+| 主题 | 结果 |
+| --- | --- |
+| 任务与用量（G4） | 5 个任务（上限 8）、13 次 Flash 低档模型请求：`agy` 4 个任务 9 次，App 的 YOLO 任务 1 个 4 次；另有 2 次 `agy` 启动撞上 Google 网络故障（EOF / TLS），没有到达模型（0 次请求），网络恢复后重做 |
+| `agy` 的目录 | 未信任的目录里 hook 载荷 `cwd` 为空串、`workspacePaths` 为空数组，有无 git 一样；用 `--settings` 信任（必须是 `/private/tmp/…` 这样的解析后路径）后才有（§4.1）。所以 `agy` 会话在没信任的目录里照常登记，但不知道文件夹；P4 的 launch id 配对只认 id、目录靠注册表回填 |
+| 全局插件在 `agy` | hooks 在 `agy` 会话里触发，会话进注册表；`pid` 存活判断、终止后标 `ended`（V3） |
+| `continue` 与注入 | `agy` 上与 App 行为相同（§4.1）：`Stop` 的 `continue` 让模型再答一次，`executionNum` 递增；`PreInvocation` 注入的消息模型在下一步回应 |
+| MCP 绑定 | `agy` 会话的 MCP 调用带会话键，AskHuman 把提问记到该 `agy` 会话与它的目录（V5） |
+| `--model=` | `agy --model=<id>` 可用；任务文本以 `-` 开头也完整到达（V15） |
+| 首次引导 | 引导屏（配色 → 数据使用同意）吞掉输入，`-i` 任务仍执行；我没有替你同意数据使用（V12） |
+| YOLO sidecar（App） | 带 `BypassSandbox` 的命令无人批准即在沙箱外执行，`curl` 得到 200，能连 daemon（V9） |
+| 意外 | R4 里模型又调用了 `whats_next`：我的 `agents stop antigravity on` 重写了整个插件、重新生成了规则文件，而那条提示没有禁止 MCP；杀掉该 `agy` 取消了卡。此后的提示都写明禁止，YOLO 那次照做了 |
+| Stop 确认卡点击（V24） | 两次试验（12:24 等了约 4.5 分钟、12:42 等了 12 分钟）都没人应答；卡正文是最后一条回复，选项「继续对话」/「结束对话」；结束 hook 后卡被取消、会话正常结束；registry 停在「工作中」直到 30 分钟兜底 |
+| App 冷启动（V1、V16，你授权退出 App） | 见 V1、V16、§12.5。做之前确认没有会话在跑（最近一个会话的 transcript 已静止 770 秒以上）、你的 Mac 空闲约 81 分钟、屏幕停在登录窗口，没有人在用 App |
+| 意外（第 4 次） | 冷启动那次的任务里，模型又去调 `whats_next`，弹出没人认领的卡（请求 `2809e587`，约 80 秒，当时屏幕锁着没人看到），取消后它又重试了一次（`e9e3a8bc`，约 28 秒），再取消后才作答。共 2 次额外请求 |
+| 用量合计（今天的真实测试） | G2 19 + G3 31 + G4 13 + Stop 卡 2 + 冷启动 4 = 69 次模型请求；Pro 级只有 1 次，其余全是 Flash 档；没有使用 Cursor |
+
+没有用户的弹窗被打扰到：四次没人认领的 `whats_next` 弹窗（G2 两次、G4 一次、冷启动一次）都是在没人在场时出现、被我取消的；G1 的 `agy` 实验还造成过一条 `away` 历史记录（附录 A.2）。
 
 ## 20. 反馈记录
 
@@ -788,3 +850,27 @@ App 的私有摘要库里还留着那三个已删会话的条目，由 App 自�
 | 提交规格与计划文档 | 未答复 | 按计划里「合适时提交」，只 `git add` 这两个文件，提交 `864aacad`（本地、未推送） |
 
 P1 的实现不依赖 D17；D17 影响的是 P1 之后接线的部分（根 / 子判断、完成判定）与 P3。
+
+### 2026-11-16 D17 与真实环境验证（用户经 AskHuman 回答）
+
+| 问题 | 回答 | 处理 |
+| --- | --- | --- |
+| D17：带子 Agent 的会话怎么处理 | **A 归并成树**（推荐项） | 已实现（P3，§8 L3 / L4、§9）；G3 实测 |
+| 真实环境验证怎么做（ask 917468 Q1） | **B**：临时切到 MCP 模式并打开「管理 sidecar」做 G2 / G3 实测；结束后还原 CLI 模式、用 AskHuman 自己的移除命令删掉我建的 sidecar、关掉管理开关 | 已按此执行；还原见附录 A.6 |
+| Pro / Claude 级任务（ask 917468 Q2） | 允许最多 1 个，用 `hy` 开头的那个 Gemini 模型 | 用了 1 个 `gemini-4-hydrogen-low`（1 次请求）；其余全是 Flash 档 |
+
+### 2026-11-16 Stop 卡、App 冷启动与收尾（用户经 AskHuman 回答，ask 735270）
+
+| 问题 | 回答 | 处理 |
+| --- | --- | --- |
+| V11：你在 App 里自建一个会话，我来发消息 | 「我不在电脑边，你来操作」 | 我不能替你在 App 界面里新建会话 → 对用户自建会话仍未验（V11） |
+| Stop 确认卡的点击测试 | 「现在就能配合（回答后我立刻开始，约 10 秒内弹卡）」 | 做了两次，都没人应答（V24）；你当时不在电脑前 |
+| V1 / V16：退出 App 做冷启动测试 | 「允许（按上面的条件，在 Q1、Q2 之后做）」 | 条件都满足后做了：见 V1、V16、§12.5、附录 A.6 |
+| V7：sidecar 会话在 App 里的位置 | 「你帮我看」 | 我看不到屏幕；只能给 App 摘要库的证据，其余列入验收（V7、§18） |
+| 测试会话怎么处理 | 「删除我创建的测试会话」 | App 与 `agy` 都没有删除会话的命令，我不手改它们的私有文件；处理结果见附录 A.6 末尾与最终报告 |
+
+### 2026-11-16 待你决定的新问题
+
+| 问题 | 背景 | 状态 |
+| --- | --- | --- |
+| Watch 要不要显示 Antigravity 的 `thinking` 文本 | Flash 的非低档会给出模型的思考文本（§4.6），Codex / Cursor 的观察界面会把公开的思考显示成带标签的一段；Antigravity 目前只显示正文与工具 | **待你决定**（不显示是现状） |

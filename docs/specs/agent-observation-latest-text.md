@@ -4,6 +4,11 @@
 > 适用入口为 Mac Agent 控制台与 iPhone 实时观察，共用后端内容语义。
 > 补充 `gui-agent-console.md` C2 / C8 与 `ios-channel.md` §6.7。
 
+> **Antigravity 补充（2026-11-16）**：Watch 读 `transcript_full.jsonl`（`~/.gemini/antigravity*/` 下按会话 UUID
+> 存放；规格见 [Antigravity 深度集成](antigravity-deep-integration.md) §11）：模型回复与工具步骤进最新正文和
+> 工具行。部分非 low 的 Flash 档的 transcript 带 `thinking` 字符串，**目前不显示**（需要产品决定，见规格 §4.6）；
+> 没有可读的原生标题，沿用会话里的首条用户请求。
+
 ## 1. 用户目标与已确认决策
 
 打开观察界面，一眼知道 Agent 现在在做什么，同时能稳定阅读它公开的思考。

@@ -2,7 +2,7 @@
 
 > 状态：Unix 上已实现 None / CLI / MCP 三种互斥模式；三种集成模式都安装同一个 AskHuman 托管插件，推荐 MCP。
 > 范围：用户级 Antigravity 插件（规则、MCP 配置、生命周期 hooks）、模式切换、迁移，以及当前明确支持/不支持的运行时能力。
-> 本文只描述当前产品行为，不记录验收过程或历史调查。会话身份之后的能力（Stop 确认、插话、新建任务、模型、YOLO）的需求与分期见
+> 本文只描述当前产品行为，不记录验收过程或历史调查。会话身份之后的能力（Stop 确认、插话、Watch、新建任务、模型、YOLO）的设计、验证与未验项见
 > [Antigravity 深度集成](./antigravity-deep-integration.md)，计划见 [plans/antigravity-deep-integration.md](../plans/antigravity-deep-integration.md)；
 > 该规格的 §6 是插件的权威描述，本文是其中已落地部分的行为摘要。
 
@@ -19,7 +19,8 @@
   用户可以在 Antigravity 里整体停用它（宿主在 `~/.gemini/config/config.json` 写 `plugins.askhuman.enabled=false`）；
   AskHuman **只读**检测这一点并在设置页、`agents`、`doctor` 里提示，从不写这个文件。
 - `hooks.json` 随生命周期开关生成：开启时有 `SessionStart`、`PreInvocation`、`Stop` 三个事件（后两个 `timeout` 为 86400 秒，
-  因为日后插话要等 composer 提交）；关闭时不写这个文件。`Stop` 走共享的 `AskHuman __stop-hook antigravity track`，目前只追踪、不弹确认卡。
+  因为插话要等 composer 提交、Stop 确认要等人回答）；关闭时不写这个文件。`Stop` 走共享的 `AskHuman __stop-hook antigravity track`；
+  「结束时确认」开关打开（`AskHuman agents stop antigravity on`，默认关）时再加一步 `confirm`，由它出确认卡。改这个开关会重写整个插件，规则文件随之重新生成。
 - 推荐 MCP，因为 App 的默认沙箱里 CLI 变体连不上 AskHuman 的 Daemon socket；MCP 在 App 与 `agy` 里都能用。
 - Antigravity 的插件写入器仅支持 Unix。Windows 上的 Antigravity 变更与状态查询返回明确的不支持错误，不写入部分产物。
 
@@ -81,7 +82,9 @@ stow / chezmoi / Home Manager 等工具若要管理这个目录，应自行维�
 - 会话限制不影响普通 `ask` 和 `whats_next` 的执行，但依赖精确会话归属的历史恢复必须保守处理。
 - 继承 `ANTIGRAVITY_CONVERSATION_ID` 本身不得阻止其它 Agent 的 hooks、MCP 或 CLI 入口；无显式 hint 时保留原有家族探测和可信 MCP 绑定。显式 `--caller-agent antigravity` 与其它家族标记冲突时，命令继续运行并在 stderr 提示，当前 CLI 调用不携带家族、会话或 MCP 实例绑定；`--show-last` 拒绝恢复，不得回退项目历史。非法、缺值或重复的 caller flag 仍属于参数错误。
 - 显式 hint 的冲突检查仅使用非空会话标记（`CODEX_THREAD_ID`、`CLAUDECODE` / `CLAUDE_CODE_SESSION_ID`、`CURSOR_CONVERSATION_ID`、`GROK_SESSION_ID`、`PI_SESSION_ID` / `PI_SESSION_FILE`）及 MCP 家族绑定。`CODEX_HOME` 等配置/工作区变量不触发冲突；这不授予可信 session，也不改变无 hint 时既有家族探测顺序。
-- 每个会话独立登记：当前不判断父子关系，子会话各自作为一个会话出现（它们的首步是父会话的系统消息，标题为空）。如何归并子会话仍待决定（深度集成规格 D17）。
+- 带子 Agent 的会话归并成一棵树（深度集成规格 D17）：hooks 对根会话和子会话各自上报，daemon 从父会话 transcript 里 `invoke_subagent` 的结果认出子会话并折进根——
+  控制台、Stop 确认和插话都只有根这一行；子会话自己的 `Stop` 不出卡，它的活动让根保持「工作中」。根在整棵树都空闲、且没有未读的跨会话消息之后才算结束。树只在 daemon 内存里，不持久化。
+- `agy` 在没有信任过的目录里，hook 载荷的 `cwd` 与 `workspacePaths` 是空的：会话照常登记和追踪，只是不知道所在文件夹；信任该目录后才有。
 
 控制台里的会话标题取该会话第一条用户请求：读 `~/.gemini/<surface>/brain/<会话 ID>/.system_generated/logs/transcript_full.jsonl`
 （App 是 `antigravity`，`agy` 是 `antigravity-cli`）的第一个用户输入步骤，去掉宿主加的 `<USER_REQUEST>` 外壳；只有规范形式的 UUID 才会拼进路径，读取有字节与行数上限。
@@ -126,16 +129,32 @@ AskHuman agents mode antigravity <none|cli|mcp>
 
 ## 7. 支持边界
 
-当前支持：提问、CLI/MCP 传输、可信会话绑定与历史恢复、生命周期追踪（会话在控制台出现、工作中 / 空闲、标题），App 与 `agy` 通用。以下能力尚未提供，也不应展示为可用：
+当前支持：提问、CLI/MCP 传输、可信会话绑定与历史恢复、生命周期追踪（会话在控制台出现、工作中 / 空闲、标题），App 与 `agy` 通用；以及：
 
-- Stop 结束确认
-- 插话与空闲消息
+- **Stop 结束确认**（App 与 `agy`）：根会话、`terminationReason == NO_TOOL_CALL`、整棵会话树 `fullyIdle` 后出确认卡，继续 = `decision: "continue"`；开关 `agents stop antigravity`，默认关。
+- **插话**：工作中经 `PreInvocation` 的 `injectSteps` 注入（App 与 `agy`）；App 的空闲／已结束会话经 sidecar 的 `agentapi send-message`，内容前加固定的 `[USER MESSAGE]` 包装；`agy` 没有空闲通道。
+- **Watch**：读会话的 `transcript_full.jsonl`，显示回复与工具步骤；`thinking` 文字目前不显示。
+- **新建任务**（手机、IM `/new`、Mac 新任务窗口）与**模型选择**：App 经 AskHuman 管理的全局 sidecar，终端用 `agy -i`；权限按 sidecar 白名单，可选 YOLO（App 用宽授权 sidecar，`agy` 用 `--dangerously-skip-permissions`）；
+  模型清单是 `agy models` 的平铺列表。App 路线需要用户一次性允许 AskHuman 管理 sidecar（`antigravityDesktop.manageSidecars`）。
+
+以下能力不提供，也不应展示为可用：
+
 - 原生权限拦截
 - 上下文恢复 Hook
-- Watch
-- 新建任务 / Fork
+- Fork
 
-其中 Stop 确认、插话、Watch 与新建任务已有规格与分期（深度集成规格 §9–§12、§16），原生权限拦截与 Fork 只记录调研结论（§13），上下文恢复不在范围内。
+设计、验证与未验项见深度集成规格 §9–§12、§17–§18；原生权限拦截与 Fork 只记录调研结论（§13），上下文恢复不在范围内。
+
+### 7.1 App 新建任务与 sidecar
+
+App 没有「在指定文件夹里新建会话」的公开入口，但它会为 `~/.gemini/config/sidecars/<id>/` 里的每个 sidecar 启动一个进程，该进程能运行 `agentapi` 并带着清单里授予的权限。AskHuman 据此：
+
+- 每个文件夹一个全局 sidecar：`askhuman-ws-<h8>`（只允许白名单）、`askhuman-yolo-<h8>`（宽授权，名字带「YOLO」，设置页标注、可一键移除）；另有不属于任何用户文件夹、没有授权、只用来传空闲消息的 `askhuman-ctl`。最多 20 个。
+- AskHuman 只写 `~/.askhuman/antigravity-sidecars.json`、各 sidecar 目录与 `config.json` 里的 `sidecars.askhuman-*` 条目（读-改-写，一次 `rename`，其余字节不动，用户的授权与插件开关原样保留）。
+- sidecar 进程从不启动 daemon，只连 daemon 并执行 daemon 下发的固定 `agentapi` 调用；不接受任意命令。
+- 创建 sidecar 要用户一次性允许（`antigravityDesktop.manageSidecars`，默认关）；未允许时明确拒绝，不静默创建，也不静默改走 `agy`。
+- Antigravity 里已经创建的会话由 Antigravity 管理，AskHuman 不替用户删除；移除 sidecar（`AskHuman agents sidecars remove`）只移除它自己的文件与配置条目。
+- 管理命令 `AskHuman agents sidecars [list|remove <id>|remove --all]`，设置页 Antigravity 卡里有同样的列表与规则编辑。
 
 ## 8. 平台与验证口径
 
