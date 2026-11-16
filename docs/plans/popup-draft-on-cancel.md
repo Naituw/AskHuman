@@ -1,7 +1,7 @@
 # 计划：调用方断开时保住弹窗里没提交的内容
 
 规格：[popup-draft-on-cancel.md](../specs/popup-draft-on-cancel.md)（设计定案以规格为准；本计划只写怎么做、怎么验）。
-状态：规格已评审通过，实施中（2026-11-16）。执行位置：用户选了主工作区。主工作区里有别的会话的未提交改动
+状态：已实施并验收（2026-11-16，实施记录与验收结果见 §3 和规格 §5）。执行位置：用户选了主工作区。主工作区里有别的会话的未提交改动
 （`src-tauri/src/codex_desktop/mod.rs`、`docs/specs/codex-desktop-session-integration.md`、`ios/AskHuman/Views/Attachments/*`、
 `ios/AskHumanUITests/*`）：提交只按明确路径；它们会被一起编进我的构建，测试失败要先分清是不是它们的；
 安装前先问用户怎么处理它们（用户在选位置时已知晓这一点）。
@@ -116,4 +116,56 @@
 
 ## 3. 实施记录
 
-（实施后填写：提交清单、前置核对结论、验证结果与没做到的部分。）
+### 提交（主工作区；提交只按明确路径）
+
+| 阶段 | 提交 |
+| --- | --- |
+| 规格与计划、评审记录 | `963cbbcf`、`dd745613` |
+| P1 历史存储 | `4e76e67c` |
+| P2 取消路径 | `1deef0f1` |
+| P3 保存 | `85a1bd44` |
+| P4 载入 | `cb89ce16` |
+| P5 历史窗口 | `0b3525fb` |
+| P6 文档回写（含 wiki 里「系统触发的取消不记录」的更正） | `619f8758` |
+| 验收结果与本记录 | 本记录所在的提交（标题 `docs(popup): record the draft-on-cancel acceptance run …`） |
+
+### 前置核对的结论
+
+- 会话键与指纹在 `daemon/request.rs` 构造 `ShowPayload` 之前就已算好（收敛键本来就存在 `RequestEntry` 里），`draft_key` 直接取它们；
+  只有 Ask 类请求填，Confirm 填 `None`。
+- 弹窗渠道的 `Cancel` 与 daemon 请求表后来补发的 `Cancel` 走同一条宿主连接，但**先后原来不保证**：宿主在听到的第一条 `Cancel`
+  上结束卡片，补发的那条（不带 `keepDraft`）若先到，草稿就读不到。另一个会话在 `229f9e7e` 里把 `finalizing` 的设置挪到所有渠道
+  都 `interrupt_abandoned` 之后，才让这个先后成立（他们修的是幽灵卡问题，提交说明里点名了本篇的 D4 / D5）。
+- 恢复存储：`ShowPayload`、`ServerMsg::Cancel` 新增字段都是 `#[serde(default)]`，无值时不序列化；完整 `cargo test` 里的恢复存储哈希夹具通过，
+  没有升 `PROTOCOL_VERSION`。
+- `popup_init` 是同步函数，没有改它；载入走新命令 `popup_draft_claim`，只有合并宿主的前端调用。
+- 历史条目结构体没有 `deny_unknown_fields`，旧版本读到带 `draft` 的行不会失败。
+
+### 与计划不同的地方
+
+- **没有 `popup_draft_images` 命令。** 图片由宿主在 `popup_draft_claim` 里读（只读系统临时目录 `askhuman/` 下、规范化后仍在该前缀内的
+  文件，限制单文件大小），连同缺失张数一起放进 `DraftLoad` 返回，少一次往返，校验口径不变。
+- **宿主退出路径多了一条。** 计划写的是两条（`PopupHostIdleAck keep_warm=false`、`PopupHostShutdown`）；实现里与 daemon 的连接断开
+  （EOF）导致的退出也会等待待存草稿（同样有界 3 s），否则 daemon 先停时草稿会在宿主被带走的路上丢掉。
+- **载入时要等「刚保存」的草稿。** 调用方断开后立刻重发，新卡的认领可能早于上一张卡的保存；`popup_draft_claim` 先
+  `drafts_kept(同键)` 等最多 3 s 再认领（验收第 7 项就是它）。
+- 规格里两处前提在实施时更正（已写回规格）：§1 的「26 次调用方取消」其实是 15 条旧协调器单元测试写进真实历史的污染
+  （项目 `/project`）、8 条 Antigravity 实验、3 条真实的；§6 第 3 条草稿图片的保留期是 daemon 自己的临时目录清理（24 小时），
+  不是系统的。
+
+### 验证
+
+- 最终 HEAD `53f234c2`：`cargo fmt --check`、`cargo clippy --all-targets -D warnings` 通过；`cargo test` 3433 通过 / 0 失败 / 12 忽略；
+  vitest 139 个文件 / 1960 项；`vue-tsc` 通过。Node 脚本测试里只有 `codex-native-title.node-test.mjs` 失败（读本机 Codex App 的包，
+  与本篇无关）。
+- 安装：用户先确认另一个会话的未提交改动已提交（`229f9e7e`、`53f234c2`），再从 `53f234c2` 全局安装；daemon 热更新到指纹 `f69c35f2`。
+  `53f234c2` 让被热更新接管的空闲宿主退休并换成新镜像；安装当时的日常弹窗宿主还被另一个会话的一条长时间未答的提问占着，
+  要等那条结束才会换成新二进制。
+- 真实验收：用户选了「不做真人验收」，改在隔离的私有实例里无人值守地跑，界面用浏览器页看，逐项结果与没验证到的部分见规格 §5「验收结果」。
+- 清理：私有实例已停，临时目录和浏览器页用的一次性脚本都已删；真实历史和 daemon 没动过。
+
+### 没做、留给后续的
+
+- 载入提示与历史窗口的状态行写的是「调用方断开时…」，而 daemon 停止导致的取消（渠道「系统」）同样会带草稿，此时措辞不准；
+  规格 D8 的原文就是这句，改不改要用户定。
+- 只杀 MCP server（SIGTERM / SIGKILL）会留下孤儿 CLI 子进程和一张不会关的卡，是另一类问题（规格 §4），没有处理。
