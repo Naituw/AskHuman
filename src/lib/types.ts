@@ -723,6 +723,20 @@ export interface HistoryEntry {
   answers: HistoryAnswer[];
   /** Notes written on the Agent's text with the answer; absent on entries recorded without any. */
   annotations?: UserAnnotation[];
+  /**
+   * What the user had typed when the caller went away (docs/specs/popup-draft-on-cancel.md); only on a cancelled entry
+   * that kept one. Never part of `answers`, which keeps meaning "what was sent".
+   */
+  draft?: HistoryDraft | null;
+}
+
+/** The unsent content of an ask whose caller went away, kept on its cancel entry. */
+export interface HistoryDraft {
+  /** One per question, same shape as a sent answer (pictures and files are paths). */
+  answers: HistoryAnswer[];
+  annotations?: UserAnnotation[];
+  /** The request whose card loaded this draft; a draft is loaded at most once. Absent while it still waits. */
+  claimedBy?: string | null;
 }
 
 /** Aggregated project info for the history window's project picker. */
