@@ -327,7 +327,7 @@ const thumbs = images.urls;
       </button>
     </div>
 
-    <!-- What was typed but not submitted when the caller went away, and whether a new question took it (spec D8) -->
+    <!-- What was typed but not submitted when the ask was cancelled, and whether a new question took it (spec D8) -->
     <div v-if="draft" class="draft-line">
       <span class="draft-tag">{{ t("history.draft") }}</span>
       <span class="draft-line-text">{{ t("history.draftNote") }}</span>

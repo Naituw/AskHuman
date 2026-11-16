@@ -1341,13 +1341,13 @@ export default {
     annotations: "附注",
     copyAnnotations: "附注：",
     copySession: "会话：{session}",
-    // 调用方断开时没来得及提交的内容（docs/specs/popup-draft-on-cancel.md D8）。
+    // 被取消时没来得及提交的内容（调用方断开或 daemon 停止；docs/specs/popup-draft-on-cancel.md D8）。
     draft: "草稿",
-    draftNote: "调用方断开时未提交的内容",
+    draftNote: "取消时未提交的内容",
     draftLoaded: "已载入新提问",
     draftNotLoaded: "未载入新提问",
     copyDraft: "复制草稿",
-    copyDraftHeading: "调用方断开时未提交的内容：",
+    copyDraftHeading: "取消时未提交的内容：",
     copySelectedOptions: "已选选项：",
     attach: {
       button: "附件",

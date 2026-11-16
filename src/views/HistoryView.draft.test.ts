@@ -87,9 +87,9 @@ describe("the history window and the unsent content of cancelled asks", () => {
     const view = await mountHistory();
     const [waiting, taken] = view.findAll(".draft-badge");
     expect(waiting.classes()).not.toContain("loaded");
-    expect(waiting.attributes("title")).toBe("Not submitted when the caller went away · Not loaded into a new question");
+    expect(waiting.attributes("title")).toBe("Not submitted when it was cancelled · Not loaded into a new question");
     expect(taken.classes()).toContain("loaded");
-    expect(taken.attributes("title")).toBe("Not submitted when the caller went away · Loaded into a new question");
+    expect(taken.attributes("title")).toBe("Not submitted when it was cancelled · Loaded into a new question");
   });
 
   it("finds an entry by the words typed in its draft", async () => {
@@ -128,7 +128,7 @@ describe("the history window and the unsent content of cancelled asks", () => {
   it("shows the draft in the detail of the entry that was chosen", async () => {
     const view = await mountHistory();
     // The newest entry is the one on screen when the window opens.
-    expect(view.get(".draft-line").text()).toContain("Not submitted when the caller went away");
+    expect(view.get(".draft-line").text()).toContain("Not submitted when it was cancelled");
     expect(view.get(".draft-block .reply-text").text()).toBe("needs the migration rollback plan");
     await view.findAll(".entry")[3].trigger("click");
     await settle();
@@ -144,6 +144,6 @@ describe("the history window and the unsent content of cancelled asks", () => {
     const view = await mountHistory();
     const badge = view.get(".draft-badge");
     expect(badge.text()).toBe("草稿");
-    expect(badge.attributes("title")).toBe("调用方断开时未提交的内容 · 未载入新提问");
+    expect(badge.attributes("title")).toBe("取消时未提交的内容 · 未载入新提问");
   });
 });

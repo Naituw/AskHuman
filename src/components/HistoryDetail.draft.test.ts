@@ -85,7 +85,7 @@ describe("the unsent content of a cancelled ask in the detail", () => {
 
   it("says what it is, and whether a new question has taken it", async () => {
     const { wrapper } = mountDetail(cancelled());
-    expect(wrapper.get(".draft-line").text()).toContain("Not submitted when the caller went away");
+    expect(wrapper.get(".draft-line").text()).toContain("Not submitted when it was cancelled");
     expect(wrapper.get(".draft-line-state").text()).toBe("Not loaded into a new question");
     expect(wrapper.get(".draft-line-state").classes()).not.toContain("loaded");
     // The record is still a cancellation: the banner and "Not answered" are as they were.
@@ -156,7 +156,7 @@ describe("the unsent content of a cancelled ask in the detail", () => {
     await wrapper.get(".draft-line .copy-btn").trigger("click");
     await flushPromises();
     expect(copied).toEqual([[
-      "Not submitted when the caller went away:",
+      "Not submitted when it was cancelled:",
       "",
       "Question 1/2",
       "Selected options:",
@@ -183,7 +183,7 @@ describe("the unsent content of a cancelled ask in the detail", () => {
     const text = copied[0];
     expect(text.startsWith("Cancelled via Caller")).toBe(true);
     expect(text).toContain("Not answered");
-    const heading = text.indexOf("Not submitted when the caller went away:");
+    const heading = text.indexOf("Not submitted when it was cancelled:");
     expect(heading).toBeGreaterThan(text.indexOf("Anything else?"));
     expect(text.slice(heading)).toContain("because it is slow");
     expect(text.slice(heading)).toContain("> the plan");
@@ -197,7 +197,7 @@ describe("the unsent content of a cancelled ask in the detail", () => {
     const { wrapper } = mountDetail(single);
     await wrapper.get(".draft-line .copy-btn").trigger("click");
     await flushPromises();
-    expect(copied).toEqual(["Not submitted when the caller went away:\n\nReply:\njust this"]);
+    expect(copied).toEqual(["Not submitted when it was cancelled:\n\nReply:\njust this"]);
   });
 
   it("is absent from a cancelled entry that kept nothing, and from every sent one", () => {
@@ -218,7 +218,7 @@ describe("the unsent content of a cancelled ask in the detail", () => {
   it("speaks the language of the interface", () => {
     i18n.global.locale.value = "zh";
     const { wrapper } = mountDetail(cancelled({ draft: draft({ claimedBy: "request-2" }) }));
-    expect(wrapper.get(".draft-line").text()).toContain("调用方断开时未提交的内容");
+    expect(wrapper.get(".draft-line").text()).toContain("取消时未提交的内容");
     expect(wrapper.get(".draft-line-state").text()).toBe("已载入新提问");
     expect(wrapper.get(".draft-block .draft-tag").text()).toBe("草稿");
     expect(wrapper.get(".draft-line .copy-btn").text()).toBe("复制草稿");

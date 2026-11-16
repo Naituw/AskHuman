@@ -1364,13 +1364,14 @@ export default {
     annotations: "Annotations",
     copyAnnotations: "Annotations:",
     copySession: "Session: {session}",
-    // What was typed but not submitted when the caller went away (docs/specs/popup-draft-on-cancel.md D8).
+    // What was typed but not submitted when the ask was cancelled (its caller went away or the daemon stopped;
+    // docs/specs/popup-draft-on-cancel.md D8).
     draft: "Draft",
-    draftNote: "Not submitted when the caller went away",
+    draftNote: "Not submitted when it was cancelled",
     draftLoaded: "Loaded into a new question",
     draftNotLoaded: "Not loaded into a new question",
     copyDraft: "Copy draft",
-    copyDraftHeading: "Not submitted when the caller went away:",
+    copyDraftHeading: "Not submitted when it was cancelled:",
     copySelectedOptions: "Selected options:",
     attach: {
       button: "Attachments",

@@ -3,19 +3,6 @@
 记录需要跨会话保留的未完成 / 延期事项和明确下一步。任务 / 需求完成后删除其 section
 （历史留在 git）。
 
-## 进行中：调用方断开时保住弹窗里没提交的内容（已实现、已安装、已验收，等用户收尾）
-
-规格 [popup-draft-on-cancel.md](specs/popup-draft-on-cancel.md)（§5 有验收结果与没验证到的部分），计划 [plans/popup-draft-on-cancel.md](plans/popup-draft-on-cancel.md)（§3 是实施记录）。
-起因：Agent 一侧出错关掉 AskHuman 的 MCP server → 调用方断开 → 弹窗被取消，正在输入的内容（只在网页内存里）随窗口丢失。
-用户选定：草稿记在那条取消的历史记录上；窗口照旧立刻关闭、不加提示；同会话重发同一个问题时自动载入并提示。
-
-- [x] 规格评审：§6 五个默认值全部按默认；执行位置选主工作区（里面有别的会话的未提交改动，提交只按明确路径、安装前先问）。
-- [x] P1–P6 实现、全量验证、从 `53f234c2` 全局安装；用户选了「不做真人验收」，改在隔离私有实例里无人值守验收（结果见规格 §5）。
-- [ ] 待用户：是否推送（只按明确 SHA 推我的提交，别带上别的会话还没推的提交）；载入提示和历史里的「调用方断开时未提交的内容」对 daemon 停止
-  造成的取消（渠道「系统」）措辞不准，要不要改成不带来源的说法（规格 D8 原文就是这句，我没有自己改）；真实历史里有 15 条项目为 `/project`
-  的旧测试污染记录（早先的协调器单元测试写进去的，现已修好），要不要删。
-- [ ] 日常弹窗宿主安装时被另一个会话的一条长问占着，仍是旧镜像，那条结束后才会换成新二进制。
-
 ## 进行中：Antigravity 深度集成（P1–P4 已实现并装为日常版，等用户验收）
 
 规格 [antigravity-deep-integration.md](specs/antigravity-deep-integration.md)，计划 [plans/antigravity-deep-integration.md](plans/antigravity-deep-integration.md)
