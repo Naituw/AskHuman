@@ -35,6 +35,10 @@ macOS 标题栏拖动由本地 `vendor/tao` 补丁在原生 `sendEvent:` 中保�
 以一次性 token 和 generation 认证共享连接；普通题、权限和 Stop 共用 `--popup-host`。
 请求账本及终态仍属于 Daemon，IPC submission ACK 按 ID 区分合法提交、渠道抢答和失败。
 同一终态只移除一个请求；连接故障有界重建 pending 请求，明确提示内存草稿丢失。
+调用方断开（Agent 一侧出错关掉 MCP）或 daemon 停止取消一张提问卡时，宿主在移除卡片的同时读出它的内容，
+写进那条取消历史记录的 `draft`（`app/popup_draft.rs`；内容不经 daemon IPC，图片落系统临时目录，宿主因此也会写历史文件）；
+同会话重发同一个问题时，新卡经 `popup_draft_claim` 认领并带出，只填空着的部分，顶部有一行可关闭的提示。
+用户自己取消、被别处抢答、Handoff 与独立窗口模式不走这条。规格见 [popup-draft-on-cancel.md](specs/popup-draft-on-cancel.md)。
 
 `PopupInboxView.vue` 管理按完整项目路径分组的导航、10pt 未查看蓝点、草稿提示、同项目
 下一条和固定 ID 快照的统一关闭。条目保留问题摘要主标题，下面仅一行「Agent / 会话图标 +
