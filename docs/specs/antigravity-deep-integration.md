@@ -803,6 +803,26 @@ App 的私有摘要库里还留着那三个已删会话的条目，由 App 自�
 
 没有用户的弹窗被打扰到：四次没人认领的 `whats_next` 弹窗（G2 两次、G4 一次、冷启动一次）都是在没人在场时出现、被我取消的；G1 的 `agy` 实验还造成过一条 `away` 历史记录（附录 A.2）。
 
+**还原（测试结束后；按 ask 917468 的回答，全部用 AskHuman 自己的命令）**
+
+| 项目 | 处理 | 结果 |
+| --- | --- | --- |
+| sidecar | `agents sidecars remove --all`（`askhuman-ctl`、`askhuman-ws-3d2de96a` / `-e34fbce0` / `-4c2e9c4e`、`askhuman-yolo-0fd7463d`） | 12 秒后 App 里没有它们的进程（剩 1 个 sidecar 进程，与 `config.json` 里只剩你自己的 `swarm/swarm_board` 一致）；`~/.gemini/config/sidecars/` 是空目录；AskHuman 的 sidecar 注册表为空 |
+| 管理开关 | `config set antigravityDesktop.manageSidecars false` | 已关 |
+| 接入模式 | `agents mode antigravity cli` | 插件是 CLI 模式（hooks + 规则，没有 MCP）；`agents stop antigravity` 为关 |
+| `~/.gemini/config/config.json` | 只经 AskHuman 的编辑器读-改-写；测试前留了备份，现在逐项比对 | 与测试前语义一致：`userSettings`（含授权 `command(AskHuman)`、`command(ls)`）、`plugins`、你自己的 `swarm/swarm_board` 都没动；文本上只差文件末尾的一个换行符 |
+| `mcp_config.json` | MCP 模式装过又撤 | 与原来一致（0 字节） |
+| App | 冷启动那次之后一直在运行 | 没有再退出；你自己的会话（`fc8d08f7…`）没碰过 |
+
+没有还原、也不该由我还原的：
+
+- App 生成的 `projects/<id>.json`（名字是 sidecar 的 id）与 `sidecar_data/<id>/`：P10 规定移除 sidecar 不删它们，保留任务历史的归属。
+- 我建的测试会话（你答「删除我创建的测试会话」）：App 目录里 19 个（其中 2 个是子 Agent 会话）、`agy` 目录里 6 个，都是今天 11:31 之后建的，和你自己的会话分得清（`fc8d08f7…` 是 01:56 的）。
+  没有受批准的删除办法：`agy` 没有删除命令；App 内部有删除会话的接口，但属于私有接口，本规格没有批准使用（§4.6），我也不手改它们的私有文件（G1 手工删过一次文件，App 的摘要库因此留了幽灵条目）。
+  App 的那 19 个可以在 App 里按项目名 `askhuman-ws-…` / `askhuman-ctl` / `askhuman-yolo-…` 找到并删除；`agy` 的 6 个见 §20「待你决定」。
+- 控制台的 Agent 列表里还有我的测试会话：App 会话 1 小时后自动变「已结束」（L2），已结束队列只留最近 10 条，会被新会话顶掉。
+- `~/.askhuman/antigravity-tasks/` 里 19 份任务回执（几百字节；`create` 时顺带清理 30 天以前的）。
+
 ## 20. 反馈记录
 
 ### 2026-11-16 首轮审阅（用户经 AskHuman 回答）
@@ -874,3 +894,4 @@ P1 的实现不依赖 D17；D17 影响的是 P1 之后接线的部分（根 / �
 | 问题 | 背景 | 状态 |
 | --- | --- | --- |
 | Watch 要不要显示 Antigravity 的 `thinking` 文本 | Flash 的非低档会给出模型的思考文本（§4.6），Codex / Cursor 的观察界面会把公开的思考显示成带标签的一段；Antigravity 目前只显示正文与工具 | **待你决定**（不显示是现状） |
+| 要不要让我按会话 ID 直接删除我留下的测试会话文件 | 你答了「删除我创建的测试会话」，但没有受批准的删除接口（附录 A.6「还原」）。直接删文件是手改它们的私有文件，而且不一定能让列表里的条目消失：G1 那次删完，App 的私有摘要库里的条目留了下来，要等 App 自己以后整理（附录 A.2）| **待你决定**（默认不做；做的话我先列出会话 ID 清单给你确认） |
