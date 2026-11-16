@@ -158,6 +158,18 @@ jobs:
         if: startsWith(matrix.os, 'ubuntu') || startsWith(matrix.os, 'windows') || matrix.target == 'aarch64-apple-darwin'
         run: cargo test --manifest-path src-tauri/Cargo.toml
 
+      # TEMPORARY (Windows diagnosis): the job log needs admin rights to read, annotations do not.
+      # Runs only when a step before it failed, on Windows; remove once the failing tests are fixed.
+      - name: list the failing Windows tests (temporary)
+        if: failure() && startsWith(matrix.os, 'windows')
+        shell: bash
+        run: |
+          cargo test --manifest-path src-tauri/Cargo.toml --no-fail-fast 2>&1 | tee test-run.log || true
+          names=$(grep -E '^test .* \.\.\. FAILED' test-run.log | sed -E 's/^test (.*) \.\.\. FAILED.*$/\1/' | tr '\n' ' ' || true)
+          echo "::error title=failing Windows tests::${names:-none matched}"
+          details=$(tr -d '\r' < test-run.log | awk '/^failures:$/{c++} c>=1' | head -c 14000 | awk 'BEGIN{ORS="%0A"} {gsub(/%/,"%25"); print}' || true)
+          echo "::error title=Windows failure details::${details:-none}"
+
       - name: cargo build (release)
         run: cargo build --release --manifest-path src-tauri/Cargo.toml --target ${{ matrix.target }} --features custom-protocol
 
