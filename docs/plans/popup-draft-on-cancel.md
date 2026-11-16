@@ -175,6 +175,32 @@
 - **图片路径前缀校验**：用户定了不补（见上面「与计划不同的地方」）。
 - **推送**：用户同意推送；到我检查时 `origin/main` 已经在 `46d327ef`，无需再推。
 
+### 发布（2026-11-17）
+
+用户要求发布新的补丁版本，草稿功能随桌面 [v0.17.2](https://github.com/Naituw/AskHuman/releases/tag/v0.17.2) 公开。
+同一版还带上了 v0.17.1 之后其余的面向用户的提交（共 90 条），其中包括仍在等用户验收的 Antigravity 深度集成；
+发布说明如实写了「只在 macOS 验过」和升级后要执行一次的迁移命令。
+
+- **发布说明**：用户在手写版与 git-cliff 自动版之间选了手写版，随版本提交为 `docs/release-notes/v0.17.2.md`
+  （英文、按功能与修复分组、不含 iPhone 专属条目）。Release 页的正文与该文件逐字一致。
+- **流程**：干净的临时 worktree 里 `bump-version` 到 0.17.2（含 `Cargo.lock`），提交 `1d7c51fd chore(release): prepare v0.17.2`，
+  按 SHA 单独推送。该提交的 [CI 43917249624](https://github.com/Naituw/AskHuman/actions/runs/43917249624) 七项全绿
+  （上一个提交 `1565ef0f` 也全绿，Windows `cargo test` 在 `7592c4b3` 的修复后恢复通过）。
+  注解 tag `v0.17.2` 指向 `1d7c51fd`，只推了这一个 tag：没有用 `--tags`（本地的 `ios-testflight-*` 标签没有出去），
+  也没有用 `scripts/publish.sh`（它是裸 `git push`）。
+- **发布结果**：[Release 43921656141](https://github.com/Naituw/AskHuman/actions/runs/43921656141) 全部成功，
+  从打 tag 到结束约 24 分钟（含排队约 13 分钟），2026-11-17 02:08:54（北京时间）发布。
+  Release 为非草稿、非预发布，四个二进制归档和 `SHA256SUMS` 都在。
+- **npm**：`askhuman` 与四个 `@humaninloop/*` 平台包的 0.17.2 都能查到，latest 一致，主包依赖固定为 0.17.2。
+  注册表有几分钟的传播延迟：工作流结束后约 3 分钟，`darwin-arm64` 与 `linux-x64` 才能被直接查到；
+  期间我做的第一次隔离安装只装上了主包，用 `--prefer-online` 重装才装全。刚发布的几分钟里，用户可能遇到同样的情况。
+- **核验**：下载的 Mac ARM64 归档通过 `SHA256SUMS`；解出的程序通过严格签名验证（Developer ID Application，
+  TeamID `DMJXDB9H6Q` 与既有常量一致），`--version` 为 v0.17.2；`todo-sync resource-info --require-bundled`
+  给出内嵌 production 组件版本 0.17.2、协议 1。隔离目录里全新的 npm 安装（`--prefer-online`）能运行 `AskHuman --version`，
+  其 native binary 与 GitHub 下载包的 SHA-256 一致。
+- **没验证**：Windows、Linux、Intel Mac 的发布二进制没有在本机运行（CI 只覆盖编译与测试）；
+  没有实际走一遍应用内自更新到 0.17.2；本机日常版仍是 0.17.1，重装后才对齐。
+
 ### 没做、留给后续的
 
 - 只杀 MCP server（SIGTERM / SIGKILL）会留下孤儿 CLI 子进程和一张不会关的卡，是另一类问题（规格 §4），没有处理。
