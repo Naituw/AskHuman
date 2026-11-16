@@ -6,25 +6,33 @@ import { mockIPC, mockWindows } from "@tauri-apps/api/mocks";
 import type { AskRequest, PopupInit } from "../lib/types";
 import { PROJECT, REQUEST_ID, readParams as readBase, type FrameParams } from "./replyMenuMock";
 
-export type Shape = "message" | "direct" | "three";
+export type Shape = "message" | "direct" | "three" | "files";
 export interface AnnotationParams extends FrameParams {
   shape: Shape;
 }
 
+const SHAPES: readonly Shape[] = ["message", "direct", "three", "files"];
+
 export function readParams(search: string = location.search): AnnotationParams {
   const base = readBase(search);
   const shape = new URLSearchParams(search).get("shape");
-  return { ...base, shape: shape === "direct" ? "direct" : shape === "three" ? "three" : "message" };
+  return { ...base, shape: SHAPES.find((candidate) => candidate === shape) ?? "message" };
 }
 
 const OPTION = (text: string, recommended = false) => ({ text, recommended });
 
 function askRequest(id: string, shape: Shape): AskRequest {
   const base = { id, isMarkdown: true, selectOnly: false, single: false, outputFormat: "text" as const, annotatable: true };
-  if (shape === "direct") {
+  if (shape === "direct" || shape === "files") {
+    // `files` is the same direct ask with two files attached to the Message: the question is then shown as the Message,
+    // above the files (docs/specs/message-annotations.md D20).
+    const files = [
+      { path: "/tmp/migration-plan.md", name: "migration-plan.md", size: 4_812, isImage: false },
+      { path: "/tmp/orders-diff.patch", name: "orders-diff.patch", size: 18_340, isImage: false },
+    ];
     return {
       ...base,
-      message: { text: "", files: [] },
+      message: { text: "", files: shape === "files" ? files : [] },
       questions: [
         {
           message: [
@@ -97,7 +105,12 @@ function initPayload(params: AnnotationParams): PopupInit {
     agentPid: 4242,
     agentConsoleSessionId: "proto-session",
     agentSessionId: "019d3a52-7c1e-7e41-b9a8-3f6a0c2d9e10",
-    agentSessionTitle: params.shape === "direct" ? "订单表迁移" : params.shape === "three" ? "重构登录会话存储" : "修复登录页 Safari 样式错位",
+    agentSessionTitle:
+      params.shape === "direct" || params.shape === "files"
+        ? "订单表迁移"
+        : params.shape === "three"
+          ? "重构登录会话存储"
+          : "修复登录页 Safari 样式错位",
     language: "zh",
     speechLanguage: "auto",
     speechShortcut: "",

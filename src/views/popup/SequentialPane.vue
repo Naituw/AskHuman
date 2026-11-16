@@ -13,6 +13,7 @@ const {
   request,
   showQuestionHeader,
   showDescription,
+  questionAsMessage,
   annotationTarget,
   questionHeaderLabel,
   qHeaderRef,
@@ -53,15 +54,16 @@ const {
   <!-- 当前问题区（上一个/下一个左右滑动） -->
   <Transition :name="transitionName" mode="out-in" @after-enter="onQuestionEntered">
     <div class="question-pane" :key="current">
+      <!-- A question that stands in for the Message is drawn by MessageSection, above the files. -->
       <MarkdownContent
-        v-if="request?.isMarkdown && !viewSource && currentQuestion?.message"
+        v-if="!questionAsMessage && request?.isMarkdown && !viewSource && currentQuestion?.message"
         :source="currentQuestion.message"
         :base-directory="projectPath"
         :data-find-seg="`q-${current}-msg`"
         :data-annotation-root="annotationTarget === 'question' ? '' : undefined"
       />
       <pre
-        v-else-if="currentQuestion?.message"
+        v-else-if="!questionAsMessage && currentQuestion?.message"
         class="plain-body"
         :data-find-seg="`q-${current}-msg`"
         :data-annotation-root="annotationTarget === 'question' ? '' : undefined"

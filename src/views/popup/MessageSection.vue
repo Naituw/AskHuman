@@ -9,6 +9,8 @@ const ctx = usePopupContext();
 const {
   request,
   showDescription,
+  questionAsMessage,
+  currentQuestion,
   annotationTarget,
   messageText,
   projectPath,
@@ -48,6 +50,23 @@ const {
       data-find-seg="message"
       :data-annotation-root="annotationTarget === 'message' ? '' : undefined"
     >{{ messageText }}</pre>
+    <!-- A lone question with files and no Message text is the Message: its text comes first, the files right after it
+         (docs/specs/message-annotations.md D20). SequentialPane leaves the text out of the question pane. -->
+    <template v-else-if="questionAsMessage">
+      <MarkdownContent
+        v-if="request?.isMarkdown && !viewSource"
+        :source="currentQuestion?.message ?? ''"
+        :base-directory="projectPath"
+        data-find-seg="q-0-msg"
+        :data-annotation-root="annotationTarget === 'question' ? '' : undefined"
+      />
+      <pre
+        v-else
+        class="plain-body"
+        data-find-seg="q-0-msg"
+        :data-annotation-root="annotationTarget === 'question' ? '' : undefined"
+      >{{ currentQuestion?.message }}</pre>
+    </template>
 
     <div v-if="attachments.length" class="attachments">
       <div class="att-caption" data-find-skip>

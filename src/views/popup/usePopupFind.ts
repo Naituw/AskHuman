@@ -53,6 +53,8 @@ export function usePopupFind(deps: {
   viewSource: Ref<boolean>;
   attachments: Ref<FileAttachment[]>;
   questions: Ref<Question[]>;
+  /** The lone question is shown as the Message (files attached, no Message text): its text comes before the files. */
+  questionAsMessage?: Readonly<Ref<boolean>>;
   /** The todo options are the project's live queue (What's next, a Stop confirmation): drawn without the display prefix. */
   liveTodoOptions: Ref<boolean>;
   todoPrefix: Ref<string>;
@@ -144,6 +146,10 @@ export function usePopupFind(deps: {
     const msg = deps.messageText.value;
     if (msg) segs.push({ id: "message", text: msg, qIndex: null });
 
+    // Matches are visited in reading order, so a question that stands in for the Message is read before the files.
+    const lead = deps.questionAsMessage?.value ? deps.questions.value[0] : undefined;
+    if (lead?.message) segs.push({ id: "q-0-msg", text: lead.message, qIndex: 0 });
+
     deps.attachments.value.forEach((a, i) => {
       if (a.name) segs.push({ id: `att-${i}`, text: a.name, qIndex: null });
     });
@@ -151,7 +157,7 @@ export function usePopupFind(deps: {
     const live = deps.liveTodoOptions.value;
     const prefix = deps.todoPrefix.value;
     deps.questions.value.forEach((q, qi) => {
-      if (q.message) {
+      if (q.message && !(lead && qi === 0)) {
         segs.push({ id: `q-${qi}-msg`, text: q.message, qIndex: qi });
       }
       q.predefinedOptions.forEach((opt: OptionItem, oi: number) => {

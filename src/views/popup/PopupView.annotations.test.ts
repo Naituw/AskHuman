@@ -194,8 +194,111 @@ describe("notes on the Agent's text", () => {
       });
       const w = await mountPopup();
       expect(root()?.textContent).toContain("Should the index be added now");
+      // Nothing moves without files: the question is already the first thing on the page, with no subheading.
+      expect(w.find(".question-pane [data-annotation-root]").exists()).toBe(true);
+      expect(w.find(".attachments").exists()).toBe(false);
+      expect(w.find(".q-header").exists()).toBe(false);
+      expect(w.find(".brand-title").text()).toBe("Question from Codex");
       await select("given the 18% slowdown");
       expect(fab(w).exists()).toBe(true);
+    });
+
+    // Files attached to the Message are not words a note can refer to: with no Message text, the lone question is still
+    // the body of the request, and with files it is shown as the Message, above them (spec D2 and D20, 2026-11-16).
+    it("shows a lone question as the Message above the files and lets it be annotated", async () => {
+      interaction = () => ask("a", {
+        message: { text: "", files: [{ path: "/tmp/plan.md", name: "plan.md", size: 1234, isImage: false }] },
+        questions: [{
+          message: "Should the **index** be added now, given the 18% slowdown?",
+          predefinedOptions: [{ text: "Yes", recommended: false }, { text: "No", recommended: false }],
+        }],
+      });
+      const w = await mountPopup();
+      const body = root() as HTMLElement;
+      const files = w.find(".attachments").element;
+      const pane = w.find(".question-pane").element;
+      expect(w.findAll(".attachment")).toHaveLength(1);
+      expect(body.textContent).toContain("Should the index be added now");
+      // It is the Message: its text comes first, then the files, then the options; nothing says "Question".
+      expect(w.find(".question-pane [data-annotation-root]").exists()).toBe(false);
+      expect(body.compareDocumentPosition(files) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+      expect(files.compareDocumentPosition(pane) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+      expect(w.find(".q-header").exists()).toBe(false);
+      expect(w.findAll(".question-pane .option")).toHaveLength(2);
+      // It is drawn once, and the window still says "Message from": there are files to speak of.
+      expect(w.findAll('[data-find-seg="q-0-msg"]')).toHaveLength(1);
+      expect(w.find(".brand-title").text()).toBe("Message from Codex");
+      await select("given the 18% slowdown");
+      expect(fab(w).exists()).toBe(true);
+      await fab(w).trigger("click");
+      await flushPromises();
+      expect(w.find(".an-editor .an-quote").text()).toBe("given the 18% slowdown");
+    });
+
+    it("shows a lone question that is plain text as the Message above the files too", async () => {
+      interaction = () => ask("a", {
+        isMarkdown: false,
+        message: { text: "", files: [{ path: "/tmp/plan.md", name: "plan.md", size: 1234, isImage: false }] },
+        questions: [{ message: "Should the index be added now, given the 18% slowdown?", predefinedOptions: [] }],
+      });
+      const w = await mountPopup();
+      const body = root() as HTMLElement;
+      expect(body.tagName).toBe("PRE");
+      expect(body.compareDocumentPosition(w.find(".attachments").element) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+      expect(w.find(".question-pane .plain-body").exists()).toBe(false);
+      expect(w.find(".q-header").exists()).toBe(false);
+    });
+
+    it("sends the note of a lone question that has files beside it", async () => {
+      interaction = () => ask("a", {
+        message: { text: "", files: [{ path: "/tmp/plan.md", name: "plan.md", size: 1234, isImage: false }] },
+        questions: [{ message: "Should the index be added now, given the 18% slowdown?", predefinedOptions: [] }],
+      });
+      const w = await mountPopup();
+      await addNote(w, "18% slowdown", "Measured where?");
+      await footerButton(w, "Send").trigger("click");
+      await flushPromises();
+      const [call] = calls("submit_popup") as Array<{ submission: { annotations: unknown[] } }>;
+      expect(call.submission.annotations).toEqual([{ quote: "18% slowdown", note: "Measured where?" }]);
+    });
+
+    it("annotates the Message, not the question, when the Message has both text and files", async () => {
+      interaction = () => ask("a", {
+        message: { text: MESSAGE, files: [{ path: "/tmp/plan.md", name: "plan.md", size: 1234, isImage: false }] },
+      });
+      const w = await mountPopup();
+      expect(root()?.textContent).toContain("The migration drops three indexes");
+      expect(document.querySelector(".question-pane [data-annotation-root]")).toBeNull();
+      // The layout of a real Message is untouched: its text, the files, then the "Question" subheading and the question.
+      const files = w.find(".attachments").element;
+      expect((root() as HTMLElement).compareDocumentPosition(files) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+      expect(files.compareDocumentPosition(w.find(".q-header").element) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+      expect(w.find(".q-header .q-label").text()).toBe("Question");
+      expect(w.find(".question-pane").text()).toContain("Which one should I take?");
+    });
+
+    it("leaves several questions and What's next alone when the Message only has files", async () => {
+      const files = [{ path: "/tmp/plan.md", name: "plan.md", size: 1234, isImage: false }];
+      interaction = () => ask("a", {
+        message: { text: "", files },
+        questions: [{ message: "First?", predefinedOptions: [] }, { message: "Second?", predefinedOptions: [] }],
+      });
+      let w = await mountPopup();
+      expect(root()).toBeNull();
+      // Several questions keep their subheading, and their text stays below the files.
+      expect(w.find(".q-header").exists()).toBe(true);
+      expect(w.find(".attachments").element.compareDocumentPosition(
+        w.find('[data-find-seg="q-0-msg"]').element) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+      document.body.innerHTML = "";
+
+      interaction = () => ask("a", { message: { text: "", files }, whatsNext: true, single: true,
+        questions: [{ message: "What next?", predefinedOptions: [{ text: "Add tests", recommended: false }] }] });
+      w = await mountPopup();
+      expect(root()).toBeNull();
+      // What's next keeps its question under the files, with the subheading, as before.
+      expect(w.find(".q-header .q-label").text()).toBe("Question");
+      expect(w.find(".attachments").element.compareDocumentPosition(
+        w.find('[data-find-seg="q-0-msg"]').element) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
     });
 
     it("offers the button after a triple click on a lone question, whose range ends past the question", async () => {

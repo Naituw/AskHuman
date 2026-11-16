@@ -1004,13 +1004,30 @@ export function usePopupCore(scope?: PopupScope) {
   const showDescription = computed(
     () => messageText.value.trim() !== "" || attachments.value.length > 0
   );
-  // 存在 Message（描述/附件）或多题时，显示问题头部以区隔 Message 与 Question。
-  const showQuestionHeader = computed(() => showDescription.value || isMulti.value);
+  // A lone question with no Message text is the body of the request, so with files attached the popup shows it as the
+  // Message: its text first, the files right after it, no "Question" subheading, and only the options and the answer
+  // box below (docs/specs/message-annotations.md D20, 2026-11-16). Without files nothing moves: the question already is
+  // the first thing on the page. Several questions, What's next and confirm cards keep the layout they have.
+  const questionAsMessage = computed(
+    () =>
+      !isConfirm.value &&
+      !whatsNext.value &&
+      questions.value.length === 1 &&
+      messageText.value.trim() === "" &&
+      attachments.value.length > 0 &&
+      !!questions.value[0].message?.trim()
+  );
+  // 存在 Message（描述/附件）或多题时，窗口标题用「Message from」。
+  const hasMessageArea = computed(() => showDescription.value || isMulti.value);
+  // 存在 Message（描述/附件）或多题时，显示问题头部以区隔 Message 与 Question；题干自己就是 Message 时没有可区隔的。
+  const showQuestionHeader = computed(
+    () => (showDescription.value && !questionAsMessage.value) || isMulti.value
+  );
   // 顶栏来源头部：默认来源 "the Loop"（human-in-the-loop 固定短语）强制英文；
   // 自定义来源跟随界面语言（与后端 i18n::source_header 规则一致）。
   const DEFAULT_SOURCE_NAME = "the Loop";
   const headerTitle = computed(() => {
-    const key = showQuestionHeader.value ? "popup.messageFrom" : "popup.questionFrom";
+    const key = hasMessageArea.value ? "popup.messageFrom" : "popup.questionFrom";
     const named = { source: sourceName.value };
     return sourceName.value === DEFAULT_SOURCE_NAME
       ? t(key, named, { locale: "en" })
@@ -1030,7 +1047,7 @@ export function usePopupCore(scope?: PopupScope) {
   // 渲染为「Message from [Cursor] [Project]」，规避中文「来自 [胶囊] 的消息」夹在句中的观感。
   const SOURCE_SLOT = "\u0000";
   const headerParts = computed(() => {
-    const key = showQuestionHeader.value ? "popup.messageFrom" : "popup.questionFrom";
+    const key = hasMessageArea.value ? "popup.messageFrom" : "popup.questionFrom";
     const full = t(key, { source: SOURCE_SLOT }, { locale: "en" });
     const idx = full.indexOf(SOURCE_SLOT);
     if (idx < 0) return { prefix: full, suffix: "" };
@@ -2067,6 +2084,7 @@ export function usePopupCore(scope?: PopupScope) {
     viewSource,
     attachments,
     questions,
+    questionAsMessage,
     liveTodoOptions,
     todoPrefix: computed(() => t("popup.todos.optionPrefix")),
     confirmChoiceTexts,
@@ -2138,13 +2156,15 @@ export function usePopupCore(scope?: PopupScope) {
   });
 
   // ===== Notes on passages of the Agent's text (docs/specs/message-annotations.md) =====
-  // What can carry notes: the Message; or, with no Message at all (no text, no files) and a single question, that
-  // question's text, which is then the body of the request (D6). Several questions, What's next and anything the daemon
-  // did not mark `annotatable` (confirm cards, IM-only answers, strict choice) offer none.
+  // What can carry notes: the Message; or, with no Message text and a single question, that question's text, which is
+  // then the body of the request (D6). Files attached to the Message are not words a note can refer to, so they do not
+  // make a Message of their own (spec D2, 2026-11-16): the question is still the body, and with files it is shown as
+  // the Message above them (`questionAsMessage`). Several questions, What's next and anything the daemon did not mark
+  // `annotatable` (confirm cards, IM-only answers, strict choice) offer none.
   const annotationTarget = computed<AnnotationTarget | null>(() => {
     if (!request.value?.annotatable || isConfirm.value) return null;
     if (messageText.value.trim() !== "") return "message";
-    if (showDescription.value || whatsNext.value || questions.value.length !== 1) return null;
+    if (whatsNext.value || questions.value.length !== 1) return null;
     return questions.value[0].message?.trim() ? "question" : null;
   });
   const annotations = useAnnotations({
@@ -2986,6 +3006,7 @@ export function usePopupCore(scope?: PopupScope) {
     // Message / 头部
     messageText,
     showDescription,
+    questionAsMessage,
     showQuestionHeader,
     questionHeaderLabel,
     headerPrefix,

@@ -1,9 +1,9 @@
 <script setup lang="ts">
 // The "annotations in the popup" page. The real PopupView, with the product's own annotation layer, footer chip and list,
 // runs inside a fake window on a mocked backend; this page draws nothing of the feature itself. It picks the request
-// (`?shape=message|direct|three`: a Message and one question; a direct ask with no Message; a Message and three
-// questions) and, for `?scene=`, drives the real UI the way a person does (select a passage, press the button, type,
-// add) so a state can be reached on load, e.g. for a screenshot:
+// (`?shape=message|direct|three|files`: a Message and one question; a direct ask with no Message; a Message and three
+// questions; a direct ask with files attached) and, for `?scene=`, drives the real UI the way a person does (select a
+// passage, press the button, type, add) so a state can be reached on load, e.g. for a screenshot:
 //   select  a passage is selected and the button stands beside it
 //   editor  the editor is open on a passage with a note typed
 //   notes   two notes are added: highlights with numbers and the chip beside Send
@@ -26,9 +26,10 @@ const windowStyle = {
   "--rp-win-h": `${params.height + (mac ? 0 : 32)}px`,
 };
 
-// What to select and write, per request shape (the `three` shape annotates its Message, like `message`).
+// What to select and write, per request shape (the `three` shape annotates its Message, like `message`; `files` annotates
+// its question, like `direct`).
 const SAMPLES: Record<"a" | "b" | "c", Sample> =
-  params.shape === "direct"
+  params.shape === "direct" || params.shape === "files"
     ? {
         a: { phrase: "少 3 个索引", text: "是哪 3 个？为什么没建？" },
         b: { phrase: "要不要现在补齐索引", text: "补索引要锁表吗？大概多久？" },
