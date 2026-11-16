@@ -141,6 +141,41 @@ pub(crate) fn desktop_reason(facts: DesktopFacts) -> Option<UnavailableReason> {
     }
 }
 
+/// What the cheap check of the message route looks at. A message goes out through a sidecar of
+/// the App, so it needs the App and the user's consent for sidecars, but not the plugin's mode:
+/// the conversation was already tracked, and the sidecar does not depend on the plugin.
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct MessageFacts {
+    pub supported: bool,
+    pub dev_instance: bool,
+    pub app_installed: bool,
+    pub manage_sidecars: bool,
+}
+
+pub(crate) fn message_facts(config: &Config) -> MessageFacts {
+    MessageFacts {
+        supported: cfg!(target_os = "macos"),
+        dev_instance: crate::dev_instance::is_dev_instance_context(),
+        app_installed: runtime::app_installed(),
+        manage_sidecars: config.manage_sidecars,
+    }
+}
+
+pub(crate) fn message_reason(facts: MessageFacts) -> Option<UnavailableReason> {
+    use UnavailableReason::*;
+    if !facts.supported {
+        Some(UnsupportedPlatform)
+    } else if facts.dev_instance {
+        Some(DevInstance)
+    } else if !facts.app_installed {
+        Some(AppNotInstalled)
+    } else if !facts.manage_sidecars {
+        Some(SidecarsNotAllowed)
+    } else {
+        None
+    }
+}
+
 pub(crate) fn cli_reason(
     binary: bool,
     integrated: bool,

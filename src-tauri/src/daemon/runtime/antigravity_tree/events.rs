@@ -300,3 +300,98 @@ async fn an_open_composer_holds_the_invocation_without_losing_the_turn_start() {
     assert_eq!(held.hook.frame().await.0, InterjectAction::Release);
     held.task.await.unwrap();
 }
+
+#[tokio::test]
+async fn the_turn_a_woken_conversation_announces_answers_the_message_waiting_for_it() {
+    use crate::agents::control::Operation;
+    let world = world();
+    // The conversation was seen once and is idle: a conversation of the App at rest.
+    call(&world.state, world.start(ROOT)).await;
+    let id = super::super::agent_control::operation_id("phone", "m1");
+    let begin = |status: &str| Operation {
+        id: id.clone(),
+        kind: AgentKind::Antigravity,
+        session_id: ROOT.into(),
+        phone_id: "phone".into(),
+        generation: None,
+        text: "please continue".into(),
+        files: Vec::new(),
+        expected_result_id: None,
+        status: status.into(),
+        reason: None,
+        turn_id: None,
+    };
+    world.state.agent_controls.begin(begin("queued")).unwrap();
+    // The sidecar delivered it; the daemon named the turn it expects.
+    world
+        .state
+        .agent_controls
+        .finish(&id, "dispatched", Some("named-by-the-daemon".into()))
+        .unwrap();
+    // The conversation wakes, and its first invocation is the announcement.
+    call(&world.state, world.invocation(ROOT, 0, Ask::Nothing)).await;
+    let operation = world.state.agent_controls.existing(&id).unwrap().unwrap();
+    assert_eq!(operation.status, "started");
+    assert_eq!(operation.turn_id.as_deref(), Some("named-by-the-daemon"));
+    let record = world
+        .state
+        .agents
+        .snapshot()
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|record| record["sessionId"] == ROOT)
+        .cloned()
+        .unwrap();
+    assert_eq!(record["state"], "working");
+    assert_eq!(record["activeTurnId"], "named-by-the-daemon");
+    // Nothing is waiting any more: a later turn is nobody's answer.
+    assert!(world
+        .state
+        .agent_controls
+        .awaiting_start(AgentKind::Antigravity, ROOT)
+        .is_none());
+}
+
+#[tokio::test]
+async fn a_sub_agents_first_invocation_does_not_answer_the_message_waiting_for_its_root() {
+    use crate::agents::control::Operation;
+    let world = world();
+    let log = transcript(world.home.path(), ROOT);
+    std::fs::create_dir_all(log.parent().unwrap()).unwrap();
+    std::fs::write(&log, PARENT_TRANSCRIPT).unwrap();
+    call(&world.state, world.start(ROOT)).await;
+    let id = super::super::agent_control::operation_id("phone", "m1");
+    world
+        .state
+        .agent_controls
+        .begin(Operation {
+            id: id.clone(),
+            kind: AgentKind::Antigravity,
+            session_id: ROOT.into(),
+            phone_id: "phone".into(),
+            generation: None,
+            text: "please continue".into(),
+            files: Vec::new(),
+            expected_result_id: None,
+            status: "queued".into(),
+            reason: None,
+            turn_id: None,
+        })
+        .unwrap();
+    world
+        .state
+        .agent_controls
+        .finish(&id, "dispatched", Some("named-by-the-daemon".into()))
+        .unwrap();
+    // The sub-agent the message may have made is a conversation of its own; its start is not
+    // the root's turn.
+    world.state.antigravity_trees.link(ROOT, CHILD);
+    call(&world.state, world.invocation(CHILD, 0, Ask::Nothing)).await;
+    let operation = world.state.agent_controls.existing(&id).unwrap().unwrap();
+    assert_eq!(operation.status, "dispatched");
+    // The root's own start still is.
+    call(&world.state, world.invocation(ROOT, 0, Ask::Nothing)).await;
+    let operation = world.state.agent_controls.existing(&id).unwrap().unwrap();
+    assert_eq!(operation.status, "started");
+}

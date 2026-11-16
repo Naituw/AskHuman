@@ -109,6 +109,14 @@ pub enum Command {
         #[serde(default)]
         model: Option<String>,
     },
+    /// `agentapi send-message`: put a message into an existing conversation. One that is idle
+    /// wakes up and answers it. AskHuman sends one only to a conversation it saw go idle, and
+    /// never to one that is working.
+    SendMessage {
+        /// The conversation's id (a UUID).
+        conversation: String,
+        content: String,
+    },
     /// A call that proves `agentapi` works in the sidecar's environment without a model call:
     /// it asks about a conversation that does not exist.
     Probe,
@@ -173,18 +181,7 @@ impl Command {
                 title,
                 model,
             } => {
-                if prompt.trim().is_empty() {
-                    return Err("The task text is empty".into());
-                }
-                if prompt.len() > MAX_PROMPT_BYTES {
-                    return Err(format!(
-                        "The task text is {} bytes; at most {MAX_PROMPT_BYTES} fit in one call",
-                        prompt.len()
-                    ));
-                }
-                if prompt.contains('\0') {
-                    return Err("The task text contains a NUL character".into());
-                }
+                check_text("task text", prompt)?;
                 let mut argv = vec!["new-conversation".to_string()];
                 if let Some(model) = model {
                     if !crate::agents::model_catalog::valid_model_id(model) {
@@ -206,12 +203,46 @@ impl Command {
                 argv.push(prompt.clone());
                 Ok(argv)
             }
+            Command::SendMessage {
+                conversation,
+                content,
+            } => {
+                // The id is not text the daemon read from a user: it must still be exactly an id,
+                // so it cannot be read as an option or as part of the message.
+                if conversation.len() != 36 || uuid::Uuid::parse_str(conversation).is_err() {
+                    return Err(format!("{conversation:?} is not a conversation id"));
+                }
+                check_text("message", content)?;
+                Ok(vec![
+                    "send-message".into(),
+                    "--".into(),
+                    conversation.clone(),
+                    content.clone(),
+                ])
+            }
             Command::Probe => Ok(vec![
                 "get-conversation-metadata".into(),
                 PROBE_CONVERSATION.into(),
             ]),
         }
     }
+}
+
+/// What a prompt or a message must be to travel as one argument.
+fn check_text(what: &str, text: &str) -> Result<(), String> {
+    if text.trim().is_empty() {
+        return Err(format!("The {what} is empty"));
+    }
+    if text.len() > MAX_PROMPT_BYTES {
+        return Err(format!(
+            "The {what} is {} bytes; at most {MAX_PROMPT_BYTES} fit in one call",
+            text.len()
+        ));
+    }
+    if text.contains('\0') {
+        return Err(format!("The {what} contains a NUL character"));
+    }
+    Ok(())
 }
 
 /// The conversation `agentapi new-conversation` made, from what it printed
@@ -656,6 +687,54 @@ mod tests {
             };
             assert!(command.argv().is_err(), "{model:?}");
         }
+    }
+
+    #[test]
+    fn a_message_names_its_conversation_and_is_one_argument_after_a_double_dash() {
+        let id = "0b7f2c1e-aaaa-4bbb-8ccc-ddddeeeeffff";
+        let sent = |content: &str| Command::SendMessage {
+            conversation: id.into(),
+            content: content.into(),
+        };
+        assert_eq!(
+            sent("- keep going; rm -rf /").argv().unwrap(),
+            ["send-message", "--", id, "- keep going; rm -rf /"]
+        );
+        assert!(sent("").argv().is_err());
+        assert!(sent(" \n").argv().is_err());
+        assert!(sent("a\0b").argv().is_err());
+        assert!(sent(&"x".repeat(MAX_PROMPT_BYTES + 1)).argv().is_err());
+        assert!(sent(&"x".repeat(MAX_PROMPT_BYTES)).argv().is_ok());
+        // The recipient is an id and nothing else: it cannot be an option or smuggle text.
+        for conversation in [
+            "",
+            "--help",
+            "-x",
+            "not-an-id",
+            "0b7f2c1e aaaa",
+            &format!("{id} x"),
+        ] {
+            let command = Command::SendMessage {
+                conversation: conversation.into(),
+                content: "hello".into(),
+            };
+            assert!(command.argv().is_err(), "{conversation:?}");
+        }
+    }
+
+    #[test]
+    fn a_message_command_travels_over_the_link_and_back() {
+        let command = Command::SendMessage {
+            conversation: "0b7f2c1e-aaaa-4bbb-8ccc-ddddeeeeffff".into(),
+            content: "hi".into(),
+        };
+        let frame = Down::Run {
+            command_id: "c1".into(),
+            command: command.clone(),
+        };
+        let wire = serde_json::to_string(&frame).unwrap();
+        assert!(wire.contains(r#""kind":"sendMessage""#), "{wire}");
+        assert_eq!(serde_json::from_str::<Down>(&wire).unwrap(), frame);
     }
 
     #[test]

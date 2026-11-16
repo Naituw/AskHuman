@@ -2251,6 +2251,18 @@ async fn control_loop(reader: &mut Reader, w: &mut Writer, state: &Arc<ServerSta
                                 observation.subagent = true;
                             }
                         }
+                        // A conversation that a message woke up announces its turn like any
+                        // other; the message waiting for it is matched here, before the registry
+                        // names the turn.
+                        if let Some(observation) = observation.as_mut() {
+                            agent_control::claim_turn_start(
+                                state,
+                                kind,
+                                &session_id,
+                                ev,
+                                observation,
+                            );
+                        }
                         let applied = state.agents.apply_observed(
                             kind,
                             ev,

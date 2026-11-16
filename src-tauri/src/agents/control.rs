@@ -282,6 +282,24 @@ impl ControlStore {
         Some(operation)
     }
 
+    /// The message sent to this session whose turn has not been seen to start yet. An Agent whose
+    /// hook cannot carry the id of the message that woke it (Antigravity's) is matched to it by
+    /// session: the turn that starts while one message is waiting answers that message. At most
+    /// one message per session waits at a time ([`ControlStore::begin`] refuses a second).
+    pub fn awaiting_start(&self, kind: AgentKind, session_id: &str) -> Option<Operation> {
+        self.inner
+            .lock()
+            .unwrap()
+            .operations
+            .values()
+            .find(|operation| {
+                operation.kind == kind
+                    && operation.session_id == session_id
+                    && matches!(operation.status.as_str(), "dispatched" | "accepted")
+            })
+            .cloned()
+    }
+
     pub fn cancel_unsubmitted(&self, kind: AgentKind, session_id: &str) {
         let mut inner = self.inner.lock().unwrap();
         for operation in inner.operations.values_mut().filter(|operation| {
@@ -451,8 +469,10 @@ impl ControlStore {
         })
     }
 
-    pub async fn wait_for_submission(&self, id: &str) -> Result<Operation> {
-        let until = tokio::time::Instant::now() + Duration::from_secs(5);
+    /// Waits for the operation to leave `queued`, `dispatched` and `accepted`, at most `window`;
+    /// what is still in one of them then becomes unknown (or rejected, if it never left `queued`).
+    pub async fn wait_for_submission(&self, id: &str, window: Duration) -> Result<Operation> {
+        let until = tokio::time::Instant::now() + window;
         loop {
             let notified = self.changed.notified();
             let operation = self
@@ -589,6 +609,36 @@ mod tests {
         signal.status = Some("accepted".into());
         store.poll("s", &signal).unwrap();
         assert_eq!(store.existing(&id).unwrap().unwrap().status, "started");
+    }
+
+    #[test]
+    fn the_message_a_session_is_waiting_on_is_found_by_session_until_its_turn_starts() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = ControlStore::new(dir.path().into());
+        let id = uuid::Uuid::new_v4().to_string();
+        assert!(store.awaiting_start(AgentKind::Antigravity, "s").is_none());
+        let mut message = operation(id.clone(), "g");
+        message.kind = AgentKind::Antigravity;
+        store.begin(message).unwrap();
+        // Queued: nothing has been sent, so no turn can be its answer.
+        assert!(store.awaiting_start(AgentKind::Antigravity, "s").is_none());
+        store
+            .finish(&id, "dispatched", Some("turn-1".into()))
+            .unwrap();
+        let waiting = store.awaiting_start(AgentKind::Antigravity, "s").unwrap();
+        assert_eq!(
+            (waiting.id.as_str(), waiting.turn_id.as_deref()),
+            (id.as_str(), Some("turn-1"))
+        );
+        // Another session, or another Agent with the same id, is not waiting on it.
+        assert!(store
+            .awaiting_start(AgentKind::Antigravity, "elsewhere")
+            .is_none());
+        assert!(store.awaiting_start(AgentKind::Cursor, "s").is_none());
+        store
+            .started(AgentKind::Antigravity, "s", Some(&id), Some("turn-1"))
+            .unwrap();
+        assert!(store.awaiting_start(AgentKind::Antigravity, "s").is_none());
     }
 
     #[test]

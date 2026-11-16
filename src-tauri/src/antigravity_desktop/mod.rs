@@ -11,6 +11,7 @@ mod create;
 mod host_config;
 mod launch;
 mod link;
+mod message;
 mod receipt;
 mod runtime;
 mod sidecar;
@@ -19,6 +20,7 @@ mod sidecar_run;
 pub use create::Request as CreateRequest;
 pub use launch::{launch_status, resolve_launch, LaunchStatus};
 pub use link::{shared as manager, CheckIn, Down, Manager, Outbound, Up};
+pub use message::{available as message_available, send as send_message, Failure, Message};
 // What the daemon's link tests stand in for; nothing else outside this module sends commands yet.
 #[cfg(test)]
 pub use link::{Command, Outcome, RunError};

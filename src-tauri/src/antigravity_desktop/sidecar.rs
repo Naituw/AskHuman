@@ -681,6 +681,36 @@ pub(super) fn ensure_workspace(
     Ok((id, change))
 }
 
+/// The folder the control sidecar is attached to: an empty one of AskHuman's own, so the App's
+/// project list does not gain a folder of the user's for it.
+pub(super) fn control_directory() -> PathBuf {
+    crate::paths::config_dir().join("antigravity-control")
+}
+
+/// Makes the control sidecar exist, with its private folder, and returns its id with what was
+/// done to its files. It has no grants and no project of the user's; it only carries messages.
+pub(super) fn ensure_control(
+    layout: &Layout,
+    executable: &str,
+    directory: &Path,
+    now_ms: u64,
+) -> Result<(String, Change)> {
+    std::fs::create_dir_all(directory)?;
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let _ = std::fs::set_permissions(directory, std::fs::Permissions::from_mode(0o700));
+    }
+    let spec = Spec {
+        kind: Kind::Control,
+        directory: std::fs::canonicalize(directory)?,
+        rules: Vec::new(),
+    };
+    let id = spec.id();
+    let change = ensure(layout, executable, &spec, &[], now_ms)?;
+    Ok((id, change))
+}
+
 /// Replaces the rules of the sidecar `id`. A YOLO or control sidecar has nothing to add to.
 pub(super) fn set_rules(
     layout: &Layout,

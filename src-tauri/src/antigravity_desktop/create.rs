@@ -22,7 +22,7 @@ use crate::i18n::Lang;
 
 /// How long starting the App, the App's reading of a new sidecar and the sidecar's check-in may
 /// take, all together.
-const ONLINE_BUDGET: Duration = Duration::from_secs(30);
+pub(super) const ONLINE_BUDGET: Duration = Duration::from_secs(30);
 /// The longest title made from the task text.
 const TITLE_CHARS: usize = 60;
 /// How long the receipt of a finished operation is kept.
@@ -589,7 +589,7 @@ pub(super) async fn execute_with<B: Backend>(
 
 // MARK: - The real thing
 
-struct Live;
+pub(super) struct Live;
 
 impl Backend for Live {
     async fn unavailable(&self) -> Option<UnavailableReason> {
@@ -794,6 +794,7 @@ mod tests {
             self.note(match command {
                 Command::NewConversation { .. } => "run:new",
                 Command::Probe => "run:probe",
+                Command::SendMessage { .. } => unreachable!("creating a task sends no message"),
             });
             self.runs
                 .lock()

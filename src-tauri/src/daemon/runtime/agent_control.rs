@@ -163,36 +163,82 @@ pub(super) fn operation_id(phone: &str, message: &str) -> String {
     uuid::Uuid::from_bytes(bytes).to_string()
 }
 
-/// What the daemon asks of Cursor Desktop's message bridge. Everything around it (which sessions
-/// may be messaged, how a refusal reads, what the registry does afterwards) is tested against a
-/// stand-in, so no test ever reaches a real Cursor.
+/// What the daemon asks of the native message bridges: Cursor Desktop's, and the sidecars of the
+/// Antigravity App. Everything around them (which sessions may be messaged, how a refusal reads,
+/// what the registry does afterwards) is tested against a stand-in, so no test ever reaches a real
+/// Cursor or a real Antigravity.
 #[allow(async_fn_in_trait)]
-pub(super) trait CursorChat {
-    /// Whether the chat can be messaged at all, judged from files alone (never by attaching).
-    fn available(&self, session_id: &str) -> bool;
-    async fn send(
+pub(super) trait NativeChat {
+    /// Whether the session's chat can be messaged at all, judged from files alone (never by
+    /// attaching to anything).
+    fn available(&self, kind: AgentKind, session_id: &str) -> bool;
+    async fn send_cursor(
         &self,
         session_id: &str,
         id: &str,
         text: &str,
     ) -> crate::cursor_desktop::MessageResult;
+    /// Puts `text` into an idle conversation of the Antigravity App. `directory` is the
+    /// conversation's project folder when the registry knows it.
+    async fn send_antigravity(
+        &self,
+        session_id: &str,
+        text: &str,
+        directory: Option<&str>,
+    ) -> AntigravitySend;
 }
 
-/// The real bridge.
-pub(super) struct LiveCursor;
+/// How the Antigravity App's route answered one message.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) enum AntigravitySend {
+    /// The sidecar's `agentapi send-message` succeeded. That is delivery, not a turn: the
+    /// conversation's own hook proves the turn started, or nothing does.
+    Delivered,
+    /// Nothing was sent.
+    NotSent,
+    /// It may have been sent.
+    Unknown,
+}
 
-impl CursorChat for LiveCursor {
-    fn available(&self, session_id: &str) -> bool {
-        crate::cursor_desktop::messages_available(session_id)
+/// The real bridges.
+pub(super) struct LiveChats;
+
+impl NativeChat for LiveChats {
+    fn available(&self, kind: AgentKind, session_id: &str) -> bool {
+        match kind {
+            AgentKind::Cursor => crate::cursor_desktop::messages_available(session_id),
+            AgentKind::Antigravity => crate::antigravity_desktop::message_available(session_id),
+            _ => false,
+        }
     }
 
-    async fn send(
+    async fn send_cursor(
         &self,
         session_id: &str,
         id: &str,
         text: &str,
     ) -> crate::cursor_desktop::MessageResult {
         crate::cursor_desktop::send_message(session_id, id, text).await
+    }
+
+    async fn send_antigravity(
+        &self,
+        session_id: &str,
+        text: &str,
+        directory: Option<&str>,
+    ) -> AntigravitySend {
+        use crate::antigravity_desktop::{send_message, Failure, Message};
+        match send_message(Message {
+            conversation: session_id.into(),
+            text: text.into(),
+            directory: directory.map(std::path::PathBuf::from),
+        })
+        .await
+        {
+            Ok(()) => AntigravitySend::Delivered,
+            Err(Failure::NotSent(_)) => AntigravitySend::NotSent,
+            Err(Failure::Unclear(_)) => AntigravitySend::Unknown,
+        }
     }
 }
 
@@ -218,32 +264,34 @@ pub(super) fn for_phone(mut result: InterjectResult) -> InterjectResult {
     result
 }
 
-/// How long an answer about a Cursor chat is trusted when it only feeds a snapshot or a button.
-/// Each answer reads Cursor's database, and snapshots follow every Agent event. Sending always
-/// asks again, so a stale answer can at worst show a composer that then says it is unavailable.
+/// How long an answer about a native chat is trusted when it only feeds a snapshot or a button.
+/// Each answer reads Cursor's database or Antigravity's settings and logs, and snapshots follow
+/// every Agent event. Sending always asks again, so a stale answer can at worst show a composer
+/// that then says it is unavailable.
 const CHAT_ANSWER_TTL: Duration = Duration::from_secs(20);
 
 static CHAT_ANSWERS: std::sync::LazyLock<
     std::sync::Mutex<std::collections::HashMap<String, (std::time::Instant, bool)>>,
 > = std::sync::LazyLock::new(Default::default);
 
-/// [`CursorChat::available`] with the answer remembered for [`CHAT_ANSWER_TTL`].
-pub(super) fn cached_chat(session_id: &str) -> bool {
+/// [`NativeChat::available`] with the answer remembered for [`CHAT_ANSWER_TTL`].
+pub(super) fn cached_chat(kind: AgentKind, session_id: &str) -> bool {
     let now = std::time::Instant::now();
+    let key = format!("{}:{session_id}", kind.as_str());
     let answers = CHAT_ANSWERS.lock().unwrap_or_else(|e| e.into_inner());
-    if let Some(&(at, ok)) = answers.get(session_id) {
+    if let Some(&(at, ok)) = answers.get(&key) {
         if now.duration_since(at) < CHAT_ANSWER_TTL {
             return ok;
         }
     }
     drop(answers);
-    // The lookup reads a database: never hold the lock across it.
-    let ok = LiveCursor.available(session_id);
+    // The lookup reads files: never hold the lock across it.
+    let ok = LiveChats.available(kind, session_id);
     let mut answers = CHAT_ANSWERS.lock().unwrap_or_else(|e| e.into_inner());
     if answers.len() > 256 {
         answers.retain(|_, (at, _)| now.duration_since(*at) < CHAT_ANSWER_TTL);
     }
-    answers.insert(session_id.into(), (now, ok));
+    answers.insert(key, (now, ok));
     ok
 }
 
@@ -251,12 +299,13 @@ pub(super) fn can_send(state: &Arc<ServerState>, rec: &Value) -> crate::ios::wir
     can_send_with(state, rec, &cached_chat)
 }
 
-/// `has_chat` says whether a Cursor Desktop chat exists to be messaged; it is asked at most once,
-/// and only for the states that need it.
+/// `has_chat` says whether the session has a native chat to be messaged (a Cursor Desktop chat, an
+/// Antigravity App conversation); it is asked at most once, and only for the states and the Agents
+/// that need it.
 pub(super) fn can_send_with(
     state: &Arc<ServerState>,
     rec: &Value,
-    has_chat: &dyn Fn(&str) -> bool,
+    has_chat: &dyn Fn(AgentKind, &str) -> bool,
 ) -> crate::ios::wire::CanInterject {
     let refuse = |reason: &str| crate::ios::wire::CanInterject {
         ok: false,
@@ -269,7 +318,11 @@ pub(super) fn can_send_with(
         return refuse("notFound");
     };
     let chat = std::cell::OnceCell::new();
-    let cursor_chat = || *chat.get_or_init(|| kind == AgentKind::Cursor && has_chat(sid));
+    let native_chat = || {
+        *chat.get_or_init(|| {
+            matches!(kind, AgentKind::Cursor | AgentKind::Antigravity) && has_chat(kind, sid)
+        })
+    };
     if state.agent_controls.pending(kind, sid) {
         return refuse("controlStarting");
     }
@@ -280,7 +333,7 @@ pub(super) fn can_send_with(
         return ios_agents::can_interject(rec);
     }
     let available = match kind {
-        AgentKind::Cursor => cursor_chat(),
+        AgentKind::Cursor | AgentKind::Antigravity => native_chat(),
         AgentKind::Pi => state.agent_controls.pi_generation(sid).is_some(),
         _ => false,
     };
@@ -323,15 +376,15 @@ pub(super) struct Message<'a> {
 }
 
 pub(super) async fn send(state: &Arc<ServerState>, message: Message<'_>) -> InterjectResult {
-    send_with(state, message, &LiveCursor).await
+    send_with(state, message, &LiveChats).await
 }
 
 pub(super) async fn send_with(
     state: &Arc<ServerState>,
     message: Message<'_>,
-    cursor: &impl CursorChat,
+    chats: &impl NativeChat,
 ) -> InterjectResult {
-    let _guard = state.agent_controls.send_gate.lock().await;
+    let guard = state.agent_controls.send_gate.lock().await;
     let id = operation_id(message.phone, message.message_id);
     match state.agent_controls.existing(&id) {
         Ok(Some(operation)) => return receipt(&operation),
@@ -361,7 +414,7 @@ pub(super) async fn send_with(
             return InterjectResult::rejected("resultChanged");
         }
     }
-    let can = can_send_with(state, rec, &|sid| cursor.available(sid));
+    let can = can_send_with(state, rec, &|kind, sid| chats.available(kind, sid));
     if !can.ok {
         return InterjectResult::rejected(can.reason.as_deref().unwrap_or("nativeUnavailable"));
     }
@@ -398,9 +451,14 @@ pub(super) async fn send_with(
         return receipt(&operation);
     }
     if message.kind != AgentKind::Pi {
+        // The turn an Antigravity message starts is announced by the conversation's own hook,
+        // which cannot carry an id of ours: the daemon names the turn here, and the hook's
+        // `TurnStart` takes this name (see `claim_turn_start`).
+        let turn_id =
+            (message.kind == AgentKind::Antigravity).then(|| uuid::Uuid::new_v4().to_string());
         if state
             .agent_controls
-            .finish(&id, "dispatched", None)
+            .finish(&id, "dispatched", turn_id)
             .is_err()
         {
             return InterjectResult::rejected("controlUnknown");
@@ -437,7 +495,7 @@ pub(super) async fn send_with(
             for file in &operation.files {
                 text.push_str(&format!("\n\nAttached file: {} ({})", file.name, file.path));
             }
-            match cursor.send(message.sid, &id, &text).await {
+            match chats.send_cursor(message.sid, &id, &text).await {
                 crate::cursor_desktop::MessageResult::Started(turn_id) => {
                     let _ = state
                         .agent_controls
@@ -459,6 +517,26 @@ pub(super) async fn send_with(
                     let _ = state.agent_controls.reject(&id, cursor_refusal(&reason));
                 }
                 crate::cursor_desktop::MessageResult::Unknown => {
+                    let _ = state.agent_controls.finish(&id, "unknown", None);
+                }
+            }
+        } else if message.kind == AgentKind::Antigravity {
+            let mut text = operation.text.clone();
+            for file in &operation.files {
+                text.push_str(&format!("\n\nAttached file: {} ({})", file.name, file.path));
+            }
+            let directory = rec["cwd"].as_str();
+            // Starting the App can take most of half a minute, and the message is already
+            // recorded as dispatched, so another one for this session is refused meanwhile.
+            // Messages for other sessions need not wait for this one.
+            drop(guard);
+            match chats.send_antigravity(message.sid, &text, directory).await {
+                // Delivered is not started: the turn's own hook proves that, or nothing does.
+                AntigravitySend::Delivered => {}
+                AntigravitySend::NotSent => {
+                    let _ = state.agent_controls.reject(&id, "nativeUnavailable");
+                }
+                AntigravitySend::Unknown => {
                     let _ = state.agent_controls.finish(&id, "unknown", None);
                 }
             }
@@ -485,9 +563,40 @@ pub(super) async fn send_with(
             tokio::time::sleep(Duration::from_millis(100)).await;
         }
     }
-    match state.agent_controls.wait_for_submission(&id).await {
+    // How long the conversation's own hook has to announce the turn the message started.
+    let window = if message.kind == AgentKind::Antigravity {
+        ANTIGRAVITY_START_WINDOW
+    } else {
+        Duration::from_secs(5)
+    };
+    match state.agent_controls.wait_for_submission(&id, window).await {
         Ok(operation) => receipt(&operation),
         Err(_) => InterjectResult::rejected("controlUnknown"),
+    }
+}
+
+/// How long a message to an Antigravity conversation waits for the turn it starts to be announced
+/// by that conversation's `PreInvocation` hook. The conversation wakes up on its own after the
+/// sidecar delivered the message, so this is the model's start-up, not a network call.
+const ANTIGRAVITY_START_WINDOW: Duration = Duration::from_secs(15);
+
+/// Matches the turn an Antigravity hook announces to the message that woke the conversation. The
+/// hook cannot carry our operation's id, so the turn that starts while one message is waiting
+/// answers it: the event takes the message's id and the turn id the daemon named at dispatch,
+/// which is what [`ControlStore::started`] and the phone's follow look for.
+pub(super) fn claim_turn_start(
+    state: &Arc<ServerState>,
+    kind: AgentKind,
+    session_id: &str,
+    event: LifecycleEvent,
+    observation: &mut Observation,
+) {
+    if kind != AgentKind::Antigravity || event != LifecycleEvent::TurnStart {
+        return;
+    }
+    if let Some(operation) = state.agent_controls.awaiting_start(kind, session_id) {
+        observation.control_operation_id = Some(operation.id);
+        observation.turn_id = operation.turn_id;
     }
 }
 
@@ -503,7 +612,7 @@ const CONSOLE_MAX_CHARS: usize = 20_000;
 pub(super) fn mark_messageable(
     state: &Arc<ServerState>,
     snapshot: &mut Value,
-    has_chat: &dyn Fn(&str) -> bool,
+    has_chat: &dyn Fn(AgentKind, &str) -> bool,
 ) {
     let Some(records) = snapshot.as_array_mut() else {
         return;
@@ -558,13 +667,13 @@ pub(super) async fn send_from_console(
     state: &Arc<ServerState>,
     message: ConsoleMessage,
 ) -> Result<Value, String> {
-    send_from_console_with(state, message, &LiveCursor, crate::i18n::Lang::current()).await
+    send_from_console_with(state, message, &LiveChats, crate::i18n::Lang::current()).await
 }
 
 pub(super) async fn send_from_console_with(
     state: &Arc<ServerState>,
     message: ConsoleMessage,
-    cursor: &impl CursorChat,
+    chats: &impl NativeChat,
     lang: crate::i18n::Lang,
 ) -> Result<Value, String> {
     let rejected = |reason: &str| {
@@ -593,7 +702,7 @@ pub(super) async fn send_from_console_with(
             expected_result_id: None,
             continuation_instruction: None,
         },
-        cursor,
+        chats,
     )
     .await;
     match (sent.status, sent.reason.as_deref()) {
@@ -772,12 +881,16 @@ mod tests {
     use crate::i18n::Lang;
     use std::sync::Mutex as StdMutex;
 
-    /// A Cursor that exists only in the test: it records what it is asked to send and answers
-    /// with whatever the test queued. Nothing here can reach a real Cursor.
+    /// The native chats, existing only in the test: they record what they are asked to send and
+    /// answer with whatever the test queued. Nothing here can reach a real Cursor or Antigravity.
     struct Chat {
         exists: bool,
         reply: StdMutex<Option<MessageResult>>,
         sent: StdMutex<Vec<(String, String, String)>>,
+        /// Whether an Antigravity conversation can be messaged, and what the route answers.
+        antigravity_exists: bool,
+        antigravity_reply: StdMutex<Option<AntigravitySend>>,
+        antigravity_sent: StdMutex<Vec<(String, String, Option<String>)>>,
     }
 
     impl Chat {
@@ -786,18 +899,34 @@ mod tests {
                 exists,
                 reply: StdMutex::new(reply),
                 sent: Default::default(),
+                antigravity_exists: false,
+                antigravity_reply: StdMutex::new(None),
+                antigravity_sent: Default::default(),
             }
+        }
+        fn antigravity(mut self, exists: bool, reply: Option<AntigravitySend>) -> Self {
+            self.antigravity_exists = exists;
+            self.antigravity_reply = StdMutex::new(reply);
+            self
         }
         fn sent(&self) -> Vec<(String, String, String)> {
             self.sent.lock().unwrap().clone()
         }
+        fn antigravity_sent(&self) -> Vec<(String, String, Option<String>)> {
+            self.antigravity_sent.lock().unwrap().clone()
+        }
     }
 
-    impl CursorChat for Chat {
-        fn available(&self, _session_id: &str) -> bool {
-            self.exists
+    impl NativeChat for Chat {
+        fn available(&self, kind: AgentKind, _session_id: &str) -> bool {
+            match kind {
+                AgentKind::Cursor => self.exists,
+                AgentKind::Antigravity => self.antigravity_exists,
+                _ => false,
+            }
         }
-        async fn send(&self, session_id: &str, id: &str, text: &str) -> MessageResult {
+
+        async fn send_cursor(&self, session_id: &str, id: &str, text: &str) -> MessageResult {
             self.sent
                 .lock()
                 .unwrap()
@@ -807,6 +936,24 @@ mod tests {
                 .unwrap()
                 .take()
                 .expect("the test queued no answer for this send")
+        }
+
+        async fn send_antigravity(
+            &self,
+            session_id: &str,
+            text: &str,
+            directory: Option<&str>,
+        ) -> AntigravitySend {
+            self.antigravity_sent.lock().unwrap().push((
+                session_id.into(),
+                text.into(),
+                directory.map(str::to_string),
+            ));
+            self.antigravity_reply
+                .lock()
+                .unwrap()
+                .take()
+                .expect("the test queued no answer for this Antigravity send")
         }
     }
 
@@ -865,8 +1012,8 @@ mod tests {
         ended(&state, AgentKind::Cursor, "chat");
         let rec = record(&state, "chat");
         assert_eq!(rec["state"], "ended");
-        assert!(can_send_with(&state, &rec, &|_| true).ok);
-        let gone = can_send_with(&state, &rec, &|_| false);
+        assert!(can_send_with(&state, &rec, &|_, _| true).ok);
+        let gone = can_send_with(&state, &rec, &|_, _| false);
         assert!(!gone.ok);
         assert_eq!(gone.reason.as_deref(), Some("idleUnsupported"));
     }
@@ -880,7 +1027,8 @@ mod tests {
             ended(&state, kind, &sid);
             let rec = record(&state, &sid);
             // The lookup must not even be asked: it reads Cursor's database.
-            let refused = can_send_with(&state, &rec, &|_| panic!("asked Cursor about {kind:?}"));
+            let refused =
+                can_send_with(&state, &rec, &|_, _| panic!("asked Cursor about {kind:?}"));
             assert!(!refused.ok);
             assert_eq!(
                 refused.reason.as_deref(),
@@ -897,10 +1045,10 @@ mod tests {
         for lifecycle in ["working", "idle", "ended"] {
             let mut rec = json!({"kind":"codex", "sessionId":"desktop", "state":lifecycle,
                 "desktop":{"connected":true}});
-            assert!(can_send_with(&state, &rec, &|_| panic!("Cursor lookup")).ok);
+            assert!(can_send_with(&state, &rec, &|_, _| panic!("Cursor lookup")).ok);
             rec["desktop"]["connected"] = false.into();
             assert_eq!(
-                can_send_with(&state, &rec, &|_| panic!("Cursor lookup"))
+                can_send_with(&state, &rec, &|_, _| panic!("Cursor lookup"))
                     .reason
                     .as_deref(),
                 Some("desktopDisconnected")
@@ -925,7 +1073,7 @@ mod tests {
             };
             state.agent_controls.poll("pi", &signal).unwrap();
             let mut snapshot = state.agents.snapshot();
-            mark_messageable(&state, &mut snapshot, &|_| panic!("Cursor lookup"));
+            mark_messageable(&state, &mut snapshot, &|_, _| panic!("Cursor lookup"));
             assert_eq!(snapshot[0]["canMessage"], true);
             assert!(super::super::can_message_session(&state, &snapshot, "pi"));
             let options =
@@ -1010,8 +1158,8 @@ mod tests {
         let directory = tempfile::tempdir().unwrap();
         let state = state(directory.path());
         let rec = json!({"kind":"cursor","sessionId":"cli","state":"idle"});
-        assert!(can_send_with(&state, &rec, &|_| true).ok);
-        let refused = can_send_with(&state, &rec, &|_| false);
+        assert!(can_send_with(&state, &rec, &|_, _| true).ok);
+        let refused = can_send_with(&state, &rec, &|_, _| false);
         assert_eq!(refused.reason.as_deref(), Some("idleUnsupported"));
     }
 
@@ -1036,8 +1184,344 @@ mod tests {
                 turn_id: None,
             })
             .unwrap();
-        let refused = can_send_with(&state, &record(&state, "chat"), &|_| true);
+        let refused = can_send_with(&state, &record(&state, "chat"), &|_, _| true);
         assert_eq!(refused.reason.as_deref(), Some("controlStarting"));
+    }
+
+    // MARK: Antigravity
+
+    fn antigravity_message<'a>(id: &'a str, sid: &'a str, text: &'a str) -> Message<'a> {
+        Message {
+            kind: AgentKind::Antigravity,
+            ..message(id, sid, text)
+        }
+    }
+
+    /// What happens when a message wakes a conversation: its own hook announces a turn, and the
+    /// daemon's handler matches that turn to the message before the registry applies it.
+    fn conversation_wakes(state: &Arc<ServerState>, sid: &str) {
+        let mut observation = Observation::default();
+        claim_turn_start(
+            state,
+            AgentKind::Antigravity,
+            sid,
+            LifecycleEvent::TurnStart,
+            &mut observation,
+        );
+        apply(
+            state,
+            AgentKind::Antigravity,
+            sid,
+            LifecycleEvent::TurnStart,
+            observation,
+            None,
+        );
+    }
+
+    async fn until(mut done: impl FnMut() -> bool) {
+        tokio::time::timeout(Duration::from_secs(2), async {
+            while !done() {
+                tokio::time::sleep(Duration::from_millis(1)).await;
+            }
+        })
+        .await
+        .expect("the condition never came true");
+    }
+
+    fn completed() -> Observation {
+        Observation {
+            result: Some(TurnResult {
+                source: Some("test".into()),
+                id: String::new(),
+                outcome: TurnOutcome::Completed,
+                turn_id: None,
+                reason: None,
+                summary: None,
+                at: 0,
+            }),
+            ..Observation::default()
+        }
+    }
+
+    #[tokio::test]
+    async fn a_message_to_an_idle_antigravity_conversation_is_delivered_once_and_its_turn_answers_it(
+    ) {
+        let directory = tempfile::tempdir().unwrap();
+        let state = state(directory.path());
+        ended(&state, AgentKind::Antigravity, "ag");
+        let chat = Chat::new(false, None).antigravity(true, Some(AntigravitySend::Delivered));
+        let submit = send_with(
+            &state,
+            antigravity_message("m1", "ag", "please continue"),
+            &chat,
+        );
+        let wake = async {
+            until(|| {
+                state
+                    .agent_controls
+                    .awaiting_start(AgentKind::Antigravity, "ag")
+                    .is_some()
+            })
+            .await;
+            conversation_wakes(&state, "ag");
+        };
+        let (sent, ()) = tokio::join!(submit, wake);
+        assert_eq!(sent.status, "delivered");
+        let started = sent.started_control.expect("the turn answered the message");
+        assert_eq!(started.phone_id, "mac-console");
+        // The route got the text and the conversation's folder, once.
+        assert_eq!(
+            chat.antigravity_sent(),
+            [(
+                "ag".to_string(),
+                "please continue".to_string(),
+                Some("/tmp/project".to_string())
+            )]
+        );
+        // The turn the registry runs is the one the operation was told about, so the phone's
+        // follow finds the result of the turn its message started.
+        let rec = record(&state, "ag");
+        assert_eq!(rec["state"], "working");
+        assert_eq!(rec["activeTurnId"], started.turn_id);
+        apply(
+            &state,
+            AgentKind::Antigravity,
+            "ag",
+            LifecycleEvent::TurnEnd,
+            completed(),
+            None,
+        );
+        let result = state
+            .agents
+            .last_turn_result(AgentKind::Antigravity, "ag")
+            .unwrap();
+        assert_eq!(result.turn_id.as_deref(), Some(started.turn_id.as_str()));
+        // The same message again is answered from the journal; nothing is sent twice.
+        let again = send_with(
+            &state,
+            antigravity_message("m1", "ag", "please continue"),
+            &chat,
+        )
+        .await;
+        assert_eq!(again.status, "delivered");
+        assert_eq!(chat.antigravity_sent().len(), 1);
+    }
+
+    #[tokio::test]
+    async fn the_files_of_a_message_to_antigravity_are_named_in_its_text() {
+        let directory = tempfile::tempdir().unwrap();
+        let state = state(directory.path());
+        ended(&state, AgentKind::Antigravity, "ag");
+        let chat = Chat::new(false, None).antigravity(true, Some(AntigravitySend::NotSent));
+        let mut with_file = antigravity_message("m1", "ag", "look");
+        with_file.files = vec![FileAttachment {
+            path: "/tmp/a.png".into(),
+            name: "a.png".into(),
+            size: 3,
+            is_image: true,
+        }];
+        send_with(&state, with_file, &chat).await;
+        assert_eq!(
+            chat.antigravity_sent()[0].1,
+            "look\n\nAttached file: a.png (/tmp/a.png)"
+        );
+    }
+
+    #[tokio::test]
+    async fn a_message_the_route_did_not_send_is_rejected_and_never_tried_again_under_its_id() {
+        let directory = tempfile::tempdir().unwrap();
+        let state = state(directory.path());
+        ended(&state, AgentKind::Antigravity, "ag");
+        let chat = Chat::new(false, None).antigravity(true, Some(AntigravitySend::NotSent));
+        let sent = send_with(&state, antigravity_message("m1", "ag", "hello"), &chat).await;
+        assert_eq!(sent, InterjectResult::rejected("nativeUnavailable"));
+        // The stand-in fails the test if it is asked a second time.
+        let again = send_with(&state, antigravity_message("m1", "ag", "hello"), &chat).await;
+        assert_eq!(again, sent);
+        assert_eq!(chat.antigravity_sent().len(), 1);
+        // A refusal leaves nothing waiting, so a new message is a new operation.
+        assert!(!state.agent_controls.pending(AgentKind::Antigravity, "ag"));
+        assert_eq!(record(&state, "ag")["state"], "ended");
+        // The console says it in words.
+        let answer = send_from_console_with(
+            &state,
+            ConsoleMessage {
+                kind: AgentKind::Antigravity,
+                ..console("m2", "ag", "hello")
+            },
+            &Chat::new(false, None).antigravity(true, Some(AntigravitySend::NotSent)),
+            Lang::En,
+        )
+        .await
+        .unwrap();
+        assert_eq!(answer["status"], "rejected");
+        assert_eq!(answer["reason"], "nativeUnavailable");
+    }
+
+    #[tokio::test]
+    async fn a_message_that_may_have_been_sent_is_unknown_and_is_not_claimed_by_a_later_turn() {
+        let directory = tempfile::tempdir().unwrap();
+        let state = state(directory.path());
+        ended(&state, AgentKind::Antigravity, "ag");
+        let chat = Chat::new(false, None).antigravity(true, Some(AntigravitySend::Unknown));
+        let sent = send_with(&state, antigravity_message("m1", "ag", "hello"), &chat).await;
+        assert_eq!(sent, InterjectResult::rejected("controlUnknown"));
+        let again = send_with(&state, antigravity_message("m1", "ag", "hello"), &chat).await;
+        assert_eq!(again, sent);
+        assert_eq!(chat.antigravity_sent().len(), 1);
+        assert!(!state.agent_controls.pending(AgentKind::Antigravity, "ag"));
+        let mut observation = Observation::default();
+        claim_turn_start(
+            &state,
+            AgentKind::Antigravity,
+            "ag",
+            LifecycleEvent::TurnStart,
+            &mut observation,
+        );
+        assert_eq!(observation.control_operation_id, None);
+        assert_eq!(observation.turn_id, None);
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn a_delivered_message_no_turn_answers_becomes_unknown_when_the_window_ends() {
+        let directory = tempfile::tempdir().unwrap();
+        let state = state(directory.path());
+        ended(&state, AgentKind::Antigravity, "ag");
+        let chat = Chat::new(false, None).antigravity(true, Some(AntigravitySend::Delivered));
+        let sent = send_with(&state, antigravity_message("m1", "ag", "hello"), &chat).await;
+        assert_eq!(sent, InterjectResult::rejected("controlUnknown"));
+        let operation = state
+            .agent_controls
+            .existing(&operation_id("mac-console", "m1"))
+            .unwrap()
+            .unwrap();
+        assert_eq!(operation.status, "unknown");
+        // A turn that starts after the window is nobody's answer.
+        let mut observation = Observation::default();
+        claim_turn_start(
+            &state,
+            AgentKind::Antigravity,
+            "ag",
+            LifecycleEvent::TurnStart,
+            &mut observation,
+        );
+        assert_eq!(observation.control_operation_id, None);
+    }
+
+    #[test]
+    fn only_antigravity_turn_starts_are_matched_to_a_waiting_message() {
+        let directory = tempfile::tempdir().unwrap();
+        let state = state(directory.path());
+        let id = operation_id("mac-console", "m1");
+        state
+            .agent_controls
+            .begin(Operation {
+                id: id.clone(),
+                kind: AgentKind::Antigravity,
+                session_id: "ag".into(),
+                phone_id: "mac-console".into(),
+                generation: None,
+                text: "hello".into(),
+                files: Vec::new(),
+                expected_result_id: None,
+                status: "queued".into(),
+                reason: None,
+                turn_id: None,
+            })
+            .unwrap();
+        state
+            .agent_controls
+            .finish(&id, "dispatched", Some("turn-x".into()))
+            .unwrap();
+        let claimed = |kind, session: &str, event| {
+            let mut observation = Observation::default();
+            claim_turn_start(&state, kind, session, event, &mut observation);
+            observation.control_operation_id
+        };
+        let ag = AgentKind::Antigravity;
+        assert_eq!(claimed(ag, "ag", LifecycleEvent::TurnStart), Some(id));
+        // Not another event, another session, or another Agent.
+        assert_eq!(claimed(ag, "ag", LifecycleEvent::Activity), None);
+        assert_eq!(claimed(ag, "ag", LifecycleEvent::TurnEnd), None);
+        assert_eq!(claimed(ag, "other", LifecycleEvent::TurnStart), None);
+        assert_eq!(
+            claimed(AgentKind::Cursor, "ag", LifecycleEvent::TurnStart),
+            None
+        );
+    }
+
+    #[tokio::test]
+    async fn nothing_is_sent_to_a_working_antigravity_conversation_or_to_one_the_app_does_not_own()
+    {
+        let directory = tempfile::tempdir().unwrap();
+        let state = state(directory.path());
+        for event in [LifecycleEvent::SessionStart, LifecycleEvent::TurnStart] {
+            state.agents.apply_event(
+                AgentKind::Antigravity,
+                event,
+                "busy",
+                None,
+                Some("/tmp/project".into()),
+                0,
+            );
+        }
+        // The stand-in has no answer queued: being asked would fail the test.
+        let chat = Chat::new(false, None).antigravity(true, None);
+        let sent = send_with(&state, antigravity_message("m1", "busy", "hi"), &chat).await;
+        assert_eq!(sent, InterjectResult::rejected("stateChanged"));
+        // An `agy` conversation is idle and ended like any other, but has no sidecar to carry it.
+        ended(&state, AgentKind::Antigravity, "agy");
+        let chat = Chat::new(false, None).antigravity(false, None);
+        let sent = send_with(&state, antigravity_message("m2", "agy", "hi"), &chat).await;
+        assert_eq!(sent, InterjectResult::rejected("idleUnsupported"));
+        assert!(chat.antigravity_sent().is_empty());
+    }
+
+    #[test]
+    fn an_antigravity_conversation_is_looked_up_only_when_it_is_idle_or_ended() {
+        let directory = tempfile::tempdir().unwrap();
+        let state = state(directory.path());
+        let working = json!({"kind":"antigravity","sessionId":"w","state":"working"});
+        assert!(can_send_with(&state, &working, &|_, _| panic!("looked up a working one")).ok);
+        for lifecycle in ["idle", "ended"] {
+            let rec = json!({"kind":"antigravity","sessionId":"i","state":lifecycle});
+            let asked = std::cell::RefCell::new(Vec::new());
+            let can = can_send_with(&state, &rec, &|kind, sid| {
+                asked.borrow_mut().push((kind, sid.to_string()));
+                true
+            });
+            assert!(can.ok, "{lifecycle}");
+            assert_eq!(
+                asked.into_inner(),
+                [(AgentKind::Antigravity, "i".to_string())]
+            );
+            let refused = can_send_with(&state, &rec, &|_, _| false);
+            assert_eq!(refused.reason.as_deref(), Some("idleUnsupported"));
+        }
+    }
+
+    #[test]
+    fn the_console_flags_the_antigravity_conversations_the_app_can_carry_a_message_to() {
+        let directory = tempfile::tempdir().unwrap();
+        let state = state(directory.path());
+        let mut snapshot = json!([
+            {"kind":"antigravity","sessionId":"app","state":"idle"},
+            {"kind":"antigravity","sessionId":"app-ended","state":"ended"},
+            {"kind":"antigravity","sessionId":"agy","state":"idle"},
+            {"kind":"antigravity","sessionId":"busy","state":"working"},
+            {"kind":"antigravity","sessionId":"asking","state":"idle","waitingRequestId":"r1"},
+        ]);
+        mark_messageable(&state, &mut snapshot, &|kind, sid| {
+            kind == AgentKind::Antigravity && sid.starts_with("app") || sid == "asking"
+        });
+        let flagged: Vec<&str> = snapshot
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter(|rec| rec["canMessage"] == true)
+            .filter_map(|rec| rec["sessionId"].as_str())
+            .collect();
+        assert_eq!(flagged, ["app", "app-ended"]);
     }
 
     #[test]
@@ -1054,7 +1538,7 @@ mod tests {
             {"kind":"codex","sessionId":"codex","state":"ended"},
             {"kind":"codex","sessionId":"desktop","state":"ended","desktop":{"connected":true}},
         ]);
-        mark_messageable(&state, &mut snapshot, &|sid| sid != "gone");
+        mark_messageable(&state, &mut snapshot, &|_, sid| sid != "gone");
         let flagged: Vec<&str> = snapshot
             .as_array()
             .unwrap()
