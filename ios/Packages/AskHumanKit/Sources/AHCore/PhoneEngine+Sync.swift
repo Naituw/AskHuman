@@ -57,7 +57,11 @@ extension PhoneEngine {
             nonce: nonce, appVer: config.appVersion, deviceName: config.deviceName, lifecycleResults: true, trafficUsage: true,
             leanWatch: true
         )
-        await send(hello, to: macId)
+        if var plain = try? Plain(hello, nowMs: clock.nowMs()) {
+            // The Mac references the envelope ID when it rejects hello for clock skew.
+            plain.i = nonce
+            await send(plain, to: macId)
+        }
         after("hello." + macId, Self.helloTimeout) { engine in await engine.helloTimedOut(macId, nonce: nonce) }
     }
 
@@ -92,6 +96,7 @@ extension PhoneEngine {
         mac.helloNonces = []
         mac.helloRounds = 0
         mac.sync = .acked
+        mac.clockSkew = false
         mac.epoch = ack.epoch
         mac.caps = ack.caps
         mac.slot = ack.slot
@@ -152,13 +157,18 @@ extension PhoneEngine {
     func onError(_ macId: String, _ error: ErrorBody) {
         switch error.code {
         case "clock_skew":
-            clockSkew = true
+            markClockSkew(macId, hello: error.ref)
         case "not_paired":
             // The Mac forgot this phone (it was revoked there while we were away).
             Task { await self.onUnpaired(macId) }
         default:
             break
         }
+    }
+
+    func markClockSkew(_ macId: String, hello: String) {
+        guard case .helloSent(let nonce, _) = macs[macId]?.sync, nonce == hello else { return }
+        macs[macId]?.clockSkew = true
     }
 
     func requestResync(_ macId: String, stream: String) async {
