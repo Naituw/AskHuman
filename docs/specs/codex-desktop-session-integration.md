@@ -37,9 +37,9 @@ iOS Agent 详情页也复用 `Operation::Send`，支持运行中补充、空闲�
   `launch` 共用运行偏好、可用性与回退原因判定；`protocol` 处理版本化 IPC、帧和状态增量；
   `requests` 适配实时原生问题和审批；模块根负责
   owner、连接、控制操作与结果台账。原生连接只由 daemon 持有，GUI/CLI 均走 AskHuman IPC。
-- 本机端点是 Codex 数据目录下的 `ipc/ipc.sock`。协议为 4 字节小端长度 + JSON；广播
-  `thread-stream-state-changed` 当前适配版本 11。只有 host、会话、owner 和 revision 匹配才
-  可操作；patch 失配废弃控制资格并重新订阅，不猜测增量或自动切换执行器。
+- 本机端点是 Codex 数据目录下的 `ipc/ipc.sock`。协议为 4 字节小端长度 + JSON。
+  `thread-stream-state-changed` 按 host、会话、owner、状态结构和 revision 校验，广播版本号
+  不参与接收判定。patch 失配废弃控制资格并重新订阅，不猜测增量或自动切换执行器。
 - SQLite 只发现最近 24 条未归档桌面会话，排除 CLI 和子 agent；历史文件不产生待审批。
   Hook 与桌面状态按真实 session ID 合并；Watch 文本可取原生最新回复，回复出现不等于完成。
 - 原生 `requestUserInput` 和异步问题进入现有 AskHuman 提问协调器；原生请求 ID 参与去重，
@@ -144,7 +144,7 @@ App 接管空线程可能建立 `reasoning_effort=null` 的协作模式，单靠
 `Contents/Resources/codex-cli/bin/codex`。已验证私有 IPC v11、canonical turnHistory、
 独立目录的空聊天创建、持久化、owner 接管、首条回复及原生中断。
 运行偏好改版已通过 Rust 1196 项（2 项忽略）、Vitest 192 项、Node 5 项及 Clippy；覆盖选择矩阵、原因分类、无 socket 的安装检测、配置往返、焦点同步、异步竞态、刷新恢复和 App-only 表单。
-适配器测试覆盖帧、owner / revision / 版本失配、canonical 顺序、请求答案映射、权限范围、
+适配器测试覆盖帧、不同广播版本的快照与增量、owner / revision 校验、canonical 顺序、请求答案映射、权限范围、
 只读发现和台账；安装版已验证原生新建、继续回复、运行中补充进入同一 turn、停止、相同 UUID 去重和未知结果
 禁止重发。测试聊天停止后已归档。运行中补充确认的是 App
 接收记录，不将它表述为模型已执行。原生提问 / 审批通过协议与映射测试，尚未逐类做真人 IM

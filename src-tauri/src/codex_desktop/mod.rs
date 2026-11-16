@@ -351,12 +351,6 @@ impl Bridge {
         else {
             return;
         };
-        if message["version"] != 11 {
-            s.connected = false;
-            s.error = Some("Incompatible Codex App protocol".into());
-            *self.error.lock().unwrap() = s.error.clone();
-            return;
-        }
         let change = &message["params"]["change"];
         let owner = message["sourceClientId"].as_str();
         if owner.is_none() {
@@ -1117,7 +1111,7 @@ mod tests {
     }
 
     #[test]
-    fn owner_revision_and_protocol_must_match_before_control() {
+    fn owner_and_revision_must_match_across_stream_versions() {
         let b = bridge();
         b.sessions
             .lock()
@@ -1130,11 +1124,10 @@ mod tests {
         b.event(json!({"method":"thread-stream-state-changed","version":11,"sourceClientId":"owner","params":{"hostId":"local","conversationId":"s","change":{"type":"patches","baseRevision":0,"revision":2,"patches":[]}}}));
         assert!(!b.session("s").unwrap().connected);
         assert!(b.session("s").unwrap().owner.is_none());
-        b.event(snapshot("new-owner", 11, json!(5)));
+        b.event(snapshot("new-owner", 13, json!(5)));
         assert!(b.session("s").unwrap().connected);
-        b.event(snapshot("new-owner", 12, json!(6)));
-        assert!(!b.session("s").unwrap().connected);
-        b.event(snapshot("new-owner", 11, Value::Null));
+        assert_eq!(b.session("s").unwrap().revision, Some(5));
+        b.event(snapshot("new-owner", 13, Value::Null));
         assert!(!b.session("s").unwrap().connected);
     }
 
@@ -1158,7 +1151,7 @@ mod tests {
         b.event(native);
         assert_eq!(title(), "Generated title");
         let patch = |owner: &str, base: u64, revision: u64, title: &str| {
-            json!({"method":"thread-stream-state-changed","version":11,"sourceClientId":owner,
+            json!({"method":"thread-stream-state-changed","version":13,"sourceClientId":owner,
                 "params":{"hostId":"local","conversationId":"s","change":{
                     "type":"patches","baseRevision":base,"revision":revision,
                     "patches":[{"op":"replace","path":"/title","value":title}]}}})
