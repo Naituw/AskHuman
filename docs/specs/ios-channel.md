@@ -487,8 +487,23 @@ Mac 未开启「Agent 任务」或终端不可用时，入口置灰并说明如�
 
 用户看完「历史里的图」的汇报后又反馈了一句：「ios 端查看图片时，顶岛可能挡住图片」。我理解为查看器顶上的栏（关闭、文件名与「N / M」、分享；iOS 26 起是浮在内容上的玻璃按钮）盖住了图：为了让键盘盖上来时页面不动，每页的尺寸取自整张 sheet（见 `docs/overview-ios.md` 的不变量），竖长的图（高过 sheet 的屏幕截图）上端就落在栏的后面。这次没有再向用户提问，下面的取舍是我定的、用户还没看过，可否决：
 
-- **图从栏的下沿开始排**，而不是铺满整张 sheet：每页再按栏的高度留出上边距（左右安全区同理，iPhone 竖屏为 0）。宽图因此在栏下面的区域里居中，而不是在整张 sheet 里居中，比以前低约 20 pt。**放大后图被裁在栏的下沿**——不能再把图拖到栏的后面（系统照片 App 放大后能拖到栏下面，这里没做；要做需要在 `ZoomableImage` 里用内容内边距，没定）。底边不变：一直到 sheet 的底。
+- **图从栏的下沿开始排**，而不是铺满整张 sheet：每页再按栏的高度留出上边距（左右安全区同理，iPhone 竖屏为 0）。宽图因此在栏下面的区域里居中，而不是在整张 sheet 里居中，比以前低约 20 pt。**放大后图被裁在栏的下沿**——不能再把图拖到栏的后面（系统照片 App 放大后能拖到栏下面，这里没做；要做需要在 `ZoomableImage` 里用内容内边距，没定；**2026-11-16 用户提出后已改，见下一节**）。底边不变：一直到 sheet 的底。
 - **「顶岛」的另一种读法**：灵动岛 / 状态栏。iPhone 只有竖屏，查看器是 sheet，顶上留着一条缝（模拟器截图里 sheet 的上沿在状态栏之下），岛碰不到 sheet 的内容；所以没有为岛另做处理。如果用户指的是别的地方，请告诉我哪一屏。
 - **验证**：新增 UI 用例 `testATallPictureStartsBelowTheBarOfTheViewer`（`historyPictures` 场景里的 `onboarding-2.png` 改成 1170×2532 的屏幕截图，比较图所在区域与栏的下沿、与屏幕边）。**改前红**：iPhone 16 / iOS 18.5 上图的区域是 (0, 69, 393, 783)，栏的下沿 111 pt，上面 42 pt 在栏的后面（截图里图的上沿叠在「关闭 / 文件名 / 分享」上）。**改后绿**，截图里图从栏的下沿开始：iPhone 16 / iOS 18.5、iPad Pro 11 (M4) / iOS 18.5（表单 sheet）、iPhone 17 / iOS 26.2（Liquid Glass，玻璃按钮与标题在图的上面）。第一次改动（直接读 `.ignoresSafeArea()` 的那层 `GeometryReader` 的安全区）没有效果：那一层读到的永远是 0，必须在不忽略安全区的外层读（见不变量）。
 - **回归**：iPhone 16 / iOS 18.5 上查看器相关的 5 条（`AskHumanHistoryPicturesUITests` 的 3 条、请求页附件的 `testThePictureViewerPagesFromOnePictureToTheNext`、到达动效期间的 `testTheImageViewerKeepsItsHeadingAndPagingDuringAnArrival`）都通过；「键盘从另一个窗口盖到查看器上」的守卫用例 `testTheButtonIsAboveAFullScreenImageViewerAndThePageOpensOverItToo` 连跑 8 次（`-test-iterations 8 -run-tests-until-failure`）全过，iOS 26.2 上跑了 1 次也过。另有一轮 8 次在机器负载约 400 时第 3 次失败：那次页面上根本没有 sheet、App 没卡死（无障碍快照照常返回），是点缩略图的点按没有生效——本节上文 2026-10-29 记过同样的负载下丢点按；负载降下来后同一条命令重跑 8/8 通过，所以不是查看器卡死。iPad 与 iOS 26.2 上各跑了这条新用例加两条翻页用例，全过。
 - **没验证**：真机（还没出包）；放大后平移的手感（图被裁在栏的下沿，是设计取舍，没在手上试过）；iOS 27.x（没跑）；VoiceOver 的实际朗读；整套 UI 用例没有重跑。
+
+### 2026-11-16 图片查看器：放大后的图可以拖到顶栏的后面
+
+用户看过上一节的改动后说：「现在的确不会盖住了，但是我图片放大的时候，顶导没有办法延伸到顶导下面，顶导就完全变成不透明的了。帮我优化一下。」我的理解（没有再向用户确认，可否决）：放大后图被裁在栏的下沿（上一节写明的取舍），栏的后面没有图，栏就成了一条空的实心带；要的是系统照片 App 的样子——静止时图在栏的下面，放大后图能拖到栏的后面，栏半透明地盖在图上。上一节与 `docs/PROGRESS.md` 当时都写了「要做就在 `ZoomableImage` 里用内容内边距，改之前先问用户」，这次的请求就是那个许可。
+
+- **根因与做法**：2026-11-12 用每页 `.padding(clear)` 躲开栏，页面——也就是承载图的那个 `UIScrollView`——自己缩到了栏的下沿，放大后的图只能在这块里滚动，到栏的下沿就被裁掉。现在每页恢复整张 sheet 的大小，躲栏的是图：`clear`（外层 `GeometryReader` 读到的上、左、右安全区，底 0）交给 `ZoomableImage`，成为它那个 `UIScrollView` 的 `contentInset`（`contentInsetAdjustmentBehavior = .never`，内边距是查看器自己定的），图按「视图尺寸减去内边距」排好（`PictureScrollView.place()`）。静止时图在栏的下面（与上一节一样）；放大后滚动范围一直到 sheet 的边，上端能拖到栏的后面，停下的边界仍是静止时的边：拖到最下，图的上沿回到栏的下沿；拖到最上，图的下沿是 sheet 的底。视图大小或 `clear` 变了（旋转、iPad 的窗口）会重新排，回到不放大。载入中、失败与远处页的占位不是图，仍用 `.padding(clear)` 留在栏的下面。
+- **栏**：iOS 26 起栏是玻璃按钮，系统的滚动边缘效果把栏后面的图柔化，不用另做。更早的系统栏是透明的，标题与按钮会直接印在图上（第一次试跑在 iOS 18.5 上看到了：黑色标题压在放大的图上），所以 `BarOverPicture` 对 iOS 26 之前给栏加上系统材质（`toolbarBackground(.visible, for: .navigationBar)`）。**这是我加的，用户没提过**：iOS 25 及更早的系统上，栏静止时也成了一条浅灰的材质带（改动前是透明的，iOS 18.5 上截图对比过）；iOS 26 静止时与改动前一模一样。若要「只有图在栏后面时才有材质」，得把「图被放大、拖到栏后面」的状态从 `ZoomableImage` 传到画廊，没做。
+- **图是一个无障碍元素**：`ZoomableImage` 里的图像视图现在 `isAccessibilityElement = true`，标签是文件名、特征是 `.image`，标识是 `viewer-picture-<assetId>`（它的帧随放大变化）；SwiftUI 一侧的 `viewer-zoom-<assetId>` 是整个活动区域（铺满 sheet）。这是为了让测试量得到图本身；VoiceOver 因此会聚焦到图、读文件名，实际朗读没有试过。
+- **验证**：
+  - 新增 UI 用例 `testAZoomedPictureCanBeDraggedUnderTheBarOfTheViewer`（`historyPictures` 场景的 `onboarding-2.png`）：静止时图在栏的下沿之下，活动区域的顶在栏的按钮之上、底与 `image-gallery`（整张 sheet）的底一致；双击放大；上拉后图向上移动超过 100 pt（进入栏的后面）；一路拖到最下，图的上沿回到静止时的位置；一路拖到最上，图的下沿是区域的底；再双击，图回到原来的位置与大小。
+  - **改前红**（iPhone 17 / iOS 26.2，这条用例在改动前的代码上）：活动区域是 (0, 132, 402, 742)，从栏的下沿（132 pt）才开始，栏的按钮在 y = 82，也就是区域没有伸到栏的后面。**改后绿**。
+  - 试跑时出过三个问题，都已处理：用例用 `viewer-picture-`（放大后它的帧比屏幕大）换算拖动的坐标，手势落到了屏幕外，改为用活动区域；iOS 18.5 上标题压在图上（见上面的栏）；用例拿窗口的底边当 sheet 的底边，而 iPad 的表单 sheet 不占满窗口，第一次在 iPad 上失败，是用例的错，改为与 `image-gallery` 比。
+  - 回归（最终代码）：iPhone 17 / iOS 26.2：`AskHumanHistoryPicturesUITests` 整个类 14 条，请求页附件的翻页、文件、宽图 3 条，到达动效期间的查看器 1 条，都通过（附件拖出 4 条因没有主机端接收器而按设计跳过）；「键盘盖到查看器上」的守卫用例 `testTheButtonIsAboveAFullScreenImageViewerAndThePageOpensOverItToo` 连跑 8 次（`-test-iterations 8 -run-tests-until-failure`）8/8 通过。iPhone 16 / iOS 18.5：同一批 19 条通过（守卫跑了 1 次）。iPad Pro 11 (M4) / iOS 18.5：`AskHumanHistoryPicturesUITests` 13 条通过、1 条按既有的 iPad 跳过，请求页附件 3 条通过。深色与中文（iOS 26.2）各跑了新用例，通过。
+  - **iPad 上两条既有用例失败，与这次改动无关**：到达动效的 `testTheImageViewerKeepsItsHeadingAndPagingDuringAnArrival`（等 `destination=title`，iPad 的宽窗口里落点是 `row`，`docs/plans/ios-arrival-motion.md` 已记）与守卫用例（点缩略图后 `image-gallery` 没出现，原因没查）。把我的改动暂存后，在改动前的代码上、同一台 iPad 模拟器上，两条以同样的信息失败。所以「键盘盖到查看器上」的守卫目前只在 iPhone 上起作用（上一节同样只在 iPhone 上连跑）。
+- **没验证**：真机（用户的 iPhone Air、iOS 26，还没出包）：放大后拖到栏后面的手感、玻璃按钮与系统边缘效果在真机上的样子；深色下很浅的图拖到栏的后面时，标题（白）压在浅米色的图上，系统在顶端压了一层渐变，标题看得清，副标题「2 / 7」偏淡（iOS 26.2 模拟器截图，没另外处理）；iOS 18.5 与 iPad 的深色；iOS 27.x（没跑）；VoiceOver 的实际朗读；整套 UI 用例没有重跑（只跑了上面这些）；放大后在边缘继续翻页（与上一节一样没做）。
