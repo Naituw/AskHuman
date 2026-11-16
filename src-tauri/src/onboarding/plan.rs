@@ -147,7 +147,9 @@ mod tests {
 
     #[test]
     fn every_supported_mode_has_a_preview() {
-        for def in agents::all() {
+        // The Agents the wizard offers on this platform. Antigravity's integration is unix-only
+        // (its hook commands run through `sh -c`), so off unix it has no preview to check.
+        for def in agents::available() {
             for mode in [Mode::Cli, Mode::Mcp] {
                 assert_eq!(
                     !planned_files(def, mode).is_empty(),
