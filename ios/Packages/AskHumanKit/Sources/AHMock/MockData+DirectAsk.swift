@@ -4,18 +4,19 @@ import AHCore
 import AHStore
 
 extension MockData {
-    /// A request of the `direct` scenario. The message is empty unless one is given, so the question is all there is:
-    /// the phone shows a request like that with the question in the message area (`AskView.isDirectAsk`).
+    /// A request of the `direct` scenario. The message has no words unless some are given, so the question is all there
+    /// is to read: the phone shows a request like that with the question in the message area (`AskView.isDirectAsk`),
+    /// and the files of the message, if any, under it.
     private static func directAsk(
-        _ id: String, title: String, questions: [QuestionView], message: String = "", markdown: Bool = true,
-        annotatable: Bool = true, selectOnly: Bool = false, whatsNext: Bool = false, now: Date
+        _ id: String, title: String, questions: [QuestionView], message: String = "", files: [AssetRef] = [],
+        markdown: Bool = true, annotatable: Bool = true, selectOnly: Bool = false, whatsNext: Bool = false, now: Date
     ) -> RequestView {
         RequestView(
             id: id, kind: "ask", createdAt: ms(now.addingTimeInterval(-30)), agent: AgentRef(kind: "cursor", label: "Cursor"),
             project: ProjectRef(key: "proj-humaninloop", name: "HumanInLoop"), sessionTitle: title,
             source: "cursor", contentHash: "h-" + id,
             ask: AskView(
-                isMarkdown: markdown, message: MessageView(text: message, files: []), questions: questions,
+                isMarkdown: markdown, message: MessageView(text: message, files: files), questions: questions,
                 selectOnly: selectOnly, single: questions.count == 1, whatsNext: whatsNext, annotatable: annotatable
             )
         )
@@ -26,8 +27,10 @@ extension MockData {
     }
 
     /// The `direct` scenario's requests, the newest first. The first five are one question with no message (a short one,
-    /// a long one that takes notes, a strict choice, plain text, and one from a Mac that has no notes); the last three are
-    /// not (What's next, two questions, and a message with a question) and keep their questions in their cards.
+    /// a long one that takes notes, a strict choice, plain text, and one from a Mac that has no notes); the next three
+    /// are not (What's next, two questions, and a message with a question) and keep their questions in their cards; the
+    /// last is one question beside a file, which is a direct ask too: a file is not a message, so the question is in the
+    /// message area with the file under it.
     public static func directInbox(now: Date = Date()) -> [InboxItem] {
         let entries: [(String, String, RequestView, Bool, TimeInterval)] = [
             (homeMacId, "Home MacBook Pro", directAsk(
@@ -73,6 +76,12 @@ extension MockData {
                 questions: [QuestionView(text: "Deploy to production now?", options: choice("Deploy", "Wait"))],
                 message: "Staging is healthy: all 42 checks passed.", now: now
             ), true, -80),
+            (homeMacId, "Home MacBook Pro", directAsk(
+                "req-direct-files", title: "Question beside a file",
+                questions: [QuestionView(text: annotationsMessage, options: choice("The first", "The second"))],
+                files: [AssetRef(assetId: "asset-plan", name: "migration-plan.md", size: 4_812, mime: "text/markdown", isImage: false)],
+                now: now
+            ), true, -90),
         ]
         return items(entries, now: now)
     }

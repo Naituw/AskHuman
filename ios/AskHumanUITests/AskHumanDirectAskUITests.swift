@@ -175,6 +175,39 @@ final class AskHumanDirectAskUITests: XCTestCase {
         shot("64-direct-old-mac")
     }
 
+    // MARK: a file is not a message
+
+    func testAQuestionBesideAFileIsInTheMessageAreaAboveTheFile() {
+        launch(open: "req-direct-files")
+        _ = requireElement("request-title")
+        let question = word("Redis")
+        XCTAssertTrue(question.waitForExistence(timeout: 60), "the question is drawn as a message page")
+        let file = requireElement("asset-file-asset-plan")
+        // With the question in its own card the file would be the first card, above it.
+        XCTAssertGreaterThan(file.frame.minY, question.frame.maxY, "the file is under the question, in the message area")
+        let option = requireElement("option-0-0")
+        XCTAssertGreaterThan(option.frame.minY - file.frame.maxY, betweenCards, "the options are in the next card")
+        shot("68-direct-files")
+    }
+
+    func testAQuestionBesideAFileTakesNotes() {
+        launch(open: "req-direct-files")
+        _ = requireElement("request-title")
+        XCTAssertTrue(word("Redis").waitForExistence(timeout: 60), "the question is drawn as a message page")
+
+        guard let add = selectWord(word("Redis"), until: "Add annotation") else {
+            XCTFail("a question beside a file has no entry for a note in its selection menu")
+            return
+        }
+        add.tap()
+        requireElement("annotation-field", timeout: 10).typeText("Is this the plan attached below?")
+        requireElement("annotation-commit").tap()
+        XCTAssertTrue(gone("annotation-field"), "the sheet went")
+        XCTAssertEqual(requireElement("annotations-button", timeout: 10).label, "Annotations · 1")
+        XCTAssertTrue(element("asset-file-asset-plan").exists, "the file is still listed")
+        shot("69-direct-files-with-a-note")
+    }
+
     // MARK: everything else keeps its cards
 
     func testWhatsNextKeepsItsQuestionInItsCard() {
