@@ -21,7 +21,7 @@ use serde::{Deserialize, Serialize};
 ///
 /// 改本文件的消息类型前先读 `docs/overview.md` 的「IPC 协议号」：什么改动要 +1、什么不要，
 /// 以及 +1 时要同步更新的文档。
-pub const PROTOCOL_VERSION: u32 = 5;
+pub const PROTOCOL_VERSION: u32 = 6;
 
 fn is_zero_u32(value: &u32) -> bool {
     *value == 0
@@ -587,6 +587,19 @@ pub enum ClientMsg {
     CursorDesktop {
         operation: crate::cursor_desktop::Operation,
     },
+    /// Settings and the command line manage the sidecars AskHuman keeps for the Antigravity App
+    /// (docs/specs/antigravity-deep-integration.md §12.3); the daemon answers with
+    /// `ServerMsg::AntigravityDesktop`.
+    AntigravityDesktop {
+        operation: crate::antigravity_desktop::Operation,
+    },
+    /// A sidecar process the Antigravity App runs for the daemon: the first frame checks in, and
+    /// the connection then carries the results of the commands the daemon sends back. The
+    /// connection does not keep the daemon running. It sends no `Hello`, so a sidecar of an
+    /// older build never makes the daemon give way.
+    AntigravitySidecar {
+        frame: crate::antigravity_desktop::Up,
+    },
     /// Mac 控制台给一个不在工作中的会话发消息（目前只有 Cursor Desktop 聊天）：Daemon 直接送进原聊天，
     /// 并回 `ServerMsg::AgentMessage`。同一 `id` 的重试得到同一个结果。
     AgentMessage {
@@ -852,6 +865,13 @@ pub enum ServerMsg {
     },
     CursorDesktop {
         result: Result<serde_json::Value, String>,
+    },
+    AntigravityDesktop {
+        result: Result<serde_json::Value, String>,
+    },
+    /// The daemon's side of a sidecar's connection: the welcome, a refusal, or a command.
+    AntigravitySidecar {
+        frame: crate::antigravity_desktop::Down,
     },
     /// `ClientMsg::AgentMessage` 的答复：`Ok` 载荷的 `status` 为 `accepted`、`rejected`（没有发出，
     /// 该 `id` 已作废）或 `unknown`（可能已发出），`message` 是给用户看的本地化文案。
@@ -1399,6 +1419,46 @@ mod tests {
     fn tray_subscribe_unit_variant() {
         let msg: ClientMsg = serde_json::from_str(r#"{"type":"traySubscribe"}"#).unwrap();
         assert!(matches!(msg, ClientMsg::TraySubscribe));
+    }
+
+    /// The Antigravity sidecar link rides in the ordinary envelope: the sidecar's frames inside
+    /// `ClientMsg::AntigravitySidecar`, the daemon's inside `ServerMsg::AntigravitySidecar`, and
+    /// the Settings operations inside `AntigravityDesktop`.
+    #[test]
+    fn antigravity_messages_have_a_stable_wire_form() {
+        use crate::antigravity_desktop::{Down, Operation, Up};
+        let check_in = r#"{"type":"antigravitySidecar","frame":{"type":"checkIn","id":"askhuman-ws-1","linkVersion":1}}"#;
+        assert!(matches!(
+            serde_json::from_str::<ClientMsg>(check_in).unwrap(),
+            ClientMsg::AntigravitySidecar {
+                frame: Up::CheckIn(_)
+            }
+        ));
+        let welcome = serde_json::to_string(&ServerMsg::AntigravitySidecar {
+            frame: Down::Welcome,
+        })
+        .unwrap();
+        assert_eq!(
+            welcome,
+            r#"{"type":"antigravitySidecar","frame":{"type":"welcome"}}"#
+        );
+        let request: ClientMsg =
+            serde_json::from_str(r#"{"type":"antigravityDesktop","operation":{"op":"sidecars"}}"#)
+                .unwrap();
+        assert!(matches!(
+            request,
+            ClientMsg::AntigravityDesktop {
+                operation: Operation::Sidecars
+            }
+        ));
+        let answer = serde_json::to_string(&ServerMsg::AntigravityDesktop {
+            result: Ok(serde_json::json!({"status": "done"})),
+        })
+        .unwrap();
+        assert_eq!(
+            answer,
+            r#"{"type":"antigravityDesktop","result":{"Ok":{"status":"done"}}}"#
+        );
     }
 
     #[test]

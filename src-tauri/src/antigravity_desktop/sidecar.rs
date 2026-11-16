@@ -438,6 +438,18 @@ impl std::fmt::Display for NotManaged {
 
 impl std::error::Error for NotManaged {}
 
+/// The rules a sidecar was asked to have are not valid grants.
+#[derive(Debug)]
+pub(super) struct BadRules(pub String);
+
+impl std::fmt::Display for BadRules {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(&self.0)
+    }
+}
+
+impl std::error::Error for BadRules {}
+
 // MARK: - The directory of a sidecar
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -582,7 +594,8 @@ pub(super) fn ensure(
     now_ms: u64,
 ) -> Result<Change> {
     let spec = Spec {
-        rules: validate_rules(&spec.rules, spec.kind)?,
+        rules: validate_rules(&spec.rules, spec.kind)
+            .map_err(|error| BadRules(error.to_string()))?,
         ..spec.clone()
     };
     let id = spec.id();

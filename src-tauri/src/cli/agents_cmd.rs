@@ -38,6 +38,7 @@ pub fn dispatch(args: &[String], lang: Lang) {
         "delegated" => delegated_cmd(rest, lang),
         "lifecycle" => lifecycle_cmd(rest, lang),
         "cleanup" => cleanup_cmd(rest, lang),
+        "sidecars" => super::antigravity_sidecars::run(rest, lang),
         "install" | "uninstall" => Err(legacy_write_error(sub, lang)),
         "show" => show(rest, lang),
         "help" | "-h" | "--help" => {
@@ -887,6 +888,7 @@ fn help(lang: Lang) -> String {
   agents delegated codex [on|off]    Query or set whether delegated Codex runs (codex exec, review, plugins) may use AskHuman (on = allow; default off = silent)\n\
   agents lifecycle <agent> [on|off]  Query or set lifecycle tracking inside an active integration\n\
   agents cleanup                     Remove every AskHuman-managed Agent artifact\n\
+  agents sidecars [list [--json]|remove <id>|remove --all]  The Antigravity App sidecars AskHuman keeps for starting tasks\n\
   agents show [<agent>]              Manual-integration prompt + paste paths + install status\n\
 \n\
   Modes: cli = rules + runtime + lifecycle where supported; mcp = rules/skill + MCP + lifecycle where supported; none = remove.\n\
@@ -906,6 +908,7 @@ fn help(lang: Lang) -> String {
   agents delegated codex [on|off]    查询或设置被委派的 Codex 运行（codex exec、review、插件等）是否可使用 AskHuman（on = 允许；默认 off = 静默）\n\
   agents lifecycle <agent> [on|off]  查询或设置已启用集成内的生命周期追踪\n\
   agents cleanup                     移除全部由 AskHuman 托管的 Agent 产物\n\
+  agents sidecars [list [--json]|remove <id>|remove --all]  AskHuman 为启动任务在 Antigravity App 里保留的 sidecar\n\
   agents show [<agent>]              手动集成提示词 + 粘贴位置 + 安装状态\n\
 \n\
   模式: cli = 规则 + runtime + 受支持的生命周期；mcp = 规则/skill + MCP + 受支持的生命周期；none = 移除。\n\

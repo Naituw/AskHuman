@@ -164,3 +164,17 @@ Linux / Windows 不能替换沉默的 daemon；本次也没有提高进程的文
 在途提问（日志里同一请求在新进程里再次 accepted，`status` 显示仍在途），等待中的 CLI 没有退出。
 弹窗宿主的启动收束靠 `daemon::server_impl::inbox` 里起真实子进程的测试验证，没有图形界面的端到端记录；
 Linux / Windows 没有实机记录。
+
+## 10. 协议号 5 → 6 的升级过渡（2026-11-16 补充）
+
+Antigravity 新建任务新增 `ClientMsg::AntigravityDesktop` / `ServerMsg::AntigravityDesktop`（设置页与命令行管理 sidecar）
+以及 sidecar 进程与 Daemon 之间的 `ClientMsg::AntigravitySidecar` / `ServerMsg::AntigravitySidecar`，
+新增枚举变体旧端无法解码，按 D11 把 `PROTOCOL_VERSION` 从 5 提到 6。过渡期的行为与此前每次 +1 相同，没有新增机制：
+
+- 新客户端（协议号 6）握手遇到旧 Daemon（5）时，由旧 Daemon 回 `Restarting` 并按 D1–D4 排空，不丢已显示的提问与草稿。
+- 旧客户端（5）连到新 Daemon 时按 D11 让位，不会与新 Daemon 并存。
+- 两条新消息只出现在 `__antigravity-desktop` 隐藏入口、`agents sidecars` 命令、GUI 设置页的 Antigravity 卡与 sidecar 进程里，旧客户端收不到它们。
+- **sidecar 进程是特例**：它由 Antigravity App 在打开时按清单里的路径启动，装好新版 AskHuman 之后旧进程可能继续跑好几天。所以它的连接**不发 `Hello`**——否则旧构建的 sidecar 一连上就会让新 Daemon 让位——也不保活（不抬 Daemon 的活动计数）。它第一帧自报家门，带自己的链路版本 `LINK_VERSION`：版本比 Daemon 旧时 Daemon 回「拒绝并要求重启」，sidecar 退出，App 按 `restart_policy: always` 用磁盘上的新二进制重新拉起；版本比 Daemon 新时只拒绝、不要求重启。链路帧的演进因此不占 `PROTOCOL_VERSION`。
+- 旧 Daemon 收到新 sidecar 的第一帧会解码失败并关闭连接；sidecar 按上限为 10 秒的退避重连，等 Daemon 换新后即可连上。
+
+不改排空、在途草稿与首答胜出的语义。

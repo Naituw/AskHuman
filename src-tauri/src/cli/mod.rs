@@ -1,4 +1,5 @@
 pub mod agents_cmd;
+mod antigravity_sidecars;
 pub mod args;
 pub mod away_cmd;
 pub mod cfgio;
@@ -559,6 +560,32 @@ pub fn dispatch() {
                 });
             print_line(&serde_json::to_string(&result).unwrap_or_default());
             exit(if result.is_ok() { 0 } else { 1 });
+        }
+        // Hidden: one Antigravity sidecar operation as JSON on stdin; the daemon's answer on stdout.
+        "__antigravity-desktop" => {
+            use std::io::Read;
+            let mut input = String::new();
+            if std::io::stdin()
+                .take(1024 * 1024)
+                .read_to_string(&mut input)
+                .is_err()
+            {
+                exit(1);
+            }
+            let result = serde_json::from_str::<crate::antigravity_desktop::Operation>(&input)
+                .map_err(|e| e.to_string())
+                .and_then(|op| {
+                    tokio::runtime::Runtime::new()
+                        .map_err(|e| e.to_string())?
+                        .block_on(crate::client::antigravity_desktop(op))
+                });
+            print_line(&serde_json::to_string(&result).unwrap_or_default());
+            exit(if result.is_ok() { 0 } else { 1 });
+        }
+        // Hidden: the process the Antigravity App starts for each sidecar AskHuman made. It never
+        // starts the daemon.
+        "__antigravity-sidecar" => {
+            exit(crate::antigravity_desktop::sidecar_main(&argv[2..]));
         }
         "__ask-question-hook" => {
             crate::ask_question::run(argv.get(2).map(String::as_str));

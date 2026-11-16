@@ -37,6 +37,7 @@ use tokio::io::BufReader;
 use transport::Stream;
 
 mod agent_control;
+mod antigravity_link;
 mod away_ops;
 mod conn_slot;
 mod cursor_reports;
@@ -1697,6 +1698,9 @@ enum Control {
     AgentsSub,
     /// 菜单栏宿主订阅：接管连接，持续推送 `TrayState`（非保活）。
     TraySub,
+    /// A sidecar process of the Antigravity App checked in: the connection stays and carries
+    /// its commands and results (not a keepalive).
+    AntigravitySidecar(crate::antigravity_desktop::CheckIn),
     /// 插话 composer 窗口连接：接管连接，登记「composer 打开」；断开＝关闭（非保活）。
     InterjectComposer {
         session_id: String,
@@ -1729,6 +1733,9 @@ async fn handle_conn(stream: Stream, state: Arc<ServerState>) {
         Control::GuiWarm => handle_gui_warm(reader, w, &state).await,
         Control::AgentsSub => handle_agents_sub(reader, w, &state).await,
         Control::TraySub => handle_tray_sub(reader, w, &state).await,
+        Control::AntigravitySidecar(check_in) => {
+            antigravity_link::handle_sidecar(reader, w, &state, check_in).await
+        }
         Control::InterjectComposer { session_id } => {
             handle_interject_composer(reader, w, &state, session_id).await
         }
@@ -1775,6 +1782,16 @@ async fn control_loop(reader: &mut Reader, w: &mut Writer, state: &Arc<ServerSta
                 let result = crate::cursor_desktop::execute(operation).await;
                 let _ = ipc::write_msg(w, &ServerMsg::CursorDesktop { result }).await;
             }
+            ClientMsg::AntigravityDesktop { operation } => {
+                let result = crate::antigravity_desktop::execute(operation).await;
+                let _ = ipc::write_msg(w, &ServerMsg::AntigravityDesktop { result }).await;
+            }
+            // A sidecar says who it is first. It sends no Hello: a sidecar can be an older build
+            // than the daemon, and that must never make the daemon give way.
+            ClientMsg::AntigravitySidecar {
+                frame: crate::antigravity_desktop::Up::CheckIn(check_in),
+            } => return Control::AntigravitySidecar(check_in),
+            ClientMsg::AntigravitySidecar { .. } => {}
             ClientMsg::AgentMessage { message } => {
                 let result = agent_control::send_from_console(state, message).await;
                 let _ = ipc::write_msg(w, &ServerMsg::AgentMessage { result }).await;

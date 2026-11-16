@@ -1265,6 +1265,20 @@ pub async fn cursor_desktop(
     .await
 }
 
+/// Ask the daemon to manage the sidecars AskHuman keeps for the Antigravity App.
+pub async fn antigravity_desktop(
+    operation: crate::antigravity_desktop::Operation,
+) -> Result<serde_json::Value, String> {
+    desktop_round_trip(
+        ClientMsg::AntigravityDesktop { operation },
+        |msg| match msg {
+            ServerMsg::AntigravityDesktop { result } => Some(result),
+            _ => None,
+        },
+    )
+    .await
+}
+
 /// Send a message typed in the Agents console straight to a chat that is not working. `Err` means
 /// the daemon's answer did not arrive, so the message may or may not have been sent.
 pub async fn agent_message(
