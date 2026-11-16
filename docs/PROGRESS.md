@@ -6,7 +6,7 @@
 ## 进行中：Antigravity 深度集成（P1–P4 已实现并装为日常版，等用户验收）
 
 规格 [antigravity-deep-integration.md](specs/antigravity-deep-integration.md)，计划 [plans/antigravity-deep-integration.md](plans/antigravity-deep-integration.md)
-（实施记录在计划末尾，真实验证在规格附录 A.2–A.6）。P1–P4 与文档回写都已提交，本地、未推送（提交清单见计划的实施记录）；
+（实施记录在计划末尾，真实验证在规格附录 A.2–A.6）。P1–P4 与文档回写都已提交（提交清单见计划的实施记录；是否已推送以 `git status` 为准）；
 门 G1–G4 的真实验证做完了，测试后的环境已还原（规格附录 A.6「还原」）。下面是我做不了、或要用户决定的：
 
 - [ ] **用户验收**（规格 §18；我这边做不了）：Stop 确认卡的真人点击路径（V24，两次试验都没人应答）；sidecar 会话在 App 左侧列表里的位置（V7）；
@@ -14,8 +14,6 @@
   App 登录失效时建任务的失败形态（V1 剩下的部分）；设置页与控制台的肉眼验收（Computer Use 截不到也读不到 AskHuman GUI host 的窗口，
   shell 的 `screencapture` 没有屏幕录制权限；日常 GUI host 要等没有窗口时才换成新二进制，最后一次安装（含设置页默认路线提示的新文案）后它还没换）；手机 / IM 的 `/new` 与 Mac 弹窗的真实点击；Watch 里 Antigravity 思考文本的外观（非低档 Flash 的会话）；GUI 的终端路由真的拉起 `agy`；`agy` 的取消 / Ctrl-C（V3）；Linux（V13）。
 - [ ] **待用户决定**：要不要让我按会话 ID 直接删除我留下的测试会话文件（默认不做；见规格 §20）。
-- [ ] **待用户决定**：要不要做 Antigravity 的权限接管（F，约一期 P5，先过门 G5）。2026-11-16 复核发现公开接口里有可行方案——`PreToolUse` 的 `auto_approve` / `deny`（`agy` 1.5.9 无头实测，App 与 TUI 没测）；
-  细节、设计草图、其它路径与门 G5 清单见规格 §13.1.1、附录 A.7。不决定就保持本版「不做」。
 - [ ] 可选改进（没有做，没有批准）：`Stop` 的 hook 被杀（`agy` 里 Ctrl-C、退出 App）时，登记要到 30 分钟兜底才离开「工作中」；要不要改成 hook 断开就回落（计划的风险表，G4 实测）。
 - [ ] 旧的共享规则迁移成插件没有自动迁移：用户升级后第一次执行 `AskHuman agents mode antigravity …` / `agents update antigravity` 才会做。
   本机在测试时已经迁移完，现在是插件的 CLI 模式（hooks + 规则，没有 MCP）；其他机器上要用户自己执行，迁移时若 App 有会话在跑，先看规格 §6.5 与 V22。
