@@ -527,6 +527,20 @@ struct PendingLaunchWatch {
     created_at: u64,
 }
 
+/// The folder of the task a launch id names, while the task is still waiting for its agent.
+fn pending_launch_cwd(
+    pending: &Mutex<Vec<PendingLaunchWatch>>,
+    kind: AgentKind,
+    launch_id: &str,
+) -> Option<String> {
+    pending
+        .lock()
+        .unwrap()
+        .iter()
+        .find(|item| item.kind == kind && item.id == launch_id)
+        .map(|item| item.cwd.clone())
+}
+
 /// Whether an agent event is the start of the task `item` asked for. The launch id the helper puts
 /// in the agent's environment is unique, so it pairs on its own wherever the agent reports no
 /// directory (an `agy` outside a trusted workspace sends an empty one); a directory it does report
@@ -2221,7 +2235,15 @@ async fn control_loop(reader: &mut Reader, w: &mut Writer, state: &Arc<ServerSta
                             pid.or_else(|| state.agents.resolve_pid(&session_id, kind, hint_pid));
 
                         let event_cwd = cwd.clone();
-                        let cwd = crate::agents::session_info::workspace(kind, &session_id).or(cwd);
+                        // An agent that reports no folder (an `agy` outside a trusted workspace
+                        // sends an empty one) is still in the one its task was started in.
+                        let cwd = crate::agents::session_info::workspace(kind, &session_id)
+                            .or(cwd)
+                            .or_else(|| {
+                                launch_id.as_deref().and_then(|id| {
+                                    pending_launch_cwd(&state.pending_launches, kind, id)
+                                })
+                            });
                         let mut observation = observation.or_else(|| {
                             use crate::agents::result::{Observation, TurnOutcome, TurnResult};
                             let mut legacy = Observation {
@@ -5830,7 +5852,7 @@ fn print_status(info: &StatusInfo) {
 #[cfg(test)]
 mod tests {
     use super::{
-        agent_kind_for_im, development_popup_enabled, marks_session_working,
+        agent_kind_for_im, development_popup_enabled, marks_session_working, pending_launch_cwd,
         pending_launch_matches, popup_prewarm_requested, popup_should_dispatch, scoped_candidates,
         select_im_delivery_candidates, task_workspace_options, update_snapshot_from_state,
         with_ios, InboundRegistry, PendingLaunchWatch,
@@ -5839,6 +5861,7 @@ mod tests {
     use crate::config::AppConfig;
     use crate::i18n::Lang;
     use std::sync::Arc;
+    use std::sync::Mutex;
 
     #[test]
     fn the_update_prompt_skips_a_dismissed_version_but_not_a_newer_one() {
@@ -6239,6 +6262,32 @@ mod tests {
             Some("launch-1"),
             None
         ));
+    }
+
+    #[test]
+    fn a_waiting_task_names_the_folder_of_its_launch_id() {
+        let pending = Mutex::new(vec![PendingLaunchWatch {
+            id: "launch-1".into(),
+            channel: None,
+            ios: None,
+            kind: AgentKind::Antigravity,
+            cwd: "/tmp/project".into(),
+            task_sha256: "hash-1".into(),
+            source_session_id: None,
+            created_at: 1,
+        }]);
+        assert_eq!(
+            pending_launch_cwd(&pending, AgentKind::Antigravity, "launch-1").as_deref(),
+            Some("/tmp/project")
+        );
+        assert_eq!(
+            pending_launch_cwd(&pending, AgentKind::Antigravity, "launch-2"),
+            None
+        );
+        assert_eq!(
+            pending_launch_cwd(&pending, AgentKind::Codex, "launch-1"),
+            None
+        );
     }
 
     /// An `agy` outside a trusted workspace reports no directory at all; the launch id alone is
