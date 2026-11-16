@@ -157,7 +157,7 @@ Mac 端：此前 `./scripts/install.sh` 被会话历史开发中的 `RequestView
 
 还没做的：
 
-1. **真机没看过。** 2026-11-12 那一版已随内外 TestFlight `0.1.0 (21)` 分发（见 [Build 21 交付记录](plans/ios-channel.md#2026-11-13testflight-内部与外部构建-21)）；2026-11-16 放大后能拖到栏后面的改动**还没出包**，手机上要等新的 TestFlight 构建才看得到。装上后在手机（iOS 26）上：打开一张竖长截图（高过 sheet 的那种），确认上端在栏的下面；放大后上下拖几下，看图拖到栏的后面时玻璃按钮与系统的边缘效果好不好看、手感合不合适，两端停的位置（拖到最下，图的上沿回到栏的下沿）自然不自然。
+1. **真机没看过。** 2026-11-12 那一版已随内外 TestFlight `0.1.0 (21)` 分发（见 [Build 21 交付记录](plans/ios-channel.md#2026-11-13testflight-内部与外部构建-21)）；2026-11-16 放大后能拖到栏后面的改动已随内外 TestFlight `0.1.0 (27)` 分发（源码 `972dafc9`，见 [Build 27 交付记录](plans/ios-channel.md#2026-11-17testflight-内部与外部构建-27)）。手机更新后在手机（iOS 26）上：打开一张竖长截图（高过 sheet 的那种），确认上端在栏的下面；放大后上下拖几下，看图拖到栏的后面时玻璃按钮与系统的边缘效果好不好看、手感合不合适，两端停的位置（拖到最下，图的上沿回到栏的下沿）自然不自然。
 2. **「顶岛」的读法**是我定的：iPhone 竖屏下查看器是 sheet，顶上留着一条缝，灵动岛碰不到它的内容，所以没有为岛另做处理。如果用户指的是别的屏幕（例如某个全屏页面），要请他指明。
 3. **iOS 25 及更早的栏**是我加的取舍（用户没提过）：栏静止时也成了一条浅灰的系统材质带（改动前是透明的），因为栏是透明的话，标题与按钮会直接印在拖到栏后面的图上；iOS 26 不受影响。要改成「只有图在栏后面时才有材质」得把状态从 `ZoomableImage` 传到画廊，没做。
 4. **iPad 上「键盘盖到查看器上」的守卫用例失败**（`testTheButtonIsAboveAFullScreenImageViewerAndThePageOpensOverItToo`：点缩略图后 `image-gallery` 没出现），改动前的代码上同样失败，原因没查；所以这条守卫目前只在 iPhone 上起作用。到达动效的 `testTheImageViewerKeepsItsHeadingAndPagingDuringAnArrival` 在 iPad 上也失败，那条是手机专属的断言，`plans/ios-arrival-motion.md` 已记。
