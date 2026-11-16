@@ -447,11 +447,23 @@ mod tests {
     #[tokio::test]
     async fn a_call_that_does_not_finish_is_stopped() {
         let fake = Fake::new(&format!(
-            "echo $$ > \"{}/pid\"\nexec sleep 30",
+            "[ \"$1\" = warm ] && exit 0\necho $$ > \"{}/pid\"\nexec sleep 30",
             "$(dirname \"$0\")"
         ));
+        // The system looks a new script over the first time it runs, which can take longer than
+        // the timeout below; run it once, so that the call under test starts at once.
+        assert!(std::process::Command::new(fake.program())
+            .arg("warm")
+            .status()
+            .unwrap()
+            .success());
         let started = std::time::Instant::now();
-        let outcome = execute(&fake.program(), &Command::Probe, Duration::from_millis(300)).await;
+        let outcome = execute(
+            &fake.program(),
+            &Command::Probe,
+            Duration::from_millis(1500),
+        )
+        .await;
         assert!(started.elapsed() < Duration::from_secs(10));
         assert_eq!(outcome.status, None);
         assert!(outcome.error.as_deref().unwrap().contains("did not finish"));
