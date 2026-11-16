@@ -199,7 +199,7 @@ Cursor 出错或中断时，可能把 AskHuman 的 MCP server 关掉。MCP serve
 | 1 | 通过（拖入文件的原生拖放手势除外） | 真卡载入含「选项 / 文字 / 图片 / 文件 / 第 2 问文字 / 批注」的草稿后杀掉调用方：取消记录带 `draft`，内容与载入前一致（图片复制到 `$TMPDIR/askhuman/<请求 id>/q1/`，字节相同）；`draft_kept` 在取消后约 7 ms 记下；窗口从取消到消失约 0.64 s，空卡与带草稿的卡各 3 轮对比没有差别。浏览器页里手工输两问的文字、点选项、粘贴图片、选段加批注，调用方断开事件后页面交给宿主的草稿与输入一致，卡片照常移除、无报错。`--show-last` 与最近回答不受影响：单元测试 `a_draft_never_shows_up_as_a_sent_exchange`。|
 | 2 | 通过（载入后点提交除外） | 同会话同问题再问：新卡载入，历史里旧记录的 `claimedBy` 指向新请求；已认领的不会再被取，多条时取最新未认领的；卡片顶部有一行可关闭的提示（浅色 / 深色截图都看过，关闭后已载入的内容留着）。载入写进的就是手输时用的那份表单状态，但没有在真实窗口里点过提交。|
 | 3 | 通过 | message 差一点、或换了会话：不载入；对照组载入。|
-| 4 | 只有单元测试 | 用户自己关窗、手机 / IM 抢答、IM 取消，无人值守触发不了。协调器的「人的决定不算放弃」、宿主的「别的结局不读表单」都有单元测试。|
+| 4 | 只有单元测试 | 用户自己关窗、手机 / IM 抢答、IM 取消，无人值守触发不了。单元测试覆盖：协调器 `a_decision_by_a_person_interrupts_the_other_channels_the_ordinary_way`、弹窗渠道 `the_host_keeps_the_draft_only_when_the_ask_was_abandoned`（`AnsweredBy`、人的取消、`Handoff` 都不带 `keepDraft`）、前端 `asks nothing of the form for any other ending`。|
 | 5 | 通过 | 中途把历史条数设为 0：宿主记 `draft_not_kept`，什么也没存、无报错；取消设置后又能保存。空卡取消后记录里没有 `draft`。|
 | 6 | 通过 | whats-next 卡里输了文字、加了批注后调用方断开；两次提问之间新增一条待办，新卡仍载入。|
 | 7 | 通过 | 调用方断开后 1–2 ms 内重发，连续 6 次都载入。|
