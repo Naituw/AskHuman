@@ -127,7 +127,7 @@ pub(super) fn can_interject(rec: &Value) -> CanInterject {
         ok: false,
         reason: Some(reason.to_string()),
     };
-    if matches!(text(rec, "kind"), "grok" | "antigravity") {
+    if text(rec, "kind") == "grok" {
         return refuse("unsupported");
     }
     if crate::codex_desktop::is_desktop_session(rec) {
@@ -588,6 +588,12 @@ mod tests {
         assert_eq!(
             refused(json!({"kind": "grok"})).as_deref(),
             Some("unsupported")
+        );
+        // An Antigravity hook carries the message into the next invocation of a working session.
+        assert!(can_interject(&record(json!({"kind": "antigravity", "state": "working"}))).ok);
+        assert_eq!(
+            refused(json!({"kind": "antigravity", "state": "ended"})).as_deref(),
+            Some("ended")
         );
         assert!(
             can_interject(&record(

@@ -723,7 +723,15 @@ const messageUnderHeader = (id: AgentId) =>
           </label>
         </div>
         <p class="card-desc agent-hint">
-          {{ t(a.id === 'grok' ? "settings.integration.stopGrokHint" : "settings.integration.stopHint") }}
+          {{
+            t(
+              a.id === 'grok'
+                ? "settings.integration.stopGrokHint"
+                : a.id === 'antigravity'
+                  ? "settings.integration.stopAntigravityHint"
+                  : "settings.integration.stopHint",
+            )
+          }}
         </p>
         <p
           v-if="modes[a.id].stop.otherHandlersDetected"

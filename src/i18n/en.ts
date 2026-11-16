@@ -761,6 +761,8 @@ export default {
       stopHint:
         "Ask before a natural completion, or show a card after a final turn failure. Sessions with a continuation channel can continue. Automatic retries, tool errors and manual cancellations stay quiet. Phone pushes use the existing notification timing.",
       stopGrokHint: "Final error reminders only. Natural completions are not intercepted and continuation from an error card is not yet supported; choose Got it to dismiss.",
+      stopAntigravityHint:
+        "Ask before a natural completion, once the agent and every sub-agent it started have finished (sub-agents never ask on their own), or show a card after a final turn failure. A failed turn can be continued when its conversation can be messaged. Manual cancellations stay quiet.",
       stopUnsupported:
         "This Agent has no reliable completion or error event source for this feature yet.",
       stopCoexist:
@@ -792,7 +794,7 @@ export default {
       capabilityUnsupported: "Currently unsupported",
       antigravityRecoveryUnsupported: "Antigravity context recovery hooks are not implemented; CLI integration does not install this hook.",
       antigravityLifecycleHint:
-        "Tracks the status and title of app and agy sessions through the plugin's hooks and shows them in the console; interject, Watch and task launch are not available yet. AskHuman questions still work when it is off.",
+        "Tracks the status and title of app and agy sessions through the plugin's hooks and shows them in the console. It also powers interject, Watch, and pairing tasks launched from your phone or IM with their sessions. AskHuman questions still work when it is off.",
       contextRecoveryHookLabel: "Context recovery hook",
       protocolLabel: "Protocol (SessionStart hook)",
       codexProtocolHint:
@@ -1530,7 +1532,6 @@ export default {
     pendingCount: "{n} queued",
     pendingAttachments: "{n} attachment(s)",
     revoke: "Revoke",
-    antigravityHint: "Antigravity interjection and idle messages are not available yet",
     grokHint: "Grok does not support messaging",
     idleHint: "The message channel is unavailable. Open the original session in the Agent to continue.",
     endedHint: "The message channel is unavailable. Open the original session in the Agent to continue.",

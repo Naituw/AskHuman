@@ -747,6 +747,8 @@ export default {
       stopHint:
         "自然完成时询问继续还是结束；整轮最终出错时显示处理卡，支持接续的会话可要求继续。自动重试中、工具错误和用户取消不提醒，手机推送沿用现有提醒时机。",
       stopGrokHint: "目前仅支持整轮出错提醒，不拦截正常结束，也暂不支持从错误卡接续；可以选择「知道了」。",
+      stopAntigravityHint:
+        "自然完成时询问继续还是结束：要等 Agent 和它启动的所有子 Agent 都结束后才询问（子 Agent 自己不会弹卡）；整轮最终出错时显示处理卡，对话可以发消息时可要求继续。用户取消不提醒。",
       stopUnsupported:
         "该 Agent 尚无可靠的结束／出错事件来源，暂不支持此确认功能。",
       stopCoexist:
@@ -777,7 +779,7 @@ export default {
       capabilityUnsupported: "当前不支持",
       antigravityRecoveryUnsupported: "Antigravity 当前未接入上下文恢复 Hook；CLI 集成不会安装此 Hook。",
       antigravityLifecycleHint:
-        "通过插件 hooks 追踪 App 与 agy 的会话状态与标题，显示在控制台；插话、Watch 与任务启动尚未开放。关闭后 AskHuman 提问仍可使用。",
+        "通过插件 hooks 追踪 App 与 agy 的会话状态与标题，显示在控制台；同时支撑插话、Watch，以及把手机／IM 启动的任务对应到会话。关闭后 AskHuman 提问仍可使用。",
       contextRecoveryHookLabel: "上下文恢复 Hook",
       protocolLabel: "协议（SessionStart Hook）",
       codexProtocolHint:
@@ -1506,7 +1508,6 @@ export default {
     pendingCount: "待送达 {n} 条",
     pendingAttachments: "{n} 个附件",
     revoke: "撤回",
-    antigravityHint: "Antigravity 插话与空闲消息尚未开放",
     grokHint: "Grok 不支持发送消息",
     idleHint: "消息通道当前不可用，请在 Agent 中打开原会话继续。",
     endedHint: "消息通道当前不可用，请在 Agent 中打开原会话继续。",

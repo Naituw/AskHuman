@@ -624,6 +624,15 @@ describe("IntegrationTab", () => {
     expect(card.find("#lifecycle-antigravity input").exists()).toBe(true);
   });
 
+  it("explains Antigravity's Stop confirmation by its sub-agents rather than the generic hint", () => {
+    const { wrapper } = mountAgent(agentDefinition("antigravity", false), modeStatus({
+      mode: "cli", mcpSupported: true, timeoutHookSupported: false,
+    }));
+    const card = wrapper.get("#integration-antigravity");
+    expect(card.text()).toContain(i18n.global.t("settings.integration.stopAntigravityHint"));
+    expect(card.text()).not.toContain(i18n.global.t("settings.integration.stopHint"));
+  });
+
   describe("Antigravity plugin notices", () => {
     const notice = (wrapper: VueWrapper, key: "plugin-disabled" | "grant-hint") =>
       wrapper.find(`[data-testid="antigravity-${key}"]`);
