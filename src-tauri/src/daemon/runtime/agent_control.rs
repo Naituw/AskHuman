@@ -525,6 +525,9 @@ pub(super) async fn send_with(
             for file in &operation.files {
                 text.push_str(&format!("\n\nAttached file: {} ({})", file.name, file.path));
             }
+            // The host shows this to the model as a system message; the wrapper says it is the
+            // user's.
+            let text = crate::prompts::antigravity_idle_message(&text);
             let directory = rec["cwd"].as_str();
             // Starting the App can take most of half a minute, and the message is already
             // recorded as dispatched, so another one for this session is refused meanwhile.
@@ -1269,12 +1272,12 @@ mod tests {
         assert_eq!(sent.status, "delivered");
         let started = sent.started_control.expect("the turn answered the message");
         assert_eq!(started.phone_id, "mac-console");
-        // The route got the text and the conversation's folder, once.
+        // The route got the text, worded as the user's, and the conversation's folder, once.
         assert_eq!(
             chat.antigravity_sent(),
             [(
                 "ag".to_string(),
-                "please continue".to_string(),
+                crate::prompts::antigravity_idle_message("please continue"),
                 Some("/tmp/project".to_string())
             )]
         );
@@ -1323,7 +1326,7 @@ mod tests {
         send_with(&state, with_file, &chat).await;
         assert_eq!(
             chat.antigravity_sent()[0].1,
-            "look\n\nAttached file: a.png (/tmp/a.png)"
+            crate::prompts::antigravity_idle_message("look\n\nAttached file: a.png (/tmp/a.png)")
         );
     }
 

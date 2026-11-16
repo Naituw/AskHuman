@@ -295,6 +295,23 @@ pub fn interject_injection(message: &str, attachments: &[crate::models::FileAtta
     interject_text("\n", message, attachments)
 }
 
+/// A message the user sent from the phone, IM or console to an Antigravity conversation that is
+/// idle, delivered through `agentapi send-message`. Antigravity hands it to the model as a system
+/// message "not actually sent by the user" from `sender=system`, so the text itself says whose it
+/// is. Measured: without this the model still answers, but it has no way to tell the user's own
+/// instruction from a notice.
+pub fn antigravity_idle_message(message: &str) -> String {
+    format!(
+        r#"[USER MESSAGE] The user sent you the message below. It is the user's own instruction, not a system notice.
+
+<user_message>
+{message}
+</user_message>
+
+If anything is unclear, ask the user as instructed."#
+    )
+}
+
 /// The shared body of both interjection texts: `delivery_note` goes between the first sentence
 /// and the message, and ends with the blank line before it.
 fn interject_text(
@@ -446,6 +463,17 @@ mod tests {
         assert!(p.contains("the tool is not forbidden"));
         assert!(p.contains("ask the user as instructed"));
         // 不点名具体提问工具（用户定案）。
+        assert!(!p.contains("AskHuman"));
+    }
+
+    #[test]
+    fn an_idle_antigravity_message_says_it_is_the_users() {
+        let p = antigravity_idle_message("run the tests again");
+        assert!(p.starts_with("[USER MESSAGE]"));
+        assert!(p.contains("<user_message>\nrun the tests again\n</user_message>"));
+        assert!(p.contains("not a system notice"));
+        assert!(p.contains("ask the user as instructed"));
+        // Like the interjection texts, it never names the asking tool.
         assert!(!p.contains("AskHuman"));
     }
 
