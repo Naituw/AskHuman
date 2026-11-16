@@ -1843,7 +1843,7 @@ export default {
       preference: "Default runtime",
       preferApp: "Prefer the App",
       preferCli: "Prefer agy (terminal)",
-      hint: "This only sets which one is tried first; when it cannot be used, the other one is taken. In the App, the task is created in a project that AskHuman prepares for the folder (with the permissions you allow below) and sent automatically; starting from agy in a terminal is not available yet. Once a task is being created it is not moved to the other route: a problem is reported instead of being worked around.",
+      hint: "This only sets which one is tried first; when it cannot be used, the other one is taken. In the App, the task is created in a project that AskHuman prepares for the folder (with the permissions you allow below) and sent automatically; the agy route opens a terminal that runs agy with the task. Once a task is being created it is not moved to the other route: a problem is reported instead of being worked around.",
       willUseApp: "New tasks will use the Antigravity App",
       willUseCli: "New tasks will use agy in a terminal",
       unavailable: "Neither the Antigravity App nor agy is available",

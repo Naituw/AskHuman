@@ -1810,7 +1810,7 @@ export default {
       preference: "默认运行方式",
       preferApp: "优先 App",
       preferCli: "优先 agy（终端）",
-      hint: "这里只决定先用哪一种；用不了时会自动改用另一种。App 路径会为该文件夹准备一个项目（权限按你下方的允许项）并自动发送任务；用 agy 在终端里启动暂未开放。任务开始创建后不再切换：遇到问题会直接提示，不会绕过去。",
+      hint: "这里只决定先用哪一种；用不了时会自动改用另一种。App 路径会为该文件夹准备一个项目（权限按你下方的允许项）并自动发送任务；agy 路径会打开系统终端，运行 agy 并带上任务。任务开始创建后不再切换：遇到问题会直接提示，不会绕过去。",
       willUseApp: "新任务将使用 Antigravity App",
       willUseCli: "新任务将使用 agy（终端）",
       unavailable: "未检测到可用的 Antigravity App 或 agy",
