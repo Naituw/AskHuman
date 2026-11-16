@@ -350,15 +350,12 @@ fn render_text(
         workspaces,
     ));
     // `ready` is the CLI route's own verdict; `start` is the one the phone and IM act on, which
-    // also counts the Codex App and Cursor's Agents window (`integrations::agent_start`).
+    // also counts the Codex App, Cursor's Agents window and the Antigravity App
+    // (`integrations::agent_start`).
     for item in
         crate::integrations::agent_start::judge(crate::integrations::agent_launch::all_readiness())
     {
-        let route = match item.start_route {
-            Some(crate::codex_desktop::LaunchTarget::Desktop) => "desktop",
-            Some(crate::codex_desktop::LaunchTarget::Terminal) => "terminal",
-            None => "no",
-        };
+        let route = launch_route_name(item.start_route);
         let item = item.readiness;
         out.push_str(&format!(
             "  {:<8} ready={} cli={} lifecycle={} integration={} start={}\n",
@@ -389,7 +386,29 @@ fn render_text(
     if let Some(error) = cursor.error {
         out.push_str(&format!("  {error}\n"));
     }
+
+    let antigravity = crate::antigravity_desktop::launch_status(false);
+    out.push_str(&format!(
+        "\nAntigravity Tasks\n  route={} preference={} manage-sidecars={}\n",
+        launch_route_name(antigravity.target),
+        launch_route_name(Some(antigravity.preference)),
+        yn(cfg.antigravity_desktop.manage_sidecars),
+    ));
+    if let Some(reason) = antigravity.desktop_reason {
+        out.push_str(&format!("  app: {}\n", reason.text(lang)));
+    }
+    if let Some(reason) = antigravity.terminal_reason {
+        out.push_str(&format!("  agy: {}\n", reason.text(lang)));
+    }
     Ok((out.trim_end().to_string(), had_errors))
+}
+
+fn launch_route_name(route: Option<crate::codex_desktop::LaunchTarget>) -> &'static str {
+    match route {
+        Some(crate::codex_desktop::LaunchTarget::Desktop) => "desktop",
+        Some(crate::codex_desktop::LaunchTarget::Terminal) => "terminal",
+        None => "no",
+    }
 }
 
 fn render_daemon_text(
@@ -596,6 +615,10 @@ fn render_json(
         "channels": channels,
         "integrations": integrations,
         "cursorDesktop": crate::cursor_desktop::status(&cfg.cursor_desktop),
+        "antigravityDesktop": {
+            "manageSidecars": cfg.antigravity_desktop.manage_sidecars,
+            "launch": crate::antigravity_desktop::launch_status(false),
+        },
         "agentTasks": {
             "enabled": cfg.agent_tasks.enabled,
             "keepalive": cfg.general.daemon_lifecycle == crate::config::DaemonLifecycleMode::KeepAlive,

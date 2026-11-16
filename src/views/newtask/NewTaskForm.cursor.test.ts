@@ -15,6 +15,7 @@ vi.mock("../../lib/ipc", () => ({
   agentTaskReadiness: api.readiness,
   codexLaunchStatus: vi.fn(async () => null),
   cursorLaunchStatus: api.route,
+  antigravityLaunchStatus: vi.fn(async () => null),
   newTaskOptions: api.options,
   newTaskInit: vi.fn(async () => ({
     popupSubmitKey: "cmdEnter",

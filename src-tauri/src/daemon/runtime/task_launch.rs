@@ -211,7 +211,7 @@ async fn start_antigravity_desktop(
 
 /// Registers a conversation the Antigravity App just created, under its own id, so a watch can
 /// start before the first hook arrives; the hooks then find the record and carry on from it.
-fn register_app_session(state: &Arc<ServerState>, session_id: &str, workspace: &str) {
+pub(super) fn register_app_session(state: &Arc<ServerState>, session_id: &str, workspace: &str) {
     if state.agents.apply_event(
         AgentKind::Antigravity,
         LifecycleEvent::TurnStart,

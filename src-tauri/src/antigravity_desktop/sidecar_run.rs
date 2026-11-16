@@ -356,7 +356,7 @@ async fn shutdown() {
 mod tests {
     use super::*;
     use std::os::unix::fs::PermissionsExt;
-    use tokio::io::{AsyncWriteExt, BufReader};
+    use tokio::io::BufReader;
 
     /// A stand-in for `agentapi`: a script that records its arguments, one per line.
     struct Fake {

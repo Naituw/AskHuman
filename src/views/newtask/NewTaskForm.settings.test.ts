@@ -10,6 +10,7 @@ vi.mock("../../lib/ipc", () => ({
   agentTaskReadiness: vi.fn(async () => ["codex", "claude", "pi"].map(kind => ({ kind, label: kind, ready: true, binaryReady: true, integrationReady: true, lifecycleReady: true, integrationMode: "mcp", launchSupported: true }))),
   codexLaunchStatus: vi.fn(async () => ({ preference: "desktop", target: "desktop", desktopAvailable: true, terminalAvailable: false, integrated: true })),
   cursorLaunchStatus: vi.fn(async () => null),
+  antigravityLaunchStatus: vi.fn(async () => null),
   newTaskInit: vi.fn(async () => ({ popupSubmitKey: "cmdEnter", permissionPrompt: "agent-default" })),
   newTaskOptions: api.options, newTaskLaunch: api.launch,
   newTaskProjects: vi.fn(async () => []), newTaskProjectsRefreshed: vi.fn(async () => []),

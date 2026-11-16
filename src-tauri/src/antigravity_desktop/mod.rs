@@ -7,10 +7,6 @@
 //! module owns the route's configuration and status, the sidecars AskHuman manages for it, and the
 //! task-creation operation (docs/specs/antigravity-deep-integration.md §12).
 
-// The route is built bottom-up over several commits and wired into the entry points (phone, IM,
-// New Task window, Settings) in the last one, which removes this attribute.
-#![allow(dead_code, unused_imports)]
-
 mod create;
 mod host_config;
 mod launch;
@@ -21,10 +17,11 @@ mod sidecar;
 mod sidecar_run;
 
 pub use create::Request as CreateRequest;
-pub use launch::{launch_status, resolve_launch, LaunchStatus, UnavailableReason};
-pub use link::{
-    shared as manager, CheckIn, Command, Down, Manager, Outbound, Outcome, RunError, Up,
-};
+pub use launch::{launch_status, resolve_launch, LaunchStatus};
+pub use link::{shared as manager, CheckIn, Down, Manager, Outbound, Up};
+// What the daemon's link tests stand in for; nothing else outside this module sends commands yet.
+#[cfg(test)]
+pub use link::{Command, Outcome, RunError};
 pub use sidecar_run::main as sidecar_main;
 
 use anyhow::Result;

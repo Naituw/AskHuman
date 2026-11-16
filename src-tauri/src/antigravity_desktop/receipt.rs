@@ -7,9 +7,3 @@ use std::path::PathBuf;
 pub(super) fn dir() -> PathBuf {
     crate::paths::config_dir().join("antigravity-tasks")
 }
-
-/// The receipt of operation `id`. The caller has checked that `id` is a UUID, so it can only name
-/// a file inside [`dir`].
-pub(super) fn path(id: &str) -> PathBuf {
-    dir().join(format!("{id}.json"))
-}

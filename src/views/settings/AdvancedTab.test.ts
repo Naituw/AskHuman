@@ -6,7 +6,7 @@ import { flushPromises, mount } from "@vue/test-utils";
 import { ref } from "vue";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { i18n } from "../../i18n";
-import type { CursorLaunchStatus } from "../../lib/ipc";
+import type { AntigravityLaunchStatus, CursorLaunchStatus } from "../../lib/ipc";
 import type { AgentKind, AgentTaskReadiness, AppConfig } from "../../lib/types";
 import AdvancedTab from "./AdvancedTab.vue";
 import type { ReadinessIssue } from "./readiness";
@@ -48,7 +48,8 @@ const AGENTS = [
   agent("codex", "Codex", ["lifecycle", "integration"]),
   agent("pi", "Pi", ["binary", "lifecycle", "integration"]),
 ];
-// Antigravity has no New Task path: it lacks everything, and nothing the person does changes that.
+// An Agent family that cannot start a task: it lacks everything, and nothing the person does changes
+// that. (A synthetic row: every real family can start one.)
 const ANTIGRAVITY = agent("antigravity", "Antigravity", ["binary", "lifecycle", "integration"], false);
 
 const CONDITIONS: ReadinessIssue[] = ["binary", "lifecycle", "integration"];
@@ -295,6 +296,11 @@ describe("AdvancedTab: Agents that start in their app or window", () => {
     startable: true,
     startRoute: "desktop",
   };
+  const ANTIGRAVITY_APP: AgentTaskReadiness = {
+    ...agent("antigravity", "Antigravity", ["binary", "lifecycle"]),
+    startable: true,
+    startRoute: "desktop",
+  };
 
   beforeEach(() => {
     document.body.innerHTML = '<div class="settings"></div>';
@@ -316,6 +322,18 @@ describe("AdvancedTab: Agents that start in their app or window", () => {
     expect(codex.text()).toBe("Ready · Desktop App");
     expect(codex.classes()).toEqual(expect.arrayContaining(["status-tag", "ok"]));
     expect(wrapper.get('[data-testid="readiness-tag-cursor"]').text()).toBe("Ready · Agents window");
+  });
+
+  it("names the Antigravity App as the place a task starts in", async () => {
+    const { wrapper } = mountTab([ANTIGRAVITY_APP]);
+    await flushPromises();
+
+    const tag = wrapper.get('[data-testid="readiness-tag-antigravity"]');
+    expect(tag.text()).toBe("Ready · Antigravity App");
+    expect(tag.classes()).toEqual(expect.arrayContaining(["status-tag", "ok"]));
+    // Its CLI's own conditions are not needed, so they are dashes and not crosses.
+    expect(wrapper.find('[data-testid="readiness-skip-antigravity-binary"]').exists()).toBe(true);
+    expect(wrapper.find(".readiness-fix").exists()).toBe(false);
   });
 
   it("shows the CLI's own conditions as dashes rather than crosses to fix", async () => {
@@ -384,6 +402,14 @@ describe("AdvancedTab: Agents that start in their app or window", () => {
     expect(wrapper.get('[data-testid="readiness-tag-codex"]').text()).toBe("就绪 · Desktop App");
     expect(wrapper.get('[data-testid="readiness-tag-cursor"]').text()).toBe("就绪 · Agents 窗口");
   });
+
+  it("speaks Chinese for the Antigravity App too", async () => {
+    const { wrapper } = mountTab([ANTIGRAVITY_APP]);
+    i18n.global.locale.value = "zh";
+    await flushPromises();
+
+    expect(wrapper.get('[data-testid="readiness-tag-antigravity"]').text()).toBe("就绪 · Antigravity App");
+  });
 });
 
 // Starts in its app, with a launch status on it: still nothing to explain.
@@ -446,6 +472,29 @@ describe("AdvancedTab: why an Agent with two routes cannot start", () => {
     // Part of the same item as the row, so the two stay together.
     expect(item.find(".readiness-row").exists()).toBe(true);
     expect(item.findAll(".readiness-fix").length).toBeGreaterThan(0);
+  });
+
+  it("names what keeps the Antigravity App and agy from starting a task, the App first", async () => {
+    const stuck: AntigravityLaunchStatus = {
+      preference: "desktop",
+      target: null,
+      desktopAvailable: false,
+      terminalAvailable: false,
+      desktopReason: "sidecarsNotAllowed",
+      terminalReason: "cliLaunchNotAvailable",
+      integrated: true,
+    };
+    const { wrapper } = mountTab([
+      { ...agent("antigravity", "Antigravity", ["binary"]), startable: false, startRoute: null, launch: stuck },
+    ]);
+    await flushPromises();
+
+    expect(wrapper.get('[data-testid="readiness-blockers-antigravity"]').text()).toBe(
+      [
+        i18n.global.t("antigravityDesktop.launch.reasons.sidecarsNotAllowed"),
+        i18n.global.t("antigravityDesktop.launch.reasons.cliLaunchNotAvailable"),
+      ].join(i18n.global.t("desktop.reasonSeparator")),
+    );
   });
 
   it("puts the Desktop route first when that is the preference", async () => {

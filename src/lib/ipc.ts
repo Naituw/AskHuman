@@ -831,6 +831,58 @@ export interface CursorLaunchStatus {
 }
 export const cursorLaunchStatus = (force = false) => invoke<CursorLaunchStatus>("cursor_launch_status", {force});
 
+export type AntigravityUnavailableReason = "unsupportedPlatform" | "devInstance" | "appNotInstalled" | "integrationDisabled" | "mcpModeRequired" | "pluginDisabled" | "sidecarsNotAllowed" | "yoloUnsupported" | "cliNotDetected" | "cliIntegrationNotConfigured" | "cliTrackingDisabled" | "cliTrackingNeedsUpdate" | "cliTrackingNotConfigured" | "terminalUnavailable" | "cliLaunchNotAvailable";
+/** Where a new Antigravity task would run: the App through a folder's sidecar, or `agy` in a terminal. */
+export interface AntigravityLaunchStatus {
+  preference: "desktop" | "terminal";
+  target: "desktop" | "terminal" | null;
+  desktopAvailable: boolean;
+  terminalAvailable: boolean;
+  desktopReason: AntigravityUnavailableReason | null;
+  terminalReason: AntigravityUnavailableReason | null;
+  integrated: boolean;
+}
+export const antigravityLaunchStatus = (force = false) => invoke<AntigravityLaunchStatus>("antigravity_launch_status", {force});
+
+/** One sidecar AskHuman keeps for the Antigravity App, as Settings lists it. */
+export interface AntigravitySidecar {
+  id: string;
+  /** `workspace` is a whitelist of grants, `yolo` has every grant, `control` only carries messages. */
+  kind: "workspace" | "yolo" | "control";
+  directory: string;
+  /** The project folder still exists. */
+  directoryExists: boolean;
+  rules: string[];
+  createdAt: number;
+  /** Milliseconds since the epoch; 0 when it has never been used. */
+  lastUsedAt: number;
+  files: "present" | "missing" | "conflict";
+  conflict?: string;
+  enabled: boolean;
+  tracked: boolean;
+  /** Whether it is connected to AskHuman right now. */
+  online: boolean;
+}
+export interface AntigravitySidecarList {
+  status: "done";
+  /** Whether AskHuman may create, change and remove sidecars. */
+  managing: boolean;
+  limit: number;
+  sidecars: AntigravitySidecar[];
+}
+/** What a sidecar operation answers when AskHuman refuses on purpose (an answer, not a failure). */
+export interface AntigravityRefusal {
+  status: "refused";
+  reason: "limitReached" | "conflict" | "notManaged" | "invalidRules" | "managingOff" | string;
+  message: string;
+}
+export type AntigravitySidecarOperation =
+  | {op: "sidecars"}
+  | {op: "remove"; id: string}
+  | {op: "removeAll"}
+  | {op: "setRules"; id: string; rules: string[]};
+export const antigravityDesktop = <T = Record<string, unknown>>(operation: AntigravitySidecarOperation) => invoke<T>("antigravity_desktop", {operation});
+
 export const popupAgentInfo = (requestId: string) => invoke<import("./types").PopupAgentInfo>("popup_agent_info", { requestId });
 export const popupProjectInfo = (requestId: string) => invoke<import("./types").PopupProjectInfo>("popup_project_info", { requestId });
 export const popupOpenTerminal = (requestId: string, target: "project" | "caller") => invoke<void>("popup_open_terminal", { requestId, target });

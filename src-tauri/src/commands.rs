@@ -3041,9 +3041,11 @@ pub async fn new_task_launch(
     if resolved == crate::codex_desktop::LaunchTarget::Desktop {
         if !matches!(
             parsed_kind,
-            crate::agents::AgentKind::Codex | crate::agents::AgentKind::Cursor
+            crate::agents::AgentKind::Codex
+                | crate::agents::AgentKind::Cursor
+                | crate::agents::AgentKind::Antigravity
         ) {
-            return Err("Only Codex and Cursor support desktop tasks".into());
+            return Err("Only Codex, Cursor and Antigravity support desktop tasks".into());
         }
         let id = operation_id.ok_or("Desktop tasks require a stable operation ID")?;
         uuid::Uuid::parse_str(&id).map_err(|_| "Invalid operation ID")?;
@@ -3091,6 +3093,25 @@ pub async fn new_task_launch(
                 title: None,
                 dry_run: false,
             })
+            .await?;
+        } else if parsed_kind == crate::agents::AgentKind::Antigravity {
+            // The daemon creates it through the folder's sidecar; an `Err` is the reason in the
+            // user's language.
+            crate::client::antigravity_desktop(crate::antigravity_desktop::Operation::Create(
+                crate::antigravity_desktop::CreateRequest {
+                    cwd: workspace,
+                    text: crate::integrations::agent_launch::task_with_attachments(
+                        &task,
+                        &delivery.files,
+                        &[],
+                    ),
+                    permission,
+                    id,
+                    model: choice.model,
+                    title: None,
+                    dry_run: false,
+                },
+            ))
             .await?;
         } else {
             crate::client::codex_desktop(crate::codex_desktop::Operation::Create {
@@ -5837,6 +5858,27 @@ pub async fn cursor_launch_status(
     })
     .await
     .map_err(|e| e.to_string())
+}
+
+/// Where a new Antigravity task would run now: the App through a sidecar, or `agy` in a terminal.
+#[tauri::command]
+pub async fn antigravity_launch_status(
+    force: Option<bool>,
+) -> Result<crate::antigravity_desktop::LaunchStatus, String> {
+    tokio::task::spawn_blocking(move || {
+        crate::antigravity_desktop::launch_status(force.unwrap_or(false))
+    })
+    .await
+    .map_err(|e| e.to_string())
+}
+
+/// What Settings does with the sidecars AskHuman keeps for the Antigravity App: list them, remove
+/// one or all, change the rules a whitelisted one has.
+#[tauri::command]
+pub async fn antigravity_desktop(
+    operation: crate::antigravity_desktop::Operation,
+) -> Result<serde_json::Value, String> {
+    crate::client::antigravity_desktop(operation).await
 }
 
 #[tauri::command]

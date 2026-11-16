@@ -157,6 +157,11 @@ export function useSettingsSearch(deps: {
         "settings.integration.delegatedHint",
       ]),
       e("integration", "cursorDesktop.title", ["cursorDesktop.hint"]),
+      e("integration", "antigravityDesktop.manage.title", [
+        "antigravityDesktop.manage.hint",
+        "antigravityDesktop.launch.preference",
+        "antigravityDesktop.sidecars.hint",
+      ]),
       lit("integration", "Claude Code", ["Agent"]),
       lit("integration", "Codex", ["Agent"]),
       lit("integration", "Cursor", ["Agent"]),

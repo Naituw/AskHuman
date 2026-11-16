@@ -5,6 +5,7 @@
 import { isMac } from "../../lib/platform";
 import type { AgentId } from "../../lib/types";
 import BrandBadge from "../setup/BrandBadge.vue";
+import AntigravityDesktopSettings from "./AntigravityDesktopSettings.vue";
 import CodexDesktopSettings from "./CodexDesktopSettings.vue";
 import CursorDesktopSettings from "./CursorDesktopSettings.vue";
 import CollaborationStyleEditor from "./CollaborationStyleEditor.vue";
@@ -918,6 +919,7 @@ const messageUnderHeader = (id: AgentId) =>
 
       <CodexDesktopSettings v-if="isMac && a.id === 'codex'" />
       <CursorDesktopSettings v-if="a.id === 'cursor'" />
+      <AntigravityDesktopSettings v-if="a.id === 'antigravity'" />
 
       <p
         v-if="modeMessage[a.id] && agentExpanded[a.id]"

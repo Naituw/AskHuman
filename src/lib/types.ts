@@ -1,4 +1,4 @@
-import type { CodexLaunchStatus, CursorLaunchStatus } from "./ipc";
+import type { AntigravityLaunchStatus, CodexLaunchStatus, CursorLaunchStatus } from "./ipc";
 
 export type OutputFormat = "text" | "json";
 
@@ -1272,8 +1272,8 @@ export interface AgentTaskReadiness {
   startable?: boolean;
   /** Where a task would run when `startable`; `null` when it cannot start. */
   startRoute?: "desktop" | "terminal" | null;
-  /** Codex and Cursor: the launch status behind `startable` (both routes, and why each is unavailable). */
-  launch?: CodexLaunchStatus | CursorLaunchStatus | null;
+  /** Codex, Cursor and Antigravity: the launch status behind `startable` (both routes, and why each is unavailable). */
+  launch?: CodexLaunchStatus | CursorLaunchStatus | AntigravityLaunchStatus | null;
   diagnostics: string[];
   /** Codex only: oldest version that can receive the protocol through its SessionStart hook. */
   protocolMinimumVersion?: string | null;
@@ -1284,6 +1284,8 @@ export interface AgentTaskReadiness {
 export interface AppConfig {
   codexDesktop?: {appPath: string; codexHome: string; launchPreference: "terminal" | "desktop"};
   cursorDesktop?: {suppressBackgroundCompletionFollowUp: boolean; endEscalationsWhileAway?: boolean; launchPreference?: "terminal" | "desktop"};
+  /** `launchPreference` says which route a new task tries first; `manageSidecars` is the one-time allowance to create and remove the App route's sidecars. */
+  antigravityDesktop?: {launchPreference?: "terminal" | "desktop"; manageSidecars?: boolean};
   general: GeneralConfig;
   channels: ChannelsConfig;
   agentTasks: AgentTasksConfig;

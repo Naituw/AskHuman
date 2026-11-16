@@ -4,9 +4,10 @@
 // (`integrations::agent_start`). Each lacking thing is an orange cross in the readiness matrix that
 // sends the person to where it is fixed (`useAgentTasks.openReadinessIssue`); a met condition is a
 // check. An Agent that cannot start tasks at all has nothing to fix, so it is shown as unsupported.
+import { antigravityLaunchReasons } from "../../lib/antigravityLaunch";
 import { codexLaunchReasons } from "../../lib/codexLaunch";
 import { cursorLaunchReasons } from "../../lib/cursorLaunch";
-import type { CodexLaunchStatus, CursorLaunchStatus } from "../../lib/ipc";
+import type { AntigravityLaunchStatus, CodexLaunchStatus, CursorLaunchStatus } from "../../lib/ipc";
 import type { AgentTaskReadiness } from "../../lib/types";
 
 type Translate = (key: string, values?: Record<string, string>) => string;
@@ -18,9 +19,9 @@ export type ReadinessState = "ready" | "notReady" | "unsupported";
 
 /**
  * Whether a task can be started on this Agent right now. `startable` is the backend's verdict and
- * also counts Codex's Desktop App and Cursor's Agents window; `ready` (the CLI route alone) is the
- * answer only where no verdict is given (older builds, test fixtures). An Agent that cannot start
- * tasks at all is never startable.
+ * also counts Codex's Desktop App, Cursor's Agents window and the Antigravity App; `ready` (the CLI
+ * route alone) is the answer only where no verdict is given (older builds, test fixtures). An Agent
+ * that cannot start tasks at all is never startable.
  */
 export function isStartable(
   item: Pick<AgentTaskReadiness, "ready" | "launchSupported" | "startable">,
@@ -30,7 +31,7 @@ export function isStartable(
 
 /**
  * Whether the Agent can start a task, is still missing something, or cannot start tasks whatever
- * is done (`launchSupported`, e.g. Antigravity): there is nothing the person can fix for the last.
+ * is done (`launchSupported` is false): there is nothing the person can fix for the last.
  */
 export function readinessState(
   item: Pick<AgentTaskReadiness, "ready" | "launchSupported" | "startable">,
@@ -52,7 +53,7 @@ export function readinessIssues(
 
 /**
  * Whether the Agent can start a task although its CLI route is not ready: it runs in its Desktop
- * App or Agents window instead. Its CLI conditions are then not needed, so a screen shows them as
+ * App, Agents window or Antigravity App instead. Its CLI conditions are then not needed, so a screen shows them as
  * such rather than as something to fix.
  */
 export function startsOutsideTheCli(
@@ -62,9 +63,9 @@ export function startsOutsideTheCli(
 }
 
 /**
- * Why a task cannot be started on this Agent, in plain words. Codex and Cursor have a route besides
- * the CLI, so they are explained by both routes (the backend's launch status); every other Agent
- * has the CLI alone and is explained by the conditions it misses.
+ * Why a task cannot be started on this Agent, in plain words. Codex, Cursor and Antigravity have a
+ * route besides the CLI, so they are explained by both routes (the backend's launch status); every
+ * other Agent has the CLI alone and is explained by the conditions it misses.
  */
 export function startBlockers(item: AgentTaskReadiness, t: Translate): string[] {
   if (item.kind === "codex" && item.launch) {
@@ -72,6 +73,9 @@ export function startBlockers(item: AgentTaskReadiness, t: Translate): string[] 
   }
   if (item.kind === "cursor" && item.launch) {
     return cursorLaunchReasons(item.launch as CursorLaunchStatus, t);
+  }
+  if (item.kind === "antigravity" && item.launch) {
+    return antigravityLaunchReasons(item.launch as AntigravityLaunchStatus, t);
   }
   return readinessIssues(item).map((issue) =>
     t(`setup.tasks.reasons.${issue}`, { label: item.label, command: item.command }),

@@ -423,8 +423,6 @@ pub(super) struct Created {
     /// `{"status": "started" | "dryRun", "sessionId", "sidecarId", …}`. Nothing of the task's
     /// own text is in it, so the receipt can hold it.
     pub answer: Value,
-    /// The title the conversation was given (or would have been).
-    pub title: Option<String>,
 }
 
 /// What the operation needs from the world, so tests can stand in for the App.
@@ -478,7 +476,6 @@ pub(super) async fn execute_with<B: Backend>(
         Stage::Created | Stage::DryRun => {
             return Ok(Created {
                 answer: receipt.value["answer"].clone(),
-                title: valid.title,
             })
         }
         Stage::Sent | Stage::Unknown => return Err(unclear(&request, None)),
@@ -535,10 +532,7 @@ pub(super) async fn execute_with<B: Backend>(
         });
         receipt.value["answer"] = answer.clone();
         receipt.set(Stage::DryRun)?;
-        return Ok(Created {
-            answer,
-            title: valid.title,
-        });
+        return Ok(Created { answer });
     }
     receipt.value["sidecarId"] = json!(sidecar_id);
     receipt.set(Stage::Sent)?;
@@ -570,10 +564,7 @@ pub(super) async fn execute_with<B: Backend>(
                 });
                 receipt.value["answer"] = answer.clone();
                 receipt.set(Stage::Created)?;
-                Ok(Created {
-                    answer,
-                    title: valid.title,
-                })
+                Ok(Created { answer })
             }
             Err(detail) => {
                 // `agentapi` that exits with an error made no conversation. Anything else (it
@@ -832,7 +823,6 @@ mod tests {
         assert_eq!(created.answer["status"], "started");
         assert_eq!(created.answer["sessionId"], CONVERSATION);
         assert_eq!(created.answer["sidecarId"], "askhuman-ws-12345678");
-        assert_eq!(created.title.as_deref(), Some("Fix the failing test"));
         assert!(created.answer.get("title").is_none());
         assert_eq!(receipt_of(receipts.path())["status"], "created");
 

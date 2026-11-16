@@ -52,6 +52,7 @@ fn group_for(command: &str) -> Group {
     } else if command.starts_with("codex_desktop")
         || command == "codex_launch_status"
         || command == "cursor_launch_status"
+        || command == "antigravity_launch_status"
         || command.starts_with("new_task_")
         || command.starts_with("fork_task_")
         || matches!(
@@ -89,6 +90,7 @@ fn group_for(command: &str) -> Group {
         Group::Channel
     } else if command.starts_with("agent_")
         || command.starts_with("cursor_desktop_")
+        || command == "antigravity_desktop"
         || command.starts_with("mcp_")
         || matches!(
             command,
@@ -230,6 +232,7 @@ fn integration(invoke: Invoke<Wry>) -> bool {
         crate::commands::save_collaboration_style,
         crate::commands::collaboration_style_defaults,
         crate::commands::cursor_desktop_status,
+        crate::commands::antigravity_desktop,
         crate::commands::agent_rule_reveal,
         crate::commands::agent_rule_open,
         crate::commands::agent_mode_status,
@@ -362,6 +365,7 @@ fn task(invoke: Invoke<Wry>) -> bool {
         crate::commands::codex_desktop,
         crate::commands::codex_launch_status,
         crate::commands::cursor_launch_status,
+        crate::commands::antigravity_launch_status,
         crate::commands::codex_desktop_attachments,
         crate::commands::fork_task_init,
         crate::commands::fork_task_launch,
@@ -398,6 +402,8 @@ mod tests {
         assert_eq!(group_for("new_task_projects_refreshed"), Group::Task);
         assert_eq!(group_for("agent_task_workspaces"), Group::Integration);
         assert_eq!(group_for("cursor_desktop_status"), Group::Integration);
+        assert_eq!(group_for("antigravity_desktop"), Group::Integration);
+        assert_eq!(group_for("antigravity_launch_status"), Group::Task);
     }
 
     #[test]

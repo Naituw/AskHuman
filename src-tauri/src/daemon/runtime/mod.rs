@@ -1783,7 +1783,20 @@ async fn control_loop(reader: &mut Reader, w: &mut Writer, state: &Arc<ServerSta
                 let _ = ipc::write_msg(w, &ServerMsg::CursorDesktop { result }).await;
             }
             ClientMsg::AntigravityDesktop { operation } => {
+                // A task the New Task window creates is registered under its own conversation id
+                // like one the phone or IM creates, so it can be watched before its first hook.
+                let created_in = match &operation {
+                    crate::antigravity_desktop::Operation::Create(request) if !request.dry_run => {
+                        Some(request.cwd.clone())
+                    }
+                    _ => None,
+                };
                 let result = crate::antigravity_desktop::execute(operation).await;
+                if let (Some(cwd), Ok(answer)) = (created_in, &result) {
+                    if let Some(session_id) = answer["sessionId"].as_str() {
+                        task_launch::register_app_session(state, session_id, &cwd);
+                    }
+                }
                 let _ = ipc::write_msg(w, &ServerMsg::AntigravityDesktop { result }).await;
             }
             // A sidecar says who it is first. It sends no Hello: a sidecar can be an older build

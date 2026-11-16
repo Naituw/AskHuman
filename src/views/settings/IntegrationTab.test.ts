@@ -13,6 +13,7 @@ const useSettingsContext = vi.hoisted(() => vi.fn());
 
 vi.mock("./context", () => ({ useSettingsContext }));
 vi.mock("./CursorDesktopSettings.vue", () => ({ default: { template: '<div class="cursor-desktop-settings-stub" />' } }));
+vi.mock("./AntigravityDesktopSettings.vue", () => ({ default: { template: '<div class="antigravity-desktop-settings-stub" />' } }));
 
 function agentDefinition(id: AgentId, hasTimeoutHook: boolean) {
   const recommended: AgentMode = id === "cursor" || id === "claude" || id === "pi" ? "cli" : "mcp";
