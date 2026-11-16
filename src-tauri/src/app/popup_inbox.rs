@@ -330,7 +330,9 @@ impl Inbox {
                     self.finish(app, request_id, winner.unwrap_or_else(|| "system".into()));
                 }
             }
-            ServerMsg::Cancel { request_id, winner } => self.finish(app, request_id, winner),
+            ServerMsg::Cancel {
+                request_id, winner, ..
+            } => self.finish(app, request_id, winner),
             ServerMsg::PresentPopup { request_id, .. } => {
                 let mut state = self.inner.lock().unwrap();
                 if state.presented || state.active.as_deref() != Some(&request_id) {

@@ -556,6 +556,11 @@ pub struct ShowPayload {
     /// 预热弹窗领用时得到的即为提问真正到达时刻（而非热进程 spawn 时刻）。
     #[serde(default)]
     pub created_at_ms: u64,
+    /// Names this ask for the draft kept from an abandoned one (spec `popup-draft-on-cancel` D6):
+    /// the asking session plus the coalescing fingerprint. Only an identifier, never content; absent
+    /// for confirmations, which have no free input.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub draft_key: Option<crate::history::DraftKey>,
 }
 
 /// Daemon-authorized first presentation for a popup helper.
@@ -960,6 +965,12 @@ pub enum ServerMsg {
     Cancel {
         request_id: String,
         winner: String,
+        /// The ask was abandoned (its caller went away, or the daemon is stopping) rather than
+        /// answered or cancelled by a person, so the popup host keeps what the user had typed
+        /// (spec `popup-draft-on-cancel` D1). Omitted when false: older hosts see the old message
+        /// and newer hosts read a missing field as false.
+        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+        keep_draft: bool,
     },
     /// 配置实时变更，下发新的 `general` 配置给活动 GUI Helper 以即时切主题/语言（D→GUI，A12）。
     ConfigChanged {

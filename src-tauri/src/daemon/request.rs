@@ -344,6 +344,7 @@ pub fn create_internal_confirm(
         perf_id: String::new(),
         perf_autodismiss: false,
         created_at_ms,
+        draft_key: None,
     };
     let entry = Arc::new(ConfirmEntry {
         development: None,
@@ -551,6 +552,12 @@ impl RequestRegistry {
         let session_key = super::ask_dedup::session_key(&task);
         let fingerprint = super::ask_dedup::fingerprint(&task);
         let coalesce_fingerprint = super::ask_dedup::coalesce_fingerprint(&task);
+        // What a draft kept from this card is matched on when the same question is asked again
+        // (spec popup-draft-on-cancel D6); only an identifier, never content.
+        let draft_key = Some(crate::history::DraftKey {
+            session_key: session_key.clone(),
+            fingerprint: coalesce_fingerprint.clone(),
+        });
         let popup_kind = task.popup_kind();
         let quick_reply = super::away::is_agent_ask(&task);
         // One of the setup wizard's own test questions (`docs/plans/onboarding.md` §4.1).
@@ -632,12 +639,15 @@ impl RequestRegistry {
             perf_autodismiss: task.perf_autodismiss,
             // 提问创建时刻：弹窗相对时间的锚点（预热弹窗领用时即为真正到达时刻）。
             created_at_ms: crate::perf::now_ms() as u64,
+            draft_key: draft_key.clone(),
         };
         let seq = if let Some(original) = restored {
             let seq = original.sequence;
             let interaction = show.interaction;
             show = original;
             show.interaction = interaction;
+            // A request saved by a build before the key existed still gets one.
+            show.draft_key = draft_key;
             self.next_seq
                 .fetch_max(seq.saturating_add(1), Ordering::SeqCst);
             seq
@@ -832,6 +842,7 @@ impl RequestRegistry {
             perf_id: String::new(),
             perf_autodismiss: false,
             created_at_ms,
+            draft_key: None,
         };
         let (show, seq) = if let Some(original) = restored {
             self.next_seq
@@ -1546,6 +1557,70 @@ mod tests {
         old.as_object_mut().unwrap().remove("todoQueue");
         let parsed: crate::models::AskRequest = serde_json::from_value(old).unwrap();
         assert!(!parsed.todo_queue);
+    }
+
+    /// Spec popup-draft-on-cancel D6: an ask card is named for the draft it may keep, by the asking
+    /// session plus the coalescing fingerprint (so a Stop card whose todo queue changed is still the
+    /// same question). The key is an identifier only and is additive on the wire.
+    #[test]
+    fn an_ask_card_is_named_for_the_draft_it_may_keep() {
+        use super::super::ask_dedup::{coalesce_fingerprint, session_key};
+        let registry = RequestRegistry::new();
+        let (entry, _rx) = registry.create(ask_task(Some("s1"), "continue?"), None);
+        let task = ask_task(Some("s1"), "continue?");
+        let key = entry.show.draft_key.clone().expect("an ask card has a key");
+        assert_eq!(key.session_key, session_key(&task));
+        assert_eq!(key.session_key.as_deref(), Some("sid:s1"));
+        assert_eq!(key.fingerprint, coalesce_fingerprint(&task));
+
+        // The same ask again has the same key; another session or another question does not.
+        let (again, _rx) = registry.create(ask_task(Some("s1"), "continue?"), None);
+        assert_eq!(again.show.draft_key.as_ref(), Some(&key));
+        let (other_session, _rx) = registry.create(ask_task(Some("s2"), "continue?"), None);
+        assert_ne!(other_session.show.draft_key.as_ref(), Some(&key));
+        let (other_question, _rx) = registry.create(ask_task(Some("s1"), "stop?"), None);
+        assert_ne!(other_question.show.draft_key.as_ref(), Some(&key));
+
+        // A Stop card is keyed by the coalescing form, which leaves the todo queue out.
+        let mut stop = ask_task(Some("s1"), "all done");
+        stop.stop_confirmation = true;
+        let expected = coalesce_fingerprint(&stop);
+        let (stop_entry, _rx) = registry.create(stop, None);
+        assert_eq!(
+            stop_entry.show.draft_key.clone().unwrap().fingerprint,
+            expected
+        );
+
+        // Only on the wire when present, and a Show from before the field reads as no key.
+        let json = serde_json::to_value(&entry.show).unwrap();
+        assert_eq!(json["draftKey"]["sessionKey"], "sid:s1");
+        let mut old = json;
+        old.as_object_mut().unwrap().remove("draftKey");
+        let parsed: ShowPayload = serde_json::from_value(old).unwrap();
+        assert!(parsed.draft_key.is_none());
+    }
+
+    /// A card with no session still has a fingerprint but no session in its key, so a draft it
+    /// leaves can be read in the history window and is never handed to another card.
+    #[test]
+    fn an_ask_card_without_a_session_has_no_session_in_its_key() {
+        let registry = RequestRegistry::new();
+        let (entry, _rx) = registry.create(ask_task(None, "continue?"), None);
+        let key = entry.show.draft_key.clone().expect("an ask card has a key");
+        assert_eq!(key.session_key, None);
+        assert!(!key.fingerprint.is_empty());
+        let json = serde_json::to_value(&entry.show).unwrap();
+        assert!(json["draftKey"].get("sessionKey").is_none());
+    }
+
+    /// A permission card has no free input, so it carries no key.
+    #[test]
+    fn a_permission_card_carries_no_draft_key() {
+        let registry = RequestRegistry::new();
+        let (entry, _rx) = registry.create_confirm(confirm_task(), None).unwrap();
+        assert!(entry.show.draft_key.is_none());
+        let json = serde_json::to_value(&entry.show).unwrap();
+        assert!(json.get("draftKey").is_none());
     }
 
     fn setup_probe_task(target: crate::onboarding::probe::ProbeTarget) -> TaskRequest {

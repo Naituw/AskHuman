@@ -193,4 +193,11 @@ pub trait Channel: Send + Sync {
     /// Interrupt this channel before it produced a result, finalizing its UI per `reason`
     /// (preempted by a winner, or the whole request cancelled). Does not deliver a result.
     fn interrupt(&self, reason: &Interruption);
+    /// The request was abandoned from the asking side (its caller went away, or the daemon is
+    /// stopping) rather than answered or cancelled by a person. Finalizes like [`Channel::interrupt`];
+    /// only a surface that holds the user's unsent input (the popup) overrides it, to keep that
+    /// input (spec `popup-draft-on-cancel` D1).
+    fn interrupt_abandoned(&self, reason: &Interruption) {
+        self.interrupt(reason);
+    }
 }

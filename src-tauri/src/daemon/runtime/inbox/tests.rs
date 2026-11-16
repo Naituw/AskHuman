@@ -859,7 +859,10 @@ async fn fragmented_answer(external_terminal: bool) {
     tokio::task::yield_now().await;
     if external_terminal {
         loop {
-            let ServerMsg::Cancel { request_id, winner } = next(&mut reader).await else {
+            let ServerMsg::Cancel {
+                request_id, winner, ..
+            } = next(&mut reader).await
+            else {
                 panic!("expected the external terminal to cancel its popup");
             };
             assert_eq!(request_id, other.request_id);

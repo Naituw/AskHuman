@@ -71,6 +71,10 @@ pub struct Coordinator {
     /// submitted, from the popup's quick-reply menu or the phone; the daemon applies it when the
     /// winning answer's result is delivered (docs/specs/special-replies.md N3).
     directive: Mutex<Option<crate::daemon::away::Directive>>,
+    /// Tests only: the order in which side effects happened, to pin down invariants that other
+    /// processes rely on (the cancel entry is in the history before the popup hears of the cancel).
+    #[cfg(test)]
+    trace: Mutex<Option<Arc<Mutex<Vec<String>>>>>,
 }
 
 struct Inner {
@@ -116,6 +120,8 @@ impl Coordinator {
             surfaces_settled: AtomicBool::new(false),
             last_surface_loss: Mutex::new(None),
             directive: Mutex::new(None),
+            #[cfg(test)]
+            trace: Mutex::new(None),
         })
     }
 
@@ -448,6 +454,10 @@ impl Coordinator {
     /// Unlike `submit`, this does not render or deliver a result (no one is waiting), but it does
     /// preserve the original prompt in reply history. No-op if a result was already submitted.
     /// `source` is the localized cancel source; `source_channel_id` is its stable history id.
+    ///
+    /// Every caller is an abandonment (the asker went away or the daemon is stopping), never a
+    /// person's decision, so channels are interrupted with `interrupt_abandoned`: the popup then
+    /// keeps what the user had typed (spec `popup-draft-on-cancel`).
     pub fn cancel_request(&self, source: String, source_channel_id: &str) {
         let _submission = self.submit_lock.lock().unwrap();
         if !self.terminal.try_set(()) {
@@ -463,17 +473,19 @@ impl Coordinator {
         // Count IM finalizers before interrupting them so the daemon can retain the coordinator
         // until every card reaches a terminal state (or the bounded timeout expires).
         self.pending.store(pending_count, Ordering::SeqCst);
-        let reason = Interruption::Cancelled(source);
-        for ch in &inner.channels {
-            ch.interrupt(&reason);
-        }
         // A disconnected caller still created a real request. Keep its prompt and predefined
-        // options in history just like a human-initiated Cancel; only answers are empty.
+        // options in history just like a human-initiated Cancel; only answers are empty. This
+        // goes first: the popup host attaches the user's draft to this very entry when the
+        // cancellation reaches it (spec `popup-draft-on-cancel` D4).
         self.record_history(
             &inner.request,
             &ChannelResult::cancel(source_channel_id),
             &[],
         );
+        let reason = Interruption::Cancelled(source);
+        for ch in &inner.channels {
+            ch.interrupt_abandoned(&reason);
+        }
     }
 
     /// Wait for interrupted IM channels to finish their terminal card updates.
@@ -563,6 +575,10 @@ impl Coordinator {
         result: &ChannelResult,
         image_paths: &[Vec<String>],
     ) {
+        #[cfg(test)]
+        if let Some(trace) = self.trace.lock().unwrap().as_ref() {
+            trace.lock().unwrap().push("history".to_string());
+        }
         if !self.record_history_enabled {
             return;
         }
@@ -681,6 +697,16 @@ mod tests {
         )
     }
 
+    /// The same coordinator, but it never records reply history: a test that cancels or submits
+    /// would otherwise append to the developer's real `~/.askhuman/history.jsonl`.
+    fn coordinator_without_history() -> Arc<Coordinator> {
+        let mut coordinator = coordinator();
+        Arc::get_mut(&mut coordinator)
+            .unwrap()
+            .record_history_enabled = false;
+        coordinator
+    }
+
     #[tokio::test]
     async fn submission_acknowledgement_identifies_the_first_winner() {
         let mut coordinator = coordinator();
@@ -740,7 +766,7 @@ mod tests {
 
     #[tokio::test]
     async fn caller_cancellation_waits_for_im_finalizers_but_not_popup() {
-        let coordinator = coordinator();
+        let coordinator = coordinator_without_history();
         let popup_interrupted = Arc::new(AtomicBool::new(false));
         let im_interrupted = Arc::new(AtomicBool::new(false));
         coordinator.register(Arc::new(InterruptChannel {
@@ -757,6 +783,86 @@ mod tests {
         assert!(popup_interrupted.load(Ordering::SeqCst));
         assert!(im_interrupted.load(Ordering::SeqCst));
         assert_eq!(coordinator.pending.load(Ordering::SeqCst), 1);
+        coordinator.notify_finalized();
+        assert!(coordinator.wait_for_finalizers().await);
+    }
+
+    /// Notes the order of what happens to it in a shared trace.
+    struct TracingChannel {
+        id: &'static str,
+        trace: Arc<Mutex<Vec<String>>>,
+    }
+
+    impl TracingChannel {
+        fn note(&self, what: &str) {
+            self.trace
+                .lock()
+                .unwrap()
+                .push(format!("{what}:{}", self.id));
+        }
+    }
+
+    impl Channel for TracingChannel {
+        fn id(&self) -> &str {
+            self.id
+        }
+
+        fn start(
+            &self,
+            _request: &AskRequest,
+            _origin: &ConversationOrigin,
+            _sink: Arc<Coordinator>,
+        ) {
+        }
+
+        fn interrupt(&self, _reason: &Interruption) {
+            self.note("interrupt");
+        }
+
+        fn interrupt_abandoned(&self, _reason: &Interruption) {
+            self.note("abandoned");
+        }
+    }
+
+    /// Spec popup-draft-on-cancel D4: the cancel entry is in the history before any channel hears
+    /// of the cancellation, because the popup host attaches the user's draft to that entry the
+    /// moment the cancellation reaches it. Every channel is told it was an abandonment.
+    #[tokio::test]
+    async fn an_abandoned_request_is_recorded_before_its_channels_hear_of_it() {
+        let coordinator = coordinator_without_history();
+        let trace = Arc::new(Mutex::new(Vec::new()));
+        *coordinator.trace.lock().unwrap() = Some(trace.clone());
+        for id in ["popup", "feishu"] {
+            coordinator.register(Arc::new(TracingChannel {
+                id,
+                trace: trace.clone(),
+            }));
+        }
+
+        coordinator.cancel_request("Caller".into(), "caller");
+
+        assert_eq!(
+            trace.lock().unwrap().as_slice(),
+            ["history", "abandoned:popup", "abandoned:feishu"]
+        );
+    }
+
+    /// A person's decision is not an abandonment: the channels that lost the race are interrupted
+    /// the ordinary way, so the popup never keeps a draft for a card the user answered elsewhere.
+    #[tokio::test]
+    async fn a_decision_by_a_person_interrupts_the_other_channels_the_ordinary_way() {
+        let coordinator = coordinator_without_history();
+        let trace = Arc::new(Mutex::new(Vec::new()));
+        for id in ["popup", "feishu"] {
+            coordinator.register(Arc::new(TracingChannel {
+                id,
+                trace: trace.clone(),
+            }));
+        }
+
+        assert!(coordinator.try_submit(ChannelResult::cancel("popup")));
+
+        assert_eq!(trace.lock().unwrap().as_slice(), ["interrupt:feishu"]);
         coordinator.notify_finalized();
         assert!(coordinator.wait_for_finalizers().await);
     }

@@ -149,6 +149,7 @@ pub(super) async fn reconnect_popup(
                     &ServerMsg::Cancel {
                         request_id: id,
                         winner,
+                        keep_draft: false,
                     },
                 )
                 .await;
@@ -412,6 +413,7 @@ fn prune_inbox(state: &Arc<ServerState>) {
                 let _ = tx.send(ServerMsg::Cancel {
                     request_id: request.id.clone(),
                     winner,
+                    keep_draft: false,
                 });
                 detach_entry(&request.value, tx);
             }

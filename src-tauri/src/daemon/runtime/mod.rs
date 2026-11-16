@@ -3808,6 +3808,7 @@ async fn serve_gui(
         let _ = gui_tx.send(ServerMsg::Cancel {
             request_id: entry.request_id.clone(),
             winner: "system".to_string(),
+            keep_draft: false,
         });
         inbox::detach_entry(&InteractionEntry::Ask(entry.clone()), &gui_tx);
         drop(gui_tx);
