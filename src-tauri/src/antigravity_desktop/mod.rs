@@ -235,7 +235,9 @@ fn run(layout: &sidecar::Layout, operation: Operation) -> std::result::Result<Va
     }
 }
 
-#[cfg(test)]
+// Antigravity's integration is Unix-only (spec antigravity-deep-integration §14), and these
+// fixtures name the executable and folders the POSIX way, which is not an absolute path on Windows.
+#[cfg(all(test, unix))]
 mod tests {
     use super::*;
 

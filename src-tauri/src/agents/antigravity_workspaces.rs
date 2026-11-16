@@ -147,7 +147,9 @@ fn parse_time(text: &str) -> Option<u64> {
         .filter(|&seconds| seconds > 0)
 }
 
-#[cfg(test)]
+// Antigravity's integration is Unix-only (spec antigravity-deep-integration §14), and these
+// fixtures name folders the POSIX way, which is not an absolute path on Windows.
+#[cfg(all(test, unix))]
 mod tests {
     use super::*;
 
