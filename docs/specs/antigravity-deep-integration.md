@@ -248,7 +248,7 @@
   `GENERIC`（工具结果）、`SYSTEM_MESSAGE`）、`status`、`created_at`、`content` 或 `tool_calls[{name,args}]`、token 计数。
   模型的正文是 `PLANNER_RESPONSE.content`（可与 `tool_calls` 并存）；用户输入包在 `<USER_REQUEST>` 里；PreInvocation 注入的用户消息来源是 `SYSTEM_SDK`
   （`send-message` 注入的消息来源未核对）。〔实测〕
-- 思考文本：Flash 的非低档（默认的 `flash-tiered`、`-medium`、`-high`、`flash-lite`）的 `PLANNER_RESPONSE` 带 `thinking` 字符串（模型的思考文本）；`-low` 档与 Pro 级的 `gemini-4-hydrogen-low` 没有。Watch 目前不显示它（§11；是否显示是待你决定的产品取舍，§20）。〔实测，V17〕
+- 思考文本：Flash 的非低档（默认的 `flash-tiered`、`-medium`、`-high`、`flash-lite`）的 `PLANNER_RESPONSE` 带 `thinking` 字符串（模型的思考文本）；`-low` 档与 Pro 级的 `gemini-4-hydrogen-low` 没有。Watch 显示它（§11，你 2026-11-16 定；已实现）。〔实测，V17〕
 - 每个产品各有私有的 `conversation_summaries.db`（标题、预览、步数、状态、workspace…）。〔私有〕本规格最多只读用于「最近目录冷启动」（§12.6），不依赖它。
   G1 里只读看了表结构：`conversation_summaries` 有 `parent_conversation_id`、`nesting_depth`、`status`（如 `CASCADE_RUN_STATUS_IDLE`）、`not_fully_idle`、`project_id` 等列，
   即 App 自己有「整棵会话树是否空闲」的记录，但它是私有库，D4 不批准依赖；仅记录，供以后若宿主把它公开时参考。
@@ -441,7 +441,7 @@ App 里 MCP 工具默认「询问」（§4.2）。第一次调用 AskHuman 时�
   - **最新正文** = 最后一个带 `content` 的 `PLANNER_RESPONSE`（同一步骤带 `tool_calls` 时 `content` 仍是候选）；`status == DONE` 才算定稿。
   - **工具** = `tool_calls[]`：`run_command` 取 `CommandLine`，`call_mcp_tool` 取 `ServerName/ToolName`，其余取 `name`；完成状态取其后的 `GENERIC` 结果步骤。
   - 用户输入 = `USER_INPUT`（剥掉 `<USER_REQUEST>`）；`SYSTEM_MESSAGE` 与注入的消息不当正文。
-  - **思考文本目前不显示**：部分档位的 transcript 带 `thinking` 字符串（§4.6），解析器忽略它；要不要像 Codex / Cursor 那样显示成带标签的思考，是产品取舍，待你决定（§20）。
+  - **思考文本显示成带标签的思考**（你 2026-11-16 定，和 Codex / Cursor 一样）：部分档位的 `PLANNER_RESPONSE` 带 `thinking` 字符串（§4.6）。只认已定稿（`DONE`）的步骤；同一步里思考在正文与工具调用之前，所以正文接替它；只有工具调用的步骤也能带思考，让最新正文在模型不写正文时继续更新。最新正文里太长的思考只留末尾 4000 字节并标「截断」（与其它 Agent 一致）。Stop 确认卡的正文与旧版客户端读的 `text` 字段仍只取模型的正文，不取思考。
 - 降级：读取失败保留最后内容并单独表达读取状态；`transcriptPath` 越界或缺失则该会话不可 Watch，并显示原因。
 - 可用性：会话已被 hook 登记且 transcript 可读。App 与 `agy` 同格式，共用解析器。
 
@@ -645,7 +645,7 @@ Agents 页的 Antigravity 卡新增：集成模式（None / CLI / MCP）、生�
 | V14 | **已验（工作区级插件，G1 T3）**：改写插件文件不重启 MCP server、不打断在途调用，新 `mcp_config.json` 也不作用于已运行的 server（§6.3）。全局插件目录另验，见 V22 | §6.3 | — |
 | V15 | **已验（G4-1）**：`agy --model gemini-3.8-flash-low -i '-reply with the single word OK…'`——任务是 `-i` 的值（单个 argv），开头的 `-` 没被当成开关，完整到达模型（transcript 的 `<USER_REQUEST>` 与原文逐字相同），答 `OK`。适配器因此不加 `--` | §12.7 | — |
 | V16 | **已验（Q3）**：App 完全退出（没有任何 App 进程、没有 sidecar 进程）时运行 `agy`（免费探针，不带 `-i`）约 25 秒，**没有出现任何 sidecar 进程**：sidecar 只由 App 启动，`agy` 不会起它。所以「App 路径可用」以 App 在运行、或能被拉起为前提（§12.1、§12.5）；只有 `agy` 在跑的机器上走终端路线 | §12.1 | — |
-| V17 | **部分已验（G2、G3）**：Pro 级 id `gemini-4-hydrogen-low`（App 路径）的 transcript 里只有最终的 `PLANNER_RESPONSE`，没有思考文本。**更正 §4.6 的说法**：Flash 的非低档（默认的 `flash-tiered`、`-medium`、`-high`、`flash-lite`）的 `PLANNER_RESPONSE` 带 `thinking` 字符串（模型的思考文本），`-low` 与 hydrogen-low 没有。Watch 现在不显示它（与 §11 一致）；要不要显示是新的产品取舍，待你决定（§20） | §11 | — |
+| V17 | **部分已验（G2、G3）**：Pro 级 id `gemini-4-hydrogen-low`（App 路径）的 transcript 里只有最终的 `PLANNER_RESPONSE`，没有思考文本。**更正 §4.6 的说法**：Flash 的非低档（默认的 `flash-tiered`、`-medium`、`-high`、`flash-lite`）的 `PLANNER_RESPONSE` 带 `thinking` 字符串（模型的思考文本），`-low` 与 hydrogen-low 没有。Watch 显示它（§11，你 2026-11-16 定） | §11 | — |
 | V18 | **已验（G2）**：sidecar 的 `mcp(askhuman_mcp/*)` 让插件 MCP 的 `show_last` 在 sidecar 会话里被执行——返回的是工具自己的「没有已完成的提问」，不是权限拒绝 | §12.4 白名单默认授权集 | — |
 | V19 | **已验（G2）**：用户全局的「始终允许」（`command(AskHuman)`）对 sidecar 项目**生效**：带 `BypassSandbox` 的 `AskHuman --version` 无人批准也执行了（退出码 0），而没授权的 `date`（同样带 `BypassSandbox`）被自动拒绝（`user denied permission`，因为 `allows_user_interactions:false`）。沙箱内的命令（`ls`、工作区里的 `touch`）本来就不需授权；沙箱内的 `AskHuman --version` 被沙箱挡（`operation not permitted`，提示改用 `BypassSandbox`） | §12.4 白名单的实际范围 | — |
 | V20 | **已验（G2、G4）**：见 §4.3（App 的默认模型、别名与 `-low` / `-medium` / `-high` 的映射）与 §4.4（`agy --model` 两种写法）。**没验到**：`pro` 别名（Pro 级，计费高）、Claude 级模型 | §12.9 | — |
@@ -671,7 +671,7 @@ Agents 页的 Antigravity 卡新增：集成模式（None / CLI / MCP）、生�
 - 测试：解析器、hooks 输出、注册表映射、sidecar 清单与 `config.json` 编辑器、回执状态机用夹具与假 `agentapi` / 假 sidecar 覆盖；**测试不启动真实 Antigravity 模型**。真实验证只用 Antigravity、优先 Flash 低档，受各门的任务数预算、隔离与停止条件约束（§1.2：不再逐项授权），**不使用 Cursor**。
 - 子会话（D17 = A）：只有根会话一行，子会话不出卡也不单独进控制台；根在整棵树空闲且没有未读的跨会话消息后才出 Stop 卡；根 `Stop(false)` 期间子会话收尾并唤醒根时不丢消息、不重复根 `Stop`（夹具与假 transcript 覆盖；G3 做过真实验证）。
 - **需要你在电脑前验收（我没能做）**：Stop 确认卡的真人点击路径（V24：两次试验都没人应答）；sidecar 创建的会话在 App 左侧列表里的位置（V7）；你自己在 App 里新建的会话能否被「发给空闲会话」唤醒（V11）；`agy` 在新目录里的信任提示（V12）；App 登录失效时建任务的失败形态（V1）；设置页与控制台的肉眼验收；手机 / IM `/new` 与 Mac 窗口的真实点击；GUI 终端路由启动 `agy`；`agy` 的取消 / Ctrl-C（V3）；Linux（V13）。
-- **需要你决定**：Watch 要不要显示 Antigravity 的 `thinking` 文本（§4.6、§11、§20）。
+- **需要你看一眼**：Watch 里 Antigravity 的思考文本（非低档 Flash 的会话；电脑控制台与手机上应是带标签的一段，正文出现后被正文接替）。
 
 ## 19. 对既有文档的影响（随各期落地时更新）
 
@@ -893,5 +893,5 @@ P1 的实现不依赖 D17；D17 影响的是 P1 之后接线的部分（根 / �
 
 | 问题 | 背景 | 状态 |
 | --- | --- | --- |
-| Watch 要不要显示 Antigravity 的 `thinking` 文本 | Flash 的非低档会给出模型的思考文本（§4.6），Codex / Cursor 的观察界面会把公开的思考显示成带标签的一段；Antigravity 目前只显示正文与工具 | **待你决定**（不显示是现状） |
+| Watch 要不要显示 Antigravity 的 `thinking` 文本 | Flash 的非低档会给出模型的思考文本（§4.6），Codex / Cursor 的观察界面会把公开的思考显示成带标签的一段；Antigravity 之前只显示正文与工具 | **已决定：显示**（你在 2026-11-16 的 `--whats-next` 里选了「让 Watch 显示 Antigravity 的 thinking 文本」）；已实现，见 §11 |
 | 要不要让我按会话 ID 直接删除我留下的测试会话文件 | 你答了「删除我创建的测试会话」，但没有受批准的删除接口（附录 A.6「还原」）。直接删文件是手改它们的私有文件，而且不一定能让列表里的条目消失：G1 那次删完，App 的私有摘要库里的条目留了下来，要等 App 自己以后整理（附录 A.2）| **待你决定**（默认不做；做的话我先列出会话 ID 清单给你确认） |

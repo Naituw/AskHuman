@@ -6,7 +6,7 @@
 
 > **Antigravity 补充（2026-11-16）**：Watch 读 `transcript_full.jsonl`（`~/.gemini/antigravity*/` 下按会话 UUID
 > 存放；规格见 [Antigravity 深度集成](antigravity-deep-integration.md) §11）：模型回复与工具步骤进最新正文和
-> 工具行。部分非 low 的 Flash 档的 transcript 带 `thinking` 字符串，**目前不显示**（需要产品决定，见规格 §4.6）；
+> 工具行。部分非 low 的 Flash 档的 transcript 带 `thinking` 字符串，**与其它 Agent 一样显示成带标签的思考**（用户 2026-11-16 定；已定稿的 `PLANNER_RESPONSE` 才算，同一步里思考在正文之前，所以正文接替它；只有工具调用的步骤也能带思考，让最新正文在模型不写正文时继续动）；
 > 没有可读的原生标题，沿用会话里的首条用户请求。
 
 ## 1. 用户目标与已确认决策

@@ -659,9 +659,9 @@ fn push_full_with_limit(
 }
 
 /// Antigravity `transcript_full.jsonl` (docs/specs/antigravity-deep-integration.md §11): the
-/// person's own requests, the model's finished prose and its tool calls. A call is closed by the
-/// `GENERIC` result step that follows, in order. Messages the host or AskHuman injected
-/// (`SYSTEM_SDK`, `SYSTEM_MESSAGE`) are not the person's words and are left out.
+/// person's own requests, the model's finished reasoning and prose, and its tool calls. A call is
+/// closed by the `GENERIC` result step that follows, in order. Messages the host or AskHuman
+/// injected (`SYSTEM_SDK`, `SYSTEM_MESSAGE`) are not the person's words and are left out.
 fn push_antigravity(
     v: &Value,
     out: &mut Vec<TranscriptEvent>,
@@ -688,6 +688,15 @@ fn push_antigravity(
             }
         }
         "PLANNER_RESPONSE" => {
+            // The reasoning comes first in the step, so it is the older candidate for the latest
+            // text and the prose written after it replaces it.
+            if let Some(text) = super::activity::antigravity_thinking(v) {
+                out.push(TranscriptEvent::Thinking {
+                    text: trunc(&text, text_limit),
+                    at: event_time(v),
+                    at_label: None,
+                });
+            }
             if let Some(text) = super::activity::antigravity_prose(v) {
                 out.push(TranscriptEvent::AssistantText {
                     text: trunc(&text, text_limit),
@@ -2092,7 +2101,7 @@ mod tests {
     }
 
     #[test]
-    fn an_antigravity_transcript_keeps_the_persons_words_the_finished_prose_and_the_tools() {
+    fn an_antigravity_transcript_keeps_the_persons_words_the_finished_reasoning_prose_and_tools() {
         use std::io::Write;
         let mut file = tempfile::NamedTempFile::new().unwrap();
         file.write_all(include_bytes!("fixtures/antigravity-transcript.jsonl"))
@@ -2105,6 +2114,7 @@ mod tests {
             .map(|event| match event {
                 TranscriptEvent::UserText { text, .. } => format!("user: {text}"),
                 TranscriptEvent::AssistantText { text, .. } => format!("assistant: {text}"),
+                TranscriptEvent::Thinking { text, .. } => format!("thinking: {text}"),
                 TranscriptEvent::ToolCall {
                     args_summary,
                     is_error,
@@ -2122,25 +2132,63 @@ mod tests {
                 "user: Fix the failing test in tests/parser.rs and report back.",
                 "assistant: I'll start by running the failing test.",
                 "tool: 运行: Run the failing test (cargo test parser)",
+                // A step with calls and no prose can still carry the reasoning, and it comes
+                // before the calls it led to.
+                "thinking: The test fails on trailing whitespace. Read the test file first, then check the repository state.",
                 "tool: 读取: parser.rs",
                 "tool (failed): 运行: git status --short",
                 // The injected message and the system message are not the person's words, and
-                // the half-written step has no prose yet.
+                // the half-written step has neither prose nor reasoning yet.
                 "assistant: The parser drops trailing whitespace; I need a decision before changing it.",
                 "tool: askhuman_mcp/ask",
+                // Reasoning comes before the prose of its own step.
+                "thinking: The change is in and the regression test passes, so I can report now.",
                 "assistant: Done: the parser now keeps trailing whitespace and a regression test covers it.",
             ]
         );
-        // The latest text is the last finished prose, whatever follows it.
         let lines: Vec<String> = include_str!("fixtures/antigravity-transcript.jsonl")
             .lines()
             .map(str::to_string)
             .collect();
+        // The latest text is the last finished text: the prose replaces the reasoning written
+        // just before it in the same step.
         let latest = latest_text_from_lines(AgentKind::Antigravity, &lines).unwrap();
         assert_eq!(latest.kind, "assistant");
         assert!(latest.text.starts_with("Done: the parser now keeps"));
+        // Neither the prose nor the reasoning of a step that is still being written is shown.
         let half_written = latest_text_from_lines(AgentKind::Antigravity, &lines[..10]).unwrap();
+        assert_eq!(half_written.kind, "assistant");
         assert!(half_written.text.starts_with("The parser drops"));
+        // While the model works without writing prose, its reasoning is what moves.
+        let working = latest_text_from_lines(AgentKind::Antigravity, &lines[..4]).unwrap();
+        assert_eq!(working.kind, "thinking");
+        assert!(working
+            .text
+            .starts_with("The test fails on trailing whitespace"));
+    }
+
+    #[test]
+    fn an_antigravity_thought_longer_than_the_limit_keeps_its_latest_words() {
+        let long = format!(
+            "{} and the last thing it decided",
+            "weighing options ".repeat(600)
+        );
+        let step = serde_json::json!({
+            "step_index": 1, "source": "MODEL", "type": "PLANNER_RESPONSE", "status": "DONE",
+            "created_at": "2026-11-15T18:06:24Z", "thinking": long,
+            "tool_calls": [{"name": "run_command", "args": {"CommandLine": "ls"}}],
+        });
+        let latest = latest_text_from_lines(AgentKind::Antigravity, &[step.to_string()]).unwrap();
+        assert_eq!(latest.kind, "thinking");
+        assert!(latest.truncated);
+        assert!(latest.text.len() <= 4_000);
+        assert!(latest.text.ends_with("and the last thing it decided"));
+        // A thought with nothing in it is not a candidate.
+        let empty = serde_json::json!({
+            "step_index": 1, "source": "MODEL", "type": "PLANNER_RESPONSE", "status": "DONE",
+            "thinking": "  \n ",
+        });
+        assert!(latest_text_from_lines(AgentKind::Antigravity, &[empty.to_string()]).is_none());
     }
 
     fn write_jsonl(lines: &[Value]) -> tempfile::NamedTempFile {

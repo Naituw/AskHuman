@@ -85,7 +85,7 @@ AskHuman tells sessions apart by the **root conversation ID** the Antigravity ho
 
 - **Confirm on finish**: switch it on in Settings → Agents → Antigravity, or with `AskHuman agents stop antigravity on`; it is off by default. When the agent finishes a turn on its own, AskHuman raises a confirmation card: continue (optionally with a follow-up instruction) or end. An error, a cancellation or 24 hours without an answer all count as end. A task with sub-agents is asked once, after the whole task has finished; a sub-agent never raises a card of its own. It works in the app and in `agy`, and changing the switch rewrites the plugin files (the rules file is regenerated with it).
 - **Interjection**: for a working conversation (app and `agy`), a message sent from the Mac console, the tray, the phone or IM `/msg` reaches the agent before its next model call; while the agent is running one long tool call it waits for that call to finish. A message to an idle or finished app conversation goes through an AskHuman sidecar into the original conversation; `agy` conversations have no such path.
-- **Watch**: the phone and the Mac console show the conversation's replies and tool steps live. Some models carry "thinking" text, which is not shown yet.
+- **Watch**: the phone and the Mac console show the conversation's replies and tool steps live. Some models carry "thinking" text, which is shown as a labelled block.
 
 ## Creating tasks
 

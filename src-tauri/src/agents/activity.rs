@@ -357,6 +357,20 @@ fn push_events(kind: AgentKind, v: &Value, out: &mut Vec<Ev>) {
 /// answer; the step may carry tool calls as well, and its `content` stays a candidate for the
 /// latest text (docs/specs/antigravity-deep-integration.md §11).
 pub(super) fn antigravity_prose(step: &Value) -> Option<String> {
+    antigravity_step_text(step, "content")
+}
+
+/// The model's reasoning in one Antigravity step: the `thinking` string of a finished
+/// `PLANNER_RESPONSE`. Only some model tiers write it (§4.6). It comes before the step's
+/// `content` and its calls, and a step with calls alone can carry it, which is what keeps the
+/// latest text moving while the model works without writing prose.
+pub(super) fn antigravity_thinking(step: &Value) -> Option<String> {
+    antigravity_step_text(step, "thinking")
+}
+
+/// One text field of a finished `PLANNER_RESPONSE`; a step that is still being written holds
+/// neither a finished answer nor a finished thought.
+fn antigravity_step_text(step: &Value, field: &str) -> Option<String> {
     if step.get("type").and_then(Value::as_str) != Some("PLANNER_RESPONSE") {
         return None;
     }
@@ -367,7 +381,7 @@ pub(super) fn antigravity_prose(step: &Value) -> Option<String> {
     {
         return None;
     }
-    let text = step.get("content").and_then(Value::as_str)?.trim();
+    let text = step.get(field).and_then(Value::as_str)?.trim();
     (!text.is_empty()).then(|| text.to_string())
 }
 
@@ -382,7 +396,9 @@ fn push_events_antigravity(v: &Value, out: &mut Vec<Ev>) {
 /// Antigravity's `transcript_full.jsonl` as events. The file holds one step per line: a
 /// `PLANNER_RESPONSE` carries the model's prose in `content` and its tool calls in `tool_calls`,
 /// and the result of a call is a `GENERIC` step that follows, in the order the calls were made
-/// (`status: ERROR` when it failed). There is no reasoning text.
+/// (`status: ERROR` when it failed). The reasoning (`thinking`) is not an event here: like the
+/// other agents' activity, this view keeps the prose and the tools, and the reasoning reaches the
+/// latest text and the full transcript through `transcript_full`.
 ///
 /// A call is reported when its result arrives, so that a failed call is marked failed even when
 /// several calls share one step. A call that never gets a result before the next answer, and the

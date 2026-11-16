@@ -133,7 +133,7 @@ AskHuman agents mode antigravity <none|cli|mcp>
 
 - **Stop 结束确认**（App 与 `agy`）：根会话、`terminationReason == NO_TOOL_CALL`、整棵会话树 `fullyIdle` 后出确认卡，继续 = `decision: "continue"`；开关 `agents stop antigravity`，默认关。
 - **插话**：工作中经 `PreInvocation` 的 `injectSteps` 注入（App 与 `agy`）；App 的空闲／已结束会话经 sidecar 的 `agentapi send-message`，内容前加固定的 `[USER MESSAGE]` 包装；`agy` 没有空闲通道。
-- **Watch**：读会话的 `transcript_full.jsonl`，显示回复与工具步骤；`thinking` 文字目前不显示。
+- **Watch**：读会话的 `transcript_full.jsonl`，显示回复、工具步骤与模型的 `thinking` 文字（部分模型档位才有；显示成带标签的思考）。
 - **新建任务**（手机、IM `/new`、Mac 新任务窗口）与**模型选择**：App 经 AskHuman 管理的全局 sidecar，终端用 `agy -i`；权限按 sidecar 白名单，可选 YOLO（App 用宽授权 sidecar，`agy` 用 `--dangerously-skip-permissions`）；
   模型清单是 `agy models` 的平铺列表。App 路线需要用户一次性允许 AskHuman 管理 sidecar（`antigravityDesktop.manageSidecars`）。
 
