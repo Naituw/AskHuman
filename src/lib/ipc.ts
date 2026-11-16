@@ -60,6 +60,7 @@ import type {
   ThemeMode,
   DiffFileView,
   DiffStatPage,
+  DraftLoad,
   DraftSave,
   DropLogEntry,
   ImageAttachment,
@@ -87,6 +88,13 @@ export const popupInboxIdle = () => invoke<void>("popup_inbox_idle");
  */
 export const popupInboxDraft = (requestId: string, draft: DraftSave | null) =>
   invoke<void>("popup_inbox_draft", { requestId, draft });
+
+/**
+ * A new card asks for what an abandoned ask of the same session and question left (docs/specs/popup-draft-on-cancel.md
+ * D6). Each draft is handed out once; null means there is nothing to load.
+ */
+export const popupDraftClaim = (requestId: string) =>
+  invoke<DraftLoad | null>("popup_draft_claim", { requestId });
 
 export const enrichPermissionDiff = (requestId: string) =>
   invoke<PermissionDiffModel>("enrich_permission_diff", { requestId });

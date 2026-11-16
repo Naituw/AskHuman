@@ -305,6 +305,12 @@ export default {
         mute: "发送并停用 AskHuman",
       },
     },
+    // 带出了被取消提问里未提交内容的卡片顶部的提示条（docs/specs/popup-draft-on-cancel.md D7）。
+    draftRestored: {
+      text: "已载入上次未提交的内容",
+      missingImages: "已载入上次未提交的内容；有 {n} 张图片的文件已被清理，没能带出",
+      dismiss: "关闭提示",
+    },
     // 离开模式期间被升级过来的提问顶部的提示条（docs/specs/special-replies.md D21）。
     escalated: {
       title: "离开模式开启中",

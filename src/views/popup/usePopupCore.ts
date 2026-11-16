@@ -83,6 +83,7 @@ import { usePopupFind } from "./usePopupFind";
 import { useTodoActions } from "./useTodoActions";
 import { useQuickReply, type ArmedDirective } from "./useQuickReply";
 import { useAnnotations, type AnnotationTarget } from "./useAnnotations";
+import { useDraftLoad } from "./useDraftLoad";
 import {
   canComposerDock,
   composerHomeVisibleRatio,
@@ -2215,6 +2216,17 @@ export function usePopupCore(scope?: PopupScope) {
   // Notes count as having something to lose (cancel and close confirm, the shared window's unanswered mark), but not as
   // an answer: they neither fill a question nor satisfy strict choice.
   const hasAnyContent = computed(() => hasAnyAnswer.value || annotations.hasAnnotations.value);
+  // What an abandoned ask of the same session and question left (docs/specs/popup-draft-on-cancel.md D6/D7); it fills
+  // only what is still empty, so it never takes anything the user has typed since the card came up.
+  const draftLoad = useDraftLoad({
+    questions,
+    chosenByQ,
+    inputByQ,
+    imagesByQ,
+    replyFilesByQ,
+    restoreNotes: annotations.restoreAnnotations,
+    growInput: (index) => autoGrow(index),
+  });
   /** The page's markdown was redrawn (image, Mermaid, source view): notes find their text again, then find repaints. */
   function onMarkdownContentUpdated() {
     annotations.reapplyAnnotations();
@@ -2594,6 +2606,7 @@ export function usePopupCore(scope?: PopupScope) {
     todoActions.resetTodoActions();
     quickReply.resetQuickReply();
     annotations.resetAnnotations();
+    draftLoad.dismissDraftNotice();
     todoChosenIds.value = [];
     todoChosenSnapshots.value = {};
     attach.loadThumbs();
@@ -2625,6 +2638,13 @@ export function usePopupCore(scope?: PopupScope) {
         });
       });
     };
+    // A card of the shared window may take what an abandoned ask of the same session and question left behind
+    // (docs/specs/popup-draft-on-cancel.md D6). Once the card is in the DOM, so the notes find their passages.
+    if (scope && req) {
+      void nextTick(() =>
+        draftLoad.claimDraft(requestId, () => !disposed && request.value?.id === req.id),
+      );
+    }
     // Hidden windows have no display link, so readiness must not wait for rAF. nextTick is enough
     // to put this request into the DOM; daemon presentation restores rAF for afterPaint.
     nextTick(() => {
@@ -3132,6 +3152,9 @@ export function usePopupCore(scope?: PopupScope) {
     ...quickReply,
     // Notes on passages of the Agent's text (the selection button, editor, footer chip and list)
     ...annotations,
+    // The line that says this card came up with an abandoned ask's unsent content (spec popup-draft-on-cancel D7)
+    draftNotice: draftLoad.draftNotice,
+    dismissDraftNotice: draftLoad.dismissDraftNotice,
     onMarkdownContentUpdated,
     // 设置向导提示条
     setupHint,

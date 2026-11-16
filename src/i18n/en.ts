@@ -316,6 +316,12 @@ export default {
         mute: "Send and turn off",
       },
     },
+    // The line on a question that came up with what an abandoned ask was holding (docs/specs/popup-draft-on-cancel.md D7).
+    draftRestored: {
+      text: "Loaded what you had not submitted last time",
+      missingImages: "Loaded what you had not submitted last time; {n} picture could not be loaded because its file is gone | Loaded what you had not submitted last time; {n} pictures could not be loaded because their files are gone",
+      dismiss: "Dismiss",
+    },
     // The banner on a question that was escalated while away mode is on (docs/specs/special-replies.md D21).
     escalated: {
       title: "Away mode is on",

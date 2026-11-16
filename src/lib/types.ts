@@ -669,6 +669,27 @@ export interface DraftSave {
   annotations?: UserAnnotation[];
 }
 
+/** One question of a loaded draft, shaped like what the form holds. */
+export interface DraftLoadAnswer {
+  selectedOptions: string[];
+  userInput: string;
+  /** Read back from the files the host saved them to, as data URLs like a pasted picture. */
+  images: ImageAttachment[];
+  /** Only the paths that still lead to a file. */
+  files: string[];
+}
+
+/**
+ * What `popup_draft_claim` hands a new card (docs/specs/popup-draft-on-cancel.md D6/D7): the draft an abandoned ask of
+ * the same session and question left, one entry per question.
+ */
+export interface DraftLoad {
+  answers: DraftLoadAnswer[];
+  annotations: UserAnnotation[];
+  /** Pictures the draft had whose files are gone (the system cleared them); the card says how many. */
+  missingImages: number;
+}
+
 export type ChannelAction = "send" | "cancel";
 
 /** One question's recorded answer in history (paths only, no base64). */

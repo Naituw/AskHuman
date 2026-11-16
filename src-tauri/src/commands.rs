@@ -510,6 +510,42 @@ pub async fn popup_inbox_draft(
     Ok(())
 }
 
+/// A new card asks whether an abandoned ask of the same session and question left a draft for it
+/// (spec `popup-draft-on-cancel` D6). `None` when there is nothing to load: the card names no
+/// session, nothing matches, or the draft was taken already. The card that was closed a moment ago
+/// may still be handing its draft to the history, so a draft being kept under the same question is
+/// waited for first (bounded, event-driven).
+#[tauri::command]
+pub async fn popup_draft_claim(
+    app: AppHandle,
+    request_id: String,
+) -> Result<Option<crate::app::popup_draft::DraftLoad>, String> {
+    let inbox = app
+        .try_state::<crate::app::popup_inbox::Inbox>()
+        .ok_or("popup inbox is unavailable")?;
+    let Some(key) = inbox
+        .request(&request_id)?
+        .draft_key
+        .filter(|key| key.session_key.is_some())
+    else {
+        return Ok(None);
+    };
+    inbox.drafts_kept(Some(&key)).await;
+    let id = request_id.clone();
+    let loaded =
+        tauri::async_runtime::spawn_blocking(move || crate::app::popup_draft::claim(&key, &id))
+            .await
+            .map_err(|error| error.to_string())?;
+    if loaded.is_some() {
+        crate::daemon::lifecycle::log_runtime_event(
+            "popup_host",
+            "draft_loaded",
+            Some(&request_id),
+        );
+    }
+    Ok(loaded)
+}
+
 #[tauri::command]
 pub async fn enrich_permission_diff(
     app: AppHandle,
@@ -2143,7 +2179,7 @@ fn open_with_system(path: &str) -> Result<(), String> {
     })
 }
 
-fn image_mime_from_path(path: &str) -> &'static str {
+pub(crate) fn image_mime_from_path(path: &str) -> &'static str {
     let ext = std::path::Path::new(path)
         .extension()
         .and_then(|e| e.to_str())

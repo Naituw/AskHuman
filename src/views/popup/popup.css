@@ -1872,6 +1872,14 @@ mark.popup-find-hit-current,
 .qr-banner-action:hover:not(:disabled) { background: color-mix(in srgb, var(--accent) 12%, transparent); }
 .qr-banner-action:disabled { opacity: 0.5; }
 .qr-banner-error { flex: 0 0 auto; margin: 6px var(--space-4) 0; }
+/* The line that says a card came up with what an abandoned ask was holding (docs/specs/popup-draft-on-cancel.md D7):
+   the away-mode bar's shape in the accent colour, since it informs rather than warns. */
+.qr-banner.draft-banner {
+  background: color-mix(in srgb, var(--accent) 8%, var(--control-bg));
+  border-bottom-color: color-mix(in srgb, var(--accent) 22%, transparent);
+}
+.draft-banner .qr-bar-ico { color: var(--accent); }
+.draft-banner .qr-bar-close { margin-left: 0; }
 /* 待办下拉区（spec todo-whats-next D7 第 11 轮改版）：内容区里、最后一个问题之后。
    收起＝一行「▸ 待办 N」；展开＝复用 .options/.option（与预选答案同构）+ 行内完成/删除 + 末尾添加行。 */
 .todo-section {

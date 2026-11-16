@@ -77,6 +77,8 @@ impl Inner {
         show.agent_session_title = Some(title.to_string());
         true
     }
+    /// The tests' shorthand for a card that ends with no draft to keep.
+    #[cfg(test)]
     fn finish(&mut self, id: &str, winner: &str) -> Option<Terminal> {
         self.finish_with(id, winner, false)
     }
