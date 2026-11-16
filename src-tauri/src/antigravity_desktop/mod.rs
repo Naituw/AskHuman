@@ -11,6 +11,7 @@
 // New Task window, Settings) in the last one, which removes this attribute.
 #![allow(dead_code, unused_imports)]
 
+mod create;
 mod host_config;
 mod launch;
 mod link;
@@ -19,6 +20,7 @@ mod runtime;
 mod sidecar;
 mod sidecar_run;
 
+pub use create::Request as CreateRequest;
 pub use launch::{launch_status, resolve_launch, LaunchStatus, UnavailableReason};
 pub use link::{
     shared as manager, CheckIn, Command, Down, Manager, Outbound, Outcome, RunError, Up,
@@ -107,6 +109,8 @@ pub enum Operation {
     RemoveAll,
     /// Replace the rules a whitelisted sidecar has of its own.
     SetRules { id: String, rules: Vec<String> },
+    /// Start a task in the App, or (`dryRun`) bring the route up and check it.
+    Create(CreateRequest),
 }
 
 fn now_ms() -> u64 {
@@ -124,6 +128,10 @@ fn executable() -> Result<String> {
 /// What the daemon answers. A request the daemon refuses on purpose (`status: "refused"` with a
 /// `reason` code and a `message`) is an answer; `Err` is for what went wrong.
 pub async fn execute(operation: Operation) -> std::result::Result<Value, String> {
+    // Creating a task waits for the App and the sidecar, so it is not a file operation.
+    if let Operation::Create(request) = operation {
+        return create::execute(request).await;
+    }
     // The registry and the sidecar directories are files behind a lock.
     tokio::task::spawn_blocking(move || run(&sidecar::Layout::current(), operation))
         .await
@@ -153,6 +161,8 @@ fn answer(error: anyhow::Error) -> std::result::Result<Value, String> {
 
 fn run(layout: &sidecar::Layout, operation: Operation) -> std::result::Result<Value, String> {
     match operation {
+        // `execute` sends it down the asynchronous path before this function is reached.
+        Operation::Create(_) => Err("A task is created asynchronously".into()),
         Operation::Sidecars => {
             let managing = crate::config::AppConfig::load_without_secrets()
                 .antigravity_desktop
@@ -393,6 +403,29 @@ mod tests {
             }
         );
         assert!(serde_json::from_value::<Operation>(json!({"op": "somethingElse"})).is_err());
+    }
+
+    #[test]
+    fn creating_a_task_is_an_operation_in_the_same_envelope() {
+        let op: Operation = serde_json::from_value(json!({
+            "op": "create",
+            "cwd": "/work/app",
+            "text": "do it",
+            "permission": "agent-default",
+            "id": "8d4c2c0a-1111-4222-8333-944455556666",
+            "model": "gemini-3.5-flash-low",
+            "dryRun": true,
+        }))
+        .unwrap();
+        let Operation::Create(request) = op else {
+            panic!("expected a creation");
+        };
+        assert_eq!(request.model.as_deref(), Some("gemini-3.5-flash-low"));
+        assert!(request.dry_run);
+        let wire = serde_json::to_value(Operation::Create(request)).unwrap();
+        assert_eq!(wire["op"], "create");
+        assert_eq!(wire["cwd"], "/work/app");
+        assert_eq!(wire["dryRun"], true);
     }
 
     #[test]

@@ -658,6 +658,29 @@ pub(super) fn ensure(
     Ok(change)
 }
 
+/// Makes sure the whitelisted sidecar of `directory` exists, keeping the rules it already has, and
+/// returns its id with what was done to its files. Used when a task is created: the user's own
+/// rules for the folder must survive it.
+pub(super) fn ensure_workspace(
+    layout: &Layout,
+    executable: &str,
+    directory: &Path,
+    roots: &[PathBuf],
+    now_ms: u64,
+) -> Result<(String, Change)> {
+    let mut spec = Spec {
+        kind: Kind::Workspace,
+        directory: directory.to_path_buf(),
+        rules: Vec::new(),
+    };
+    let id = spec.id();
+    if let Some(existing) = entry(layout, &id)? {
+        spec.rules = existing.rules;
+    }
+    let change = ensure(layout, executable, &spec, roots, now_ms)?;
+    Ok((id, change))
+}
+
 /// Replaces the rules of the sidecar `id`. A YOLO or control sidecar has nothing to add to.
 pub(super) fn set_rules(
     layout: &Layout,
@@ -1258,6 +1281,36 @@ mod tests {
 
     fn entry_hash(home: &Home, id: &str) -> String {
         entry(&home.layout, id).unwrap().unwrap().manifest_sha256
+    }
+
+    #[test]
+    fn creating_a_task_keeps_the_rules_the_user_gave_the_folder() {
+        let home = home();
+        let directory = Path::new("/Users/me/project");
+        let (id, change) =
+            ensure_workspace(&home.layout, EXE, directory, &roots(), 1).expect("first call");
+        assert_eq!(change, Change::Created);
+        assert_eq!(id, spec(Kind::Workspace, "/Users/me/project").id());
+        // The user adds a rule in Settings; the next task must not take it away.
+        set_rules(
+            &home.layout,
+            EXE,
+            &id,
+            &["command(git)".to_string()],
+            &roots(),
+            2,
+        )
+        .unwrap();
+        let (again, change) =
+            ensure_workspace(&home.layout, EXE, directory, &roots(), 3).expect("second call");
+        assert_eq!(again, id);
+        assert_eq!(change, Change::Unchanged);
+        assert_eq!(
+            entry(&home.layout, &id).unwrap().unwrap().rules,
+            vec!["command(git)"]
+        );
+        let grants = &manifest_of(&home, &id)["agent_permissions"]["access_grants"];
+        assert!(grants.as_array().unwrap().contains(&json!("command(git)")));
     }
 
     #[test]
