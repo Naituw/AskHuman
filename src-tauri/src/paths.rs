@@ -445,6 +445,17 @@ pub fn antigravity_brain_dirs_in(home_dir: &Path) -> [PathBuf; 2] {
         .map(|surface| home_dir.join(".gemini").join(surface).join("brain"))
 }
 
+/// The files in which the App (`antigravity`) and `agy` (`antigravity-cli`) summarize their
+/// conversations, one row each. A private format: only read, and only to seed a list.
+pub fn antigravity_summary_dbs_in(home_dir: &Path) -> [PathBuf; 2] {
+    ["antigravity", "antigravity-cli"].map(|surface| {
+        home_dir
+            .join(".gemini")
+            .join(surface)
+            .join("conversation_summaries.db")
+    })
+}
+
 /// The directory of the AskHuman plugin below an explicit home directory.
 pub fn antigravity_plugin_dir_in(home_dir: &Path) -> PathBuf {
     antigravity_config_dir_in(home_dir).join("plugins/askhuman")

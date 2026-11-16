@@ -12,6 +12,7 @@
 
 pub mod activity;
 pub mod antigravity_hook;
+pub mod antigravity_workspaces;
 pub mod codex_cli;
 pub mod context_recovery;
 pub mod control;

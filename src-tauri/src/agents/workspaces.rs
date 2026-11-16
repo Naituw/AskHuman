@@ -261,6 +261,11 @@ fn scan_recent() -> Vec<(PathBuf, AgentKind, u64)> {
         },
     );
     scan_cursor(&mut out);
+    out.extend(
+        super::antigravity_workspaces::recent_workspaces()
+            .into_iter()
+            .map(|(path, used)| (path, AgentKind::Antigravity, used)),
+    );
     out
 }
 
