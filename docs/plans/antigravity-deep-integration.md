@@ -296,4 +296,12 @@ F 权限接管与 Fork（规格 §13）；H 上下文恢复 Hook 与原生 `ask_
   **意外**：模型自己调用 `whats_next` 的弹窗共 4 次（G2 两次、G4 一次、冷启动一次，冷启动还重试了一次），都已取消；G1 的 `agy` 实验还留下 1 条 `away` 历史记录。详见规格附录 A.4–A.6。
 - 2026-11-16 **文档回写完成**：规格（§4.6、§11、§12.5、§17 的 V1 / V7 / V9 / V11 / V16 / V24、§18、§19、附录 A.4–A.6、§20）、`antigravity.md`、`docs/overview.md`、`overview-configuration.md`、`cli-config.md`、`ios-task-model.md`、`gui-agent-task-launch.md`、
   `im-agent-task-launch.md`、`agent-lifecycle-results-and-recovery.md`、`agent-stop-confirmation.md`、`agent-interject.md`、`agent-observation-latest-text.md`、两份 wiki、两份 README、`docs/PROGRESS.md`。
-  **下一步**：用户验收规格 §18 列出的项目；是否显示 `thinking` 文本待用户决定；本地提交尚未推送。
+  **下一步**：用户验收规格 §18 列出的项目。
+- 2026-11-16 **最终报告之后的三件事**（用户经 `--whats-next` 选的 / 写的）：
+  1. **推送**：`7e5887cc..87db385f` main → main，共 32 个本任务提交，连同另一会话的 `bcf77897`（fix(cursor)）。
+  2. **Watch 显示 `thinking` 文本**：`18ba9d96`。`transcript_full.rs` 的 `PLANNER_RESPONSE` 先出一条带标签的 `Thinking`，再出正文与工具；`activity.rs` 把正文与思考分成两个取值函数，思考不进活动事件；
+     夹具里给 3 个步骤加了 `thinking`（其中 1 个是 GENERATING，必须不显示）；新增 2 个测试（超长思考保留末尾、纯空白思考不出）。规格 §4.6 / §11 / V17 / §18 / §20、`agent-observation-latest-text.md`、`antigravity.md`、两份 wiki、`PROGRESS.md` 同步。
+  3. **权限接管（F）复核**：用户问「有没有可行的方案」。结论：**公开接口里有**——`PreToolUse` 的 `decision: "auto_approve"`（官网文档、`agy` 1.5.7 更新日志都有，App / `agy` 二进制里都有该字符串），我 G1 时只测了 `allow` / `permissionOverrides` / `overwrite`，没测它。
+     `agy` 1.5.9 无头实测（规格 §13.1.1 的 T1–T10、附录 A.7）：`auto_approve` 批准了默认策略会自动拒绝的读与 shell 命令，`deny` + `reason` 把理由交给模型，显式 `ask` / `deny` 规则优先，hook 阻塞 125 秒后照常执行，超时被杀则工具失败（fail-closed）。
+     **App 2.32.1 与 TUI 没测**（门 G5）。**这不改变已批准的范围**：规格 §13.1 的「本版不做」照旧，只补了事实与设计草图，是否立项（P5）待用户决定。
+     用量：14 个无头任务 + 1 次 TUI 尝试，约 32 次 Flash 低档请求；**意外（第 5 次）**：前几个任务的提示漏写了「不要运行 AskHuman」（V3 里早有这条教训），第 8 个任务里模型调了 `--whats-next`，在你的 Mac 上出了约 67 秒没人认领的卡（`0415e831`），进程被 `agy` 杀掉后取消。

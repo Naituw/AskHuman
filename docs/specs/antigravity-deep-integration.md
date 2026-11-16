@@ -157,7 +157,10 @@
 | `PreInvocation` | 无操作 | `{"injectSteps":[{"userMessage":"…"}]}` 注入一条用户消息（transcript 里是 `USER_INPUT`，来源 `SYSTEM_SDK`）；非 JSON 杂项输出被忽略 |
 | `Stop` | 无操作（会话正常结束） | `{"decision":"continue","reason":"…"}` 让会话继续，`reason` 以系统消息注入（transcript 里是 `SYSTEM_MESSAGE`），`executionNum` 递增；退出码 1 被忽略 |
 
-`allow`、`permissionOverrides`、`overwrite` 都不会预先批准原生权限提示（§13）。
+`allow`、`permissionOverrides`、`overwrite` 都不会预先批准原生权限提示〔App 2.32.1 实测，G1〕。**`decision: "auto_approve"` 会**〔`agy` 1.5.9 实测，2026-11-16 复核，§13.1.1；App 未验〕：
+官网文档给 `PreToolUse` 的决定共六个——`allow`（交给下一个 hook 或默认策略，**不是批准**）、`auto_approve`（默认策略本来要询问时自动批准，仍遵守用户明确配置的规则）、`deny`（硬拦）、`ask`、`force_ask`、`deny_unless_prior_grant`〔文档〕；
+本机 App 2.32.1 自带的文档只列到 `ask` / `force_ask`，但 App 的 `language_server` 与 `agy` 二进制里都有 `auto_approve`、`deny_unless_prior_grant` 字符串，`agy` 1.5.7 的更新日志也在修「`auto_approve` 绕过管理员强制审核」。
+`deny` 带 `reason` 时，理由原样作为工具错误交给模型（`tool call denied by pre-tool hook: <reason>`）。§13.1 的「不做」结论当时没测 `auto_approve`，复核见 §13.1.1。
 续跑次数有上限：执行器配置里有 `max_stop_hook_continuations`（来自 LS 二进制字符串，**未见文档**，〔私有〕）。**G3 实测（V2）：连续 8 次 `continue` 都被接受（`executionNum` 0–7），第 9 次是实验 hook 自己没再续，没碰到上限**；
 续跑期间每次 `Stop` 的 `continuationActive` 都是 `false`，不能拿它判断「这是续跑」。
 `agy` 对这两种输出的处理与 App 相同〔`agy` 实测，G4〕：Stop `continue` 的 `reason` 在 transcript 里是 `SYSTEM_MESSAGE`（`Stop hook blocked termination: …`），模型随即再答一次，`executionNum` 递增；`PreInvocation` 注入的消息是 `SYSTEM_SDK` 的 `USER_INPUT`（`[USER INTERJECTION] …`），模型在下一步里回应。
@@ -557,13 +560,75 @@ Agents 页的 Antigravity 卡新增：集成模式（None / CLI / MCP）、生�
 
 ### 13.1 权限接管（F）
 
-结论：**不做**，`permission` 能力保持「不支持」。依据：
+结论（2026-11-15 用户确认的范围）：**本版不做**，`permission` 能力保持「不支持」。依据：
 
 - 原生权限提示是会话里的一个 WAITING 步骤（`requestedInteraction.permission`），hooks 看不到它，也回答不了它。〔实测〕
-- `PreToolUse` 返回 `allow`、`permissionOverrides` 或 `overwrite` 都不会预先批准原生提示（App 2.32.1）；文档把 `permissionOverrides` 描述为临时授权，但未观察到该效果。hook 只能 `deny`，或把决定留给原生提示。〔实测〕
-- 能回答原生提示的只有私有 LS RPC（`HandleCascadeUserInteraction`，需要 `cascadeId`）。〔私有〕用户 2026-11-15 不批准私有接口。
+- `PreToolUse` 返回 `allow`、`permissionOverrides` 或 `overwrite` 都不会预先批准原生提示（App 2.32.1）；文档把 `permissionOverrides` 描述为临时授权，但未观察到该效果。〔实测〕
+  **这条的原结论「hook 只能 `deny`，或把决定留给原生提示」不完整**：当时没测 `decision: "auto_approve"`，它能批准（2026-11-16 复核，§13.1.1）。
+- 能回答**已经弹出的**原生提示的只有私有 LS RPC（`HandleCascadeUserInteraction`，需要 `cascadeId`）。〔私有〕用户 2026-11-15 不批准私有接口。
 - 公开但改变形态的替代：ACP（`agy acp`）与 SDK 让**客户端**持有权限请求，但前提是 AskHuman 自己托管会话、取代 TUI / App，这不是增强，不在本版。〔文档〕
 - sidecar 的 `allows_user_interactions:false` 是预授权白名单，不是接管（§12.4）。
+
+### 13.1.1 复核：公开接口里有可行方案（2026-11-16，用户追问「有没有可行的方案」）
+
+**状态：调研记录。不在本版已批准的范围内（§1.1），是否立项待用户决定（§20）；上面的「不做」结论照旧有效，直到用户改变范围。**
+
+**新增实测**（`agy` 1.5.9，`-p` 无头模式，`gemini-3.8-flash-low`；临时目录里的工作区级 `.agents/hooks.json`；附录 A.7；**App 2.32.1 与交互界面没测**）：
+
+| 编号 | 做法 | 结果 |
+| --- | --- | --- |
+| T1 | 默认策略要询问的读：工作区外的 `/etc/hosts`，hook 不给决定 | 自动拒绝（无头里不能弹窗：`user denied permission for read_file(…)`） |
+| T2 | 同一请求，`PreToolUse` 返回 `{"decision":"auto_approve"}`（hook 先阻塞 2 秒） | **读成功**，工具在 hook 返回后立即执行 |
+| T3 | 默认模式 + `request-review` 下，写临时目录文件的 shell 命令，hook 不给决定 | 自动拒绝（`user denied permission to run command`），文件没写出 |
+| T4 | 同一请求，`auto_approve` | **命令执行**，文件写出 |
+| T5 | `deny` + `reason` | 工具失败，错误是 `tool call denied by pre-tool hook: <reason>`，模型原样转述理由 |
+| T6 | 用户规则里有该资源的 `ask` + hook `auto_approve` | 仍被拒：显式 `ask` 规则优先于 hook 的批准 |
+| T7 | 用户规则里有 `deny` + hook `auto_approve` | 仍被拒（`Matches user-configured deny rule`）：显式 `deny` 优先 |
+| T8 | hook 阻塞 125 秒后 `auto_approve`（hook `timeout` 300） | 125 秒里没有引擎超时，hook 返回后工具立即执行 |
+| T9 | hook 阻塞 15 秒，但 `timeout` 只有 8 秒 | hook 被杀，工具**失败**（`JSON hook … failed: command failed: signal: killed`）：超时是 fail-closed，不会退回原生提示 |
+| T10 | hook 阻塞 90 秒时对 `agy` 发 SIGINT（相当于取消） | `agy` 以 `interrupted` 结束，hook 进程 6 秒内消失（没有留成孤儿）：挂起的卡可以靠既有的「hook 断开 → 撤卡」路径撤回 |
+
+旁证：①`agy` 1.5.7 起会话默认模式是 Auto〔更新日志〕，沙箱外命令先由自动审查判断，所以无头默认下带 `BypassSandbox` 的 `curl` 没被拦（〔推断〕审查放行），要复现命令询问得显式 `agentMode:""`（T3）；
+②`init` 事件的 `permission_mode` 两种模式下都是 `request-review`，只反映 `toolPermission`；③交互界面（TUI）首次运行要先过引导（配色 → 数据使用同意），没完成不能测，我没有替你完成（V12）。
+
+**载荷与官网文档不一致**（〔`agy` 1.5.9 实测〕）：`read_file{Path,StartLine,EndLine}`（文档是 `view_file{AbsolutePath…}`）、`write_file{Path,Content}`（文档 `write_to_file{TargetFile,CodeContent…}`）、
+`edit_file{Path,Target,Replacement}`（文档 `replace_file_content…`）、`search_web{query}`、`run_command{CommandLine,WaitMsBeforeAsync,toolSummary[,BypassSandbox]}`；`toolCall.id`、`stepIdx` 与文档一致。
+所以适配器要容忍工具名与字段漂移：认不出的工具退回通用卡（工具名 + 参数 JSON），`doctor` 标「未验证版本」。
+
+**原理**：`PreToolUse` 在默认策略**之前**执行，hook 能长时间阻塞（T8），再用 `auto_approve` 批准、或 `deny` + `reason` 拒绝并把人的理由交给模型；其它情形空输出，退回默认策略（原生提示 / sidecar 自动拒绝）。
+这正好满足 [权限审批计划](../plans/agent-permission-approval.md) 给 Claude / Codex 定的口径——「Hook 能在原生弹窗出现前阻塞，并把人的决定同步返回 Agent」。
+**与 Claude / Codex 的关键差别**：Antigravity 没有 `PermissionRequest`，`PreToolUse` 对**每一次**工具调用都触发，hook 看不到「默认策略会不会询问」，只能自己预测。
+预测偏松 → 退回今天的行为（sidecar 自动拒绝、`agy` 终端里等人）；偏紧 → 多弹几张卡。
+
+**设计草图（未批准，仅供决定）**
+- 范围：先只管 AskHuman 自己建的任务——App 的 sidecar 任务（`access_grants` 是 AskHuman 自己写的，预测最准）与 `agy` 终端任务；用户自建的会话以后再说（全局开关 + 逐会话）。
+- 卡：沿用权限卡的三类内容（命令 / 文件改动 / MCP），三个动作：允许一次 / 允许并记住（AskHuman 侧规则，不写 Antigravity 的授权） / 拒绝（可附理由，经 `reason` 交给模型）。
+  既有的 `shell_safety` 是 Codex 语义的移植，只能部分复用；Antigravity 的前缀 / `regex:` 规则与「危险构造要整行匹配」要另写。
+- 触发：只对「默认策略多半会询问」的调用出卡——`run_command` 带 `BypassSandbox` 且不被判为已知安全、工作区与临时目录之外的文件读写、未授权的 MCP / 网页；其余空输出。
+  已被 `command(…)` / `read_file(…)` / `mcp(…)` 授权的跳过（读 `config.json` 与 sidecar 清单）。
+- 失败：daemon 不可达 / 解析失败 → 空输出（退回原生）；等人时不能让 hook 超时，`timeout` 写 86400，到 AskHuman 自己的期限就答 `deny` + 理由（T9）。
+- 变体「守门」：宽授权 / YOLO 下模型不会遇到原生提示，hook 成为唯一的闸——预测问题消失，但 hook 没装上（插件被停用、工作区级 hooks 在未信任目录里不载入）时就是裸 YOLO，所以只能用在 AskHuman 自己建、并核实过 hook 已加载的任务上。
+
+**限制（如实）**：①用户显式 `ask` / `deny` 规则永远赢（T6、T7），命中 `ask` 的仍走原生提示；②企业 / 管理员强制审核也盖过 `auto_approve`〔`agy` 1.5.7 更新日志〕；
+③`PreToolUse` 之外的原生交互（`ask_question`、产物评审、浏览器上传确认）hook 管不到；④工具名与字段和文档不一致（上）；
+⑤hook 阻塞期间 Agent 循环停住；`agy` 被中断时 hook 进程随之消失（T10），既有的 `cli disconnected; cancelling` 路径（Stop 卡用过，V24）就能撤卡；**App 里取消会话时 hook 是否被杀没测**；
+⑥AskHuman 的「允许并记住」与 Antigravity 的「始终允许」是两套，互不同步。
+
+**其它路径（都评估过）**
+
+| 路径 | 能不能接管 | 为什么不选 / 条件 |
+| --- | --- | --- |
+| 私有 LS RPC `HandleCascadeUserInteraction` | 能，且覆盖所有 WAITING 交互 | 私有，要拿 LS 地址与 CSRF 令牌；用户 2026-11-15 不批准 |
+| ACP（`agy acp`） | 能：标准 `session/request_permission`，取消会撤回挂起的请求〔文档〕 | AskHuman 要自己托管会话、取代 TUI / App，是另一个产品形态；可作将来「手机任务」的第三条路线 |
+| 无头 `-p` + `stream-json` | 不能：要询问的动作直接软拒绝，`control_request` / `control_response` 不支持〔文档〕 | — |
+| 静态授权（sidecar 白名单 / YOLO / `--settings` 的 `permissions`） | 不是接管，是预授权 | 已实现（§12.4） |
+| 只检测不答复（`PreToolUse` 后迟迟没有 `PostToolUse`，推送「可能在等你」） | 只能提醒 | 启发式，会把长命令误报成等待 |
+| Antigravity SDK（`LocalAgentConfig(policies=[…ask_user])`） | 能 | 同 ACP：AskHuman 自己托管 |
+
+**立项前必须先验的（门 G5，按重要性）**：①**App 2.32.1**：`auto_approve` 是否同样批准 sidecar 会话里本来被 `allows_user_interactions:false` 自动拒绝的调用
+（要临时 MCP 模式 + 「管理 sidecar」，约 3–4 次 Flash 请求，做完与 G2 一样还原）；②TUI 里 hook 阻塞时的样子与取消行为（先要完成 `agy` 首次引导）；
+③`ask_permission` 工具（模型自己申请授权）与 `call_mcp_tool` 的 `PreToolUse` 载荷，`auto_approve` 对它们是否生效；④子 Agent 的调用是否同样走 hook、带哪个会话 ID；⑤App 里取消会话时 hook 是否被杀、卡是否撤回（`agy` 已验，T10）。
+工作量：新 hook 子命令与适配器（载荷 → 权限卡）、预测函数、daemon 里挂起 hook 的生命周期、插件 `hooks.json` 加 `PreToolUse` 分组（仅开启时写）、设置页 / `doctor` / 版本门、文档与测试，约一期（P5）。
 
 ### 13.2 Fork
 
@@ -653,6 +718,7 @@ Agents 页的 Antigravity 卡新增：集成模式（None / CLI / MCP）、生�
 | V22 | **部分已验（G2、G4）**：AskHuman 自己的全局插件在 App 与 `agy` 的会话里都触发 hooks（§4.1、附录 A.4、A.6）；G2 里在没有在途 `ask` 的时刻写入 / 改写全局插件目录没有出问题。**没验到**：用户真实会话运行时、有在途 `ask` 的情况下改写全局插件目录（V14 在工作区级插件上证明不会打断，全局的没单独做） | §6.3、§6.5 迁移 | — |
 | V23 | **已验（G3）**：①子会话的 `SessionStart` / `PreInvocation` / `Stop` 与 `invoke_subagent` 结果都按 G1 的格式出现，AskHuman 把子会话折进根（两个带子 Agent 的真实会话）；②根的 `Stop(fullyIdle:false)` 被实验 hook 阻塞 30 秒期间，子会话 `Stop(fullyIdle:true)` 与它的 `send_message` 照常发生，阻塞结束后根被唤醒（`PreInvocation(0)`，晚约 0.5 秒）并以 `Stop(fullyIdle:true)` 收尾——**消息排队不丢失，也没有重复的根 `Stop`**。Stop 确认卡本身的点击没测（V24） | §8 L4、§9 | — |
 | V24 | **部分已验（Stop 确认卡，真实 App 会话）**：开关打开后，会话答完时 `Stop` 的 hook 阻塞并让 daemon 出卡（历史里记到该会话与目录，正文是最后一条回复，问题「Agent 准备结束本轮对话，接下来怎么做？」，选项「继续对话」（推荐）/「结束对话」）；267 秒无人应答，hook 一直在等；结束 hook 进程后卡被取消（daemon 日志 `cli disconnected; cancelling`），会话正常结束（fail-open，没有续跑）。回合结束只在卡有了结论之后才上报，所以被手动结束的 hook 会让注册表停在「工作中」，直到 30 分钟兜底降级（与其它 Agent 的「Stop 被杀」同一条路径）。**真人点「继续对话」（带一句话）→ 会话续跑 → 第二张卡 →「结束对话」这条路径没测到**：你答复「现在就能配合」后我做了两次（12:24 等了约 4.5 分钟、12:42 等了 12 分钟），两次都没人应答——当时你不在电脑前（Mac 已空闲约 81 分钟）。两次都以我结束 hook、关掉开关收尾（附录 A.6） | §9 | 需要你在电脑前或用手机点一次（§18） |
+| V25 | **部分已验（`agy` 1.5.9 无头，§13.1.1）**：`PreToolUse` 的 `auto_approve` 批准了默认策略本来会自动拒绝的读（工作区外）与 shell 命令；`deny` + `reason` 把理由交给模型；显式 `ask` / `deny` 规则优先于 hook；hook 能阻塞 125 秒；超时被杀则工具失败。**没验到**：App 2.32.1（尤其 sidecar 会话里 `auto_approve` 能否盖过 `allows_user_interactions:false` 的自动拒绝）、TUI、`ask_permission` / `call_mcp_tool` / 浏览器类工具、子 Agent、取消时的撤卡 | §13.1.1；只在用户决定立项后才需要 | 门 G5：App 的 sidecar 会话 3–4 次 Flash 请求（要临时 MCP 模式并还原），其余按 §13.1.1 清单 |
 
 ## 18. 验收
 
@@ -823,6 +889,16 @@ App 的私有摘要库里还留着那三个已删会话的条目，由 App 自�
 - 控制台的 Agent 列表里还有我的测试会话：App 会话 1 小时后自动变「已结束」（L2），已结束队列只留最近 10 条，会被新会话顶掉。
 - `~/.askhuman/antigravity-tasks/` 里 19 份任务回执（几百字节；`create` 时顺带清理 30 天以前的）。
 
+### 附录 A.7：权限接管复核实测（2026-11-16，用户追问「分析一下那个权限接管」；只用 Antigravity，未使用 Cursor）
+
+| 主题 | 结果 |
+| --- | --- |
+| 做法 | `agy` 1.5.9 无头（`-p --output-format stream-json`），`--model gemini-3.8-flash-low`；工作目录 `/private/tmp/agy-perm-lab/ws`，用 `--settings` 的 `trustedWorkspaces` 信任；工作区级 `.agents/hooks.json` 挂实验 hook（记载荷、按控制文件答决定）；全程没改 `~/.gemini` 下任何文件，没有碰你的会话 |
+| 用量 | 14 个无头任务 + 1 次交互界面尝试（卡在首次引导，没进入测试），共 15 个会话、约 32 次模型响应、约 19 万 token（结果事件里的合计）；全是 Flash 低档，没有 Pro / Claude 级 |
+| 结果 | §13.1.1 的 T1–T10 与载荷形状 |
+| 意外（第 5 次） | 前几个任务的提示没写「不要运行 AskHuman」（V3 里我自己写过这条教训，这次没带上）。其中三个会话里模型按全局插件的规则去调了 `AskHuman`：两次只是 `--agent-help`；第 8 个任务（多工具载荷）做完后调了 `--whats-next`（`command(AskHuman)` 是你的全局授权，所以不用批准就执行了），在你的 Mac 上出了一张没人认领的卡（请求 `0415e831`，约 67 秒，项目 `/private/tmp/agy-perm-lab/ws`，选项是「接下来做什么？」），`agy` 的无头超时杀掉该进程后卡被取消（daemon 日志 `cli disconnected; cancelling`）。此后每个提示都写「不要运行 AskHuman」，并用 `--settings` 的 `permissions.deny: ["command(AskHuman)"]` 兜底；之后的 6 个会话（5 个无头任务 + 那次交互界面尝试）里模型都没再调用它 |
+| 顺带 | 这些会话在 AskHuman 注册表里都是 `ended`（`agy` 进程已死）；已结束队列最多留 10 条，所以你原来的已结束条目被这 10 个实验会话顶掉了（`ended` 条目 1 小时 TTL 与上限都是既有规则）。实验目录与脚本已删；15 个会话留在 `agy` 的数据目录里，与 A.6 的 6 个一样没有受批准的删除办法 |
+
 ## 20. 反馈记录
 
 ### 2026-11-16 首轮审阅（用户经 AskHuman 回答）
@@ -889,9 +965,18 @@ P1 的实现不依赖 D17；D17 影响的是 P1 之后接线的部分（根 / �
 | V7：sidecar 会话在 App 里的位置 | 「你帮我看」 | 我看不到屏幕；只能给 App 摘要库的证据，其余列入验收（V7、§18） |
 | 测试会话怎么处理 | 「删除我创建的测试会话」 | App 与 `agy` 都没有删除会话的命令，我不手改它们的私有文件；处理结果见附录 A.6 末尾与最终报告 |
 
+### 2026-11-16 最终报告后的追加（用户经 `--whats-next` 回答）
+
+| 问题 | 回答 | 处理 |
+| --- | --- | --- |
+| 推送 | 选「把这个任务的 32 个提交推送到 origin/main（注意：本地还有另一会话的 bcf77897，推送会一起带上）」 | 已推送（`7e5887cc..87db385f`，连同另一会话的 `bcf77897`） |
+| Watch 的 thinking 文本 | 选「让 Watch 显示 Antigravity 的 thinking 文本」 | 已实现并提交（`18ba9d96`），见 §11；已装为日常版的时间见计划的实施记录 |
+| 权限接管 | 自由输入：「另外分析一下那个权限接管，有没有什么可行的方案？」 | 做了复核与 `agy` 实测：**公开接口里有可行方案**（`PreToolUse` 的 `auto_approve` / `deny`），见 §13.1.1 与附录 A.7；是否立项见下面「待你决定」 |
+
 ### 2026-11-16 待你决定的新问题
 
 | 问题 | 背景 | 状态 |
 | --- | --- | --- |
+| 要不要做 Antigravity 的权限接管（F） | §13.1.1：`PreToolUse` 的 `auto_approve` 能批准默认策略本来要询问 / 自动拒绝的调用（`agy` 实测）；App 与 TUI 没测；做的话是约一期（P5），先过门 G5（App 实测要临时 MCP 模式并还原） | **待你决定**（不决定就保持本版「不做」） |
 | Watch 要不要显示 Antigravity 的 `thinking` 文本 | Flash 的非低档会给出模型的思考文本（§4.6），Codex / Cursor 的观察界面会把公开的思考显示成带标签的一段；Antigravity 之前只显示正文与工具 | **已决定：显示**（你在 2026-11-16 的 `--whats-next` 里选了「让 Watch 显示 Antigravity 的 thinking 文本」）；已实现，见 §11 |
 | 要不要让我按会话 ID 直接删除我留下的测试会话文件 | 你答了「删除我创建的测试会话」，但没有受批准的删除接口（附录 A.6「还原」）。直接删文件是手改它们的私有文件，而且不一定能让列表里的条目消失：G1 那次删完，App 的私有摘要库里的条目留了下来，要等 App 自己以后整理（附录 A.2）| **待你决定**（默认不做；做的话我先列出会话 ID 清单给你确认） |
