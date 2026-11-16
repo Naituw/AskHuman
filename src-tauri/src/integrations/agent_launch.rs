@@ -312,9 +312,19 @@ pub fn readiness(kind: AgentKind) -> AgentReadiness {
     readiness_with(kind, false)
 }
 
-/// Antigravity has no supported New Task or Fork path; every other family does.
-pub fn launch_supported(kind: AgentKind) -> bool {
-    !matches!(kind, AgentKind::Antigravity)
+/// Whether a new task can be started on this family by some route: the CLI in a terminal or,
+/// for Codex, Cursor and Antigravity, their app. Every family has one. Forking is judged
+/// separately by [`fork_readiness`], and Antigravity has no route for it.
+pub fn launch_supported(_kind: AgentKind) -> bool {
+    true
+}
+
+/// Whether a task on this family comes with the choice between the Agent's default permissions
+/// and YOLO. Pi has no such choice. Antigravity's tasks start in the App with the Agent's default
+/// only until its YOLO route exists (docs/plans/antigravity-deep-integration.md, P4), so
+/// offering the choice would offer what cannot be done.
+pub fn permission_choice(kind: AgentKind) -> bool {
+    !matches!(kind, AgentKind::Pi | AgentKind::Antigravity)
 }
 
 pub fn readiness_fresh(kind: AgentKind) -> AgentReadiness {
@@ -2636,18 +2646,21 @@ mod tests {
     }
 
     #[test]
-    fn launch_support_excludes_only_antigravity() {
+    fn every_family_can_start_a_task_but_antigravity_cannot_fork() {
         for kind in AgentKind::ALL {
-            assert_eq!(
-                launch_supported(kind),
-                kind != AgentKind::Antigravity,
-                "{kind:?}"
-            );
+            assert!(launch_supported(kind), "{kind:?}");
         }
-        // Phone and IM pickers probe, offer and explain only the families that can launch.
+        // Phone and IM pickers probe, offer and explain every family that can launch.
         let launchable = launchable_kinds();
-        assert!(!launchable.contains(&AgentKind::Antigravity));
-        assert_eq!(launchable.len(), AgentKind::ALL.len() - 1);
+        assert!(launchable.contains(&AgentKind::Antigravity));
+        assert_eq!(launchable.len(), AgentKind::ALL.len());
+        // Starting a task in the App does not make a fork possible.
+        let fork = fork_readiness_uncached(AgentKind::Antigravity);
+        assert!(!fork.ready);
+        assert!(fork
+            .diagnostics
+            .iter()
+            .any(|line| line.contains("unsupported")));
     }
 
     #[test]

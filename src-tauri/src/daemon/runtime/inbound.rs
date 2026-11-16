@@ -743,13 +743,12 @@ pub(super) async fn start_new_task_flow(
             crate::agents::workspaces::refresh(),
             // Only families `/new` can start: the diagnostics below are shown to the user.
             crate::integrations::agent_launch::launchable_readiness(),
-            crate::codex_desktop::launch_status(false),
-            crate::cursor_desktop::launch_status(false),
+            crate::integrations::agent_start::LaunchStatuses::read(),
         )
     })
     .await
     .ok();
-    let Some((workspaces, readiness, codex_status, cursor_status)) = probed else {
+    let Some((workspaces, readiness, statuses)) = probed else {
         let _ = reply_channel_text(
             channel_id,
             config,
@@ -770,17 +769,19 @@ pub(super) async fn start_new_task_flow(
         let _ = reply_channel_text(channel_id, config, text).await;
         return;
     }
-    // The one rule every surface shares decides whether there is anything to pick; Codex and
-    // Cursor have a route besides the CLI, so their routes explain a miss, not the CLI's lines.
-    let startable = readiness.iter().any(|item| {
-        crate::integrations::agent_start::startable(item, &codex_status, &cursor_status)
-    });
+    // The one rule every surface shares decides whether there is anything to pick; Codex, Cursor
+    // and Antigravity have a route besides the CLI, so their routes explain a miss, not the CLI's
+    // lines.
+    let startable = readiness
+        .iter()
+        .any(|item| crate::integrations::agent_start::startable(item, &statuses));
     if !startable {
         let diagnostics = readiness
             .iter()
             .map(|item| match item.kind {
-                AgentKind::Codex => codex_status.description(lang),
-                AgentKind::Cursor => cursor_status.description(lang),
+                AgentKind::Codex => statuses.codex.description(lang),
+                AgentKind::Cursor => statuses.cursor.description(lang),
+                AgentKind::Antigravity => statuses.antigravity.description(lang),
                 _ => item.diagnostics.join("\n"),
             })
             .filter(|text| !text.is_empty())
@@ -971,13 +972,10 @@ pub(super) async fn continue_task_picker(
                 return;
             }
             payload.workspace = selected_id.to_string();
-            let codex_status = crate::codex_desktop::launch_status(false);
-            let cursor_status = crate::cursor_desktop::launch_status(false);
+            let statuses = crate::integrations::agent_start::LaunchStatuses::read();
             let options = crate::integrations::agent_launch::launchable_readiness()
                 .into_iter()
-                .filter(|item| {
-                    crate::integrations::agent_start::startable(item, &codex_status, &cursor_status)
-                })
+                .filter(|item| crate::integrations::agent_start::startable(item, &statuses))
                 .map(|item| crate::select::SelectOption {
                     id: item.kind.as_str().to_string(),
                     dot: None,
@@ -986,15 +984,17 @@ pub(super) async fn continue_task_picker(
                     badge: None,
                     elapsed: None,
                     secondary: Some(match item.kind {
-                        AgentKind::Codex => codex_status.description(lang),
+                        AgentKind::Codex => statuses.codex.description(lang),
                         // The terminal route keeps the line it always had; only the Agents
                         // window needs saying.
                         AgentKind::Cursor
-                            if cursor_status.target
+                            if statuses.cursor.target
                                 == Some(crate::codex_desktop::LaunchTarget::Desktop) =>
                         {
-                            cursor_status.description(lang)
+                            statuses.cursor.description(lang)
                         }
+                        // Its only route today is the App, and it says so.
+                        AgentKind::Antigravity => statuses.antigravity.description(lang),
                         _ => format!(
                             "{} · {}",
                             item.integration_mode,
@@ -1029,7 +1029,7 @@ pub(super) async fn continue_task_picker(
                         .await;
                 return;
             }
-            if kind == AgentKind::Pi {
+            if !crate::integrations::agent_launch::permission_choice(kind) {
                 start_task_input(
                     state,
                     channel_id,
@@ -1544,6 +1544,19 @@ async fn start_task_input_form(
                             format!("Cursor created the task in its Agents window. Session: {session_id}")
                         }
                     },
+                    AgentKind::Antigravity => {
+                        super::task_launch::warn_when_unobserved(
+                            &state, session_id, &channel, &config, lang,
+                        );
+                        match lang {
+                            Lang::Zh => {
+                                format!("Antigravity 已在 App 创建任务。会话：{session_id}")
+                            }
+                            Lang::En => format!(
+                                "Antigravity created the task in its App. Session: {session_id}"
+                            ),
+                        }
+                    }
                     _ => format!("Codex App accepted the task. Session: {session_id}"),
                 }
             }

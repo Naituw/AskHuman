@@ -893,7 +893,7 @@ impl Flow<'_> {
         let mut ready_agents = Vec::new();
         let mut later_agents = Vec::new();
         for row in self.deps.scan() {
-            // An Agent with no way to start a task (Antigravity) is not part of the picture.
+            // An Agent family with no way to start a task is not part of the picture.
             if !AgentKind::parse(&row.id).is_some_and(agent_launch::launch_supported) {
                 continue;
             }

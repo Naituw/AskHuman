@@ -5,7 +5,7 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 
 use super::*;
 use crate::agents::model_catalog::{DefaultInfo, ModelEntry};
-use crate::codex_desktop::LaunchTarget;
+use crate::codex_desktop::{LaunchStatus, LaunchTarget};
 
 fn readiness(kind: AgentKind, ready: bool, executable: Option<&str>) -> AgentReadiness {
     AgentReadiness {
@@ -57,6 +57,21 @@ fn cursor_status(ready: bool) -> crate::cursor_desktop::LaunchStatus {
     }
 }
 
+/// Antigravity's route as the App alone gives it: it can start exactly when `ready` says so,
+/// whatever its CLI is.
+fn antigravity_status(ready: bool) -> crate::antigravity_desktop::LaunchStatus {
+    let target = ready.then_some(LaunchTarget::Desktop);
+    crate::antigravity_desktop::LaunchStatus {
+        preference: LaunchTarget::Desktop,
+        target,
+        desktop_available: ready,
+        terminal_available: false,
+        integrated: true,
+        desktop_reason: None,
+        terminal_reason: None,
+    }
+}
+
 fn runtime() -> Option<(PathBuf, PathBuf)> {
     Some((PathBuf::from("/app/codex"), PathBuf::from("/data/codex")))
 }
@@ -86,11 +101,19 @@ fn probes_of(readiness: Vec<AgentReadiness>, target: Option<LaunchTarget>) -> Ag
             .iter()
             .any(|item| item.kind == AgentKind::Cursor && item.ready),
     );
+    let antigravity = antigravity_status(
+        readiness
+            .iter()
+            .any(|item| item.kind == AgentKind::Antigravity && item.ready),
+    );
     AgentProbes {
         readiness,
-        codex: codex_status(target),
+        statuses: LaunchStatuses {
+            codex: codex_status(target),
+            cursor,
+            antigravity,
+        },
         codex_runtime: target.and(runtime()),
-        cursor,
     }
 }
 
@@ -123,6 +146,78 @@ fn a_list_is_read_from_the_executable_the_launch_would_use() {
     assert_eq!(source.executable, "/app/codex");
     assert_eq!(source.codex_home, Some(PathBuf::from("/data/codex")));
     assert!(catalog_source(AgentKind::Codex, Some("/bin/codex"), None).is_none());
+}
+
+#[test]
+fn antigravitys_list_comes_from_agy_when_there_is_one_and_from_the_aliases_when_not() {
+    let with_agy = catalog_source(AgentKind::Antigravity, Some("/bin/agy"), None).unwrap();
+    assert_eq!(with_agy.executable, "/bin/agy");
+    // The App route needs no `agy`: an empty executable stands for the documented aliases.
+    let without = catalog_source(AgentKind::Antigravity, None, None).unwrap();
+    assert_eq!(without.executable, "");
+    assert_eq!(without.kind, AgentKind::Antigravity);
+    assert_ne!(with_agy.cache_key(), without.cache_key());
+}
+
+#[test]
+fn antigravity_is_listed_when_its_app_can_start_it_whatever_its_cli_says() {
+    let probes = probes_of(
+        vec![
+            readiness(AgentKind::Antigravity, true, None),
+            readiness(AgentKind::Claude, true, Some("/bin/claude")),
+        ],
+        None,
+    );
+    let kinds: Vec<AgentKind> = catalog_sources(&probes).iter().map(|s| s.kind).collect();
+    assert_eq!(kinds, [AgentKind::Antigravity, AgentKind::Claude]);
+    // And not when neither route can.
+    let probes = probes_of(
+        vec![readiness(AgentKind::Antigravity, false, Some("/bin/agy"))],
+        None,
+    );
+    assert!(catalog_sources(&probes).is_empty());
+}
+
+#[test]
+fn antigravity_offers_models_but_no_permission_choice_yet() {
+    let probes = probes_of(
+        vec![
+            readiness(AgentKind::Antigravity, true, None),
+            readiness(AgentKind::Claude, true, Some("/bin/claude")),
+        ],
+        None,
+    );
+    let mut found = HashMap::new();
+    found.insert(
+        AgentKind::Antigravity,
+        Arc::new(catalog(vec![entry("flash", &[], None)])),
+    );
+    let options = agent_options(&probes, "ask", Lang::En, &found);
+    let by_kind = |kind: &str| options.iter().find(|o| o.kind == kind).unwrap();
+    let antigravity = by_kind("antigravity");
+    assert!(antigravity.ready);
+    // Models without an effort row.
+    let models = antigravity.models.as_ref().unwrap();
+    assert_eq!(models[0].id, "flash");
+    assert_eq!(models[0].efforts, None);
+    // The App route says so, and until its YOLO route exists the phone is not asked to choose.
+    assert!(!antigravity.permission_selectable);
+    assert!(by_kind("claude").permission_selectable);
+    assert!(antigravity.subtitle.contains("Antigravity"));
+}
+
+#[test]
+fn an_antigravity_that_cannot_start_says_why_from_its_own_routes() {
+    let probes = probes_of(
+        vec![readiness(AgentKind::Antigravity, false, Some("/bin/agy"))],
+        None,
+    );
+    let options = agent_options(&probes, "ask", Lang::En, &HashMap::new());
+    let antigravity = &options[0];
+    assert!(!antigravity.ready);
+    // The CLI's diagnostics are not the reason: the routes are.
+    assert_ne!(antigravity.reason.as_deref(), Some("not installed"));
+    assert!(antigravity.reason.is_some());
 }
 
 #[test]

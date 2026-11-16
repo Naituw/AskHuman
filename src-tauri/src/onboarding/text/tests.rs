@@ -1127,18 +1127,14 @@ fn the_question_lists_the_channels_and_agents_it_covers_with_the_set_up_ones_fir
         said.contains("Channels: iOS app, Slack; usable once set up: Telegram, DingTalk, Feishu"),
         "{said}"
     );
-    // Step 1 just connected Cursor and Claude Code.
+    // Step 1 just connected Cursor and Claude Code. Every family can start a task now, Antigravity
+    // included (through its App), so none is left out of the picture.
     assert!(
-        said.contains("Agents: Cursor, Claude Code; usable once connected: Codex, Grok, Pi"),
+        said.contains(
+            "Agents: Cursor, Claude Code; usable once connected: Codex, Grok, Antigravity, Pi"
+        ),
         "{said}"
     );
-    // Antigravity has no way to start a task, so it is not part of the picture.
-    let agents_line = io
-        .said
-        .iter()
-        .find(|line| line.contains("usable once connected"))
-        .expect("the Agents line");
-    assert!(!agents_line.contains("Antigravity"), "{agents_line}");
 }
 
 #[test]
@@ -1159,7 +1155,7 @@ fn allowing_agent_tasks_does_not_wait_for_an_agent_or_a_channel() {
     );
     assert!(
         said.contains(
-            "Agents: none yet; usable once connected: Cursor, Claude Code, Codex, Grok, Pi"
+            "Agents: none yet; usable once connected: Cursor, Claude Code, Codex, Grok, Antigravity, Pi"
         ),
         "{said}"
     );
@@ -1409,7 +1405,7 @@ fn the_agent_task_question_speaks_chinese_when_asked_to() {
         "{said}"
     );
     assert!(
-        said.contains("Agent： Cursor、Claude Code；接入后可用：Codex、Grok、Pi"),
+        said.contains("Agent： Cursor、Claude Code；接入后可用：Codex、Grok、Antigravity、Pi"),
         "{said}"
     );
     assert!(

@@ -16,10 +16,10 @@ use super::*;
 use crate::agents::model_catalog::cache::{CatalogCache, CATALOG_TTL, FAILURE_RETRY};
 use crate::agents::model_catalog::source::{self, CatalogSource};
 use crate::agents::model_catalog::{resolve_choice, AgentCatalog, ModelChoice};
-use crate::codex_desktop::{LaunchStatus, LaunchTarget};
+use crate::codex_desktop::LaunchTarget;
 use crate::config::AgentTaskPermission;
 use crate::integrations::agent_launch::{self, AgentReadiness, LaunchPermission, LaunchRecord};
-use crate::integrations::agent_start;
+use crate::integrations::agent_start::{self, LaunchStatuses};
 use crate::ios::gateway::{TaskChoices, TaskLaunch, TodoChoices};
 use crate::ios::wire::{
     AgentOption, DefaultModel, ModelOption, TaskOptions, TodoOption, WorkspaceOption,
@@ -93,37 +93,36 @@ fn parent_label(path: &str) -> String {
 /// What the probes of the installed Agents found.
 struct AgentProbes {
     readiness: Vec<AgentReadiness>,
-    codex: LaunchStatus,
+    /// Where a task started now would run, for the families with a route besides the CLI: Codex's
+    /// App, Cursor's Agents window and Antigravity's App.
+    statuses: LaunchStatuses,
     /// The Codex executable and data directory a task started now would run on.
     codex_runtime: Option<(PathBuf, PathBuf)>,
-    /// Where a Cursor task started now would run: the CLI or the Agents window.
-    cursor: crate::cursor_desktop::LaunchStatus,
 }
 
 fn probe_agents() -> AgentProbes {
-    // Families that cannot launch at all (Antigravity) never appear on the phone, not even as a
-    // card that stays "not ready" with a reason the user cannot act on.
+    // Families that cannot launch at all never appear on the phone, not even as a card that
+    // stays "not ready" with a reason the user cannot act on.
     let readiness = agent_launch::launchable_readiness();
-    let codex = crate::codex_desktop::launch_status(false);
+    let statuses = LaunchStatuses::read();
     let terminal_codex = readiness
         .iter()
         .find(|item| item.kind == AgentKind::Codex)
         .and_then(|item| item.executable.clone());
-    let codex_runtime = codex.target.and_then(|target| {
+    let codex_runtime = statuses.codex.target.and_then(|target| {
         crate::codex_desktop::catalog_runtime(target, terminal_codex.as_deref())
     });
     AgentProbes {
         readiness,
-        codex,
+        statuses,
         codex_runtime,
-        cursor: crate::cursor_desktop::launch_status(false),
     }
 }
 
 /// Whether a task can be started on this Agent right now: the one rule every surface shares
 /// (`agent_start`), judged here from the probes already taken.
 fn is_ready(item: &AgentReadiness, probes: &AgentProbes) -> bool {
-    agent_start::startable(item, &probes.codex, &probes.cursor)
+    agent_start::startable(item, &probes.statuses)
 }
 
 /// Where the model list of `kind` is read from: the executable the launch would use. Codex is
@@ -139,6 +138,14 @@ fn catalog_source(
             kind,
             executable: executable.to_string_lossy().into_owned(),
             codex_home: Some(home.clone()),
+        });
+    }
+    if kind == AgentKind::Antigravity {
+        // The App route does not need `agy`: without it the three documented aliases are offered.
+        return Some(CatalogSource {
+            kind,
+            executable: executable.unwrap_or_default().to_string(),
+            codex_home: None,
         });
     }
     Some(CatalogSource {
@@ -254,26 +261,31 @@ fn agent_options(
         .iter()
         .map(|item| {
             let is_codex = item.kind == AgentKind::Codex;
+            let is_antigravity = item.kind == AgentKind::Antigravity;
             // Cursor says so only when its Agents window is involved; the terminal route keeps
             // the words it always had.
             let cursor_desktop = item.kind == AgentKind::Cursor
-                && (probes.cursor.target == Some(LaunchTarget::Desktop)
-                    || probes.cursor.preference == LaunchTarget::Desktop);
+                && (probes.statuses.cursor.target == Some(LaunchTarget::Desktop)
+                    || probes.statuses.cursor.preference == LaunchTarget::Desktop);
             let ready = is_ready(item, probes);
             let subtitle = if is_codex {
-                probes.codex.description(lang)
+                probes.statuses.codex.description(lang)
+            } else if is_antigravity {
+                probes.statuses.antigravity.description(lang)
             } else if cursor_desktop {
-                probes.cursor.description(lang)
+                probes.statuses.cursor.description(lang)
             } else {
                 item.integration_mode.clone()
             };
             let reason = (!ready).then(|| {
-                // Both of these have a route besides the CLI, so "not ready" is explained by
-                // their routes, not by the CLI's diagnostics alone.
+                // These have a route besides the CLI, so "not ready" is explained by their
+                // routes, not by the CLI's diagnostics alone.
                 let reason = if is_codex {
-                    probes.codex.description(lang)
+                    probes.statuses.codex.description(lang)
+                } else if is_antigravity {
+                    probes.statuses.antigravity.description(lang)
                 } else if item.kind == AgentKind::Cursor {
-                    probes.cursor.description(lang)
+                    probes.statuses.cursor.description(lang)
                 } else {
                     item.diagnostics.first().cloned().unwrap_or_default()
                 };
@@ -295,8 +307,9 @@ fn agent_options(
                 label: item.label.clone(),
                 ready,
                 subtitle,
-                // Pi has no permission step; otherwise the Mac decides whether the user is asked.
-                permission_selectable: item.kind != AgentKind::Pi && mode == "ask",
+                // Pi has no permission step, and Antigravity none until its YOLO route exists;
+                // otherwise the Mac decides whether the user is asked.
+                permission_selectable: agent_launch::permission_choice(item.kind) && mode == "ask",
                 reason: reason.filter(|reason| !reason.is_empty()),
                 models,
                 default_model,
@@ -351,9 +364,8 @@ pub(super) async fn choices(state: &Arc<ServerState>) -> TaskChoices {
     let workspaces = workspaces.unwrap_or_default();
     let probes = probes.unwrap_or_else(|_| AgentProbes {
         readiness: Vec::new(),
-        codex: crate::codex_desktop::launch_status(false),
+        statuses: LaunchStatuses::read(),
         codex_runtime: None,
-        cursor: crate::cursor_desktop::launch_status(false),
     });
     if workspaces.is_empty() {
         return TaskChoices::blocked(mode, "noWorkspace");
@@ -374,7 +386,7 @@ pub(super) async fn choices(state: &Arc<ServerState>) -> TaskChoices {
         apply_max_hints(
             &mut agents,
             hints.as_ref(),
-            if probes.cursor.target == Some(LaunchTarget::Desktop) {
+            if probes.statuses.cursor.target == Some(LaunchTarget::Desktop) {
                 crate::agents::cursor_max::Target::Desktop
             } else {
                 crate::agents::cursor_max::Target::Cli

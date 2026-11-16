@@ -179,6 +179,86 @@ async fn start_cursor_desktop(task: CursorDesktopTask) -> Result<serde_json::Val
     .map_err(StartError::Message)
 }
 
+/// What a task in the Antigravity App needs.
+struct AntigravityDesktopTask {
+    workspace: String,
+    /// The task with its attachments named in it, as the terminal path words them.
+    text: String,
+    permission: &'static str,
+    id: String,
+    model: Option<String>,
+}
+
+/// Creates the task in the Antigravity App through the folder's sidecar. The answer carries the
+/// conversation id as `sessionId`, so the asker can be paired with it at once.
+async fn start_antigravity_desktop(
+    task: AntigravityDesktopTask,
+) -> Result<serde_json::Value, StartError> {
+    crate::antigravity_desktop::execute(crate::antigravity_desktop::Operation::Create(
+        crate::antigravity_desktop::CreateRequest {
+            cwd: task.workspace,
+            text: task.text,
+            permission: task.permission.into(),
+            id: task.id,
+            model: task.model,
+            title: None,
+            dry_run: false,
+        },
+    ))
+    .await
+    .map_err(StartError::Message)
+}
+
+/// Registers a conversation the Antigravity App just created, under its own id, so a watch can
+/// start before the first hook arrives; the hooks then find the record and carry on from it.
+fn register_app_session(state: &Arc<ServerState>, session_id: &str, workspace: &str) {
+    if state.agents.apply_event(
+        AgentKind::Antigravity,
+        LifecycleEvent::TurnStart,
+        session_id,
+        None,
+        Some(workspace.to_string()),
+        0,
+    ) {
+        state.agents.persist();
+        broadcast_agents_state(state);
+    }
+}
+
+/// How long a task the App created may stay silent before its asker is told.
+const NO_HOOK_WARNING: Duration = Duration::from_secs(60);
+
+/// Tells `channel` when the conversation the Antigravity App created has not reported through
+/// AskHuman's hooks within a minute: the task keeps running, but watching it, confirming its stop
+/// and answering it need the hooks, which means the plugin did not take effect in that
+/// conversation (docs/specs/im-agent-task-launch.md D22).
+pub(super) fn warn_when_unobserved(
+    state: &Arc<ServerState>,
+    session_id: &str,
+    channel: &str,
+    config: &AppConfig,
+    lang: crate::i18n::Lang,
+) {
+    let state = state.clone();
+    let config = config.clone();
+    let session_id = session_id.to_string();
+    let channel = channel.to_string();
+    tokio::spawn(async move {
+        tokio::time::sleep(NO_HOOK_WARNING).await;
+        if state
+            .agents
+            .has_transcript(AgentKind::Antigravity, &session_id)
+        {
+            return;
+        }
+        let text = match lang {
+            crate::i18n::Lang::Zh => "任务已在 Antigravity 创建，但 60 秒内没有收到该会话的 hook，无法实时关注进度；任务不会被终止。请确认 AskHuman 插件在 Antigravity 中已启用。",
+            crate::i18n::Lang::En => "The task was created in Antigravity, but no hook from that conversation arrived within 60 seconds, so its progress cannot be watched live. The task was not stopped. Check that the AskHuman plugin is enabled in Antigravity.",
+        };
+        let _ = reply_channel_text(&channel, &config, text).await;
+    });
+}
+
 /// Starts the task. `on_pending` runs for a terminal launch right before the window opens, with
 /// the record the Agent's first session event will be matched against; when the window cannot be
 /// opened the registration is dropped again.
@@ -233,6 +313,21 @@ pub(super) async fn start_task(
             LaunchPermission::AgentDefault => "agent-default",
             LaunchPermission::Yolo => "yolo",
         };
+        if kind == AgentKind::Antigravity {
+            let answer = start_antigravity_desktop(AntigravityDesktopTask {
+                workspace: workspace.clone(),
+                text: agent_launch::task_with_attachments(&task, &delivery.files, &[]),
+                permission,
+                id: delivery_request_id.clone(),
+                model: choice.model,
+            })
+            .await?;
+            if let Some(session_id) = answer["sessionId"].as_str() {
+                register_app_session(state, session_id, &workspace);
+            }
+            take_todo();
+            return Ok(Started::Desktop(answer));
+        }
         if kind == AgentKind::Cursor {
             let answer = start_cursor_desktop(CursorDesktopTask {
                 workspace,

@@ -374,6 +374,17 @@ impl AgentRegistry {
         cache.retain(|(sid, _), _| sid != session_id);
     }
 
+    /// Whether a hook has reported this session with the path of its transcript. A record made
+    /// ahead of the first hook (a task an app just created) has not been reported yet.
+    pub fn has_transcript(&self, kind: AgentKind, session_id: &str) -> bool {
+        let inner = self.inner.lock().unwrap();
+        inner.active.iter().chain(inner.ended.iter()).any(|record| {
+            record.kind == kind
+                && record.session_id == session_id
+                && record.transcript_path.is_some()
+        })
+    }
+
     /// Retain an already validated transcript path and invalidate the lazily cached title.
     pub fn set_transcript_path(&self, kind: AgentKind, session_id: &str, path: String) -> bool {
         let mut inner = self.inner.lock().unwrap();
@@ -2971,6 +2982,26 @@ mod tests {
 
     fn secs(base: Instant, n: u64) -> Instant {
         base + Duration::from_secs(n)
+    }
+
+    #[test]
+    fn a_session_made_ahead_of_its_first_hook_has_no_transcript_until_one_reports() {
+        let r = reg();
+        // An app created the conversation: registered under its id before any hook ran.
+        r.apply_event(
+            AgentKind::Antigravity,
+            LifecycleEvent::TurnStart,
+            "conv-1",
+            None,
+            Some("/work/app".into()),
+            0,
+        );
+        assert!(!r.has_transcript(AgentKind::Antigravity, "conv-1"));
+        assert!(r.set_transcript_path(AgentKind::Antigravity, "conv-1", "/t/transcript".into()));
+        assert!(r.has_transcript(AgentKind::Antigravity, "conv-1"));
+        // Another family's session of the same id, and an unknown one, have none.
+        assert!(!r.has_transcript(AgentKind::Codex, "conv-1"));
+        assert!(!r.has_transcript(AgentKind::Antigravity, "other"));
     }
 
     fn title_of(r: &AgentRegistry, kind: AgentKind, session_id: &str) -> Option<String> {
