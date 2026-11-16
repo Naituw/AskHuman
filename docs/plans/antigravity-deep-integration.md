@@ -301,6 +301,9 @@ F 权限接管与 Fork（规格 §13）；H 上下文恢复 Hook 与原生 `ask_
   1. **推送**：`7e5887cc..87db385f` main → main，共 32 个本任务提交，连同另一会话的 `bcf77897`（fix(cursor)）。
   2. **Watch 显示 `thinking` 文本**：`18ba9d96`。`transcript_full.rs` 的 `PLANNER_RESPONSE` 先出一条带标签的 `Thinking`，再出正文与工具；`activity.rs` 把正文与思考分成两个取值函数，思考不进活动事件；
      夹具里给 3 个步骤加了 `thinking`（其中 1 个是 GENERATING，必须不显示）；新增 2 个测试（超长思考保留末尾、纯空白思考不出）。规格 §4.6 / §11 / V17 / §18 / §20、`agent-observation-latest-text.md`、`antigravity.md`、两份 wiki、`PROGRESS.md` 同步。
+     整库验证（在 `18ba9d96` 之上，工作区里还带着另一会话未提交的 iOS / 弹窗改动）：`cargo fmt --check`、`cargo clippy --all-targets -- -D warnings`、`cargo test`（3389 通过、0 失败、12 忽略）、`vitest run`（133 个文件、1888 个测试）、`vue-tsc --noEmit` 全部通过。
+     安装：日常版在 20:46:43 被另一会话重装过，编译时源码已含 `18ba9d96`，daemon 已换成那份（fp `dac157bc`、协议 6），所以 thinking 已在日常版里；GUI host 要等没有窗口才换。
+     我没有再装——主工作区有另一会话未提交的改动（含 `src/views/popup/usePopupCore.ts`），按计划评审时的约定不在这种情况下装日常版。外观要在非低档 Flash 的会话里肉眼看（低档没有 `thinking`）。
   3. **权限接管（F）复核**：用户问「有没有可行的方案」。结论：**公开接口里有**——`PreToolUse` 的 `decision: "auto_approve"`（官网文档、`agy` 1.5.7 更新日志都有，App / `agy` 二进制里都有该字符串），我 G1 时只测了 `allow` / `permissionOverrides` / `overwrite`，没测它。
      `agy` 1.5.9 无头实测（规格 §13.1.1 的 T1–T10、附录 A.7）：`auto_approve` 批准了默认策略会自动拒绝的读与 shell 命令，`deny` + `reason` 把理由交给模型，显式 `ask` / `deny` 规则优先，hook 阻塞 125 秒后照常执行，超时被杀则工具失败（fail-closed）。
      **App 2.32.1 与 TUI 没测**（门 G5）。**这不改变已批准的范围**：规格 §13.1 的「本版不做」照旧，只补了事实与设计草图，是否立项（P5）待用户决定。
