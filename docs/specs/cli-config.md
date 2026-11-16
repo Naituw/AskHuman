@@ -45,7 +45,7 @@ Windows named-pipe daemon 已在平台对齐项目落地；本命令面在 macOS
 - `agents permission <claude|codex> [on|off]` —— 查询或设置独立 PermissionRequest 审批 capability。
 - `agents lifecycle <agent> [on|off]` —— 查询或设置 active 自动集成内的生命周期追踪 capability；
   None 下 `on` 拒绝，`off` 可记录偏好并清理残留。
-- `agents stop <claude|codex|cursor|pi> [on|off]` —— 查询或设置自然 Stop 时的结束确认；Pi 默认开，Grok 不支持。
+- `agents stop <claude|codex|cursor|grok|pi|antigravity> [on|off]` —— 查询或设置自然 Stop 时的结束确认；Pi 默认开，其余默认关。
 - `agents delegated codex [on|off]` —— 查询或设置「允许被委派的 Codex 运行（`codex exec` / `e` / `review`、插件与脚本经 app-server
   启动的线程）使用 AskHuman」。**默认 `off`（静默，与未集成一致）**；`on` = 允许。纯偏好（`delegated-preferences.json`），
   不改任何 hook，只影响之后新启动的运行；设置后打印一行提示。仅 codex 支持，其它 agent 报用法错误。规则见

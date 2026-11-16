@@ -433,8 +433,8 @@ fn stop_cmd(args: &[String], lang: Lang) -> Result<(), String> {
     let agent = args.first().ok_or_else(|| {
         cfgio::t(
             lang,
-            "usage: agents stop <claude|codex|cursor|grok|pi> [on|off]",
-            "用法: agents stop <claude|codex|cursor|grok|pi> [on|off]",
+            "usage: agents stop <claude|codex|cursor|grok|pi|antigravity> [on|off]",
+            "用法: agents stop <claude|codex|cursor|grok|pi|antigravity> [on|off]",
         )
     })?;
     if args.len() > 2 {
@@ -445,8 +445,8 @@ fn stop_cmd(args: &[String], lang: Lang) -> Result<(), String> {
     if !agent_stop::supported(kind) {
         return Err(cfgio::t(
             lang,
-            "Completion/error confirmation is supported for claude, codex, cursor, grok, and pi",
-            "结束／出错确认支持 claude、codex、cursor、grok 与 pi",
+            "Completion/error confirmation is supported for claude, codex, cursor, grok, pi, and antigravity",
+            "结束／出错确认支持 claude、codex、cursor、grok、pi 与 antigravity",
         ));
     }
     if let Some(value) = args.get(1) {
@@ -884,7 +884,7 @@ fn help(lang: Lang) -> String {
   agents mode codex mcp [--env NAME=VALUE] Repeatable; merge explicit environment overrides\n\
   agents update [<agent>]            Refresh each current mode's complete managed bundle\n\
   agents permission <claude|codex> [on|off]  Query or set permission approval\n\
-  agents stop <claude|codex|cursor|grok|pi> [on|off]  Query or set completion/error confirmation\n\
+  agents stop <claude|codex|cursor|grok|pi|antigravity> [on|off]  Query or set completion/error confirmation\n\
   agents delegated codex [on|off]    Query or set whether delegated Codex runs (codex exec, review, plugins) may use AskHuman (on = allow; default off = silent)\n\
   agents lifecycle <agent> [on|off]  Query or set lifecycle tracking inside an active integration\n\
   agents cleanup                     Remove every AskHuman-managed Agent artifact\n\
@@ -904,7 +904,7 @@ fn help(lang: Lang) -> String {
   agents mode codex mcp [--env NAME=VALUE] 可重复，合并显式环境变量\n\
   agents update [<agent>]            更新当前模式的完整托管产物包\n\
   agents permission <claude|codex> [on|off]  查询或设置权限审批\n\
-  agents stop <claude|codex|cursor|grok|pi> [on|off]  查询或设置结束／出错确认\n\
+  agents stop <claude|codex|cursor|grok|pi|antigravity> [on|off]  查询或设置结束／出错确认\n\
   agents delegated codex [on|off]    查询或设置被委派的 Codex 运行（codex exec、review、插件等）是否可使用 AskHuman（on = 允许；默认 off = 静默）\n\
   agents lifecycle <agent> [on|off]  查询或设置已启用集成内的生命周期追踪\n\
   agents cleanup                     移除全部由 AskHuman 托管的 Agent 产物\n\
