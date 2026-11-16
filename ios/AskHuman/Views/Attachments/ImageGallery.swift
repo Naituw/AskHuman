@@ -40,10 +40,12 @@ struct ImageGalleryViewer: View {
             // window (the quick-add page) keeps resizing that container, the paging never settles, and the
             // app stops answering.
             //
-            // The picture itself is laid out clear of what lies over the sheet, so that its top is not behind the bar
-            // (or the status bar and the island, where the sheet runs up to them): a tall picture would otherwise
-            // reach them. The insets are read from the outer reader, which stays inside the safe area; the inner
-            // one ignores it (and so is told there is none), and it is the one that sizes the pages. Only the top
+            // A picture rests clear of what lies over the sheet, so that its top is not behind the bar (or the status
+            // bar and the island, where the sheet runs up to them): a tall picture would otherwise reach them. The page
+            // is still the whole sheet, so a zoomed picture can be dragged out under the bar instead of being cut off at
+            // its lower edge: the insets are handed to the picture (`AssetPage.clear`), which keeps them as the content
+            // inset of its scroll view. The insets are read from the outer reader, which stays inside the safe area; the
+            // inner one ignores it (and so is told there is none), and it is the one that sizes the pages. Only the top
             // and the sides are read: the bottom is where a keyboard from another window shows up, and a page must
             // not follow it, so the outer reader ignores the bottom altogether (nothing in the size of a page
             // depends on the keyboard).
@@ -57,8 +59,7 @@ struct ImageGalleryViewer: View {
                         ScrollView(.horizontal) {
                             HStack(spacing: 0) {
                                 ForEach(Array(images.enumerated()), id: \.element.assetId) { index, asset in
-                                    AssetPage(macId: macId, asset: asset, near: abs(index - position) <= 1) { arrived[asset.assetId] = $0 }
-                                        .padding(clear)
+                                    AssetPage(macId: macId, asset: asset, near: abs(index - position) <= 1, clear: clear) { arrived[asset.assetId] = $0 }
                                         .frame(width: viewport.size.width, height: viewport.size.height)
                                         .id(asset.assetId)
                                 }
@@ -78,6 +79,7 @@ struct ImageGalleryViewer: View {
                 .accessibilityIdentifier("image-gallery")
             }
             .ignoresSafeArea(edges: .bottom)
+            .modifier(BarOverPicture())
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
@@ -108,6 +110,19 @@ struct ImageGalleryViewer: View {
                     .accessibilityLabel(String(localized: "Image \(position + 1) of \(images.count)"))
                     .accessibilityIdentifier("gallery-position")
             }
+        }
+    }
+}
+
+/// The top bar over a picture that has been dragged under it. From iOS 26 the system softens the picture where it runs
+/// under the bar (the scroll edge effect) and puts glass buttons on top. Before, the bar is clear over whatever lies
+/// behind it, which would print the name and the buttons straight over the picture: it gets the bar's material.
+private struct BarOverPicture: ViewModifier {
+    func body(content: Content) -> some View {
+        if #available(iOS 26, *) {
+            content
+        } else {
+            content.toolbarBackground(.visible, for: .navigationBar)
         }
     }
 }
