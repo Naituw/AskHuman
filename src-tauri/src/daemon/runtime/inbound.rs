@@ -1043,6 +1043,11 @@ pub(super) async fn continue_task_picker(
             }
             match config.agent_tasks.permission_prompt {
                 crate::config::AgentTaskPermission::Ask => {
+                    // In the Antigravity App "Agent default" is the folder's whitelist, which is
+                    // not what the words say anywhere else, so the card says what it means.
+                    let in_app = kind == AgentKind::Antigravity
+                        && crate::antigravity_desktop::launch_status(false).target
+                            == Some(crate::codex_desktop::LaunchTarget::Desktop);
                     let options = vec![
                         crate::select::SelectOption {
                             id: "agent-default".into(),
@@ -1056,9 +1061,15 @@ pub(super) async fn continue_task_picker(
                             badge: None,
                             elapsed: None,
                             secondary: Some(
-                                match lang {
-                                    Lang::Zh => "不附加权限覆盖参数",
-                                    Lang::En => "Do not override Agent permissions",
+                                match (in_app, lang) {
+                                    (true, Lang::Zh) => {
+                                        "只做该文件夹已允许的操作，其余自动拒绝"
+                                    }
+                                    (true, Lang::En) => {
+                                        "Only what the folder allows; anything else is declined"
+                                    }
+                                    (false, Lang::Zh) => "不附加权限覆盖参数",
+                                    (false, Lang::En) => "Do not override Agent permissions",
                                 }
                                 .into(),
                             ),
@@ -1077,9 +1088,15 @@ pub(super) async fn continue_task_picker(
                             ),
                             elapsed: None,
                             secondary: Some(
-                                match lang {
-                                    Lang::Zh => "自动批准操作并绕过沙箱限制",
-                                    Lang::En => {
+                                match (in_app, lang) {
+                                    (true, Lang::Zh) => {
+                                        "为该文件夹建一个宽授权 sidecar：命令、读写文件、联网都不再询问"
+                                    }
+                                    (true, Lang::En) => {
+                                        "Makes a wide-grant sidecar for the folder: commands, file access and the network are not asked about"
+                                    }
+                                    (false, Lang::Zh) => "自动批准操作并绕过沙箱限制",
+                                    (false, Lang::En) => {
                                         "Auto-approve operations and bypass sandbox restrictions"
                                     }
                                 }

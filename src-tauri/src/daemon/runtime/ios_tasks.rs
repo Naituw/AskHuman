@@ -307,8 +307,7 @@ fn agent_options(
                 label: item.label.clone(),
                 ready,
                 subtitle,
-                // Pi has no permission step, and Antigravity none until its YOLO route exists;
-                // otherwise the Mac decides whether the user is asked.
+                // Pi has no permission step; otherwise the Mac decides whether the user is asked.
                 permission_selectable: agent_launch::permission_choice(item.kind) && mode == "ask",
                 reason: reason.filter(|reason| !reason.is_empty()),
                 models,

@@ -831,7 +831,7 @@ export interface CursorLaunchStatus {
 }
 export const cursorLaunchStatus = (force = false) => invoke<CursorLaunchStatus>("cursor_launch_status", {force});
 
-export type AntigravityUnavailableReason = "unsupportedPlatform" | "devInstance" | "appNotInstalled" | "integrationDisabled" | "mcpModeRequired" | "pluginDisabled" | "sidecarsNotAllowed" | "yoloUnsupported" | "cliNotDetected" | "cliIntegrationNotConfigured" | "cliTrackingDisabled" | "cliTrackingNeedsUpdate" | "cliTrackingNotConfigured" | "terminalUnavailable" | "cliLaunchNotAvailable";
+export type AntigravityUnavailableReason = "unsupportedPlatform" | "devInstance" | "appNotInstalled" | "integrationDisabled" | "mcpModeRequired" | "pluginDisabled" | "sidecarsNotAllowed" | "cliNotDetected" | "cliIntegrationNotConfigured" | "cliTrackingDisabled" | "cliTrackingNeedsUpdate" | "cliTrackingNotConfigured" | "terminalUnavailable";
 /** Where a new Antigravity task would run: the App through a folder's sidecar, or `agy` in a terminal. */
 export interface AntigravityLaunchStatus {
   preference: "desktop" | "terminal";

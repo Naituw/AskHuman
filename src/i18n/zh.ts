@@ -1692,7 +1692,7 @@ export default {
     cursorWindowNote: "提交后将在 Cursor 的 Agents 窗口里创建会话并自动发送任务。",
     antigravityAppNote: "提交后将在 Antigravity App 里创建会话并自动发送任务。",
     antigravityPermissionHint:
-      "Antigravity 任务只按该文件夹已允许的操作运行：AskHuman 自己的工具，以及你在「设置 → Agents → Antigravity」里为该文件夹添加的规则；其余操作会被自动拒绝。",
+      "在 Antigravity App 里，「Agent 默认」只让任务做该文件夹已允许的操作：AskHuman 自己的工具，以及你在「设置 → Agents → Antigravity」里为该文件夹添加的规则，其余会被自动拒绝。YOLO 会为该文件夹建一个宽授权的 sidecar（App 里显示「YOLO」），任务不再询问。",
     tooLong: "任务超过 3000 字符（当前 {n}）",
     launchFailed: "启动失败：{e}",
     todoMissing: "该待办已被删除；启动将使用其原文快照。",
@@ -1822,14 +1822,12 @@ export default {
         mcpModeRequired: "App 路径需要 MCP 模式（App 的沙箱不允许命令行模式）",
         pluginDisabled: "AskHuman 插件已在 Antigravity 中停用",
         sidecarsNotAllowed: "尚未允许 AskHuman 管理 Antigravity sidecar（请在设置中开启）",
-        yoloUnsupported: "Antigravity 暂不支持 YOLO 启动：请把「权限选择」改成「每次询问」或「总是 Agent 默认」",
         cliNotDetected: "未检测到 agy 命令行",
         cliIntegrationNotConfigured: "CLI 的 AskHuman 集成未配置",
         cliTrackingDisabled: "CLI 的生命周期追踪未启用",
         cliTrackingNeedsUpdate: "CLI 的生命周期追踪需要更新",
         cliTrackingNotConfigured: "CLI 的生命周期追踪未配置",
         terminalUnavailable: "系统终端不可用",
-        cliLaunchNotAvailable: "暂未开放用终端（agy）启动任务",
       },
     },
     sidecars: {

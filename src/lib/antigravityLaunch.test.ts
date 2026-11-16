@@ -12,7 +12,7 @@ function status(patch: Partial<AntigravityLaunchStatus>): AntigravityLaunchStatu
     desktopAvailable: true,
     terminalAvailable: false,
     desktopReason: null,
-    terminalReason: "cliLaunchNotAvailable",
+    terminalReason: "cliNotDetected",
     integrated: true,
     ...patch,
   };
@@ -57,8 +57,8 @@ it("has a Chinese sentence for every reason the backend can give", () => {
   i18n.global.locale.value = "zh";
   const reasons = [
     "unsupportedPlatform", "devInstance", "appNotInstalled", "integrationDisabled", "mcpModeRequired", "pluginDisabled",
-    "sidecarsNotAllowed", "yoloUnsupported", "cliNotDetected", "cliIntegrationNotConfigured", "cliTrackingDisabled",
-    "cliTrackingNeedsUpdate", "cliTrackingNotConfigured", "terminalUnavailable", "cliLaunchNotAvailable",
+    "sidecarsNotAllowed", "cliNotDetected", "cliIntegrationNotConfigured", "cliTrackingDisabled",
+    "cliTrackingNeedsUpdate", "cliTrackingNotConfigured", "terminalUnavailable",
   ] as const;
   for (const reason of reasons) {
     const text = t(`antigravityDesktop.launch.reasons.${reason}`);

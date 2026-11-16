@@ -342,6 +342,9 @@ fn prune(dir: &Path, keep: Duration) {
 struct Valid {
     /// The canonical project folder.
     directory: PathBuf,
+    /// Which sidecar of the folder the task goes through: its whitelist, or the one that grants
+    /// everything when the task is YOLO.
+    kind: sidecar::Kind,
     title: Option<String>,
     fingerprint: String,
 }
@@ -374,12 +377,13 @@ fn validate(request: &Request) -> Result<Valid, Problem> {
     if id.hyphenated().to_string() != request.id {
         return Err(invalid("Invalid operation ID"));
     }
-    match request.permission.as_str() {
-        "agent-default" => {}
-        // Not started yet by either route (docs/specs/antigravity-deep-integration.md §12.4).
-        "yolo" => return Err(Problem::Unavailable(UnavailableReason::YoloUnsupported)),
+    let kind = match request.permission.as_str() {
+        "agent-default" => sidecar::Kind::Workspace,
+        // The permission card of `/new` is the confirmation; the sidecar says what it grants
+        // (docs/specs/antigravity-deep-integration.md §12.4, D14).
+        "yolo" => sidecar::Kind::Yolo,
         _ => return Err(invalid("Unknown permission mode")),
-    }
+    };
     let given = Path::new(&request.cwd);
     if !given.is_absolute() {
         return Err(invalid("The project folder must be an absolute path"));
@@ -410,6 +414,7 @@ fn validate(request: &Request) -> Result<Valid, Problem> {
     );
     Ok(Valid {
         directory,
+        kind,
         title,
         fingerprint,
     })
@@ -429,8 +434,12 @@ pub(super) struct Created {
 pub(super) trait Backend {
     /// Why the App route cannot be used now, if so.
     async fn unavailable(&self) -> Option<UnavailableReason>;
-    /// Makes the folder's sidecar exist and switches it on; returns its id.
-    async fn ensure_sidecar(&self, directory: &Path) -> Result<(String, Change), Problem>;
+    /// Makes the folder's sidecar of `kind` exist and switches it on; returns its id.
+    async fn ensure_sidecar(
+        &self,
+        directory: &Path,
+        kind: sidecar::Kind,
+    ) -> Result<(String, Change), Problem>;
     /// Whether the App is running; `None` when that cannot be told.
     async fn app_running(&self) -> Option<bool>;
     /// Starts the App without bringing it to the front.
@@ -487,7 +496,7 @@ pub(super) async fn execute_with<B: Backend>(
     receipt.value["failure"] = Value::Null;
     receipt.set(Stage::Prepared)?;
     let started = Instant::now();
-    let (sidecar_id, change) = backend.ensure_sidecar(&valid.directory).await?;
+    let (sidecar_id, change) = backend.ensure_sidecar(&valid.directory, valid.kind).await?;
     let mut app_started = false;
     if backend.app_running().await == Some(false) {
         backend.start_app().await.map_err(Problem::AppNotStarted)?;
@@ -594,18 +603,22 @@ pub(super) struct Live;
 impl Backend for Live {
     async fn unavailable(&self) -> Option<UnavailableReason> {
         let app = crate::config::AppConfig::load_without_secrets();
-        let yolo = app.agent_tasks.permission_prompt == crate::config::AgentTaskPermission::Yolo;
-        launch::desktop_reason(launch::static_facts(&app.antigravity_desktop, yolo))
+        launch::desktop_reason(launch::static_facts(&app.antigravity_desktop))
     }
 
-    async fn ensure_sidecar(&self, directory: &Path) -> Result<(String, Change), Problem> {
+    async fn ensure_sidecar(
+        &self,
+        directory: &Path,
+        kind: sidecar::Kind,
+    ) -> Result<(String, Change), Problem> {
         let directory = directory.to_path_buf();
         tokio::task::spawn_blocking(move || {
             let executable = super::executable().map_err(|error| problem_of(&error))?;
-            sidecar::ensure_workspace(
+            sidecar::ensure_folder(
                 &sidecar::Layout::current(),
                 &executable,
                 &directory,
+                kind,
                 &sidecar::attachment_roots(),
                 super::now_ms(),
             )
@@ -713,6 +726,8 @@ mod tests {
     struct Fake {
         unavailable: Option<UnavailableReason>,
         ensure: Mutex<VecDeque<Result<(String, Change), Problem>>>,
+        /// The kind of sidecar each `ensure_sidecar` call asked for.
+        kinds: Mutex<Vec<sidecar::Kind>>,
         app_running: Option<bool>,
         start_error: Option<String>,
         online: Mutex<VecDeque<bool>>,
@@ -726,6 +741,7 @@ mod tests {
             Self {
                 unavailable: None,
                 ensure: Mutex::new(VecDeque::new()),
+                kinds: Mutex::new(Vec::new()),
                 app_running: Some(true),
                 start_error: None,
                 online: Mutex::new(VecDeque::new()),
@@ -755,8 +771,13 @@ mod tests {
             self.unavailable
         }
 
-        async fn ensure_sidecar(&self, _: &Path) -> Result<(String, Change), Problem> {
+        async fn ensure_sidecar(
+            &self,
+            _: &Path,
+            kind: sidecar::Kind,
+        ) -> Result<(String, Change), Problem> {
             self.note("ensure");
+            self.kinds.lock().unwrap().push(kind);
             self.ensure
                 .lock()
                 .unwrap()
@@ -856,7 +877,11 @@ mod tests {
             async fn unavailable(&self) -> Option<UnavailableReason> {
                 None
             }
-            async fn ensure_sidecar(&self, _: &Path) -> Result<(String, Change), Problem> {
+            async fn ensure_sidecar(
+                &self,
+                _: &Path,
+                _: sidecar::Kind,
+            ) -> Result<(String, Change), Problem> {
                 Ok(("askhuman-ws-12345678".into(), Change::Created))
             }
             async fn app_running(&self) -> Option<bool> {
@@ -1137,7 +1162,11 @@ mod tests {
             async fn unavailable(&self) -> Option<UnavailableReason> {
                 None
             }
-            async fn ensure_sidecar(&self, _: &Path) -> Result<(String, Change), Problem> {
+            async fn ensure_sidecar(
+                &self,
+                _: &Path,
+                _: sidecar::Kind,
+            ) -> Result<(String, Change), Problem> {
                 Ok(("askhuman-ws-12345678".into(), Change::Created))
             }
             async fn app_running(&self) -> Option<bool> {
@@ -1259,18 +1288,40 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn yolo_is_not_started_yet() {
+    async fn a_yolo_task_goes_through_the_yolo_sidecar_and_the_default_through_the_whitelist() {
         let folder = tempfile::tempdir().unwrap();
         let receipts = tempfile::tempdir().unwrap();
-        let fake = Fake::new();
+        let fake = Fake::new().runs(vec![Ok(created_outcome())]);
+        run(&fake, receipts.path(), request(folder.path()))
+            .await
+            .unwrap();
+        assert_eq!(*fake.kinds.lock().unwrap(), [sidecar::Kind::Workspace]);
+
+        let other = tempfile::tempdir().unwrap();
+        let fake = Fake::new().runs(vec![Ok(created_outcome())]);
+        *fake.ensure.lock().unwrap() =
+            VecDeque::from([Ok(("askhuman-yolo-12345678".into(), Change::Created))]);
+        let mut yolo = request(folder.path());
+        yolo.permission = "yolo".into();
+        let created = run(&fake, other.path(), yolo).await.unwrap();
+        assert_eq!(*fake.kinds.lock().unwrap(), [sidecar::Kind::Yolo]);
+        assert_eq!(created.answer["sidecarId"], "askhuman-yolo-12345678");
+    }
+
+    #[tokio::test]
+    async fn the_two_permission_modes_of_one_task_are_not_the_same_operation() {
+        // One operation id with another permission is another request: it must not be mistaken
+        // for a retry of the first, which went through the other sidecar.
+        let folder = tempfile::tempdir().unwrap();
+        let receipts = tempfile::tempdir().unwrap();
+        let fake = Fake::new().runs(vec![Ok(created_outcome())]);
+        run(&fake, receipts.path(), request(folder.path()))
+            .await
+            .unwrap();
         let mut yolo = request(folder.path());
         yolo.permission = "yolo".into();
         let error = run(&fake, receipts.path(), yolo).await.unwrap_err();
-        assert_eq!(
-            error,
-            Problem::Unavailable(UnavailableReason::YoloUnsupported)
-        );
-        assert!(fake.calls().is_empty());
+        assert_eq!(error, Problem::IdReused);
     }
 
     #[test]

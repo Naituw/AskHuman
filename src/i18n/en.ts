@@ -1724,7 +1724,7 @@ export default {
     cursorWindowNote: "Submitting creates a chat in Cursor's Agents window and sends the task.",
     antigravityAppNote: "Submitting creates a conversation in the Antigravity App and sends the task.",
     antigravityPermissionHint:
-      "An Antigravity task runs with the folder's allowed actions only: AskHuman's own tools and the rules you added for the folder in Settings → Agents → Antigravity. Anything else is declined automatically.",
+      "In the Antigravity App, \"Agent default\" lets the task do only what the folder allows: AskHuman's own tools and the rules you added for the folder in Settings → Agents → Antigravity; anything else is declined automatically. YOLO makes a wide-grant sidecar for the folder (shown as \"YOLO\" in the App), and the task asks for nothing.",
     tooLong: "Task exceeds 3000 characters (currently {n})",
     launchFailed: "Failed to launch: {e}",
     todoMissing: "This todo has been removed; launching uses its saved snapshot.",
@@ -1855,14 +1855,12 @@ export default {
         mcpModeRequired: "The App route needs MCP mode (the App's sandbox does not allow CLI mode)",
         pluginDisabled: "The AskHuman plugin is turned off in Antigravity",
         sidecarsNotAllowed: "AskHuman is not allowed to manage Antigravity sidecars yet (turn it on in Settings)",
-        yoloUnsupported: "Antigravity cannot start tasks in YOLO mode yet: set the permission choice to Ask or Agent default",
         cliNotDetected: "The agy command was not detected",
         cliIntegrationNotConfigured: "CLI integration with AskHuman is not configured",
         cliTrackingDisabled: "CLI lifecycle tracking is disabled",
         cliTrackingNeedsUpdate: "CLI lifecycle tracking needs updating",
         cliTrackingNotConfigured: "CLI lifecycle tracking is not configured",
         terminalUnavailable: "The system terminal is unavailable",
-        cliLaunchNotAvailable: "Starting tasks with agy in a terminal is not available yet",
       },
     },
     sidecars: {

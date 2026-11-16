@@ -481,7 +481,7 @@ describe("AdvancedTab: why an Agent with two routes cannot start", () => {
       desktopAvailable: false,
       terminalAvailable: false,
       desktopReason: "sidecarsNotAllowed",
-      terminalReason: "cliLaunchNotAvailable",
+      terminalReason: "cliNotDetected",
       integrated: true,
     };
     const { wrapper } = mountTab([
@@ -492,7 +492,7 @@ describe("AdvancedTab: why an Agent with two routes cannot start", () => {
     expect(wrapper.get('[data-testid="readiness-blockers-antigravity"]').text()).toBe(
       [
         i18n.global.t("antigravityDesktop.launch.reasons.sidecarsNotAllowed"),
-        i18n.global.t("antigravityDesktop.launch.reasons.cliLaunchNotAvailable"),
+        i18n.global.t("antigravityDesktop.launch.reasons.cliNotDetected"),
       ].join(i18n.global.t("desktop.reasonSeparator")),
     );
   });

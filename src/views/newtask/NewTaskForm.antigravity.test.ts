@@ -63,7 +63,7 @@ function route(patch: Record<string, unknown> = {}) {
     desktopAvailable: true,
     terminalAvailable: false,
     desktopReason: null,
-    terminalReason: "cliLaunchNotAvailable",
+    terminalReason: "cliNotDetected",
     integrated: true,
     ...patch,
   };
@@ -104,19 +104,36 @@ it("lists Antigravity with the route it will use, selectable although it has no 
   expect(row.text()).toContain("New tasks will use the Antigravity App");
 });
 
-it("offers no permission choice, even where the setting asks for one, and says what applies", async () => {
+/** Picks one of the two permission options the form offers when the setting asks every time. */
+async function choosePermission(label: "Agent default" | "YOLO") {
+  const choice = wrapper.findAll(".nt-choice").find((item) => item.text().includes(label));
+  expect(choice, label).toBeDefined();
+  await choice!.trigger("click");
+}
+
+it("asks for the permission like the other Agents and says what Agent default means in the App", async () => {
   await form();
-  // `permissionPrompt` is "ask": any other Agent would show the two options here.
-  expect(wrapper.text()).not.toContain("Agent default");
-  expect(wrapper.text()).not.toContain("YOLO");
-  expect(wrapper.text()).toContain("runs with the folder's allowed actions only");
+  expect(wrapper.text()).toContain("Agent default");
+  expect(wrapper.text()).toContain("YOLO");
+  expect(wrapper.get("[data-testid=nt-antigravity-permission-hint]").text()).toContain("lets the task do only what the folder allows");
+  // Nothing is preselected: the task waits for the user's choice.
+  expect(launchButton().attributes("disabled")).toBeDefined();
+  await choosePermission("Agent default");
   expect(launchButton().attributes("disabled")).toBeUndefined();
+});
+
+it("does not explain the App's whitelist when the task will run in agy", async () => {
+  api.route.mockResolvedValue(route({ preference: "terminal", target: "terminal", desktopAvailable: false, terminalAvailable: true, desktopReason: "sidecarsNotAllowed", terminalReason: null }));
+  await form();
+  expect(wrapper.find("[data-testid=nt-antigravity-permission-hint]").exists()).toBe(false);
+  expect(wrapper.text()).toContain("YOLO");
 });
 
 it("starts the task with the Agent default permission and the model picked from the flat list", async () => {
   await form();
   expect(wrapper.find("#nt-task-effort").exists()).toBe(false);
   await wrapper.get("#nt-task-model").setValue("gemini-flash-low");
+  await choosePermission("Agent default");
   await start();
   expect(api.launch).toHaveBeenCalledTimes(1);
   expect(api.launch.mock.calls[0][0]).toMatchObject({
@@ -128,6 +145,13 @@ it("starts the task with the Agent default permission and the model picked from 
   });
   expect(api.launch.mock.calls[0][0].effort).toBeNull();
   expect(wrapper.emitted("launched")).toHaveLength(1);
+});
+
+it("starts a YOLO task with the YOLO permission", async () => {
+  await form();
+  await choosePermission("YOLO");
+  await start();
+  expect(api.launch.mock.calls[0][0]).toMatchObject({ kind: "antigravity", permission: "yolo" });
 });
 
 it("says under the form that the task is created in the App", async () => {
@@ -152,6 +176,7 @@ it("shows why it cannot start, instead of the CLI's conditions, and cannot be pi
 it("keeps one operation ID for a retry, so a task that may exist is not created twice", async () => {
   api.launch.mockRejectedValue(new Error("Operation outcome is unknown"));
   await form();
+  await choosePermission("Agent default");
   await start();
   const id = api.launch.mock.calls[0][0].operationId;
   expect(localStorage.getItem("antigravity-desktop-pending-create")).toContain(id);
@@ -171,6 +196,7 @@ it("keeps one operation ID for a retry, so a task that may exist is not created 
 it("does not reuse the ID once the task changed", async () => {
   api.launch.mockRejectedValue(new Error("No task was submitted"));
   await form();
+  await choosePermission("Agent default");
   await start();
   const first = api.launch.mock.calls[0][0].operationId;
   await wrapper.get("textarea").setValue("A different task");

@@ -51,7 +51,7 @@ const launch = (preference = "desktop", target: string | null = preference, patc
   desktopAvailable: target === "desktop",
   terminalAvailable: target === "terminal",
   desktopReason: null,
-  terminalReason: "cliLaunchNotAvailable",
+  terminalReason: "cliNotDetected",
   integrated: true,
   ...patch,
 });
@@ -142,11 +142,11 @@ it("shows the App as the default route and what a new task will use", async () =
 
 it("explains why the App is not what will be used, in the words of the backend's reason", async () => {
   api.launch.mockResolvedValue(
-    launch("desktop", null, { desktopReason: "sidecarsNotAllowed", terminalReason: "cliLaunchNotAvailable" }),
+    launch("desktop", null, { desktopReason: "sidecarsNotAllowed", terminalReason: "cliNotDetected" }),
   );
   const row = await mountRow();
   expect(statusText(row)).toBe(
-    "Unable to start: AskHuman is not allowed to manage Antigravity sidecars yet (turn it on in Settings); Starting tasks with agy in a terminal is not available yet",
+    "Unable to start: AskHuman is not allowed to manage Antigravity sidecars yet (turn it on in Settings); The agy command was not detected",
   );
   expect(row.find("button.refresh-runtime").exists()).toBe(true);
 });

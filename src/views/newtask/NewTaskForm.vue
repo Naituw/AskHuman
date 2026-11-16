@@ -244,12 +244,8 @@ async function openIssue(
 // ===== 权限（G6）=====
 /** ask 模式下的用户选择（不预选，IM D19 同语义）；固定模式下忽略。 */
 const permissionChoice = ref<"agent-default" | "yolo" | null>(null);
-/**
- * The Agents AskHuman has no permission choice for: Pi has no permission mode, and an Antigravity
- * task runs with its folder's allowed actions (the backend's `permission_choice`; Antigravity
- * leaves this list when its terminal route can honour YOLO).
- */
-const NO_PERMISSION_CHOICE: readonly AgentKind[] = ["pi", "antigravity"];
+/** The Agents AskHuman has no permission choice for: Pi has no permission mode (the backend's `permission_choice`). */
+const NO_PERMISSION_CHOICE: readonly AgentKind[] = ["pi"];
 const noPermissionChoice = computed(() => !!selectedKind.value && NO_PERMISSION_CHOICE.includes(selectedKind.value));
 const effectivePermission = computed<"agent-default" | "yolo" | null>(() => {
   if (noPermissionChoice.value) return "agent-default";
@@ -791,7 +787,8 @@ onBeforeUnmount(() => {
           v-model="permissionChoice"
           :permission-prompt="permissionPrompt"
         />
-        <p v-else class="nt-sublabel">{{ t(selectedKind === "antigravity" ? "newTask.antigravityPermissionHint" : "newTask.piPermissionHint") }}</p>
+        <p v-else class="nt-sublabel">{{ t("newTask.piPermissionHint") }}</p>
+        <p v-if="selectedKind === 'antigravity' && antigravityLaunch?.target === 'desktop'" class="nt-sublabel" data-testid="nt-antigravity-permission-hint">{{ t("newTask.antigravityPermissionHint") }}</p>
       </template>
     </div>
 

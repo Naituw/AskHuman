@@ -527,6 +527,10 @@ struct PendingLaunchWatch {
     created_at: u64,
 }
 
+/// Whether an agent event is the start of the task `item` asked for. The launch id the helper puts
+/// in the agent's environment is unique, so it pairs on its own wherever the agent reports no
+/// directory (an `agy` outside a trusted workspace sends an empty one); a directory it does report
+/// must still be the task's. The prompt hash is only a guess, so it needs the directory too.
 fn pending_launch_matches(
     item: &PendingLaunchWatch,
     kind: AgentKind,
@@ -535,9 +539,12 @@ fn pending_launch_matches(
     prompt_sha256: Option<&str>,
 ) -> bool {
     item.kind == kind
-        && cwd.is_some_and(|value| value == item.cwd)
-        && (launch_id.is_some_and(|value| value == item.id)
-            || prompt_sha256.is_some_and(|value| value == item.task_sha256))
+        && if launch_id.is_some_and(|value| value == item.id) {
+            cwd.is_none_or(|value| value == item.cwd)
+        } else {
+            cwd.is_some_and(|value| value == item.cwd)
+                && prompt_sha256.is_some_and(|value| value == item.task_sha256)
+        }
 }
 
 /// 「跟底」重发节流：同一订阅两次跟底之间的最短间隔（用户定案 30s）。
@@ -6229,6 +6236,50 @@ mod tests {
             &item,
             AgentKind::Codex,
             Some("/tmp/other"),
+            Some("launch-1"),
+            None
+        ));
+    }
+
+    /// An `agy` outside a trusted workspace reports no directory at all; the launch id alone is
+    /// still unique, the prompt hash alone is not.
+    #[test]
+    fn pending_launch_pairs_by_id_when_the_agent_reports_no_directory() {
+        let item = PendingLaunchWatch {
+            id: "launch-1".into(),
+            channel: None,
+            ios: None,
+            kind: AgentKind::Antigravity,
+            cwd: "/tmp/project".into(),
+            task_sha256: "hash-1".into(),
+            source_session_id: None,
+            created_at: 1,
+        };
+        assert!(pending_launch_matches(
+            &item,
+            AgentKind::Antigravity,
+            None,
+            Some("launch-1"),
+            None
+        ));
+        assert!(!pending_launch_matches(
+            &item,
+            AgentKind::Antigravity,
+            None,
+            Some("launch-2"),
+            Some("hash-1")
+        ));
+        assert!(!pending_launch_matches(
+            &item,
+            AgentKind::Antigravity,
+            None,
+            None,
+            Some("hash-1")
+        ));
+        assert!(!pending_launch_matches(
+            &item,
+            AgentKind::Codex,
+            None,
             Some("launch-1"),
             None
         ));

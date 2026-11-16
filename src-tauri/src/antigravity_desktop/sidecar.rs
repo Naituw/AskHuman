@@ -658,18 +658,23 @@ pub(super) fn ensure(
     Ok(change)
 }
 
-/// Makes sure the whitelisted sidecar of `directory` exists, keeping the rules it already has, and
-/// returns its id with what was done to its files. Used when a task is created: the user's own
-/// rules for the folder must survive it.
-pub(super) fn ensure_workspace(
+/// Makes sure the sidecar of `directory` of the given kind (the whitelisted one, or the one that
+/// grants everything) exists, keeping the rules it already has, and returns its id with what was
+/// done to its files. Used when a task is created: the user's own rules for the folder must
+/// survive it. The two kinds of one folder are two sidecars, two projects in the App.
+pub(super) fn ensure_folder(
     layout: &Layout,
     executable: &str,
     directory: &Path,
+    kind: Kind,
     roots: &[PathBuf],
     now_ms: u64,
 ) -> Result<(String, Change)> {
+    if kind == Kind::Control {
+        bail!("The control sidecar has no folder of the user's");
+    }
     let mut spec = Spec {
-        kind: Kind::Workspace,
+        kind,
         directory: directory.to_path_buf(),
         rules: Vec::new(),
     };
@@ -1318,7 +1323,8 @@ mod tests {
         let home = home();
         let directory = Path::new("/Users/me/project");
         let (id, change) =
-            ensure_workspace(&home.layout, EXE, directory, &roots(), 1).expect("first call");
+            ensure_folder(&home.layout, EXE, directory, Kind::Workspace, &roots(), 1)
+                .expect("first call");
         assert_eq!(change, Change::Created);
         assert_eq!(id, spec(Kind::Workspace, "/Users/me/project").id());
         // The user adds a rule in Settings; the next task must not take it away.
@@ -1332,7 +1338,8 @@ mod tests {
         )
         .unwrap();
         let (again, change) =
-            ensure_workspace(&home.layout, EXE, directory, &roots(), 3).expect("second call");
+            ensure_folder(&home.layout, EXE, directory, Kind::Workspace, &roots(), 3)
+                .expect("second call");
         assert_eq!(again, id);
         assert_eq!(change, Change::Unchanged);
         assert_eq!(

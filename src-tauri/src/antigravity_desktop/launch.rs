@@ -9,13 +9,8 @@
 
 use super::{runtime, Config, LaunchTarget};
 use crate::agents::AgentKind;
-use crate::config::AgentTaskPermission;
 use crate::i18n::Lang;
 use crate::integrations::agent_mode::Mode;
-
-/// Whether `agy` in a terminal can start a task. The launch adapter for it is not there yet, so
-/// the route is reported unavailable rather than offered and refused later.
-const TERMINAL_LAUNCH: bool = false;
 
 /// Why a route cannot be used right now.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize)]
@@ -34,16 +29,12 @@ pub enum UnavailableReason {
     PluginDisabled,
     /// The user has not allowed AskHuman to manage Antigravity sidecars.
     SidecarsNotAllowed,
-    /// New tasks are fixed to YOLO, which neither route can start yet.
-    YoloUnsupported,
     CliNotDetected,
     CliIntegrationNotConfigured,
     CliTrackingDisabled,
     CliTrackingNeedsUpdate,
     CliTrackingNotConfigured,
     TerminalUnavailable,
-    /// Starting `agy` in a terminal is not offered yet.
-    CliLaunchNotAvailable,
 }
 
 impl UnavailableReason {
@@ -73,12 +64,6 @@ impl UnavailableReason {
             (Self::SidecarsNotAllowed, Lang::En) => {
                 "AskHuman is not allowed to manage Antigravity sidecars yet (turn it on in Settings)"
             }
-            (Self::YoloUnsupported, Lang::Zh) => {
-                "Antigravity 暂不支持 YOLO 启动：请把「权限选择」改成「每次询问」或「总是 Agent 默认」"
-            }
-            (Self::YoloUnsupported, Lang::En) => {
-                "Antigravity cannot start tasks in YOLO mode yet: set the permission choice to Ask or Agent default"
-            }
             (Self::CliNotDetected, Lang::Zh) => "未检测到 agy 命令行",
             (Self::CliNotDetected, Lang::En) => "The agy command was not detected",
             (Self::CliIntegrationNotConfigured, Lang::Zh) => "CLI 的 AskHuman 集成未配置",
@@ -95,10 +80,6 @@ impl UnavailableReason {
             }
             (Self::TerminalUnavailable, Lang::Zh) => "系统终端不可用",
             (Self::TerminalUnavailable, Lang::En) => "The system terminal is unavailable",
-            (Self::CliLaunchNotAvailable, Lang::Zh) => "暂未开放用终端（agy）启动任务",
-            (Self::CliLaunchNotAvailable, Lang::En) => {
-                "Starting tasks with agy in a terminal is not available yet"
-            }
         }
     }
 }
@@ -114,8 +95,6 @@ pub(crate) struct DesktopFacts {
     /// The user turned the plugin off inside Antigravity.
     pub plugin_disabled: bool,
     pub manage_sidecars: bool,
-    /// New tasks are fixed to YOLO.
-    pub yolo: bool,
 }
 
 pub(crate) fn desktop_reason(facts: DesktopFacts) -> Option<UnavailableReason> {
@@ -134,8 +113,6 @@ pub(crate) fn desktop_reason(facts: DesktopFacts) -> Option<UnavailableReason> {
         Some(PluginDisabled)
     } else if !facts.manage_sidecars {
         Some(SidecarsNotAllowed)
-    } else if facts.yolo {
-        Some(YoloUnsupported)
     } else {
         None
     }
@@ -202,25 +179,6 @@ pub(crate) fn cli_reason(
     }
 }
 
-/// Why the terminal route cannot be used: its own preconditions, then the rule that is still
-/// missing for both routes. The route is closed as a whole until `agy` launches are implemented,
-/// whatever the machine looks like.
-fn terminal_reason(
-    launchable: bool,
-    yolo: bool,
-    own: Option<UnavailableReason>,
-) -> Option<UnavailableReason> {
-    if !launchable {
-        Some(UnavailableReason::CliLaunchNotAvailable)
-    } else if own.is_some() {
-        own
-    } else if yolo {
-        Some(UnavailableReason::YoloUnsupported)
-    } else {
-        None
-    }
-}
-
 #[derive(Clone, Debug, serde::Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct LaunchStatus {
@@ -257,7 +215,7 @@ pub(crate) fn status_from(
 }
 
 /// What can be read without attaching to anything: the machine, the plugin, the settings.
-pub(crate) fn static_facts(config: &Config, yolo: bool) -> DesktopFacts {
+pub(crate) fn static_facts(config: &Config) -> DesktopFacts {
     use crate::integrations::{agent_mode, agent_rules, antigravity_plugin};
     DesktopFacts {
         supported: cfg!(target_os = "macos"),
@@ -266,32 +224,25 @@ pub(crate) fn static_facts(config: &Config, yolo: bool) -> DesktopFacts {
         mode: agent_mode::current(agent_rules::AgentTarget::Antigravity),
         plugin_disabled: antigravity_plugin::host_view().plugin_disabled,
         manage_sidecars: config.manage_sidecars,
-        yolo,
     }
 }
 
 /// Reads the facts from this machine. Never starts the App and never touches a sidecar.
 pub fn launch_status(force: bool) -> LaunchStatus {
     use crate::integrations::{agent_launch, agent_lifecycle};
-    let app_config = crate::config::AppConfig::load_without_secrets();
-    let yolo = app_config.agent_tasks.permission_prompt == AgentTaskPermission::Yolo;
-    let config = app_config.antigravity_desktop;
+    let config = crate::config::AppConfig::load_without_secrets().antigravity_desktop;
     let cli = if force {
         agent_launch::readiness_fresh(AgentKind::Antigravity)
     } else {
         agent_launch::readiness(AgentKind::Antigravity)
     };
     let tracking = agent_lifecycle::status(AgentKind::Antigravity);
-    let desktop = desktop_reason(static_facts(&config, yolo));
-    let terminal = terminal_reason(
-        TERMINAL_LAUNCH,
-        yolo,
-        cli_reason(
-            cli.binary_ready,
-            cli.integration_ready,
-            &tracking,
-            agent_launch::terminal_available(),
-        ),
+    let desktop = desktop_reason(static_facts(&config));
+    let terminal = cli_reason(
+        cli.binary_ready,
+        cli.integration_ready,
+        &tracking,
+        agent_launch::terminal_available(),
     );
     status_from(
         config.launch_preference,
@@ -382,7 +333,6 @@ mod tests {
             mode: Mode::Mcp,
             plugin_disabled: false,
             manage_sidecars: true,
-            yolo: false,
         }
     }
 
@@ -418,22 +368,13 @@ mod tests {
             with(|f| f.manage_sidecars = false),
             Some(SidecarsNotAllowed)
         );
-        assert_eq!(with(|f| f.yolo = true), Some(YoloUnsupported));
         // The first problem is the one reported, in the order of the settings page.
         assert_eq!(
             with(|f| {
                 f.app_installed = false;
                 f.manage_sidecars = false;
-                f.yolo = true;
             }),
             Some(AppNotInstalled)
-        );
-        assert_eq!(
-            with(|f| {
-                f.manage_sidecars = false;
-                f.yolo = true;
-            }),
-            Some(SidecarsNotAllowed)
         );
     }
 
@@ -469,27 +410,6 @@ mod tests {
             cli_reason(true, true, &ok, false),
             Some(TerminalUnavailable)
         );
-    }
-
-    #[test]
-    fn the_terminal_route_stays_closed_until_agy_launches_exist() {
-        use UnavailableReason::*;
-        // Whatever the machine looks like, a route that cannot launch is not offered.
-        assert_eq!(
-            terminal_reason(false, false, None),
-            Some(CliLaunchNotAvailable)
-        );
-        assert_eq!(
-            terminal_reason(false, true, Some(CliNotDetected)),
-            Some(CliLaunchNotAvailable)
-        );
-        // Once it can launch, its own problems come first and the YOLO rule after them.
-        assert_eq!(
-            terminal_reason(true, true, Some(CliNotDetected)),
-            Some(CliNotDetected)
-        );
-        assert_eq!(terminal_reason(true, true, None), Some(YoloUnsupported));
-        assert_eq!(terminal_reason(true, false, None), None);
     }
 
     #[test]
@@ -545,12 +465,7 @@ mod tests {
             to_app.description(Lang::En),
             "New tasks will use the Antigravity App (The agy command was not detected)"
         );
-        let direct = status_from(
-            LaunchTarget::Desktop,
-            None,
-            Some(CliLaunchNotAvailable),
-            true,
-        );
+        let direct = status_from(LaunchTarget::Desktop, None, Some(TerminalUnavailable), true);
         assert_eq!(
             direct.description(Lang::En),
             "New tasks will use the Antigravity App"
@@ -558,26 +473,26 @@ mod tests {
         let stuck = status_from(
             LaunchTarget::Desktop,
             Some(SidecarsNotAllowed),
-            Some(CliLaunchNotAvailable),
+            Some(CliNotDetected),
             true,
         );
         assert_eq!(stuck.target, None);
         assert_eq!(
             stuck.description(Lang::En),
-            "Unable to start: AskHuman is not allowed to manage Antigravity sidecars yet (turn it on in Settings); Starting tasks with agy in a terminal is not available yet"
+            "Unable to start: AskHuman is not allowed to manage Antigravity sidecars yet (turn it on in Settings); The agy command was not detected"
         );
         // Both routes are named whichever was preferred, the preferred one first; a reason that
         // both share is said once.
         let both = status_from(
             LaunchTarget::Terminal,
-            Some(YoloUnsupported),
-            Some(YoloUnsupported),
+            Some(IntegrationDisabled),
+            Some(IntegrationDisabled),
             true,
         );
         assert_eq!(both.target, None);
         assert_eq!(
             both.description(Lang::Zh),
-            "暂时无法启动：Antigravity 暂不支持 YOLO 启动：请把「权限选择」改成「每次询问」或「总是 Agent 默认」"
+            "暂时无法启动：Antigravity 的 AskHuman 集成未启用"
         );
     }
 
@@ -643,13 +558,13 @@ mod tests {
             status_from(
                 LaunchTarget::Desktop,
                 Some(UnavailableReason::AppNotInstalled),
-                Some(UnavailableReason::CliLaunchNotAvailable),
+                Some(UnavailableReason::CliNotDetected),
                 true,
             )
         };
         assert_eq!(
             resolve_with(dir.path(), None, None, stuck),
-            Err("Unable to start: The Antigravity App was not detected; Starting tasks with agy in a terminal is not available yet".into())
+            Err("Unable to start: The Antigravity App was not detected; The agy command was not detected".into())
         );
     }
 }

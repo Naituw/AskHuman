@@ -179,7 +179,7 @@ fn antigravity_is_listed_when_its_app_can_start_it_whatever_its_cli_says() {
 }
 
 #[test]
-fn antigravity_offers_models_but_no_permission_choice_yet() {
+fn antigravity_offers_models_and_the_permission_choice() {
     let probes = probes_of(
         vec![
             readiness(AgentKind::Antigravity, true, None),
@@ -200,8 +200,9 @@ fn antigravity_offers_models_but_no_permission_choice_yet() {
     let models = antigravity.models.as_ref().unwrap();
     assert_eq!(models[0].id, "flash");
     assert_eq!(models[0].efforts, None);
-    // The App route says so, and until its YOLO route exists the phone is not asked to choose.
-    assert!(!antigravity.permission_selectable);
+    // Both routes can honour YOLO (the App's YOLO sidecar, `agy`'s flag), so the phone chooses
+    // as it does for every Agent but Pi.
+    assert!(antigravity.permission_selectable);
     assert!(by_kind("claude").permission_selectable);
     assert!(antigravity.subtitle.contains("Antigravity"));
 }

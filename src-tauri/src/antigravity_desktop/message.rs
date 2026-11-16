@@ -328,7 +328,11 @@ mod tests {
             unreachable!("a message does not ask whether a task can be created")
         }
 
-        async fn ensure_sidecar(&self, _: &Path) -> Result<(String, Change), Problem> {
+        async fn ensure_sidecar(
+            &self,
+            _: &Path,
+            _: sidecar::Kind,
+        ) -> Result<(String, Change), Problem> {
             unreachable!("a message never makes the sidecar of a folder")
         }
 
