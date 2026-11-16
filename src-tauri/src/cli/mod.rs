@@ -833,6 +833,7 @@ fn try_whats_next_auto(project: &str, message: &crate::models::MessagePrompt, la
                     files: delivery.files.clone(),
                 }],
                 annotations: Vec::new(),
+                draft: None,
             },
             limit,
         );

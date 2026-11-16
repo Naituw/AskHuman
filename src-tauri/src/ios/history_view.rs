@@ -286,6 +286,7 @@ mod tests {
                 },
             ],
             annotations: Vec::new(),
+            draft: None,
         }
     }
 

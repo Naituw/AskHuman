@@ -613,6 +613,7 @@ impl Coordinator {
             questions: request.questions.clone(),
             answers,
             annotations: result.annotations.clone(),
+            draft: None,
         }
     }
 }

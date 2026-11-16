@@ -31,6 +31,58 @@ pub struct HistoryAnswer {
     pub files: Vec<String>,
 }
 
+/// Names "the same question asked again" for the draft kept from an abandoned ask (spec
+/// `popup-draft-on-cancel` D3/D6): the asking session plus the coalescing fingerprint. It is only
+/// an identifier and never carries what the user typed.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DraftKey {
+    /// `ask_dedup::session_key` of the asker. A draft is only ever loaded into the same session; an
+    /// ask with no session key can keep a draft for the history window but never gets one back.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub session_key: Option<String>,
+    /// `ask_dedup::coalesce_fingerprint`, so a whats-next / Stop card whose todo queue changed in
+    /// between still counts as the same question.
+    pub fingerprint: String,
+}
+
+/// What the user had typed in an ask when its caller went away (spec `popup-draft-on-cancel`).
+/// Lives on the cancel entry of that ask, never in `answers`, which keeps meaning "what was sent".
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct HistoryDraft {
+    /// Whose question this was. Without it the draft stays readable in the history window but is
+    /// never loaded into a new card.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub key: Option<DraftKey>,
+    /// One per question, same shape as a sent answer (images and files are paths).
+    #[serde(default)]
+    pub answers: Vec<HistoryAnswer>,
+    /// Notes on passages of the message or the questions.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub annotations: Vec<crate::annotations::UserAnnotation>,
+    /// The request whose card loaded this draft. A draft is loaded at most once.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub claimed_by: Option<String>,
+}
+
+impl HistoryDraft {
+    /// Whether the user typed anything worth keeping: a chosen option, text, an image, a reply
+    /// file or a note. An empty draft is never stored.
+    pub fn has_content(&self) -> bool {
+        !self.annotations.is_empty()
+            || self.answers.iter().any(|answer| {
+                !answer.selected_options.is_empty()
+                    || answer
+                        .user_input
+                        .as_deref()
+                        .is_some_and(|text| !text.trim().is_empty())
+                    || !answer.images.is_empty()
+                    || !answer.files.is_empty()
+            })
+    }
+}
+
 /// One recorded reply (one per request: the winning terminal result).
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -73,6 +125,10 @@ pub struct HistoryEntry {
     /// not shortened). Omitted when there are none, so older entries and older builds are unaffected.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub annotations: Vec<crate::annotations::UserAnnotation>,
+    /// What the user had typed when the caller went away (cancel entries only; spec
+    /// `popup-draft-on-cancel`). Omitted otherwise, so older entries and older builds are unaffected.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub draft: Option<HistoryDraft>,
 }
 
 /// Aggregated project info for the history window's project picker.
@@ -184,6 +240,23 @@ fn entry_by_id_at(path: &Path, id: &str) -> Option<HistoryEntry> {
     read_all_at(path).into_iter().find(|entry| entry.id == id)
 }
 
+/// Keep what the user had typed on the cancel entry of an abandoned ask (spec
+/// `popup-draft-on-cancel` D4). Only a `Cancel` entry of this id that holds no draft yet takes it:
+/// no such entry (history off, trimmed away), a reply that was sent, or a draft already there leave
+/// the store untouched. Best-effort like recording; returns whether the draft was stored.
+pub fn attach_draft(id: &str, draft: HistoryDraft) -> bool {
+    let _guard = lock();
+    attach_draft_at(&paths::history_file(), id, draft)
+}
+
+/// Take the newest unclaimed draft that an abandoned ask of the same session and question left,
+/// and mark it loaded by `request_id` (spec `popup-draft-on-cancel` D6). A draft is loaded at most
+/// once; asking again with the request id that already took it hands the same draft out again.
+pub fn claim_draft(session_key: &str, fingerprint: &str, request_id: &str) -> Option<HistoryDraft> {
+    let _guard = lock();
+    claim_draft_at(&paths::history_file(), session_key, fingerprint, request_id)
+}
+
 /// Count completed Send entries in a session with `timestamp_ms` strictly after `after_ms`.
 pub fn count_sends_for_session_after(agent_kind: &str, session_id: &str, after_ms: i64) -> usize {
     count_sends_after_at(&paths::history_file(), after_ms, |entry| {
@@ -266,6 +339,59 @@ fn record_at(path: &Path, entry: HistoryEntry, limit: u32) {
     }
     trim_vec(&mut entries, limit as usize);
     let _ = write_all_at(path, &entries);
+}
+
+fn attach_draft_at(path: &Path, id: &str, draft: HistoryDraft) -> bool {
+    if !draft.has_content() {
+        return false;
+    }
+    // A read that fails must not turn into a rewrite of whatever could be read.
+    let Ok(mut entries) = read_all_strict_at(path) else {
+        return false;
+    };
+    let Some(entry) = entries.iter_mut().find(|entry| entry.id == id) else {
+        return false;
+    };
+    if entry.action != ChannelAction::Cancel || entry.draft.is_some() {
+        return false;
+    }
+    entry.draft = Some(draft);
+    write_all_at(path, &entries).is_ok()
+}
+
+fn claim_draft_at(
+    path: &Path,
+    session_key: &str,
+    fingerprint: &str,
+    request_id: &str,
+) -> Option<HistoryDraft> {
+    let mut entries = read_all_strict_at(path).ok()?;
+    let belongs = |draft: &HistoryDraft| {
+        draft.key.as_ref().is_some_and(|key| {
+            key.session_key.as_deref() == Some(session_key) && key.fingerprint == fingerprint
+        })
+    };
+    // Entries are in append order: the newest one comes last.
+    if let Some(draft) = entries
+        .iter()
+        .rev()
+        .filter_map(|entry| entry.draft.as_ref())
+        .find(|draft| belongs(draft) && draft.claimed_by.as_deref() == Some(request_id))
+    {
+        return Some(draft.clone());
+    }
+    let entry = entries.iter_mut().rev().find(|entry| {
+        entry.id != request_id
+            && entry
+                .draft
+                .as_ref()
+                .is_some_and(|draft| belongs(draft) && draft.claimed_by.is_none())
+    })?;
+    let draft = entry.draft.as_mut()?;
+    draft.claimed_by = Some(request_id.to_string());
+    let claimed = draft.clone();
+    write_all_at(path, &entries).ok()?;
+    Some(claimed)
 }
 
 fn has_agent_origin_at(path: &Path) -> bool {
@@ -592,6 +718,7 @@ mod tests {
             questions: Vec::new(),
             answers: Vec::new(),
             annotations: Vec::new(),
+            draft: None,
         }
     }
 
@@ -648,6 +775,287 @@ mod tests {
         let legacy = r#"{"id":"old","timestampMs":3,"action":"send"}"#;
         let parsed: HistoryEntry = serde_json::from_str(legacy).unwrap();
         assert!(parsed.annotations.is_empty());
+    }
+
+    fn cancel_entry(id: &str, ts: i64) -> HistoryEntry {
+        let mut cancelled = entry(id, "/p", ts);
+        cancelled.action = ChannelAction::Cancel;
+        cancelled.channel = "caller".to_string();
+        cancelled
+    }
+
+    fn draft_of(session: Option<&str>, fingerprint: &str, text: &str) -> HistoryDraft {
+        HistoryDraft {
+            key: Some(DraftKey {
+                session_key: session.map(str::to_string),
+                fingerprint: fingerprint.to_string(),
+            }),
+            answers: vec![HistoryAnswer {
+                user_input: Some(text.to_string()),
+                ..Default::default()
+            }],
+            ..Default::default()
+        }
+    }
+
+    fn stored_draft(path: &Path, id: &str) -> Option<HistoryDraft> {
+        read_all_at(path)
+            .into_iter()
+            .find(|saved| saved.id == id)?
+            .draft
+    }
+
+    /// What the user typed rides on the cancel entry of that request and nowhere else: `answers`
+    /// keeps meaning "what was sent" (spec popup-draft-on-cancel D3).
+    #[test]
+    fn a_draft_rides_on_the_cancel_entry_and_leaves_the_answers_alone() {
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("history.jsonl");
+        record_at(&path, cancel_entry("gone", 1), 200);
+
+        assert!(attach_draft_at(
+            &path,
+            "gone",
+            draft_of(Some("sid:a"), "f", "half a thought")
+        ));
+
+        let saved = read_all_at(&path).remove(0);
+        assert!(
+            saved.answers.is_empty(),
+            "the cancel entry still has no answers"
+        );
+        let draft = saved.draft.expect("draft");
+        assert_eq!(
+            draft.answers[0].user_input.as_deref(),
+            Some("half a thought")
+        );
+        assert_eq!(draft.key.unwrap().session_key.as_deref(), Some("sid:a"));
+        assert_eq!(draft.claimed_by, None);
+    }
+
+    #[test]
+    fn a_draft_only_goes_on_a_cancel_entry_that_has_none_and_only_when_it_holds_something() {
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("history.jsonl");
+        record_at(&path, entry("sent", "/p", 1), 200);
+        record_at(&path, cancel_entry("gone", 2), 200);
+
+        let typed = || draft_of(Some("sid:a"), "f", "x");
+        assert!(
+            !attach_draft_at(&path, "sent", typed()),
+            "a reply that was sent has nothing abandoned"
+        );
+        assert!(
+            !attach_draft_at(&path, "unknown", typed()),
+            "no entry: history off, or trimmed away"
+        );
+        assert!(
+            !attach_draft_at(&path, "gone", draft_of(Some("sid:a"), "f", "  ")),
+            "nothing typed"
+        );
+        assert!(attach_draft_at(&path, "gone", typed()));
+        assert!(
+            !attach_draft_at(&path, "gone", draft_of(Some("sid:a"), "f", "second")),
+            "the first draft stays"
+        );
+
+        let kept = stored_draft(&path, "gone").unwrap();
+        assert_eq!(kept.answers[0].user_input.as_deref(), Some("x"));
+        assert!(stored_draft(&path, "sent").is_none());
+    }
+
+    #[test]
+    fn what_counts_as_something_typed() {
+        let mut draft = HistoryDraft::default();
+        assert!(!draft.has_content());
+        draft.answers = vec![HistoryAnswer::default()];
+        assert!(!draft.has_content(), "an untouched question");
+        for answer in [
+            HistoryAnswer {
+                selected_options: vec!["Yes".into()],
+                ..Default::default()
+            },
+            HistoryAnswer {
+                user_input: Some("text".into()),
+                ..Default::default()
+            },
+            HistoryAnswer {
+                images: vec!["/tmp/a.png".into()],
+                ..Default::default()
+            },
+            HistoryAnswer {
+                files: vec!["/tmp/a.txt".into()],
+                ..Default::default()
+            },
+        ] {
+            draft.answers = vec![answer];
+            assert!(draft.has_content());
+        }
+        draft.answers = vec![HistoryAnswer {
+            user_input: Some(" \n".into()),
+            ..Default::default()
+        }];
+        assert!(!draft.has_content(), "blank text is not something typed");
+        draft.annotations = vec![crate::annotations::UserAnnotation {
+            quote: "q".into(),
+            note: "n".into(),
+        }];
+        assert!(draft.has_content(), "a note alone is something");
+    }
+
+    /// Entries without a draft write no key, later rewrites keep a draft, and a line from before
+    /// the field existed still reads.
+    #[test]
+    fn a_draft_is_written_only_where_there_is_one_and_older_lines_still_read() {
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("history.jsonl");
+        record_at(&path, cancel_entry("gone", 1), 200);
+        record_at(&path, entry("plain", "/p", 2), 200);
+        assert!(attach_draft_at(
+            &path,
+            "gone",
+            draft_of(Some("sid:a"), "f", "x")
+        ));
+        record_at(&path, entry("later", "/p", 3), 200);
+        assert_eq!(trim_at(&path, 200), 3);
+
+        let text = std::fs::read_to_string(&path).unwrap();
+        let lines: Vec<&str> = text.lines().collect();
+        assert!(lines[0].contains("\"draft\""));
+        assert!(lines[0].contains("\"sessionKey\":\"sid:a\""));
+        assert!(!lines[0].contains("claimedBy"), "unclaimed writes no key");
+        assert!(!lines[1].contains("draft") && !lines[2].contains("draft"));
+
+        let legacy = r#"{"id":"old","timestampMs":3,"action":"cancel"}"#;
+        let parsed: HistoryEntry = serde_json::from_str(legacy).unwrap();
+        assert!(parsed.draft.is_none());
+    }
+
+    /// Spec popup-draft-on-cancel D6: the newest draft of the same session and question, once.
+    #[test]
+    fn a_draft_is_claimed_newest_first_and_only_once() {
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("history.jsonl");
+        for (id, ts, text) in [("older", 1, "first try"), ("newer", 2, "second try")] {
+            record_at(&path, cancel_entry(id, ts), 200);
+            assert!(attach_draft_at(
+                &path,
+                id,
+                draft_of(Some("sid:a"), "f", text)
+            ));
+        }
+
+        let first = claim_draft_at(&path, "sid:a", "f", "r1").unwrap();
+        assert_eq!(first.answers[0].user_input.as_deref(), Some("second try"));
+        let second = claim_draft_at(&path, "sid:a", "f", "r2").unwrap();
+        assert_eq!(second.answers[0].user_input.as_deref(), Some("first try"));
+        assert!(
+            claim_draft_at(&path, "sid:a", "f", "r3").is_none(),
+            "each draft loads once"
+        );
+
+        // The request that already took one gets the same draft again, and nothing else is used up.
+        let again = claim_draft_at(&path, "sid:a", "f", "r1").unwrap();
+        assert_eq!(again.answers[0].user_input.as_deref(), Some("second try"));
+        let newer = stored_draft(&path, "newer").unwrap();
+        let older = stored_draft(&path, "older").unwrap();
+        assert_eq!(newer.claimed_by.as_deref(), Some("r1"));
+        assert_eq!(older.claimed_by.as_deref(), Some("r2"));
+    }
+
+    #[test]
+    fn a_draft_only_goes_back_to_the_same_session_and_the_same_question() {
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("history.jsonl");
+        record_at(&path, cancel_entry("gone", 1), 200);
+        assert!(attach_draft_at(
+            &path,
+            "gone",
+            draft_of(Some("sid:a"), "f", "x")
+        ));
+        record_at(&path, cancel_entry("anonymous", 2), 200);
+        assert!(attach_draft_at(
+            &path,
+            "anonymous",
+            draft_of(None, "g", "y")
+        ));
+
+        assert!(
+            claim_draft_at(&path, "sid:b", "f", "r").is_none(),
+            "another session"
+        );
+        assert!(
+            claim_draft_at(&path, "sid:a", "g", "r").is_none(),
+            "another question"
+        );
+        assert!(
+            claim_draft_at(&path, "mcp:a", "f", "r").is_none(),
+            "another kind of session key"
+        );
+        assert!(
+            claim_draft_at(&path, "", "g", "r").is_none(),
+            "a draft without a session key is never handed out"
+        );
+        assert_eq!(stored_draft(&path, "gone").unwrap().claimed_by, None);
+        assert_eq!(stored_draft(&path, "anonymous").unwrap().claimed_by, None);
+
+        assert!(claim_draft_at(&path, "sid:a", "f", "r").is_some());
+    }
+
+    #[test]
+    fn a_request_never_takes_the_draft_of_its_own_entry() {
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("history.jsonl");
+        record_at(&path, cancel_entry("r", 1), 200);
+        assert!(attach_draft_at(
+            &path,
+            "r",
+            draft_of(Some("sid:a"), "f", "x")
+        ));
+
+        assert!(claim_draft_at(&path, "sid:a", "f", "r").is_none());
+        assert!(claim_draft_at(&path, "sid:a", "f", "other").is_some());
+    }
+
+    /// Drafts follow the history's own capacity and deletion rules (spec D8): no second store.
+    #[test]
+    fn the_draft_goes_with_its_entry_when_history_is_trimmed_or_deleted() {
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("history.jsonl");
+        for (id, ts) in [("a", 1), ("b", 2), ("c", 3)] {
+            record_at(&path, cancel_entry(id, ts), 200);
+            assert!(attach_draft_at(&path, id, draft_of(Some("sid:a"), "f", id)));
+        }
+
+        assert_eq!(trim_at(&path, 2), 2);
+        assert!(stored_draft(&path, "a").is_none());
+        assert_eq!(delete_ids_at(&path, &["b".to_string()]).unwrap(), 1);
+        assert!(stored_draft(&path, "b").is_none());
+
+        let left = claim_draft_at(&path, "sid:a", "f", "r1").unwrap();
+        assert_eq!(left.answers[0].user_input.as_deref(), Some("c"));
+        assert!(claim_draft_at(&path, "sid:a", "f", "r2").is_none());
+    }
+
+    /// `--show-last`, the session's recent answers and iOS history read `Send` entries only, so a
+    /// draft on a cancel entry can never be mistaken for something the user sent.
+    #[test]
+    fn a_draft_never_shows_up_as_a_sent_exchange() {
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("history.jsonl");
+        let mut gone = in_session(cancel_entry("gone", 1), "codex", "s1");
+        gone.draft = Some(draft_of(Some("sid:s1"), "f", "typed"));
+        record_at(&path, gone, 200);
+        record_at(
+            &path,
+            in_session(entry("sent", "/p", 2), "codex", "s1"),
+            200,
+        );
+
+        let recent = recent_sends_for_session_at(&path, "codex", "s1", 10);
+        let ids: Vec<&str> = recent.entries.iter().map(|e| e.id.as_str()).collect();
+        assert_eq!(ids, ["sent"]);
+        assert!(recent.entries.iter().all(|e| e.draft.is_none()));
     }
 
     #[test]
