@@ -449,7 +449,7 @@ App 里 MCP 工具默认「询问」（§4.2）。第一次调用 AskHuman 时�
 
 ### 12.1 目标选择与「能不能启动」
 
-- 设置 `antigravity.launchPreference`：`app`（默认）/ `cli`，只决定**优先**走哪条路径（D6，与 [Cursor Desktop](cursor-desktop-task-creation.md) §3 同构）：
+- 设置 `antigravityDesktop.launchPreference`：`desktop`（默认，经 App）/ `terminal`（`agy`）（规格最初写成 `antigravity.launchPreference`：`app` / `cli`；实现按 Cursor 的 `cursorDesktop.*` 风格取名，见计划 P2；「允许管理 sidecar」的键是 `antigravityDesktop.manageSidecars`，默认关），只决定**优先**走哪条路径（D6，与 [Cursor Desktop](cursor-desktop-task-creation.md) §3 同构）：
   优先路径整体可用 → 用它；整体不可用而另一条整体可用 → 自动改用另一条，并说明原因；两条都不可用 → 如实列出各自的障碍。
   **任务一旦开始，不静默改走另一条路径**：回退只发生在选择阶段。
 - **App 路径整体可用**（廉价静态检测）：macOS；App 已安装；插件已装且未被停用；集成模式为 **MCP**（App 沙箱挡 CLI 模式，§4.5）；「允许管理 sidecar」已开；
