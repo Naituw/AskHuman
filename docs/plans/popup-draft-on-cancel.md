@@ -1,0 +1,117 @@
+# 计划：调用方断开时保住弹窗里没提交的内容
+
+规格：[popup-draft-on-cancel.md](../specs/popup-draft-on-cancel.md)（设计定案以规格为准；本计划只写怎么做、怎么验）。
+状态：待规格评审通过后实施。执行位置（主工作区 / 独立 Dev Worktree）在开工时的同一轮提问里再问：
+主工作区现在有另一个会话的未提交 iOS 改动（`ios/AskHuman/Views/Attachments/*`），安装与提交都要避开它们。
+
+## 0. 前置核对（开工前做完，结果写进实施记录）
+
+- `daemon/request.rs` 里 `RequestEntry` 的 `session_key` / `coalesce_fingerprint` 是在哪一步算出来的、`ShowPayload`
+  是否在此之后才构造（要用它们填 `draftKey`）。
+- 弹窗渠道的 `Cancel`（`GuiHelperPopupChannel::interrupt`）与后来 `prune_inbox` 补发的 `Cancel` 是否走同一条宿主连接、
+  先后顺序是否保证（决定「`Cancel` 先到、`Show` 后到」这句话能不能成立；不成立也只是这次没载入，见规格 D6）。
+- `ShowPayload`、`ServerMsg::Cancel` 是否进入恢复存储或其序列化哈希（AGENTS.md「Changing recovery storage」）。
+  新增字段无值时不序列化，哈希应不变，要用现有夹具测试证明，而不是推断。
+- `popup_init`（`commands.rs` 62 行起）同时服务合并宿主、预热宿主、独立窗口，并被 `hover_init` 同步调用；它是同步函数，
+  **不改它的签名与行为**——载入走新命令 `popup_draft_claim`，只在合并宿主的前端调用。
+- 历史条目的结构体没有 `deny_unknown_fields`（已查）：旧版本读到带 `draft` 的行不会失败，只在重写时丢掉这个字段。
+
+## 1. 分阶段
+
+### P1 历史存储（Rust，无界面）
+
+- `history.rs`：`DraftKey { session_key: Option<String>, fingerprint: String }`；`HistoryDraft { key: Option<DraftKey>,
+  answers: Vec<HistoryAnswer>, annotations: Vec<UserAnnotation>, claimed_by: Option<String> }`；
+  `HistoryEntry.draft: Option<HistoryDraft>`（`#[serde(default, skip_serializing_if = "Option::is_none")]`）。
+- `attach_draft(id, draft) -> bool`：持跨进程锁；只在该 id 的记录存在、`action == Cancel`、还没有草稿时写入。
+- `claim_draft(session_key, fingerprint, request_id) -> Option<HistoryDraft>`：持锁；取最新的「有草稿、`key` 的会话键与指纹都
+  相同、未被认领或已被本请求认领」的记录，写 `claimed_by`，返回草稿；会话键为空不匹配。
+- 测试（`history.rs` 的 `mod tests`）：无 `draft` 的旧记录照常解码；附加到取消记录；对不存在 / `send` / 已有草稿的记录不动；
+  认领取最新、一次性、对同一请求幂等；换指纹 / 换会话不认领；`trim` / `delete_ids` / `clear_all` 带走草稿；
+  `recent_sends_*`、`entry_by_id` 对带草稿的取消记录行为不变。
+
+### P2 取消路径（Rust，daemon 与渠道）
+
+- `ipc/mod.rs`：`ServerMsg::Cancel` 加 `#[serde(default)] keep_draft: bool`；`ShowPayload` 加
+  `#[serde(default, skip_serializing_if = "Option::is_none")] draft_key: Option<DraftKey>`。所有构造与解构处由编译器列出，
+  已知的有：`Cancel`——`channels/popup.rs`、`daemon/runtime/inbox.rs`（`prune_inbox` 等两处）、`daemon/runtime/mod.rs`
+  （`serve_gui` 的早到取消）、`app/popup_inbox.rs`（解构）、`daemon/runtime/inbox/tests.rs`（测试里的解构补 `..`）；
+  `ShowPayload`——`daemon/request.rs` 三处（328 与 815 行是 Permission 确认卡，`draft_key` 填 `None`；614 行是 Ask 类，见下）、
+  `app/popup_inbox.rs` 的测试夹具。默认值一律 `false` / `None`，不改变它们现有行为。
+  按 AGENTS.md「Changing IPC messages」读过 `docs/overview.md` 的「IPC 协议号」再改；**不升** `PROTOCOL_VERSION`。
+- `channels/mod.rs`：`Channel` 加带默认实现的 `interrupt_abandoned(&self, reason)`（默认转调 `interrupt`）；
+  `GuiHelperPopupChannel` 覆盖它，对 `Cancelled` 发 `keep_draft: true`。IM / iOS 渠道不改。`cancel_request` 的调用方只有
+  调用方断开、daemon 关停（`cancel_all_requests`）、开发中继，全是「被放弃」，没有人的取消走它（已查全部调用点）。
+  `prune_inbox` 与 `serve_gui` 对已终结请求补发的 `Cancel` 是兜底清理，`keep_draft` 保持 `false`。
+- `coordinator.rs::cancel_request`：先 `record_history`，再对每个渠道 `interrupt_abandoned`。锁的持有范围不变
+  （原来 `record_history` 就在 `submit_lock` 与 `inner` 锁内）。`submit` 里「人」的取消仍走 `interrupt`。
+- `daemon/request.rs`：Ask 类请求（`InteractionRequest::Ask`，含 whats-next、Stop）构造 `ShowPayload` 时填 `draft_key`
+  （`ask_dedup::session_key` + `coalesce_fingerprint`）；Confirm 不填。
+- 测试：`cancel_request` 在 interrupt 时历史里已有这条记录（用测试渠道在 `interrupt` 里读历史）；弹窗渠道对调用方 / 系统取消发
+  `keep_draft: true`，对 `AnsweredBy`、人的取消、`Handoff` 不带；`Cancel` 新旧 JSON 互读（缺字段时为 `false`）。
+
+### P3 保存：弹窗宿主与前端
+
+- `app/popup_inbox.rs`：`Inner` 加「待存草稿」集合（请求 id → `draft_key`）与 `Notify`；`finish` 在 `keep_draft` 时登记并让
+  `Terminal` 带 `keepDraft`；提供 `take_pending(id)`、`wait_pending(key, 3s)`；两条退出路径（`PopupHostIdleAck keep_warm=false`、
+  `PopupHostShutdown`）改为：集合非空时在后台任务里最多等 3 秒再 `app.exit(0)`，空则立即退出，行为与今天一致。
+- `commands.rs`：新命令 `popup_inbox_draft(request_id, draft: Option<DraftSave>)`，注册到 `app/invoke.rs`：
+  图片按题用 `cli::image_writer::save` 落盘（沿用请求 id 目录），拼 `HistoryDraft`（`key` 取该请求的 `draft_key`），
+  `history::attach_draft`；无论成败都清掉待存登记并唤醒等待者；失败只写日志。
+- 前端：`src/lib/types.ts` 加 `DraftSave` / `DraftLoad`；`src/lib/ipc.ts` 加 `popupInboxDraft`；
+  `usePopupCore.ts` 加 `collectDraft()`（选项文本、文字、图片、回复文件路径、批注；不含待办 / 指令；没有内容返回 `null`）并通过
+  `PopupScope` 新增的 `draftReader` 注册；`PopupInboxView.vue` 的 `popup-inbox-terminal` 监听里，遇到 `keepDraft` 同步读取并
+  `popupInboxDraft(...)`（不 await，卡片照常移除）。
+- 测试：Rust——待存集合的登记 / 清除 / 超时、退出路径的有界等待、`popup_inbox_draft` 的图片落盘与记录合并；
+  vitest——`collectDraft` 的各部分与空内容、提交进行中也能读、监听里只在 `keepDraft` 时回传、卡片未挂载时回传 `null`。
+
+### P4 载入：重发的新卡
+
+- `commands.rs` 新增异步命令 `popup_draft_claim(request_id) -> Option<DraftLoad>`（注册到 `app/invoke.rs`）：请求带 `draft_key`
+  且有会话键时，先 `wait_pending(同键, 3s)`，再 `history::claim_draft(...)`，返回 `DraftLoad`（选项、文字、图片路径、
+  已确认仍存在的文件、批注）；其余情况返回 `None`。`popup_init` 不动，预热与独立窗口路径不会调用它。
+- 新命令 `popup_draft_images(paths)`：只读取系统临时目录下 `askhuman/` 里存在的图片，返回 `ImageAttachment[]` 与缺失张数
+  （路径先规范化再校验前缀，限制单文件大小，防止被当成任意文件读取口）。
+- 前端：`src/lib/ipc.ts` 加 `popupDraftClaim` / `popupDraftImages`；`renderInit` 之后（仅合并宿主的卡片）异步取草稿，
+  取到后 `applyDraft`——选项按文本匹配、文字、图片（调命令）、回复文件、批注（设为未定位后 `reapply()`，由现有的
+  `engine.relocate` 按引文定位）；置 `draftNotice`，卡片顶部一行可关闭的提示「已载入上次未提交的内容」（有图片缺失时附张数）。
+  `hasDraft` 随内容自然为真。若用户在草稿到达前已经开始输入，**不覆盖**已有内容（只补空的部分，提示照常显示）。
+- i18n：`zh.ts` / `en.ts` 加 `popup.draftRestored`、`popup.draftRestoredMissing`。
+- 测试：Rust——`popup_draft_claim` 里「等待 → 认领」的纯逻辑（抽成函数）、无会话键 / 无 `draft_key` 返回 `None`、
+  `popup_draft_images` 的路径校验；vitest——`applyDraft` 各部分、新卡没有的选项丢弃、用户已输入时不覆盖、提示的显示与关闭、
+  批注找不到时排在最后、独立窗口 / 预热卡不调用认领。
+
+### P5 历史窗口
+
+- `HistoryView.vue`：带草稿的取消记录加「草稿」标记；详情里每题下只读显示草稿（选项、文字、图片、文件）与批注，复制按钮，
+  状态行写明「调用方断开时未提交的内容」与是否已载入；`haystackOf` 把草稿文字纳入搜索。
+- i18n：`history.draft*`。
+- 测试：vitest——标记与详情、搜索命中草稿文字、没有草稿的记录渲染不变。
+
+### P6 文档、验证、安装
+
+- 文档回写：`overview-popup-ui.md`（第 37 行那段「内存草稿」补一句：调用方断开时草稿写进历史、重发时载入；宿主现在也会写历史文件）、
+  `specs/reply-history.md`（「当前实现补充」加一条 `draft` 字段）、`specs/duplicate-ask-coalescing.md`（D4 末尾加一句指向本规格）、
+  本规格状态改「已实现」并补验收结果；检查 `docs/wiki/` 里历史 / 弹窗相关页面是否需要同步；`docs/PROGRESS.md` 更新。
+- 验证：`node scripts/machine-health.mjs` → `cargo fmt --check`、`cargo clippy -D warnings`、`cargo test`、`vitest`、`vue-tsc`；
+  按 AGENTS.md 用 `./scripts/install.sh` 安装后验证（独立 Dev Worktree 时按 `docs/agent-worktree-setup.md`）。
+- 真实验证（规格 §5 的 1–10）：用真实弹窗输入内容、杀掉 CLI 子进程（等同 MCP 被关闭时的结果）、看历史、重发、载入、
+  再取消、用户取消 / 手机抢答的不保存；daemon `stop` 一项单独做。「调用方断开」用命令行杀掉 `AskHuman` CLI 子进程来模拟，
+  不依赖任何 Agent 会话。真人点击与输入的部分在同一轮提问里请你配合，做不到的如实写在实施记录里。
+
+## 2. 风险
+
+| 风险 | 处理 |
+| --- | --- |
+| `cancel_request` 调换顺序后，渠道 interrupt 晚于历史写入一次文件 IO | 原来 `record_history` 就在同一把锁内、同一函数里，只是换了先后；IM 卡定格延迟是一次小文件写 |
+| 宿主退出被「待存草稿」拖住 | 有界 3 秒，超时记日志并退出；集合为空时与今天一样立即退出 |
+| 前端读草稿时卡片已被别的流程移除 | 监听里同步读；读不到回传 `null`，宿主清登记，不会卡住退出 |
+| 草稿图片在系统临时目录，被清理后载入缺图 | 载入时跳过并在提示里写明张数；规格 §6 第 3 条已列为待确认 |
+| 载入影响预热 / 独立窗口路径 | `popup_init` 不动；认领是独立命令，只有合并宿主的前端调用，有测试覆盖「其余路径不调用」 |
+| 草稿到达时用户已开始输入 | 不覆盖已有内容，只补空的部分 |
+| 历史文件被宿主与 daemon 两个进程写 | 全部走既有跨进程锁与原子重写；`attach_draft` / `claim_draft` 各自一次读-改-写 |
+| 新旧版本混用丢草稿字段 | 规格 D10 已说明：只丢草稿本身；不崩溃 |
+
+## 3. 实施记录
+
+（实施后填写：提交清单、前置核对结论、验证结果与没做到的部分。）

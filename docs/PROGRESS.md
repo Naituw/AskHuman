@@ -3,6 +3,15 @@
 记录需要跨会话保留的未完成 / 延期事项和明确下一步。任务 / 需求完成后删除其 section
 （历史留在 git）。
 
+## 进行中：调用方断开时保住弹窗里没提交的内容（规格与计划已写，等评审；还没有写代码）
+
+规格 [popup-draft-on-cancel.md](specs/popup-draft-on-cancel.md)，计划 [plans/popup-draft-on-cancel.md](plans/popup-draft-on-cancel.md)。
+起因：Agent 一侧出错关掉 AskHuman 的 MCP server → 调用方断开 → 弹窗被取消，正在输入的内容（只在网页内存里）随窗口丢失。
+用户选定：草稿记在那条取消的历史记录上；窗口照旧立刻关闭、不加提示；同会话重发同一个问题时自动载入并提示。
+
+- [ ] 用户评审规格 §6 的五个默认值（Stop 确认卡也存、不设有效期、图片落系统临时目录、独立窗口模式本期不做、载入提示一行可关闭）。
+- [ ] 评审通过后开工：开工时先问执行位置（主工作区 / 独立 Dev Worktree），再按计划 P1–P6 实现；规格 §5 的验收要真人在真实弹窗里配合。
+
 ## 进行中：Antigravity 深度集成（P1–P4 已实现并装为日常版，等用户验收）
 
 规格 [antigravity-deep-integration.md](specs/antigravity-deep-integration.md)，计划 [plans/antigravity-deep-integration.md](plans/antigravity-deep-integration.md)
