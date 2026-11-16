@@ -1,8 +1,10 @@
 # 计划：调用方断开时保住弹窗里没提交的内容
 
 规格：[popup-draft-on-cancel.md](../specs/popup-draft-on-cancel.md)（设计定案以规格为准；本计划只写怎么做、怎么验）。
-状态：待规格评审通过后实施。执行位置（主工作区 / 独立 Dev Worktree）在开工时的同一轮提问里再问：
-主工作区现在有另一个会话的未提交 iOS 改动（`ios/AskHuman/Views/Attachments/*`），安装与提交都要避开它们。
+状态：规格已评审通过，实施中（2026-11-16）。执行位置：用户选了主工作区。主工作区里有别的会话的未提交改动
+（`src-tauri/src/codex_desktop/mod.rs`、`docs/specs/codex-desktop-session-integration.md`、`ios/AskHuman/Views/Attachments/*`、
+`ios/AskHumanUITests/*`）：提交只按明确路径；它们会被一起编进我的构建，测试失败要先分清是不是它们的；
+安装前先问用户怎么处理它们（用户在选位置时已知晓这一点）。
 
 ## 0. 前置核对（开工前做完，结果写进实施记录）
 
