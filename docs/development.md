@@ -100,8 +100,8 @@ Current prototypes:
   this page). The **real** `PopupView` runs against `mockIPC` (`annotationsMock.ts`) inside a fake window
   (`AnnotationsFrame.vue`); nothing on the page is prototype-only UI. `?scene=idle|select|editor|notes|list|edit` plays
   the gestures that reach that state through the real UI (select text, type, click) and every state can also be
-  reached by hand. `shape=message|direct|three` picks the request (a Message and one question / a direct ask / a
-  Message and three questions), plus `theme=dark`, `platform=win`, `w=`, `h=`. Use `w=420` with a 420 px viewport to
+  reached by hand. `shape=message|direct|three|files` picks the request (a Message and one question / a direct ask / a
+  Message and three questions / a direct ask with two files, whose question is shown as the Message above them), plus `theme=dark`, `platform=win`, `w=`, `h=`. Use `w=420` with a 420 px viewport to
   check the narrowest window, whose footer must keep Send / Next inside it.
 - `ios-annotations.html` — a static mock of the same flow on the iPhone answer page, not product code and not a
   screenshot: `?board=flow|direct|bar&cells=1,2`. The `bar` board's widths are estimates; the real ones are measured by

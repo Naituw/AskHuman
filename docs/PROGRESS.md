@@ -627,6 +627,11 @@ iOS 在 iPhone 17（402 pt）/ 26.2 与 iPhone SE（375 pt）/ 18.5 的模拟器
 3. 与附注无关、HEAD 上就失败的 iOS 26.x 量法：`AskHumanBarUITests` 里 `answered-count` 量到的是文字（23–39 pt，断言要求 ≥ 40 pt）、`quick-reply-menu` 框 54 pt（断言要求约 50 pt 的圆）；
    `AskHumanInputVisibilityUITests.testShortAnswerAndAttachmentFitWithAccessibilityText` 的键盘焦点事件。先在 27.0 上看是不是一样，再决定改断言的量法。
 4. 整库 `vitest run`（`vitest.config.ts` 没排除 `todo-sync-helper/build/**`，另一会话处理）与整库 `cargo test` 在本功能之后没有重跑。
+5. 2026-11-16 起直接提问不再把附件算成 Message（两端：Message 没有文字、恰好一个问题、不是 What's next 就算；见需求 §11「补充轮」、计划文末「追加」）。
+   弹窗里带附件的直接提问把题干当作 Message：题干在最上、附件紧随其后、没有「Question」小标题，选项与回复框在最下；没有附件的直接提问版面不变
+   （用户 2026-11-16 定，推翻了当天先做的「版面不动」，也推翻了 2026-06-04 D13 在这一形态下的结论）。弹窗随 `./scripts/install.sh` 装到本机；
+   iOS 要**新的 TestFlight 构建**才到手机（Build 14 之后还没发，发不发、何时发等用户定）。
+   真机上看：带文件的单题，iOS 上题干在上方 Message 卡里、文件列在题干下面；弹窗里题干在最上、文件紧随其后；两边选字都能加附注。
 
 没有人在真环境里点过的：Windows / Linux 的真实弹窗；真实 macOS 弹窗里鼠标拖选（自动化的拖动不产生文字选区，只用过双击与三击）；浅色主题与 420 px 窄窗口的真实弹窗；
 真实输入法组词；「查看源码」模式重新定位、历史窗口里的附注、共享窗口的未答标记（只有单元测试）；iPhone 真机上的多词与跨块选区、系统选字菜单里的「添加附注」入口、整套手感；
