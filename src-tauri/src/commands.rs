@@ -475,6 +475,41 @@ pub async fn popup_inbox_idle(app: AppHandle) -> Result<(), String> {
     Ok(())
 }
 
+/// The page's reply to a `popup-inbox-terminal` event that asked for the draft (spec
+/// `popup-draft-on-cancel` D5): what the card held when its caller went away, or `None` when it
+/// held nothing or was already gone. Always settles the host's record of that request, so nothing
+/// waits on a page that has nothing to give. A report for a request the host is not keeping a
+/// draft for (late, repeated) is ignored.
+#[tauri::command]
+pub async fn popup_inbox_draft(
+    app: AppHandle,
+    request_id: String,
+    draft: Option<crate::app::popup_draft::DraftSave>,
+) -> Result<(), String> {
+    let inbox = app
+        .try_state::<crate::app::popup_inbox::Inbox>()
+        .ok_or("popup inbox is unavailable")?;
+    let Some(key) = inbox.pending_draft(&request_id) else {
+        return Ok(());
+    };
+    if let Some(save) = draft {
+        let id = request_id.clone();
+        let lang = crate::i18n::Lang::current();
+        let kept = tauri::async_runtime::spawn_blocking(move || {
+            crate::app::popup_draft::keep(&id, key, save, lang)
+        })
+        .await
+        .unwrap_or(false);
+        crate::daemon::lifecycle::log_runtime_event(
+            "popup_host",
+            if kept { "draft_kept" } else { "draft_not_kept" },
+            Some(&request_id),
+        );
+    }
+    inbox.settle_draft(&request_id);
+    Ok(())
+}
+
 #[tauri::command]
 pub async fn enrich_permission_diff(
     app: AppHandle,

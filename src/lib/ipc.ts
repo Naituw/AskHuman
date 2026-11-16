@@ -60,6 +60,7 @@ import type {
   ThemeMode,
   DiffFileView,
   DiffStatPage,
+  DraftSave,
   DropLogEntry,
   ImageAttachment,
   TodoDoneEntry,
@@ -80,6 +81,12 @@ export const popupInit = (requestId?: string) => invoke<PopupInit>("popup_init",
 export const popupInboxInit = () => invoke<PopupInboxSnapshot>("popup_inbox_init");
 export const popupInboxActivate = (requestId: string) => invoke<void>("popup_inbox_activate", { requestId });
 export const popupInboxIdle = () => invoke<void>("popup_inbox_idle");
+/**
+ * The reply to a `popup-inbox-terminal` event that carries `keepDraft` (the caller went away): what the card held, or
+ * null when it held nothing. The host keeps it in the history; it answers once the draft is kept or given up.
+ */
+export const popupInboxDraft = (requestId: string, draft: DraftSave | null) =>
+  invoke<void>("popup_inbox_draft", { requestId, draft });
 
 export const enrichPermissionDiff = (requestId: string) =>
   invoke<PermissionDiffModel>("enrich_permission_diff", { requestId });

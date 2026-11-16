@@ -249,6 +249,13 @@ pub fn attach_draft(id: &str, draft: HistoryDraft) -> bool {
     attach_draft_at(&paths::history_file(), id, draft)
 }
 
+/// Whether `attach_draft` would take a draft for this id right now: a cancel entry of it that holds
+/// none yet. A read-only look, so the popup host can skip writing images that nothing would keep;
+/// `attach_draft` still decides under the lock.
+pub fn accepts_draft(id: &str) -> bool {
+    accepts_draft_at(&paths::history_file(), id)
+}
+
 /// Take the newest unclaimed draft that an abandoned ask of the same session and question left,
 /// and mark it loaded by `request_id` (spec `popup-draft-on-cancel` D6). A draft is loaded at most
 /// once; asking again with the request id that already took it hands the same draft out again.
@@ -341,6 +348,18 @@ fn record_at(path: &Path, entry: HistoryEntry, limit: u32) {
     let _ = write_all_at(path, &entries);
 }
 
+/// The one rule for who may take a draft: the cancel entry of the abandoned ask, once.
+fn takes_draft(entry: &HistoryEntry) -> bool {
+    entry.action == ChannelAction::Cancel && entry.draft.is_none()
+}
+
+fn accepts_draft_at(path: &Path, id: &str) -> bool {
+    read_all_strict_at(path)
+        .ok()
+        .and_then(|entries| entries.into_iter().find(|entry| entry.id == id))
+        .is_some_and(|entry| takes_draft(&entry))
+}
+
 fn attach_draft_at(path: &Path, id: &str, draft: HistoryDraft) -> bool {
     if !draft.has_content() {
         return false;
@@ -352,7 +371,7 @@ fn attach_draft_at(path: &Path, id: &str, draft: HistoryDraft) -> bool {
     let Some(entry) = entries.iter_mut().find(|entry| entry.id == id) else {
         return false;
     };
-    if entry.action != ChannelAction::Cancel || entry.draft.is_some() {
+    if !takes_draft(entry) {
         return false;
     }
     entry.draft = Some(draft);
@@ -862,6 +881,25 @@ mod tests {
         let kept = stored_draft(&path, "gone").unwrap();
         assert_eq!(kept.answers[0].user_input.as_deref(), Some("x"));
         assert!(stored_draft(&path, "sent").is_none());
+    }
+
+    /// The host asks before it writes images, with the same rule `attach_draft` applies.
+    #[test]
+    fn a_draft_is_welcome_only_where_attaching_would_take_it() {
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("history.jsonl");
+        assert!(!accepts_draft_at(&path, "gone"), "no history file");
+        record_at(&path, entry("sent", "/p", 1), 200);
+        record_at(&path, cancel_entry("gone", 2), 200);
+        assert!(!accepts_draft_at(&path, "sent"));
+        assert!(!accepts_draft_at(&path, "unknown"));
+        assert!(accepts_draft_at(&path, "gone"));
+        assert!(attach_draft_at(
+            &path,
+            "gone",
+            draft_of(Some("sid:a"), "f", "x")
+        ));
+        assert!(!accepts_draft_at(&path, "gone"), "it already holds one");
     }
 
     #[test]

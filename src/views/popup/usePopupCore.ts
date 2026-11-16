@@ -48,6 +48,7 @@ import type {
   AskRequest,
   ConfirmChoice,
   ConfirmRequest,
+  DraftSave,
   DropLogTarget,
   FileAttachment,
   ImageAttachment,
@@ -159,6 +160,11 @@ export interface PopupScope {
   /** Back to the small window. Offered while nothing is left to answer (a peek); never changes a mark. */
   shrinkWindow?: () => void;
   restoreFocus?: (restore: (() => void) | null) => void;
+  /**
+   * The form hands the page a way to read what it holds, and takes it back when it goes (spec popup-draft-on-cancel D5).
+   * The page reads it when the request ends because its caller went away, while the form still exists.
+   */
+  draftReader?: (reader: (() => DraftSave | null) | null) => void;
   failed?: (error: string) => void;
   sending?: () => void;
   requestId: string;
@@ -1878,6 +1884,33 @@ export function usePopupCore(scope?: PopupScope) {
     });
   }
 
+  /**
+   * What this form holds that is worth keeping when its caller goes away (docs/specs/popup-draft-on-cancel.md D2): each
+   * question's chosen options, text, pictures and reply files, and the notes on the text. Not the todos picked in the
+   * todo area, the quick-reply directive or a confirmation's comment. A note still being typed is kept the way a send
+   * keeps it. Null when there is nothing, so the host writes nothing.
+   *
+   * Reads, and never sends: the request has no one to send to, and the form may be mid-send when its caller leaves.
+   */
+  function collectDraft(): DraftSave | null {
+    if (isConfirm.value || !request.value) return null;
+    annotations.commitAnnotationDraft();
+    const notes = annotations.annotationPayload();
+    const answers: QuestionAnswer[] = questions.value.map((q, i) => ({
+      selectedOptions: q.predefinedOptions
+        .map((o) => o.text)
+        .filter((o) => (chosenByQ.value[i] ?? []).includes(o)),
+      userInput: inputByQ.value[i] ?? "",
+      images: imagesByQ.value[i] ?? [],
+      files: (replyFilesByQ.value[i] ?? []).map((f) => f.path),
+    }));
+    const typed = answers.some(
+      (a) => a.selectedOptions.length > 0 || a.userInput.trim() !== "" || a.images.length > 0 || a.files.length > 0,
+    );
+    if (!typed && notes.length === 0) return null;
+    return { answers, ...(notes.length > 0 ? { annotations: notes } : {}) };
+  }
+
   /** Sends the popup. A template binds this straight to `@click`, so it must not take the event as an argument. */
   function submit() {
     return submitWith();
@@ -2852,6 +2885,7 @@ export function usePopupCore(scope?: PopupScope) {
   onBeforeUnmount(() => {
     disposed = true;
     scope?.restoreFocus?.(null);
+    scope?.draftReader?.(null);
     scope?.dropReceiver?.(null);
     window.removeEventListener("paste", onPaste);
     window.removeEventListener("keydown", onKeydown);
@@ -2893,6 +2927,7 @@ export function usePopupCore(scope?: PopupScope) {
       focusComposerIfInitiallyVisible(current.value);
     }
   });
+  scope?.draftReader?.(collectDraft);
   // The page's drop controller hands over files through this, whether or not this request is the one on screen.
   scope?.dropReceiver?.({
     currentQuestion: () => current.value,

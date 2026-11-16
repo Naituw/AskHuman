@@ -660,6 +660,15 @@ export interface PopupSubmission {
   annotations?: UserAnnotation[];
 }
 
+/**
+ * What a card held when its caller went away (docs/specs/popup-draft-on-cancel.md D2/D5), shaped like a submission so
+ * it is read from the same state. The host keeps it in the history; a draft carries no todos and no directive.
+ */
+export interface DraftSave {
+  answers: QuestionAnswer[];
+  annotations?: UserAnnotation[];
+}
+
 export type ChannelAction = "send" | "cancel";
 
 /** One question's recorded answer in history (paths only, no base64). */

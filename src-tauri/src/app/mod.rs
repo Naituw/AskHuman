@@ -10,6 +10,7 @@ mod invoke;
 mod linux_dpi;
 pub mod popup_activation;
 pub(crate) mod popup_canvas;
+pub mod popup_draft;
 mod popup_drag_front;
 pub mod popup_inbox;
 pub mod popup_inbox_geometry;
