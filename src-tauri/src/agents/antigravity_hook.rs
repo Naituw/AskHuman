@@ -12,15 +12,20 @@
 //! | `PreInvocation`, `invocationNum == 0` | `turn-start` |
 //! | `PreInvocation`, `invocationNum > 0` | `activity` |
 //! | `Stop`, `fullyIdle == true` | `turn-end` |
-//! | `Stop`, `fullyIdle == false` | `activity` |
+//! | `Stop`, `fullyIdle == false` | `activity`, carrying the end it would be (`deferred_end`) |
 //!
 //! Every conversation, including a sub-agent's, is reported on its own: this module does not decide
-//! whether a conversation is a root or a child (spec §8 L3 / L4, decision D17 is still open).
+//! whether a conversation is a root or a child. The daemon does, from the parent's transcript, and
+//! folds a sub-agent's reports into its root (spec D17).
+//!
+//! Two of the hooks can also answer the host. `PreInvocation` asks the daemon for a message the
+//! user queued while the agent was working and injects it as a user message. `Stop` (when the
+//! confirmation switch is on, see `agents::stop`) first asks whether a card may be raised now.
 //!
 //! The hook contract is silent: exit code 0 and an empty stdout, whatever happens. A failure to
 //! reach the daemon is dropped, because tracking must never slow down or break the agent.
 
-use serde_json::Value;
+use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
 
 use super::{detect, AgentKind, LifecycleEvent};
@@ -92,6 +97,8 @@ pub struct Report {
     /// Only on `turn-start`: pairs the turn with a task AskHuman launched (spec §12.8).
     pub prompt_sha256: Option<String>,
     pub failed: bool,
+    /// A `Stop` that leaves work running: it ends nothing yet, but says how the turn will end.
+    pub waiting: bool,
 }
 
 fn text<'a>(input: &'a Value, key: &str) -> Option<&'a str> {
@@ -104,7 +111,7 @@ fn text<'a>(input: &'a Value, key: &str) -> Option<&'a str> {
 
 /// The project of a conversation: the first workspace root, else the hook's `cwd`. The hook
 /// process itself runs in the plugin directory, so its own working directory means nothing.
-fn project(input: &Value) -> Option<String> {
+pub(super) fn project(input: &Value) -> Option<String> {
     input
         .get("workspacePaths")
         .and_then(Value::as_array)
@@ -120,6 +127,14 @@ fn project(input: &Value) -> Option<String> {
 /// again when that finishes (spec §4.1).
 pub fn stop_is_final(input: &Value) -> bool {
     input.get("fullyIdle").and_then(Value::as_bool) == Some(true)
+}
+
+/// A `Stop` where the model itself chose to say nothing more. The only Stop worth confirming with
+/// the human: a limit, an error or a user cancel is not the agent's choice to end. Whether the
+/// whole conversation is idle by now is a separate question ([`stop_is_final`]): a `Stop` that
+/// left a sub-agent running is confirmed once that finishes.
+pub fn stop_is_natural(input: &Value) -> bool {
+    text(input, "terminationReason") == Some("NO_TOOL_CALL")
 }
 
 /// A `Stop` that ended in an error; the only turn outcome that raises a failure card.
@@ -166,11 +181,33 @@ pub fn report_for(event: HookEvent, input: &Value) -> Option<Report> {
         transcript_path,
         prompt_sha256,
         failed: lifecycle == LifecycleEvent::TurnEnd && stop_failed(input),
+        waiting: event == HookEvent::Stop && !stop_is_final(input),
     })
 }
 
-/// The wire message for a report, shared by both entry points.
-fn message(report: Report, input: &Value) -> ClientMsg {
+/// What a hook asks the daemon besides reporting.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum Ask {
+    Nothing,
+    /// A message the user queued for this conversation (`PreInvocation`).
+    Interjection,
+    /// Whether the confirmation card may be raised now (`Stop`).
+    StopGate,
+}
+
+/// The wire message for a report.
+fn message(report: Report, input: &Value, ask: Ask) -> ClientMsg {
+    let mut observation =
+        super::result::observation(AgentKind::Antigravity, report.event, Some(input));
+    if report.waiting {
+        // The end the turn will have once the sub-agent or background task is done.
+        observation.deferred_end = super::result::observation(
+            AgentKind::Antigravity,
+            LifecycleEvent::TurnEnd,
+            Some(input),
+        )
+        .result;
+    }
     ClientMsg::AgentEvent {
         agent: AgentKind::Antigravity.as_str().to_string(),
         event: report.event.as_str().to_string(),
@@ -185,14 +222,18 @@ fn message(report: Report, input: &Value) -> ClientMsg {
         prompt_sha256: report.prompt_sha256,
         ts: 0,
         tool: None,
-        interject_poll: false,
+        interject_poll: ask == Ask::Interjection,
         failed: report.failed,
-        observation: Some(Box::new(super::result::observation(
-            AgentKind::Antigravity,
-            report.event,
-            Some(input),
-        ))),
+        observation: Some(Box::new(observation)),
+        stop_gate: ask == Ask::StopGate,
     }
+}
+
+/// The message a hook invocation sends, for tests of the daemon that answers it.
+#[cfg(test)]
+pub(crate) fn wire(event: HookEvent, input: &Value, ask: Ask) -> ClientMsg {
+    let report = report_for(event, input).expect("a payload that is reported");
+    message(report, input, ask)
 }
 
 /// Reports one hook payload to the daemon. Best effort; returns whether a message was sent.
@@ -201,8 +242,73 @@ pub fn report(event: HookEvent, input: &Value) -> bool {
         return false;
     };
     super::session_info::capture_hook(AgentKind::Antigravity, input, &detect::env_snapshot());
-    crate::client::report_agent_event(message(report, input));
+    crate::client::report_agent_event(message(report, input, Ask::Nothing));
     true
+}
+
+/// What the daemon says about raising the confirmation card for a `Stop`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Gate {
+    /// Ask the human now. `held` when the daemon first made the hook wait for a sub-agent to
+    /// finish: the whole conversation is idle by now, whatever the payload said.
+    Card { held: bool },
+    /// Do not ask: a sub-agent's own end, or a pause for work that is still running. The hook
+    /// reports the `Stop` as it would without the switch.
+    Skip,
+}
+
+/// Asks the daemon whether the `Stop` may raise a card. Without an answer (an older daemon, none
+/// running) a `Stop` that ended everything asks, as it did before sub-agents were grouped, and one
+/// that left work running does not, since the agent is not done.
+pub fn gate(input: &Value) -> Gate {
+    let Some(report) = report_for(HookEvent::Stop, input) else {
+        return Gate::Skip;
+    };
+    super::session_info::capture_hook(AgentKind::Antigravity, input, &detect::env_snapshot());
+    gate_from(
+        crate::client::report_stop_gate(message(report, input, Ask::StopGate)),
+        input,
+    )
+}
+
+fn gate_from(answer: crate::client::StopGate, input: &Value) -> Gate {
+    match answer {
+        crate::client::StopGate::Card { held } => Gate::Card { held },
+        crate::client::StopGate::Skip => Gate::Skip,
+        crate::client::StopGate::Unanswered if stop_is_final(input) => Gate::Card { held: false },
+        crate::client::StopGate::Unanswered => Gate::Skip,
+    }
+}
+
+/// The payload of a `Stop` after the daemon held it until the whole conversation went idle.
+pub fn mark_idle(input: &mut Value) {
+    if let Some(fields) = input.as_object_mut() {
+        fields.insert("fullyIdle".into(), Value::Bool(true));
+    }
+}
+
+/// What the host does with an invocation it is about to start: one injected user message that
+/// carries what the human sent while the agent was working.
+pub fn injection_output(text: &str, attachments: &[crate::models::FileAttachment]) -> Value {
+    json!({
+        "injectSteps": [{
+            "userMessage": crate::prompts::interject_injection(text, attachments),
+        }]
+    })
+}
+
+/// Reports an invocation about to start and returns what the host should do with it. The daemon
+/// answers with the messages queued for this conversation, or nothing; any failure to ask means
+/// nothing, so the agent is never held up.
+pub fn pre_invocation(input: &Value) -> Option<Value> {
+    let report = report_for(HookEvent::PreInvocation, input)?;
+    super::session_info::capture_hook(AgentKind::Antigravity, input, &detect::env_snapshot());
+    match crate::client::report_agent_event_with_poll(message(report, input, Ask::Interjection)) {
+        crate::client::InterjectPollOutcome::Deny { text, attachments } => {
+            Some(injection_output(&text, &attachments))
+        }
+        crate::client::InterjectPollOutcome::Allow => None,
+    }
 }
 
 /// `AskHuman __agent-hook antigravity <event>`; `args` starts at the event name.
@@ -210,7 +316,14 @@ pub fn run(args: &[String]) {
     let Some(event) = args.first().and_then(|value| HookEvent::parse(value)) else {
         return;
     };
-    if let Some(input) = super::report::read_stdin_json() {
+    let Some(input) = super::report::read_stdin_json() else {
+        return;
+    };
+    if event == HookEvent::PreInvocation {
+        if let Some(output) = pre_invocation(&input) {
+            println!("{output}");
+        }
+    } else {
         report(event, &input);
     }
 }
@@ -421,8 +534,10 @@ mod tests {
             (ended.event, ended.failed),
             (LifecycleEvent::TurnEnd, false)
         );
+        assert!(!ended.waiting);
         let waiting = report_for(HookEvent::Stop, &base(json!(false), "NO_TOOL_CALL")).unwrap();
         assert_eq!(waiting.event, LifecycleEvent::Activity);
+        assert!(waiting.waiting, "a Stop that left work running says so");
         // An unreadable flag is not idle: the 30-minute backstop settles it instead.
         let unknown = report_for(HookEvent::Stop, &json!({"conversationId": "c"})).unwrap();
         assert_eq!(unknown.event, LifecycleEvent::Activity);
@@ -544,17 +659,115 @@ mod tests {
     }
 
     #[test]
-    fn the_subagent_recording_pins_the_flat_behavior_of_the_open_decision() {
-        // Spec §8 L4 / D17. Today every conversation stands alone: the child finishes, while the
-        // root's last `Stop` said `fullyIdle=false` and no later root `Stop` exists, so the root stays
-        // working until the 30-minute backstop. If D17 chooses to merge sub-agents into a tree, this
-        // is the assertion that changes (the whole tree is idle after the last event).
+    fn the_registry_alone_would_leave_the_root_of_a_subagent_session_working() {
+        // Spec §8 L4 / D17. Every conversation is reported on its own, and the registry takes the
+        // reports as they come: the child finishes, while the root's last `Stop` said
+        // `fullyIdle=false` and no later root `Stop` exists, so the root would stay working until
+        // the 30-minute backstop. What ends it is the daemon's tree, which folds the child into
+        // the root and settles the root's turn (`daemon::runtime::antigravity_tree`).
         const ROOT: &str = "11111111-1111-4111-8111-111111111111";
         const CHILD: &str = "22222222-2222-4222-8222-222222222222";
         let registry = super::super::registry::AgentRegistry::new();
         replay_into(&registry, APP_SUBAGENT, usize::MAX);
         assert_eq!(state_of(&registry, CHILD).as_deref(), Some("idle"));
         assert_eq!(state_of(&registry, ROOT).as_deref(), Some("working"));
+    }
+
+    /// The hook's message with only the parts the daemon branches on.
+    fn sent(event: HookEvent, input: &Value, ask: Ask) -> (String, bool, bool, Option<bool>) {
+        let report = report_for(event, input).unwrap();
+        match message(report, input, ask) {
+            ClientMsg::AgentEvent {
+                event,
+                interject_poll,
+                stop_gate,
+                observation,
+                ..
+            } => (
+                event,
+                interject_poll,
+                stop_gate,
+                observation.map(|observation| observation.deferred_end.is_some()),
+            ),
+            other => panic!("unexpected message {other:?}"),
+        }
+    }
+
+    #[test]
+    fn a_report_asks_only_what_its_hook_may_ask() {
+        let pre = json!({"conversationId": "c", "invocationNum": 1});
+        let stop =
+            json!({"conversationId": "c", "fullyIdle": true, "terminationReason": "NO_TOOL_CALL"});
+        let (_, poll, gate, _) = sent(HookEvent::PreInvocation, &pre, Ask::Interjection);
+        assert_eq!((poll, gate), (true, false));
+        let (_, poll, gate, _) = sent(HookEvent::Stop, &stop, Ask::StopGate);
+        assert_eq!((poll, gate), (false, true));
+        let (_, poll, gate, _) = sent(HookEvent::Stop, &stop, Ask::Nothing);
+        assert_eq!((poll, gate), (false, false));
+        let (_, poll, gate, _) = sent(HookEvent::SessionStart, &pre, Ask::Nothing);
+        assert_eq!((poll, gate), (false, false));
+    }
+
+    #[test]
+    fn only_a_stop_that_leaves_work_running_carries_the_end_it_will_have() {
+        let stop = |idle: bool| json!({"conversationId": "c", "fullyIdle": idle, "terminationReason": "NO_TOOL_CALL"});
+        let (event, _, _, deferred) = sent(HookEvent::Stop, &stop(false), Ask::StopGate);
+        assert_eq!((event.as_str(), deferred), ("activity", Some(true)));
+        let (event, _, _, deferred) = sent(HookEvent::Stop, &stop(true), Ask::StopGate);
+        assert_eq!((event.as_str(), deferred), ("turn-end", Some(false)));
+        let pre = json!({"conversationId": "c", "invocationNum": 0});
+        let (_, _, _, deferred) = sent(HookEvent::PreInvocation, &pre, Ask::Interjection);
+        assert_eq!(deferred, Some(false));
+    }
+
+    #[test]
+    fn a_stop_held_until_the_conversation_is_idle_is_reported_as_final() {
+        let mut stop =
+            json!({"conversationId": "c", "fullyIdle": false, "terminationReason": "NO_TOOL_CALL"});
+        assert!(!stop_is_final(&stop));
+        mark_idle(&mut stop);
+        assert!(stop_is_final(&stop));
+        let report = report_for(HookEvent::Stop, &stop).unwrap();
+        assert_eq!(
+            (report.event, report.waiting),
+            (LifecycleEvent::TurnEnd, false)
+        );
+        // A payload that is not an object is left alone.
+        let mut odd = json!("not an object");
+        mark_idle(&mut odd);
+        assert_eq!(odd, json!("not an object"));
+    }
+
+    #[test]
+    fn without_an_answer_only_a_stop_that_ended_everything_asks() {
+        use crate::client::StopGate;
+        let stop = |idle: bool| json!({"conversationId": "c", "fullyIdle": idle});
+        assert_eq!(
+            gate_from(StopGate::Unanswered, &stop(true)),
+            Gate::Card { held: false }
+        );
+        assert_eq!(gate_from(StopGate::Unanswered, &stop(false)), Gate::Skip);
+        // An answer is taken as it is, whatever the payload says.
+        assert_eq!(
+            gate_from(StopGate::Card { held: true }, &stop(false)),
+            Gate::Card { held: true }
+        );
+        assert_eq!(gate_from(StopGate::Skip, &stop(true)), Gate::Skip);
+    }
+
+    #[test]
+    fn a_queued_message_is_injected_as_one_user_step_that_blocks_nothing() {
+        let output = injection_output("use the staging database", &[]);
+        let steps = output["injectSteps"].as_array().unwrap();
+        assert_eq!(steps.len(), 1);
+        let message = steps[0]["userMessage"].as_str().unwrap();
+        assert!(message.contains("use the staging database"));
+        // The host did not deny anything; the text must not say so.
+        assert_eq!(
+            message,
+            crate::prompts::interject_injection("use the staging database", &[])
+        );
+        assert_eq!(output.as_object().unwrap().len(), 1);
     }
 
     #[test]

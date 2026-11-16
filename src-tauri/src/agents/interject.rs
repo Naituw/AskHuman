@@ -55,6 +55,9 @@ pub enum WaitOutcome {
     Message(InterjectDelivery),
     /// 放行（composer 取消 / 关窗 / 消息被并发的另一个 hook 拿走）。
     Release,
+    /// A Stop gate hold only (Antigravity): the wait ended without a card to raise, because the
+    /// conversation is running again or a sub-agent's message is still unread.
+    Skip,
 }
 
 /// 一次 hook poll 的即时结果（AgentEvent `interject_poll=true` 的处理产物）。

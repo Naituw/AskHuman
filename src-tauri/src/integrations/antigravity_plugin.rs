@@ -182,6 +182,8 @@ pub struct Snapshot {
     pub state: State,
     pub variant: Option<Variant>,
     pub lifecycle: bool,
+    /// The Stop hook asks the human before a turn ends.
+    pub stop: bool,
     /// Why the state is a conflict.
     pub reason: Option<String>,
     /// Where the plugin lives (or would live).
@@ -194,6 +196,7 @@ impl Snapshot {
             state,
             variant: None,
             lifecycle: false,
+            stop: false,
             reason,
             location: layout.dir.clone(),
         }
@@ -263,6 +266,27 @@ pub fn set_lifecycle(enabled: bool) -> Result<()> {
         &layout,
         Manifest {
             lifecycle: enabled,
+            ..manifest
+        },
+        &executable,
+        &super::agent_rules::antigravity_rule_bytes,
+    )
+}
+
+/// Turn the Stop confirmation on or off. Like [`set_lifecycle`] it only changes an existing
+/// plugin; the hooks file is rewritten only when its content changes.
+pub fn set_stop(enabled: bool) -> Result<()> {
+    let layout = Layout::current();
+    let manifest = match observe(&layout)? {
+        Observed::Missing => return Ok(()),
+        Observed::Conflict(reason) => return Err(conflict_error(&layout, &reason)),
+        Observed::Owned(owned) => owned.ledger.effective_manifest(),
+    };
+    let executable = executable()?;
+    install_at(
+        &layout,
+        Manifest {
+            stop: enabled,
             ..manifest
         },
         &executable,
@@ -822,6 +846,7 @@ fn snapshot_at(
                 state,
                 variant: Some(manifest.variant.into()),
                 lifecycle: manifest.lifecycle,
+                stop: manifest.stop,
                 reason: None,
                 location: layout.dir.clone(),
             }

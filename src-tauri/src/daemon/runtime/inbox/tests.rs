@@ -487,6 +487,7 @@ fn state_inheriting(inherited: Arc<Inherited>) -> Arc<ServerState> {
         update: Mutex::new(Default::default()),
         agents: Arc::new(AgentRegistry::new()),
         agent_controls: crate::agents::control::ControlStore::load(),
+        antigravity_trees: Default::default(),
         interject: crate::agents::interject::InterjectStore::new(),
         away: crate::daemon::away::AwayEngine::in_memory(),
         grok_bindings: Default::default(),

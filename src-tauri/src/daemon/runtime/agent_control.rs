@@ -614,7 +614,7 @@ pub(super) fn valid_result(rec: &Value, id: &str) -> bool {
         )
 }
 
-fn apply(
+pub(super) fn apply(
     state: &Arc<ServerState>,
     kind: AgentKind,
     sid: &str,

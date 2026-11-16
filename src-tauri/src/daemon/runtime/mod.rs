@@ -38,6 +38,7 @@ use transport::Stream;
 
 mod agent_control;
 mod antigravity_link;
+mod antigravity_tree;
 mod away_ops;
 mod conn_slot;
 mod cursor_reports;
@@ -347,6 +348,9 @@ struct ServerState {
     /// Agent lifecycle registry (lifecycle tracking spec D3).
     agents: Arc<AgentRegistry>,
     agent_controls: crate::agents::control::ControlStore,
+    /// Antigravity sub-agent conversations folded into the conversation that started them (spec
+    /// D17). In memory only; found again from the transcripts after a restart.
+    antigravity_trees: antigravity_tree::Trees,
     failure_confirmations: failure_confirmation::Cards,
     /// Agent 插话队列（spec agent-interject）：内存常驻，变更时落盘 `interject.json`。
     interject: crate::agents::interject::InterjectStore,
@@ -443,6 +447,7 @@ fn test_state(directory: &std::path::Path) -> Arc<ServerState> {
         update: Mutex::new(Default::default()),
         agents: Arc::new(AgentRegistry::new()),
         agent_controls: crate::agents::control::ControlStore::new(directory.join("controls")),
+        antigravity_trees: Default::default(),
         interject: crate::agents::interject::InterjectStore::new(),
         away: crate::daemon::away::AwayEngine::in_memory(),
         grok_bindings: Default::default(),
@@ -1154,6 +1159,7 @@ async fn serve(
         update: Mutex::new(init_update_snapshot()),
         agents,
         agent_controls: crate::agents::control::ControlStore::load(),
+        antigravity_trees: Default::default(),
         failure_confirmations,
         interject: crate::agents::interject::InterjectStore::load(),
         away: crate::daemon::away::AwayEngine::load(),
@@ -1414,6 +1420,7 @@ async fn serve(
                     state.interject.persist();
                 }
                 sweep(&state);
+                antigravity_tree::sweep(&state);
                 if changed || ij_changed || has_agent_subs(&state) {
                     broadcast_agents_state(&state);
                 }
@@ -1712,6 +1719,77 @@ enum Control {
     },
     PassiveClosed,
     Closed,
+}
+
+/// Answers one interjection poll with its first frame: nothing, a message the human queued, or a
+/// hold while a composer is open. `Some` hands the connection on (the hold, or a closed one when a
+/// message could not be delivered and went back to the queue).
+async fn answer_interject_poll(
+    state: &Arc<ServerState>,
+    w: &mut Writer,
+    session_id: &str,
+) -> Option<Control> {
+    use crate::agents::interject::PollOutcome;
+    use crate::ipc::InterjectAction;
+    match state.interject.poll(session_id) {
+        PollOutcome::None => {
+            let _ = ipc::write_msg(
+                w,
+                &ServerMsg::InterjectDecision {
+                    control: None,
+                    action: InterjectAction::None,
+                    text: String::new(),
+                    attachments: Vec::new(),
+                },
+            )
+            .await;
+            None
+        }
+        PollOutcome::Message {
+            delivery,
+            receipt_channels,
+        } => {
+            let delivered = ipc::write_msg(
+                w,
+                &ServerMsg::InterjectDecision {
+                    control: None,
+                    action: InterjectAction::Message,
+                    text: delivery.text.clone(),
+                    attachments: delivery.attachments.clone(),
+                },
+            )
+            .await
+            .is_ok();
+            if !delivered {
+                state
+                    .interject
+                    .requeue_front(session_id, delivery, receipt_channels);
+                state.interject.persist();
+                broadcast_agents_state(state);
+                return Some(Control::Closed);
+            }
+            state.interject.persist();
+            broadcast_agents_state(state);
+            spawn_read_receipts(state, session_id, receipt_channels);
+            None
+        }
+        PollOutcome::Hold(rx) => {
+            let _ = ipc::write_msg(
+                w,
+                &ServerMsg::InterjectDecision {
+                    control: None,
+                    action: InterjectAction::Hold,
+                    text: String::new(),
+                    attachments: Vec::new(),
+                },
+            )
+            .await;
+            Some(Control::InterjectHold {
+                session_id: session_id.to_string(),
+                rx,
+            })
+        }
+    }
 }
 
 async fn handle_conn(stream: Stream, state: Arc<ServerState>) {
@@ -2047,6 +2125,7 @@ async fn control_loop(reader: &mut Reader, w: &mut Writer, state: &Arc<ServerSta
                 interject_poll,
                 failed,
                 observation,
+                stop_gate,
             } => {
                 if let Some(signal) = observation
                     .as_ref()
@@ -2080,209 +2159,215 @@ async fn control_loop(reader: &mut Reader, w: &mut Writer, state: &Arc<ServerSta
                     if !crate::development::session::native_binding_allowed(kind, &session_id) {
                         return Control::Closed;
                     }
-                    // PreToolUse：先回 interject 再做后续（hook 在等，优先解除阻塞）。
-                    if interject_poll {
-                        use crate::agents::interject::PollOutcome;
+                    // An Antigravity `Stop` asking whether it may raise its confirmation card. It
+                    // applies nothing (the hook reports the end itself once the human decided), so
+                    // it is answered, or held until the sub-agents are done, before anything else.
+                    if stop_gate {
                         use crate::ipc::InterjectAction;
-                        match state.interject.poll(&session_id) {
-                            PollOutcome::None => {
-                                let _ = ipc::write_msg(
-                                    w,
-                                    &ServerMsg::InterjectDecision {
-                                        control: None,
-                                        action: InterjectAction::None,
-                                        text: String::new(),
-                                        attachments: Vec::new(),
-                                    },
-                                )
-                                .await;
-                            }
-                            PollOutcome::Message {
-                                delivery,
-                                receipt_channels,
-                            } => {
-                                let delivered = ipc::write_msg(
-                                    w,
-                                    &ServerMsg::InterjectDecision {
-                                        control: None,
-                                        action: InterjectAction::Message,
-                                        text: delivery.text.clone(),
-                                        attachments: delivery.attachments.clone(),
-                                    },
-                                )
+                        let answer = if kind == AgentKind::Antigravity {
+                            antigravity_tree::gate(state, &session_id, ev, observation.as_deref())
                                 .await
-                                .is_ok();
-                                if !delivered {
-                                    state.interject.requeue_front(
-                                        &session_id,
-                                        delivery,
-                                        receipt_channels,
-                                    );
-                                    state.interject.persist();
-                                    broadcast_agents_state(state);
-                                    return Control::Closed;
-                                }
-                                state.interject.persist();
-                                broadcast_agents_state(state);
-                                spawn_read_receipts(state, &session_id, receipt_channels);
-                            }
-                            PollOutcome::Hold(rx) => {
-                                let _ = ipc::write_msg(
-                                    w,
-                                    &ServerMsg::InterjectDecision {
-                                        control: None,
-                                        action: InterjectAction::Hold,
-                                        text: String::new(),
-                                        attachments: Vec::new(),
-                                    },
-                                )
-                                .await;
-                                return Control::InterjectHold { session_id, rx };
-                            }
-                        }
-                    }
-
-                    // PID 解析：优先用显式 pid，否则从 hint_pid 走缓存/walk。
-                    let resolved_pid =
-                        pid.or_else(|| state.agents.resolve_pid(&session_id, kind, hint_pid));
-
-                    let event_cwd = cwd.clone();
-                    let cwd = crate::agents::session_info::workspace(kind, &session_id).or(cwd);
-                    let observation = observation.or_else(|| {
-                        use crate::agents::result::{Observation, TurnOutcome, TurnResult};
-                        let mut legacy = Observation {
-                            tool_started: matches!(
-                                tool.as_ref().map(|tool| &tool.phase),
-                                Some(crate::ipc::ToolPhase::Pre)
-                            ),
-                            tool_finished: matches!(
-                                tool.as_ref().map(|tool| &tool.phase),
-                                Some(crate::ipc::ToolPhase::Post)
-                            ),
-                            ..Observation::default()
+                        } else {
+                            antigravity_tree::Gate::Card
                         };
-                        if ev == LifecycleEvent::TurnEnd {
-                            legacy.result = Some(TurnResult {
-                                source: Some("legacyHook".into()),
-                                id: String::new(),
-                                outcome: if failed {
-                                    TurnOutcome::Failed
-                                } else {
-                                    TurnOutcome::Unknown
-                                },
-                                turn_id: None,
-                                reason: None,
-                                summary: None,
-                                at: 0,
-                            });
-                        }
-                        Some(Box::new(legacy))
-                    });
-                    let applied = state.agents.apply_observed(
-                        kind,
-                        ev,
-                        &session_id,
-                        resolved_pid,
-                        cwd,
-                        ts,
-                        observation.as_deref(),
-                    );
-                    if !applied.accepted {
-                        if applied.changed {
-                            state.agents.persist();
-                        }
-                        continue;
-                    }
-                    let mut changed = applied.changed;
-                    if ev == LifecycleEvent::TurnStart {
-                        state.agent_controls.cancel_unsubmitted(kind, &session_id);
-                    }
-                    let started_control = (ev == LifecycleEvent::TurnStart)
-                        .then(|| {
-                            observation
-                                .as_ref()
-                                .and_then(|observation| {
-                                    state.agent_controls.started(
-                                        kind,
-                                        &session_id,
-                                        observation.control_operation_id.as_deref(),
-                                        observation.turn_id.as_deref(),
-                                    )
-                                })
-                                .and_then(|operation| operation.started_control())
-                        })
-                        .flatten();
-                    if kind == AgentKind::Pi {
-                        if let Some(path) = transcript_path.as_deref().and_then(|path| {
-                            crate::agents::session_paths::register_pi(
-                                &session_id,
-                                path,
-                                event_cwd.as_deref(),
-                            )
-                        }) {
-                            changed |= state.agents.set_transcript_path(kind, &session_id, path);
-                        }
-                    }
-                    if let Some(launch_id) = launch_id.as_deref() {
-                        changed |= state.agents.set_launch_id(&session_id, launch_id);
-                    }
-                    if changed {
-                        state.agents.persist();
-                        broadcast_agents_state(state);
-                    }
-                    if matches!(ev, LifecycleEvent::SessionStart | LifecycleEvent::TurnStart) {
-                        if let Some(ref path) = event_cwd {
-                            let _ =
-                                crate::agents::workspaces::add(std::path::Path::new(path), false);
-                        }
-                    }
-                    if matches!(ev, LifecycleEvent::SessionEnd) {
-                        state.agents.clear_pid_cache(&session_id);
-                        if state.interject.remove_session(&session_id) {
-                            state.interject.persist();
-                        }
-                        session_ended(state, &session_id);
-                    }
-                    match tool {
-                        Some(crate::ipc::ToolReport {
-                            phase: crate::ipc::ToolPhase::Pre,
-                            name,
-                            object,
-                        }) => state.agents.set_current_tool(
-                            kind,
-                            &session_id,
-                            resolved_pid,
-                            name,
-                            object,
-                        ),
-                        Some(crate::ipc::ToolReport {
-                            phase: crate::ipc::ToolPhase::Post,
-                            ..
-                        }) => state.agents.clear_current_tool(kind, &session_id),
-                        None => {}
-                    }
-                    ensure_inbound_listeners(state).await;
-                    state.watch.notify.notify_one();
-                    failure_confirmation::observe(state, kind, &session_id, ev);
-                    if let Some(gateway) = ios_gateway(state) {
-                        gateway.agent_event(crate::ios::gateway::AgentEventInfo {
-                            agent_key: ios_agents::agent_key(kind, &session_id),
-                            event: ios_agents::event_kind(ev),
-                            failed,
-                            result: state.agents.last_turn_result(kind, &session_id),
-                            started_control,
-                        });
-                    }
-                    if matches!(ev, LifecycleEvent::TurnStart) {
-                        match_pending_launch_watch(
-                            state,
-                            kind,
-                            &session_id,
-                            event_cwd.as_deref(),
-                            launch_id.as_deref(),
-                            prompt_sha256.as_deref(),
+                        let (action, hold) = match answer {
+                            antigravity_tree::Gate::Card => (InterjectAction::None, None),
+                            antigravity_tree::Gate::Skip => (InterjectAction::Skip, None),
+                            antigravity_tree::Gate::Hold(rx) => (InterjectAction::Hold, Some(rx)),
+                        };
+                        let _ = ipc::write_msg(
+                            w,
+                            &ServerMsg::InterjectDecision {
+                                control: None,
+                                action,
+                                text: String::new(),
+                                attachments: Vec::new(),
+                            },
                         )
                         .await;
+                        match hold {
+                            Some(rx) => return Control::InterjectHold { session_id, rx },
+                            None => continue,
+                        }
+                    }
+                    // PreToolUse：先回 interject 再做后续（hook 在等，优先解除阻塞）。
+                    // Antigravity's `PreInvocation` can start a turn, and a hook held for an open
+                    // composer must not lose that: it is answered after the event is applied.
+                    let answer_after = interject_poll && kind == AgentKind::Antigravity;
+                    if interject_poll && !answer_after {
+                        if let Some(control) = answer_interject_poll(state, w, &session_id).await {
+                            return control;
+                        }
+                    }
+
+                    // The sub-agents of an Antigravity conversation are folded into it (spec D17).
+                    let folded = if kind == AgentKind::Antigravity {
+                        antigravity_tree::record(state, &session_id, ev, observation.as_deref())
+                    } else {
+                        None
+                    };
+                    // What follows applies the event to the registry; an event the registry does
+                    // not take leaves the block early (it used to leave the whole message).
+                    'apply: {
+                        // PID 解析：优先用显式 pid，否则从 hint_pid 走缓存/walk。
+                        let resolved_pid =
+                            pid.or_else(|| state.agents.resolve_pid(&session_id, kind, hint_pid));
+
+                        let event_cwd = cwd.clone();
+                        let cwd = crate::agents::session_info::workspace(kind, &session_id).or(cwd);
+                        let mut observation = observation.or_else(|| {
+                            use crate::agents::result::{Observation, TurnOutcome, TurnResult};
+                            let mut legacy = Observation {
+                                tool_started: matches!(
+                                    tool.as_ref().map(|tool| &tool.phase),
+                                    Some(crate::ipc::ToolPhase::Pre)
+                                ),
+                                tool_finished: matches!(
+                                    tool.as_ref().map(|tool| &tool.phase),
+                                    Some(crate::ipc::ToolPhase::Post)
+                                ),
+                                ..Observation::default()
+                            };
+                            if ev == LifecycleEvent::TurnEnd {
+                                legacy.result = Some(TurnResult {
+                                    source: Some("legacyHook".into()),
+                                    id: String::new(),
+                                    outcome: if failed {
+                                        TurnOutcome::Failed
+                                    } else {
+                                        TurnOutcome::Unknown
+                                    },
+                                    turn_id: None,
+                                    reason: None,
+                                    summary: None,
+                                    at: 0,
+                                });
+                            }
+                            Some(Box::new(legacy))
+                        });
+                        if folded.as_ref().is_some_and(|folded| folded.child) {
+                            // A sub-agent is not a session of its own: the registry ignores the event.
+                            if let Some(observation) = observation.as_mut() {
+                                observation.subagent = true;
+                            }
+                        }
+                        let applied = state.agents.apply_observed(
+                            kind,
+                            ev,
+                            &session_id,
+                            resolved_pid,
+                            cwd,
+                            ts,
+                            observation.as_deref(),
+                        );
+                        if !applied.accepted {
+                            if applied.changed {
+                                state.agents.persist();
+                            }
+                            break 'apply;
+                        }
+                        let mut changed = applied.changed;
+                        if ev == LifecycleEvent::TurnStart {
+                            state.agent_controls.cancel_unsubmitted(kind, &session_id);
+                        }
+                        let started_control = (ev == LifecycleEvent::TurnStart)
+                            .then(|| {
+                                observation
+                                    .as_ref()
+                                    .and_then(|observation| {
+                                        state.agent_controls.started(
+                                            kind,
+                                            &session_id,
+                                            observation.control_operation_id.as_deref(),
+                                            observation.turn_id.as_deref(),
+                                        )
+                                    })
+                                    .and_then(|operation| operation.started_control())
+                            })
+                            .flatten();
+                        if kind == AgentKind::Pi {
+                            if let Some(path) = transcript_path.as_deref().and_then(|path| {
+                                crate::agents::session_paths::register_pi(
+                                    &session_id,
+                                    path,
+                                    event_cwd.as_deref(),
+                                )
+                            }) {
+                                changed |=
+                                    state.agents.set_transcript_path(kind, &session_id, path);
+                            }
+                        }
+                        if let Some(launch_id) = launch_id.as_deref() {
+                            changed |= state.agents.set_launch_id(&session_id, launch_id);
+                        }
+                        if changed {
+                            state.agents.persist();
+                            broadcast_agents_state(state);
+                        }
+                        if matches!(ev, LifecycleEvent::SessionStart | LifecycleEvent::TurnStart) {
+                            if let Some(ref path) = event_cwd {
+                                let _ = crate::agents::workspaces::add(
+                                    std::path::Path::new(path),
+                                    false,
+                                );
+                            }
+                        }
+                        if matches!(ev, LifecycleEvent::SessionEnd) {
+                            state.agents.clear_pid_cache(&session_id);
+                            if state.interject.remove_session(&session_id) {
+                                state.interject.persist();
+                            }
+                            session_ended(state, &session_id);
+                        }
+                        match tool {
+                            Some(crate::ipc::ToolReport {
+                                phase: crate::ipc::ToolPhase::Pre,
+                                name,
+                                object,
+                            }) => state.agents.set_current_tool(
+                                kind,
+                                &session_id,
+                                resolved_pid,
+                                name,
+                                object,
+                            ),
+                            Some(crate::ipc::ToolReport {
+                                phase: crate::ipc::ToolPhase::Post,
+                                ..
+                            }) => state.agents.clear_current_tool(kind, &session_id),
+                            None => {}
+                        }
+                        ensure_inbound_listeners(state).await;
+                        state.watch.notify.notify_one();
+                        failure_confirmation::observe(state, kind, &session_id, ev);
+                        if let Some(gateway) = ios_gateway(state) {
+                            gateway.agent_event(crate::ios::gateway::AgentEventInfo {
+                                agent_key: ios_agents::agent_key(kind, &session_id),
+                                event: ios_agents::event_kind(ev),
+                                failed,
+                                result: state.agents.last_turn_result(kind, &session_id),
+                                started_control,
+                            });
+                        }
+                        if matches!(ev, LifecycleEvent::TurnStart) {
+                            match_pending_launch_watch(
+                                state,
+                                kind,
+                                &session_id,
+                                event_cwd.as_deref(),
+                                launch_id.as_deref(),
+                                prompt_sha256.as_deref(),
+                            )
+                            .await;
+                        }
+                    }
+                    if answer_after {
+                        if let Some(control) = answer_interject_poll(state, w, &session_id).await {
+                            return control;
+                        }
+                    }
+                    if let Some(folded) = folded {
+                        antigravity_tree::follow_up(state, &session_id, folded).await;
                     }
                 } else if interject_poll {
                     let _ = ipc::write_msg(

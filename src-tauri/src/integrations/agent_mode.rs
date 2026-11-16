@@ -424,8 +424,7 @@ fn set_antigravity(mode: Mode) -> Result<()> {
                 Variant::Cli
             },
             lifecycle: agent_lifecycle::tracking_wanted(crate::agents::AgentKind::Antigravity),
-            // The Stop confirmation joins the shared Stop hook in a later phase.
-            stop: false,
+            stop: agent_stop::active_in_mode(crate::agents::AgentKind::Antigravity, mode),
         })?,
     }
     agent_lifecycle::reconcile_unlocked(crate::agents::AgentKind::Antigravity, mode, true)?;
@@ -1020,15 +1019,16 @@ mod env_mode_tests {
 mod antigravity_capability_tests {
     use super::*;
     #[test]
-    fn advanced_adapters_remain_closed_except_mcp_and_lifecycle() {
-        // Lifecycle tracking is open (the plugin's hooks); its on-disk state is covered by the
-        // isolated-home tests below, so nothing here reads the real home directory.
+    fn advanced_adapters_remain_closed_except_mcp_lifecycle_and_stop() {
+        // Lifecycle tracking and the Stop confirmation are open (the plugin's hooks); their
+        // on-disk state is covered by the isolated-home tests below, so nothing here reads the
+        // real home directory.
         let kind = crate::agents::AgentKind::Antigravity;
         let target = AgentTarget::Antigravity;
         assert!(!timeout_hook_supported(target));
         assert!(mcp_config::supported(target));
         assert!(!agent_permission::supported(target));
-        assert!(!agent_stop::supported(kind));
+        assert!(agent_stop::supported(kind));
         assert!(!agent_ask_question::supported(kind));
         assert!(!super::super::agent_launch::fork_readiness(kind).ready);
     }
@@ -1040,6 +1040,7 @@ mod antigravity_capability_tests {
             state,
             variant,
             lifecycle,
+            stop: false,
             reason: None,
             location: std::path::PathBuf::from("/plugin"),
         };

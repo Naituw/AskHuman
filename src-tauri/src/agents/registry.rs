@@ -754,6 +754,21 @@ impl AgentRegistry {
             .and_then(|r| r.last_turn_result.clone())
     }
 
+    /// Drops a conversation's record. A conversation that turned out to belong to another one (a
+    /// sub-agent that reported before its parent said so, spec D17) is not a session of its own.
+    /// Returns whether a record existed.
+    pub fn forget_session(&self, kind: AgentKind, session_id: &str) -> bool {
+        let mut inner = self.inner.lock().unwrap();
+        let before = inner.active.len() + inner.ended.len();
+        inner
+            .active
+            .retain(|record| !(record.kind == kind && record.session_id == session_id));
+        inner
+            .ended
+            .retain(|record| !(record.kind == kind && record.session_id == session_id));
+        inner.active.len() + inner.ended.len() != before
+    }
+
     /// Whether the session is tracked, active or recently ended. Read-only: unlike an observation it
     /// never creates a record, so a source with no hook of its own cannot invent sessions.
     pub fn knows_session(&self, kind: AgentKind, session_id: &str) -> bool {

@@ -354,6 +354,7 @@ pub(super) async fn handle_interject_hold(
         outcome = rx => {
             let (action, delivery) = match outcome {
                 Ok(WaitOutcome::Message(delivery)) => (InterjectAction::Message, Some(delivery)),
+                Ok(WaitOutcome::Skip) => (InterjectAction::Skip, None),
                 // Release / 发送端消失（会话清理）→ 放行。
                 _ => (InterjectAction::Release, None),
             };

@@ -686,6 +686,7 @@ pub fn agent_control_request(
             control: Some(Box::new(signal)),
             ..Default::default()
         })),
+        stop_gate: false,
     };
     rt.block_on(async {
         let (mut reader, mut writer) = connect_split().await.ok()?;
@@ -821,6 +822,69 @@ pub fn report_agent_event_with_poll(msg: ClientMsg) -> InterjectPollOutcome {
         }
         interject_read_frames(&mut reader, INTERJECT_FIRST_FRAME_TIMEOUT).await
     })
+}
+
+/// What the daemon says about raising a Stop confirmation card (`AgentEvent.stop_gate`).
+#[derive(Debug, PartialEq, Eq)]
+pub enum StopGate {
+    /// Ask the human now. `held` when the daemon made the hook wait first.
+    Card { held: bool },
+    /// Do not ask.
+    Skip,
+    /// No answer: an older daemon, none reachable, or a frame nobody expected.
+    Unanswered,
+}
+
+/// The first answer to a gate query includes a look at the conversation's log, so it gets more
+/// time than an interjection poll. A daemon that never answers costs this once per Stop.
+const STOP_GATE_FIRST_FRAME_TIMEOUT: Duration = Duration::from_secs(2);
+
+/// Sends a Stop with `stop_gate` set and reads the daemon's answer. A `hold` is answered by a
+/// second frame whenever the sub-agents the daemon is waiting for have finished, however long that
+/// takes; the hook's own timeout is the limit.
+pub fn report_stop_gate(msg: ClientMsg) -> StopGate {
+    let Ok(rt) = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+    else {
+        return StopGate::Unanswered;
+    };
+    rt.block_on(async {
+        if !background_peer_ready().await {
+            return StopGate::Unanswered;
+        }
+        let Ok((mut reader, mut writer)) = connect_split().await else {
+            return StopGate::Unanswered;
+        };
+        if !accepts_observation(&mut reader, &mut writer, &msg).await {
+            return StopGate::Unanswered;
+        }
+        if ipc::write_msg(&mut writer, &msg).await.is_err() {
+            return StopGate::Unanswered;
+        }
+        stop_gate_frames(&mut reader, STOP_GATE_FIRST_FRAME_TIMEOUT).await
+    })
+}
+
+/// The frames of a gate answer, apart from the transport so an in-memory stream can test it.
+async fn stop_gate_frames<R>(reader: &mut R, first_timeout: Duration) -> StopGate
+where
+    R: tokio::io::AsyncBufRead + Unpin,
+{
+    use crate::ipc::InterjectAction;
+    let first = match tokio::time::timeout(first_timeout, read_interject_decision(reader)).await {
+        Ok(first) => first,
+        Err(_) => return StopGate::Unanswered,
+    };
+    match first {
+        Some((InterjectAction::None, _, _)) => StopGate::Card { held: false },
+        Some((InterjectAction::Skip, _, _)) => StopGate::Skip,
+        Some((InterjectAction::Hold, _, _)) => match read_interject_decision(reader).await {
+            Some((InterjectAction::Release, _, _)) => StopGate::Card { held: true },
+            _ => StopGate::Unanswered,
+        },
+        _ => StopGate::Unanswered,
+    }
 }
 
 /// 裁决帧读取逻辑（与传输解耦，内存流可单测）：首帧带超时（none/message/hold），
@@ -1523,6 +1587,82 @@ mod tests {
         let out = interject_read_frames(&mut reader, first_timeout).await;
         writer.abort();
         out
+    }
+
+    /// The same fake daemon for a Stop gate query.
+    async fn gate_frames(
+        actions: Vec<InterjectAction>,
+        close_after: bool,
+        first_timeout: Duration,
+    ) -> StopGate {
+        let (mut tx, rx) = tokio::io::duplex(4096);
+        let mut reader = BufReader::new(rx);
+        let writer = tokio::spawn(async move {
+            for action in actions {
+                let frame = ServerMsg::InterjectDecision {
+                    control: None,
+                    action,
+                    text: String::new(),
+                    attachments: Vec::new(),
+                };
+                ipc::write_msg(&mut tx, &frame).await.unwrap();
+            }
+            if !close_after {
+                tokio::time::sleep(Duration::from_secs(5)).await;
+            }
+        });
+        let out = stop_gate_frames(&mut reader, first_timeout).await;
+        writer.abort();
+        out
+    }
+
+    #[tokio::test]
+    async fn a_stop_gate_answer_is_ask_skip_or_wait_then_ask() {
+        let wait = Duration::from_millis(300);
+        assert_eq!(
+            gate_frames(vec![InterjectAction::None], true, wait).await,
+            StopGate::Card { held: false }
+        );
+        assert_eq!(
+            gate_frames(vec![InterjectAction::Skip], true, wait).await,
+            StopGate::Skip
+        );
+        // A sub-agent is still running: the hook waits for the second frame, then asks.
+        assert_eq!(
+            gate_frames(
+                vec![InterjectAction::Hold, InterjectAction::Release],
+                true,
+                wait
+            )
+            .await,
+            StopGate::Card { held: true }
+        );
+    }
+
+    #[tokio::test]
+    async fn a_stop_gate_without_a_usable_answer_is_unanswered() {
+        let wait = Duration::from_millis(50);
+        // An older daemon sends nothing at all.
+        assert_eq!(gate_frames(vec![], false, wait).await, StopGate::Unanswered);
+        // The daemon went away while the hook was waiting.
+        assert_eq!(
+            gate_frames(vec![InterjectAction::Hold], true, wait).await,
+            StopGate::Unanswered
+        );
+        // Frames meant for another question are not an answer.
+        assert_eq!(
+            gate_frames(vec![InterjectAction::Message], true, wait).await,
+            StopGate::Unanswered
+        );
+        assert_eq!(
+            gate_frames(
+                vec![InterjectAction::Hold, InterjectAction::Message],
+                true,
+                wait
+            )
+            .await,
+            StopGate::Unanswered
+        );
     }
 
     #[tokio::test]

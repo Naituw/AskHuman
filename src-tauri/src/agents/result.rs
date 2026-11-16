@@ -67,6 +67,11 @@ pub struct Observation {
     pub tool_finished: bool,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub control: Option<Box<super::control::ControlSignal>>,
+    /// A `Stop` that leaves work running (a sub-agent, a background task) ends no turn yet. It
+    /// carries the end it would be once that work is done, for the daemon that groups an
+    /// Antigravity conversation's sub-agents under it (spec D17). The registry never reads it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub deferred_end: Option<TurnResult>,
 }
 
 fn bounded(value: Option<&str>, maximum: usize) -> Option<String> {

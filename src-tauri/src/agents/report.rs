@@ -108,6 +108,7 @@ pub fn run(args: &[String]) {
             event,
             stdin.as_ref(),
         ))),
+        stop_gate: false,
     };
     if interject_poll {
         if let crate::client::InterjectPollOutcome::Deny { text, attachments } =
@@ -166,6 +167,7 @@ pub(super) fn report_simple_event(
             event,
             Some(input),
         ))),
+        stop_gate: false,
     });
 }
 

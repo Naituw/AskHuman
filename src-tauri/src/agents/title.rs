@@ -458,7 +458,7 @@ fn antigravity_title(session_id: &str) -> Option<String> {
 /// `~/.gemini/<surface>/brain/<conversation id>/.system_generated/logs/transcript_full.jsonl`.
 /// The id arrives from a hook or from MCP metadata, so only its canonical UUID form is ever joined
 /// into a path.
-pub(super) fn antigravity_transcript_in(home: &Path, session_id: &str) -> Option<PathBuf> {
+pub(crate) fn antigravity_transcript_in(home: &Path, session_id: &str) -> Option<PathBuf> {
     let id = uuid::Uuid::parse_str(session_id)
         .ok()?
         .hyphenated()

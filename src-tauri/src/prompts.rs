@@ -282,12 +282,29 @@ pub fn interject_deny_reason(
     message: &str,
     attachments: &[crate::models::FileAttachment],
 ) -> String {
+    interject_text(
+        "This tool call was blocked only to deliver it — the tool is not forbidden; re-issue\nthe same call if still appropriate.\n\n",
+        message,
+        attachments,
+    )
+}
+
+/// The same interjection for a host that injects it as a user message instead of blocking a tool
+/// call (Antigravity's `PreInvocation`): nothing was blocked, so the sentence about it is gone.
+pub fn interject_injection(message: &str, attachments: &[crate::models::FileAttachment]) -> String {
+    interject_text("\n", message, attachments)
+}
+
+/// The shared body of both interjection texts: `delivery_note` goes between the first sentence
+/// and the message, and ends with the blank line before it.
+fn interject_text(
+    delivery_note: &str,
+    message: &str,
+    attachments: &[crate::models::FileAttachment],
+) -> String {
     let mut prompt = format!(
         r#"[USER INTERJECTION] The user sent you the message below while you were working.
-This tool call was blocked only to deliver it — the tool is not forbidden; re-issue
-the same call if still appropriate.
-
-<user_message>
+{delivery_note}<user_message>
 {message}
 </user_message>"#
     );
@@ -443,6 +460,20 @@ mod tests {
         let p = interject_deny_reason("", &[attachment]);
         assert!(p.contains("<attachments>\n- \"/tmp/a file.png\"\n</attachments>"));
         assert!(p.contains("Open and use them as inputs"));
+    }
+
+    #[test]
+    fn an_injected_interjection_says_nothing_was_blocked() {
+        let injected = interject_injection("改用方案 B", &[]);
+        assert!(injected.starts_with("[USER INTERJECTION]"));
+        assert!(injected.contains("<user_message>\n改用方案 B\n</user_message>"));
+        assert!(injected.contains("ask the user as instructed"));
+        assert!(!injected.contains("blocked"));
+        assert!(!injected.contains("re-issue"));
+        // The one place the two texts differ is the sentence about the blocked call.
+        let denied = interject_deny_reason("改用方案 B", &[]);
+        let note = "This tool call was blocked only to deliver it — the tool is not forbidden; re-issue\nthe same call if still appropriate.\n";
+        assert_eq!(denied.replace(note, ""), injected);
     }
 
     #[test]

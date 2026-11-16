@@ -717,6 +717,13 @@ pub enum ClientMsg {
         failed: bool,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         observation: Option<Box<crate::agents::result::Observation>>,
+        /// An Antigravity `Stop` hook asking whether it may raise the confirmation card now. The
+        /// daemon answers with one `InterjectDecision` (`none` = ask now, `skip` = do not ask,
+        /// `hold` = a sub-agent is still running: wait for a second `release`) and applies nothing:
+        /// the hook reports the end itself once the human has decided. An old daemon ignores the
+        /// field and never answers, which the hook reads as "no information".
+        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+        stop_gate: bool,
     },
     /// Register one long-lived AskHuman MCP server process for Grok's best-effort session binding.
     McpInstanceRegister {
@@ -847,6 +854,10 @@ pub enum InterjectAction {
     Hold,
     /// 放行（Hold 后二帧：composer 取消/关窗，或消息被并发的另一个 hook 拿走）。
     Release,
+    /// Answer to a `stop_gate` query only: this Stop must not raise a card (the conversation is a
+    /// sub-agent, or the agent only paused for work that is still running). No peer is ever sent
+    /// this without asking for it, so it needs no protocol bump.
+    Skip,
 }
 
 /// Daemon → 客户端（CLI / GUI Helper）的消息。
@@ -1643,6 +1654,7 @@ mod tests {
             interject_poll: false,
             failed: false,
             observation: None,
+            stop_gate: false,
         })
         .unwrap();
         assert!(!out.contains("interject_poll"));
@@ -1663,6 +1675,7 @@ mod tests {
             interject_poll: true,
             failed: false,
             observation: None,
+            stop_gate: false,
         })
         .unwrap();
         assert!(out.contains(r#""interject_poll":true"#));
@@ -1697,6 +1710,7 @@ mod tests {
             interject_poll: false,
             failed: true,
             observation: None,
+            stop_gate: false,
         })
         .unwrap();
         assert!(out.contains(r#""failed":true"#));

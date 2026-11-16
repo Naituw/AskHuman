@@ -48,51 +48,30 @@ fn run_inner(args: &[String]) -> Option<Value> {
     }
     let track = args.get(1).is_some_and(|value| value == "track");
     let confirm = args.iter().skip(1).any(|value| value == "confirm");
-    if kind == AgentKind::Antigravity {
-        // Lifecycle only for now: whether the whole conversation went idle decides if this Stop is a
-        // turn end, which the reporter knows. Stop confirmation is a later phase.
-        if track || confirm {
-            if let Some(input) = super::report::read_stdin_json() {
-                super::antigravity_hook::report(super::antigravity_hook::HookEvent::Stop, &input);
-            }
-        }
-        return None;
-    }
     let env = super::detect::env_snapshot();
-    if super::report::should_skip(kind, &env) {
+    // Antigravity is never a compatibility-loaded copy of another agent's hook.
+    if kind != AgentKind::Antigravity && super::report::should_skip(kind, &env) {
         return None;
     }
-    let input = super::report::read_stdin_json()?;
+    let mut input = super::report::read_stdin_json()?;
     let session_id = super::report::resolve_session_id(kind, &env, Some(&input));
     if session_id.is_empty() {
         return None;
     }
-    let cwd = super::report::resolve_cwd(&env, Some(&input));
+    let cwd = stop_cwd(kind, &env, &input);
 
     // Cursor also emits stop for aborted/error turns, but only consumes followup_message for a
     // completed turn. Non-natural stops only retain the existing lifecycle turn-end behavior.
     if !is_natural_stop(kind, &input) {
         if track || confirm {
-            super::report::report_simple_event(
-                kind,
-                LifecycleEvent::TurnEnd,
-                session_id,
-                cwd,
-                &input,
-            );
+            report_turn_end(kind, session_id, cwd, &input);
         }
         return None;
     }
 
     if !confirm {
         if track || confirm {
-            super::report::report_simple_event(
-                kind,
-                LifecycleEvent::TurnEnd,
-                session_id,
-                cwd,
-                &input,
-            );
+            report_turn_end(kind, session_id, cwd, &input);
         }
         return None;
     }
@@ -115,13 +94,7 @@ fn run_inner(args: &[String]) -> Option<Value> {
                 .and_then(Value::as_str),
         });
         if track || confirm {
-            super::report::report_simple_event(
-                kind,
-                LifecycleEvent::TurnEnd,
-                session_id,
-                cwd,
-                &input,
-            );
+            report_turn_end(kind, session_id, cwd, &input);
         }
         return None;
     }
@@ -129,15 +102,25 @@ fn run_inner(args: &[String]) -> Option<Value> {
     let last_message = last_assistant_message(kind, &input);
     if last_message.user_confirmed_end_turn {
         if track || confirm {
-            super::report::report_simple_event(
-                kind,
-                LifecycleEvent::TurnEnd,
-                session_id,
-                cwd,
-                &input,
-            );
+            report_turn_end(kind, session_id, cwd, &input);
         }
         return None;
+    }
+    if kind == AgentKind::Antigravity {
+        // A sub-agent's own Stop, or a pause for work that is still running, ends nothing the human
+        // is waiting for; the daemon knows which one this is and may first hold the hook until the
+        // sub-agents are done (spec D17).
+        match super::antigravity_hook::gate(&input) {
+            super::antigravity_hook::Gate::Skip => {
+                report_turn_end(kind, session_id, cwd, &input);
+                return None;
+            }
+            super::antigravity_hook::Gate::Card { held } => {
+                if held {
+                    super::antigravity_hook::mark_idle(&mut input);
+                }
+            }
+        }
     }
     let lang = Lang::current();
     // Todo dispatch on the Stop card (spec todo-whats-next D5): the hook's cwd maps to the git
@@ -182,17 +165,34 @@ fn run_inner(args: &[String]) -> Option<Value> {
         )),
         StopDecision::End => {
             if track || confirm {
-                super::report::report_simple_event(
-                    kind,
-                    LifecycleEvent::TurnEnd,
-                    session_id,
-                    cwd,
-                    &input,
-                );
+                report_turn_end(kind, session_id, cwd, &input);
             }
             None
         }
     }
+}
+
+/// The project a Stop is reported for. Antigravity's hook runs in the plugin directory, so its
+/// payload's workspace is the project; the others use the hook's own `cwd`.
+fn stop_cwd(
+    kind: AgentKind,
+    env: &std::collections::HashMap<String, String>,
+    input: &Value,
+) -> Option<String> {
+    if kind == AgentKind::Antigravity {
+        return super::antigravity_hook::project(input);
+    }
+    super::report::resolve_cwd(env, Some(input))
+}
+
+/// Reports the end of a turn. Antigravity's reporter decides from the payload whether the whole
+/// conversation went idle (a Stop that left background work running is only activity).
+fn report_turn_end(kind: AgentKind, session_id: String, cwd: Option<String>, input: &Value) {
+    if kind == AgentKind::Antigravity {
+        super::antigravity_hook::report(super::antigravity_hook::HookEvent::Stop, input);
+        return;
+    }
+    super::report::report_simple_event(kind, LifecycleEvent::TurnEnd, session_id, cwd, input);
 }
 
 fn is_natural_stop(kind: AgentKind, input: &Value) -> bool {
@@ -203,7 +203,8 @@ fn is_natural_stop(kind: AgentKind, input: &Value) -> bool {
             .or_else(|| input.get("hookEventName"))
             .and_then(Value::as_str)
             .is_some_and(|event| event.eq_ignore_ascii_case("stop")),
-        AgentKind::Grok | AgentKind::Antigravity => false,
+        AgentKind::Grok => false,
+        AgentKind::Antigravity => super::antigravity_hook::stop_is_natural(input),
         AgentKind::Pi => {
             input.get("stop_reason").and_then(Value::as_str) == Some("stop")
                 && input
@@ -303,7 +304,8 @@ fn last_assistant_message(kind: AgentKind, input: &Value) -> LastAssistantMessag
             .filter(|text| !text.trim().is_empty())
             .map(str::to_string),
         AgentKind::Cursor => cursor_last_message(input),
-        AgentKind::Grok | AgentKind::Antigravity => None,
+        AgentKind::Antigravity => antigravity_last_message(input),
+        AgentKind::Grok => None,
         AgentKind::Pi => input
             .get("last_assistant_message")
             .or_else(|| input.get("lastAssistantMessage"))
@@ -327,6 +329,25 @@ fn normalize_last_assistant_message(raw: Option<&str>) -> LastAssistantMessage {
             .then(|| truncate_preserving_layout(&cleaned, MAX_LAST_MESSAGE_CHARS)),
         user_confirmed_end_turn,
     }
+}
+
+/// The agent's last reply, read from the conversation log found by the id the payload names. The
+/// payload carries no message of its own, and the log is looked up by id rather than by the path it
+/// reports, so a payload cannot point the card at an arbitrary file.
+fn antigravity_last_message(input: &Value) -> Option<String> {
+    antigravity_last_message_with(input, &|id| {
+        super::title::transcript_path(AgentKind::Antigravity, id)
+    })
+}
+
+/// [`antigravity_last_message`] with the lookup of the log injected.
+fn antigravity_last_message_with(
+    input: &Value,
+    log: &dyn Fn(&str) -> Option<PathBuf>,
+) -> Option<String> {
+    let id = input.get("conversationId")?.as_str()?.trim();
+    let path = log(id)?;
+    super::activity::resolve_last_assistant_text_from_path_raw(AgentKind::Antigravity, &path)
 }
 
 fn cursor_last_message(input: &Value) -> Option<String> {
@@ -538,7 +559,9 @@ fn continuation_output(kind: AgentKind, prompt: &str) -> Value {
         AgentKind::Claude | AgentKind::Codex => {
             json!({ "decision": "block", "reason": prompt })
         }
-        AgentKind::Grok | AgentKind::Antigravity => json!({}),
+        AgentKind::Grok => json!({}),
+        // The host runs another invocation with this as the reason it was not allowed to stop.
+        AgentKind::Antigravity => json!({ "decision": "continue", "reason": prompt }),
         AgentKind::Pi => json!({ "followup_message": prompt }),
     }
 }
@@ -582,6 +605,85 @@ mod tests {
             AgentKind::Pi,
             &json!({"hook_event_name":"Stop","stop_reason":"error"})
         ));
+    }
+
+    #[test]
+    fn an_antigravity_stop_is_natural_only_when_the_model_chose_to_end() {
+        let stop = |idle: bool, reason: &str| json!({"conversationId": "c", "fullyIdle": idle, "terminationReason": reason});
+        assert!(is_natural_stop(
+            AgentKind::Antigravity,
+            &stop(true, "NO_TOOL_CALL")
+        ));
+        // Whether anything is still running is the daemon's call at the gate, not this one's: a
+        // Stop that left a sub-agent running is confirmed once the sub-agent is done.
+        assert!(is_natural_stop(
+            AgentKind::Antigravity,
+            &stop(false, "NO_TOOL_CALL")
+        ));
+        // A limit, an error and a cancel are not the agent finishing.
+        for reason in [
+            "ERROR",
+            "MAX_INVOCATIONS",
+            "MAX_FORCED_INVOCATIONS",
+            "MAX_TOKEN_BUDGET_EXCEEDED",
+            "USER_CANCELED",
+            "",
+        ] {
+            assert!(
+                !is_natural_stop(AgentKind::Antigravity, &stop(true, reason)),
+                "{reason:?}"
+            );
+        }
+        assert!(!is_natural_stop(AgentKind::Antigravity, &json!({})));
+    }
+
+    #[test]
+    fn an_antigravity_continuation_names_why_the_agent_may_not_stop() {
+        let output = continuation_output(AgentKind::Antigravity, "keep going");
+        assert_eq!(
+            output,
+            json!({"decision": "continue", "reason": "keep going"})
+        );
+    }
+
+    #[test]
+    fn the_antigravity_card_shows_the_last_finished_reply_of_the_logged_conversation() {
+        let home = tempfile::tempdir().unwrap();
+        let id = "33333333-3333-4333-8333-333333333333";
+        let dir = home
+            .path()
+            .join(".gemini/antigravity/brain")
+            .join(id)
+            .join(".system_generated/logs");
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(
+            dir.join("transcript_full.jsonl"),
+            include_str!("fixtures/antigravity-transcript.jsonl"),
+        )
+        .unwrap();
+        let input = json!({"conversationId": id});
+        let lookup = |id: &str| super::super::title::antigravity_transcript_in(home.path(), id);
+        let message = antigravity_last_message_with(&input, &lookup);
+        assert_eq!(
+            message.as_deref(),
+            Some("Done: the parser now keeps trailing whitespace and a regression test covers it.")
+        );
+        // The log is found by the id, never by a path the payload names.
+        let pointed = json!({"conversationId": id, "transcriptPath": "/etc/passwd"});
+        assert_eq!(
+            antigravity_last_message_with(&pointed, &lookup),
+            antigravity_last_message_with(&input, &lookup)
+        );
+        // A conversation without a log, or a payload without an id, has no message to show.
+        let other = json!({"conversationId": "44444444-4444-4444-8444-444444444444"});
+        assert_eq!(antigravity_last_message_with(&other, &lookup), None);
+        assert_eq!(antigravity_last_message_with(&json!({}), &lookup), None);
+        // The agent's own marker is read from that text like for any other agent.
+        let confirmed = normalize_last_assistant_message(Some(&format!(
+            "All done.\n{}",
+            crate::prompts::USER_CONFIRMED_END_TURN_MARKER
+        )));
+        assert!(confirmed.user_confirmed_end_turn);
     }
 
     fn never_delegated(_: &str, _: Option<&Value>) -> Option<String> {
