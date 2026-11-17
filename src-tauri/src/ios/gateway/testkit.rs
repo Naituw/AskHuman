@@ -252,6 +252,7 @@ impl Host for TestHost {
             annotations: true,
             session_history: true,
             history_pictures: true,
+            lean_agents: true,
         }
     }
 
@@ -896,6 +897,14 @@ impl Fixture {
 
 // ---------------------------------------------------------------- phone
 
+/// One message a [`TestPhone`] received.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Received {
+    pub ty: String,
+    pub compressed: bool,
+    pub bytes: usize,
+}
+
 pub struct TestPhone {
     pub phone_id: String,
     transport: Arc<LoopbackTransport>,
@@ -907,6 +916,13 @@ pub struct TestPhone {
     pub with_push: bool,
     /// Whether its `hello` says that it merges lean watch frames.
     pub lean_watch: bool,
+    /// Whether its `hello` says that it shows a working Agent nobody watches without live activity.
+    pub lean_agents: bool,
+    /// Whether its `hello` says that it opens compressed envelopes.
+    pub compression: bool,
+    /// Every message that came in on its topic, in order: what it was, whether the envelope was compressed and how
+    /// many bytes it took on the wire.
+    pub received: Vec<Received>,
     ticket_key: Option<[u8; 32]>,
     pair_topic: Option<String>,
     queue: VecDeque<Plain>,
@@ -950,6 +966,9 @@ impl TestPhone {
             sas: String::new(),
             with_push: true,
             lean_watch: false,
+            lean_agents: false,
+            compression: false,
+            received: Vec::new(),
             ticket_key: None,
             pair_topic: None,
             queue: VecDeque::new(),
@@ -1105,6 +1124,11 @@ impl TestPhone {
         if topic == wire::topic_down(USER, &self.phone_id) {
             if let Some(keys) = &self.keys {
                 if let Ok(plain) = envelope::open_plain(&keys.m2p, Scope::Topic(&topic), &env) {
+                    self.received.push(Received {
+                        ty: plain.t.clone(),
+                        compressed: env.z.is_some(),
+                        bytes: payload.len(),
+                    });
                     self.queue.push_back(plain);
                 }
             }
@@ -1193,6 +1217,8 @@ impl TestPhone {
             device_name: "Test iPhone".into(),
             lifecycle_results: true,
             lean_watch: self.lean_watch,
+            lean_agents: self.lean_agents,
+            compression: self.compression,
         })
         .await;
         let ack: wire::HelloAck = self.recv_body(t::HELLO_ACK).await;

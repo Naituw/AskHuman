@@ -146,7 +146,7 @@ async fn a_ticking_clock_alone_sends_nothing() {
 }
 
 #[tokio::test(start_paused = true)]
-async fn an_agent_change_between_hello_and_the_foreground_presence_is_caught_up() {
+async fn an_agent_change_between_hello_and_the_foreground_presence_is_caught_up_as_a_delta() {
     // The app says "foreground" only after its first sync: until then it gets no deltas.
     let fx = Fixture::new().await;
     fx.host
@@ -154,21 +154,26 @@ async fn an_agent_change_between_hello_and_the_foreground_presence_is_caught_up(
     let mut phone = fx.pair_phone().await;
     phone.set_presence(true, false).await;
     phone.hello().await;
-    snapshot(&mut phone).await;
+    let snap = snapshot(&mut phone).await;
 
     fx.host
         .update_agent("claude:s1", |a| a.state = "idle".into());
     assert!(!phone.gets(t::AGENTS_DELTA, 3 * SECOND).await);
 
+    // What differs from the snapshot of the hello comes as a delta; the list is not sent again.
     phone.set_presence(true, true).await;
-    let snap: wire::AgentsSnapshot = phone.recv_body(t::AGENTS_SNAPSHOT).await;
-    assert_eq!(snap.agents[0].state, "idle");
+    let caught_up: wire::AgentsDelta = phone.recv_body(t::AGENTS_DELTA).await;
+    assert_eq!(caught_up.rev, snap.rev + 1);
+    assert_eq!(caught_up.upsert.len(), 1);
+    assert_eq!(caught_up.upsert[0].state, "idle");
+    assert!(caught_up.remove.is_empty());
+    assert!(!phone.gets(t::AGENTS_SNAPSHOT, 2 * SECOND).await);
 
-    // The stream continues right after the snapshot.
+    // The stream continues right after it.
     fx.host
         .update_agent("claude:s1", |a| a.state = "working".into());
     let delta: wire::AgentsDelta = phone.recv_body(t::AGENTS_DELTA).await;
-    assert_eq!(delta.rev, snap.rev + 1);
+    assert_eq!(delta.rev, caught_up.rev + 1);
 }
 
 #[tokio::test(start_paused = true)]
@@ -901,10 +906,11 @@ async fn leaving_the_foreground_stops_every_watch() {
     fx.host.set_frame("claude:s1", "b", "More work", false);
     assert!(!phone.gets(t::WATCH_FRAME, 6 * SECOND).await);
 
-    // Back in the foreground the phone opens its view again and gets a fresh frame.
-    phone.set_presence(true, true).await;
+    // Back in the foreground the app starts a new session as it does every time: it says hello, opens its view
+    // when it has the list, and reports the foreground last. The view starts over with a fresh frame.
     phone.hello().await;
     phone.send(&watch("claude:s1")).await;
+    phone.set_presence(true, true).await;
     let frame: wire::WatchFrame = phone.recv_body(t::WATCH_FRAME).await;
     assert_eq!(frame.seq, 1);
     assert_eq!(frame.frame["text"], "More work");
@@ -1242,6 +1248,8 @@ async fn an_old_phone_never_receives_an_unknown_incomplete_push_key() {
             device_name: "Old phone".into(),
             lifecycle_results: false,
             lean_watch: false,
+            lean_agents: false,
+            compression: false,
         })
         .await;
     let _: wire::HelloAck = phone.recv_body(t::HELLO_ACK).await;

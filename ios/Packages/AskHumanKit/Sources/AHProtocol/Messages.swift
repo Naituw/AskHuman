@@ -35,12 +35,18 @@ public struct Caps: Codable, Equatable, Sendable {
     /// their questions) and answers `history.exchange.get` (docs/specs/ios-history-pictures.md). A Mac without it
     /// has none, so the phone asks for neither. Left out of the wire when false, like `sessionHistory`.
     @OmitFalse public var historyPictures: Bool
+    /// The Mac leaves the live activity of a working Agent nobody watches (its tool, step count and last activity time)
+    /// out of the Agents list for a phone that asked for it (`Hello.leanAgents`; docs/specs/ios-traffic-reduction.md
+    /// §3.2). A phone reads it to know that the Mac understood. Left out of the wire when false.
+    @OmitFalse public var leanAgents: Bool
 
     public init(
         newTask: Bool, interject: Bool, watch: Bool, todos: Bool = false, answerTodos: Bool = false,
         away: Bool = false, annotations: Bool = false, liveUpdate: Bool = false, sessionHistory: Bool = false,
-        historyPictures: Bool = false, trafficSync: Bool = false, trafficUsage: Bool = false
+        historyPictures: Bool = false, trafficSync: Bool = false, trafficUsage: Bool = false,
+        leanAgents: Bool = false
     ) {
+        self.leanAgents = leanAgents
         self.trafficUsage = trafficUsage
         self.trafficSync = trafficSync
         self.liveUpdate = liveUpdate
@@ -69,6 +75,7 @@ public struct Caps: Codable, Equatable, Sendable {
         liveUpdate = try c.decodeIfPresent(Bool.self, forKey: .liveUpdate) ?? false
         sessionHistory = try c.decodeIfPresent(Bool.self, forKey: .sessionHistory) ?? false
         historyPictures = try c.decodeIfPresent(Bool.self, forKey: .historyPictures) ?? false
+        leanAgents = try c.decodeIfPresent(Bool.self, forKey: .leanAgents) ?? false
     }
 }
 
@@ -173,10 +180,18 @@ public struct Hello: WireMessage {
     /// The phone merges lean watch frames: a latest text it already holds comes as a reference to it, and a frame that has
     /// `latestText` has no legacy `text`.
     @OmitFalse public var leanWatch: Bool
+    /// The phone shows a working Agent nobody watches without its live tool, step count and activity time, so the Mac
+    /// need not send a change that only touches them (docs/specs/ios-traffic-reduction.md §3.2). The Mac answers with
+    /// `Caps.leanAgents`.
+    @OmitFalse public var leanAgents: Bool
+    /// The phone opens compressed envelopes (`"z":1`, raw DEFLATE; docs/specs/ios-traffic-reduction.md §3.3). The Mac
+    /// compresses only the list streams, and only for a phone that said so in its latest `hello`.
+    @OmitFalse public var compression: Bool
 
     public init(
         nonce: String, proto: Int = Wire.proto, appVer: String, deviceName: String, lifecycleResults: Bool = false,
-        trafficSync: Bool = false, trafficUsage: Bool = false, leanWatch: Bool = false
+        trafficSync: Bool = false, trafficUsage: Bool = false, leanWatch: Bool = false, leanAgents: Bool = false,
+        compression: Bool = false
     ) {
         self.nonce = nonce
         self.proto = proto
@@ -186,6 +201,8 @@ public struct Hello: WireMessage {
         self.trafficUsage = trafficUsage
         self.trafficSync = trafficSync
         self.leanWatch = leanWatch
+        self.leanAgents = leanAgents
+        self.compression = compression
     }
 }
 

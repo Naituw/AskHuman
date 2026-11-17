@@ -1,8 +1,11 @@
 //! Live Agent views for phones that have the app open (plan §3.4, §4.7).
 //!
 //! The daemon computes a frame for a session; the gateway asks for it every two seconds per open
-//! view and only sends it when its signature changed. Views end when the phone leaves the
-//! foreground (see `Actor::on_presence`), when the session ends, or when the phone closes them.
+//! view and only sends it when its signature changed. A view belongs to one session of the phone:
+//! it ends when the Agent's session ends, when the phone closes it, or when the phone's next `hello`
+//! forgets it (`Actor::on_hello`; the phone asks again for the ones it still wants after the
+//! snapshot it gets). It is served only while the phone is online and in the foreground, so a phone
+//! that left the foreground costs nothing and need not be told to close its views.
 
 use serde_json::Value;
 

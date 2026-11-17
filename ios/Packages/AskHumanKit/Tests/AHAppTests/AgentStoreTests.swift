@@ -210,6 +210,33 @@ final class AgentStoreTests: XCTestCase {
         await eventually("the watch is closed") { self.store.watchState(id: id) == nil }
     }
 
+    // MARK: lean list
+
+    func testAWorkingRowShowsItsLiveActivityOnlyWhenThePhoneIsKeptCurrentOnIt() async throws {
+        await make()
+        let workingItem = working
+        let idle = try XCTUnwrap(store.state.agents.first { $0.view.state == "idle" })
+        let waiting = try XCTUnwrap(store.state.agents.first { $0.view.state == "waiting" })
+        XCTAssertFalse(store.state.macs.contains { $0.caps.leanAgents }, "the demo Macs predate the lean list")
+        XCTAssertTrue(store.showsLiveActivity(of: workingItem), "a Mac that sends every step")
+
+        // A Mac that leaves the activity of a working Agent nobody watches out of the list.
+        await backend.offerLeanAgents()
+        await eventually("the Macs' capability") { self.store.state.macs.allSatisfy(\.caps.leanAgents) }
+        XCTAssertFalse(store.showsLiveActivity(of: working), "what the phone holds of it is old")
+        XCTAssertTrue(store.showsLiveActivity(of: idle), "every change of an Agent that is not working is sent")
+        XCTAssertTrue(store.showsLiveActivity(of: waiting))
+
+        // The Agent whose page is open is watched, and the Mac keeps its row current.
+        store.openAgent(macId: MockData.homeMacId, agentKey: MockData.workingAgentKey)
+        XCTAssertTrue(store.showsLiveActivity(of: working))
+        let other = try XCTUnwrap(store.state.agents.first { $0.view.state == "working" && $0.id != workingItem.id })
+        XCTAssertFalse(store.showsLiveActivity(of: other), "another working Agent is not")
+
+        store.agentPath = []
+        XCTAssertFalse(store.showsLiveActivity(of: working))
+    }
+
     func testAnEndedAgentStaysOnItsPageAfterItLeavesTheList() async {
         await make()
         let id = working.id

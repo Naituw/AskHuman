@@ -38,6 +38,21 @@ final class TestMac: @unchecked Sendable {
     var dropNextRequestGet = false
     var corruptAssetChecksum = false
     var caps = Caps(newTask: false, interject: false, watch: false)
+    /// Whether the Mac compresses the list streams for a phone that asked for it in its latest `hello`, as the real
+    /// one does (docs/specs/ios-traffic-reduction.md §3.3): a list type of at least 512 bytes, when that is smaller.
+    var compressesLists = true
+    private var helloOf: [String: Hello] = [:]
+    private var compressedCount = 0
+    /// Number of `z: 1` envelopes the Mac sent.
+    var compressedSent: Int {
+        lock.lock(); defer { lock.unlock() }
+        return compressedCount
+    }
+    /// The latest `hello` of a phone, as the Mac read it.
+    func hello(of phoneId: String) -> Hello? {
+        lock.lock(); defer { lock.unlock() }
+        return helloOf[phoneId]
+    }
     /// Number of upcoming `asset.get` requests to ignore.
     var dropAssetGets = 0
     /// Reason the Mac refuses uploads with (nil = accept).
@@ -208,8 +223,43 @@ final class TestMac: @unchecked Sendable {
         guard let key else { return false }
         let topic = Wire.topicDown(user: user, phoneId: phoneId)
         let plain = try! Plain(body, nowMs: clock.nowMs())
-        let bytes = try! plain.sealed(key: key.m2p, scope: .topic(topic), sender: macId, kid: key.kid)
+        let bytes = sealedDown(plain, key: key.m2p, kid: key.kid, topic: topic, phoneId: phoneId)
         return await client.publish(topic: topic, payload: bytes, retain: false)
+    }
+
+    /// Seals a message for a phone, compressed when the real Mac would (see `compressesLists`).
+    private func sealedDown(_ plain: Plain, key: Data, kid: Int, topic: String, phoneId: String) -> Data {
+        let plaintext = try! AHJSON.encoder.encode(plain)
+        lock.lock()
+        let asked = helloOf[phoneId]?.compression == true
+        lock.unlock()
+        if compressesLists, asked, ["agents.snapshot", "agents.delta", "inbox.snapshot"].contains(plain.t), plaintext.count >= 512 {
+            let packed = AHEnvelope.compress(plaintext)
+            if packed.count < plaintext.count {
+                let nonce = Bytes.random(AHCrypto.nonceLength)
+                // Written out here on purpose: the AAD is the wire format, not the implementation under test.
+                let aad = Data("ah1|\(topic)|\(macId)|\(kid)|z1".utf8)
+                let ciphertext = try! AHCrypto.seal(key: key, nonce: nonce, aad: aad, plaintext: packed)
+                lock.lock()
+                compressedCount += 1
+                lock.unlock()
+                return AHEnvelope.encode(Envelope(f: macId, k: kid, n: Bytes.b64u(nonce), c: Bytes.b64u(ciphertext), z: 1))
+            }
+        }
+        return try! plain.sealed(key: key, scope: .topic(topic), sender: macId, kid: kid)
+    }
+
+    /// Sends a `z: 1` envelope that carries `deflated` as it is (a damaged stream, a bomb), properly encrypted so that
+    /// the phone gets as far as inflating it.
+    func sendDeflated(_ deflated: Data, to phoneId: String) async {
+        let key = lock.withLock { keys[phoneId] }
+        guard let key else { return }
+        let topic = Wire.topicDown(user: user, phoneId: phoneId)
+        let nonce = Bytes.random(AHCrypto.nonceLength)
+        let aad = Data("ah1|\(topic)|\(macId)|\(key.kid)|z1".utf8)
+        let ciphertext = try! AHCrypto.seal(key: key.m2p, nonce: nonce, aad: aad, plaintext: deflated)
+        let envelope = Envelope(f: macId, k: key.kid, n: Bytes.b64u(nonce), c: Bytes.b64u(ciphertext), z: 1)
+        _ = await client.publish(topic: topic, payload: AHEnvelope.encode(envelope), retain: false)
     }
 
     /// Sends a message built by hand (stale timestamps, wrong keys …).
@@ -329,7 +379,11 @@ final class TestMac: @unchecked Sendable {
     private func handle(_ plain: Plain, from phoneId: String) async {
         switch plain.t {
         case Wire.T.hello:
-            guard autoHello, let hello = try? plain.body(as: Hello.self) else { return }
+            guard let hello = try? plain.body(as: Hello.self) else { return }
+            lock.lock()
+            helloOf[phoneId] = hello
+            lock.unlock()
+            guard autoHello else { return }
             await sendHelloSync(to: phoneId, nonce: hello.nonce)
         case Wire.T.resync:
             if let resync = try? plain.body(as: Resync.self) {

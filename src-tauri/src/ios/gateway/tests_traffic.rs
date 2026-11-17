@@ -16,6 +16,8 @@ async fn a_capable_phone_merges_owners_and_keeps_the_ledger_after_revocation_and
             device_name: "phone".into(),
             lifecycle_results: false,
             lean_watch: false,
+            lean_agents: false,
+            compression: false,
         })
         .await;
     let ack: wire::HelloAck = phone.recv_body(wire::t::HELLO_ACK).await;

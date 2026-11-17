@@ -85,6 +85,31 @@ fn agent_sig(view: &AgentView) -> String {
     serde_json::to_string(&view).unwrap_or_default()
 }
 
+/// The signature without the live activity of the Agent: what it did last (`last_activity_at`), how many steps its
+/// turn has taken and which tool it runs now change with nearly every tool call, and are the bulk of the Agents
+/// stream. A phone that said `Hello::lean_agents` does not show them for a working Agent it does not watch, so a
+/// change that only touches them is not worth a message (docs/specs/ios-traffic-reduction.md §3.2).
+fn lean_signature(view: &AgentView) -> String {
+    let mut view = view.clone();
+    view.last_activity_at = 0;
+    view.turn_steps = 0;
+    view.current_tool = None;
+    agent_sig(&view)
+}
+
+/// Whether the phone must be told that `view` differs from `held`, the version it was last sent.
+///
+/// Every change is told, except that a lean phone is not told about the live activity of a working Agent it does not
+/// watch: it holds an older value of those fields, which it does not show. A view that is watched is told every
+/// change, because the phone's live-view watchdog reads the list for it.
+fn differs_for_the_phone(held: &AgentView, view: &AgentView, lean: bool, watched: bool) -> bool {
+    if lean && !watched && held.state == "working" && view.state == "working" {
+        lean_signature(held) != lean_signature(view)
+    } else {
+        agent_sig(held) != agent_sig(view)
+    }
+}
+
 impl Actor {
     // ------------------------------------------------------------ the list
 
@@ -111,7 +136,7 @@ impl Actor {
         self.live.agents_at = now;
     }
 
-    fn refresh_agents_if_stale(&mut self) {
+    pub(super) fn refresh_agents_if_stale(&mut self) {
         let now = self.now();
         if self.live.agents_at == 0 || now - self.live.agents_at >= AGENTS_POLL_MS {
             self.refresh_agents(now);
@@ -167,17 +192,20 @@ impl Actor {
         let Some(rt) = self.rt.get_mut(phone_id) else {
             return;
         };
+        let lean = rt.lean_agents;
         let mut upsert = Vec::new();
         let mut next = HashMap::with_capacity(views.len());
         for view in views {
-            let changed = rt
-                .agents_sent
-                .get(&view.key)
-                .is_none_or(|old| agent_sig(old) != agent_sig(&view));
+            let held = rt.agents_sent.get(&view.key);
+            let watched = rt.watches.iter().any(|w| w.agent_key == view.key);
+            let changed = held.is_none_or(|held| differs_for_the_phone(held, &view, lean, watched));
             if changed {
                 upsert.push(view.clone());
+                next.insert(view.key.clone(), view);
+            } else if let Some(held) = held {
+                // What the phone holds, not the Agent's latest: the next comparison is with that.
+                next.insert(view.key.clone(), held.clone());
             }
-            next.insert(view.key.clone(), view);
         }
         let remove: Vec<String> = rt
             .agents_sent

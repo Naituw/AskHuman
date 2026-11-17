@@ -245,6 +245,15 @@ final class AgentTests: XCTestCase {
         XCTAssertTrue(hello.leanWatch)
     }
 
+    func testTheHelloAsksForTheLeanAgentListAndForCompression() async throws {
+        let h = Harness()
+        await h.pair()
+        let hello = try h.mac.received(Wire.T.hello)[0].body(as: Hello.self)
+        XCTAssertTrue(hello.leanAgents)
+        XCTAssertTrue(hello.compression)
+        XCTAssertEqual(h.mac.hello(of: h.phoneId)?.compression, true, "the Mac keeps the latest hello of the phone")
+    }
+
     func testALeanFrameTakesItsWordsFromTheFrameThatCarriedThem() async throws {
         let h = Harness()
         h.mac.agents = ["claude:s1": sampleAgent("claude:s1")]

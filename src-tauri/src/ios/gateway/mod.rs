@@ -26,6 +26,8 @@ mod tests_away;
 #[cfg(test)]
 mod tests_history;
 #[cfg(test)]
+mod tests_reduction;
+#[cfg(test)]
 mod tests_requests;
 #[cfg(test)]
 mod tests_tasks;
@@ -51,7 +53,7 @@ use tokio::sync::oneshot;
 use super::crypto;
 use super::envelope::{self, Plain, Scope};
 use super::push::{PushClient, PushOutcome};
-use super::store::{PhoneState, Store, Traffic};
+use super::store::{PhoneState, Store, Traffic, TrafficBreakdown};
 use super::transport::{BrokerTransport, TransportEvent};
 use super::wire::{self, t, AgentView, Caps, Msg, Presence, SlotInfo, CLOCK_SKEW_MS, PROTO};
 use crate::config::IosChannelConfig;
@@ -286,6 +288,10 @@ pub struct GatewayState {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub pairing: Option<PairingView>,
     pub traffic: Traffic,
+    /// Where this month's traffic went, by direction and message type (docs/specs/ios-traffic-reduction.md T6). Local
+    /// to this Mac: it is read with `channel ios status --json` and is not part of the wire protocol.
+    #[serde(default)]
+    pub traffic_breakdown: TrafficBreakdown,
     #[serde(default)]
     pub traffic_records: Vec<super::traffic::TrafficRecord>,
     #[serde(default)]
@@ -597,13 +603,26 @@ pub(crate) struct PhoneRt {
     pub traffic_pending: bool,
     /// The phone said in its last `hello` that it merges lean watch frames (`wire::Hello::lean_watch`).
     pub lean_watch: bool,
+    /// The phone said in its last `hello` that it shows a working Agent nobody watches without its live tool, step count
+    /// and activity time (`wire::Hello::lean_agents`), and this Mac agreed to leave those changes out
+    /// (`Caps::lean_agents`): see `agents::lean_signature`.
+    pub lean_agents: bool,
+    /// The phone said in its last `hello` that it opens compressed envelopes (`wire::Hello::compression`).
+    pub compression: bool,
     pub device_name: String,
     pub dedup: Dedup,
     /// Revision of this phone's `agents` stream (the stream differs per phone: `followed`).
     pub agents_rev: u64,
-    /// What this phone's Agents list shows right now, for computing deltas.
+    /// What this phone's Agents list holds right now, for computing deltas: the version it was last sent of each
+    /// Agent, which for a lean phone can be older than the Agent's current activity.
     pub agents_sent: HashMap<String, AgentView>,
-    /// Live Agent views (plan §3.4 `watch.open`); only while the phone is in the foreground.
+    /// The body of the last snapshot of each stream other than `agents` that went to this phone, so that when the
+    /// phone becomes live again it is sent only what differs from it (docs/specs/ios-traffic-reduction.md §3.1).
+    /// Reset by every `hello`, whose snapshots are the new baseline.
+    pub sent_streams: HashMap<&'static str, Value>,
+    /// Live Agent views (plan §3.4 `watch.open`). They belong to one session of the phone: a new `hello` forgets
+    /// them, and the phone opens the ones it still wants after the snapshot it is sent. They are served only while
+    /// the phone is online and in the foreground.
     pub watches: Vec<watch::WatchRt>,
     /// Workspaces offered by the last `task.options`, valid for a while.
     pub workspaces: Option<tasks::WorkspaceMap>,
@@ -993,6 +1012,7 @@ impl Actor {
             phones,
             pairing: self.pairing_view(),
             traffic: self.current_traffic(),
+            traffic_breakdown: self.current_breakdown(),
             traffic_records: self
                 .traffic_records()
                 .into_iter()
@@ -1096,6 +1116,7 @@ impl Actor {
     async fn on_message(&mut self, topic: &str, payload: &[u8]) {
         self.count_traffic(true, payload.len(), false);
         if let Some(device) = wire::presence_device(&self.user, topic) {
+            self.count_message(true, "presence", payload.len());
             self.announce_traffic();
             self.on_presence(&device, payload);
             return;
@@ -1105,6 +1126,7 @@ impl Actor {
             return;
         }
         if let Some(ticket_id) = topic.strip_prefix(&format!("ah/{}/p/", self.user)) {
+            self.count_message(true, "pair", payload.len());
             self.announce_traffic();
             self.on_pair_topic(topic, ticket_id, payload).await;
         }
@@ -1128,17 +1150,16 @@ impl Actor {
         }
         let was_live = self.is_live(device);
         if let Some(rt) = self.rt.get_mut(device) {
+            // The phone's live views stay registered when it leaves the foreground: they are served only while it is
+            // live (`tick_watch`), and the next `hello` forgets them.
             rt.apply_presence(&presence);
-            // Live views only run in the foreground.
-            if !rt.foreground {
-                rt.watches.clear();
-            }
         }
         // The app reports "foreground" only after its first sync, so a phone that said hello
         // first counts as live only from here on: whatever changed in between (a new request
-        // above all) was not sent to it live and its hello snapshots predate it. Catch it up.
+        // above all) was not sent to it live and its hello snapshots predate it. Send it what
+        // differs from what it holds, and nothing when nothing changed.
         if !was_live && self.is_live(device) {
-            self.send_snapshots(device);
+            self.catch_up(device);
         }
         self.refresh_status();
     }
@@ -1148,31 +1169,32 @@ impl Actor {
         PhoneRt::with_presence(self.presence_cache.get(phone_id))
     }
 
-    async fn on_up(&mut self, topic: &str, payload: &[u8]) {
-        let Ok(env) = envelope::parse(payload) else {
-            return;
-        };
+    /// Opens one message of the up topic: the phone it came from, that phone's pairing state and the message. `None`
+    /// when it is not from a phone this Mac is paired with, or does not authenticate.
+    fn open_up(&self, topic: &str, payload: &[u8]) -> Option<(String, PhoneState, Plain)> {
+        let env = envelope::parse_from_phone(payload).ok()?;
         if env.f == self.mac_id {
-            return;
+            return None;
         }
-        let Some(phone) = self.store.state.phone(&env.f) else {
-            return;
-        };
-        let state = phone.state;
-        let Some(keys) = self.store.keys(&env.f).cloned() else {
-            return;
-        };
+        let state = self.store.state.phone(&env.f)?.state;
+        let keys = self.store.keys(&env.f)?;
         if env.k != keys.kid {
-            return;
+            return None;
         }
-        let Ok(plain) = envelope::open_plain(&keys.p2m, Scope::Topic(topic), &env) else {
+        let plain = envelope::open_plain(&keys.p2m, Scope::Topic(topic), &env).ok()?;
+        Some((env.f, state, plain))
+    }
+
+    async fn on_up(&mut self, topic: &str, payload: &[u8]) {
+        let Some((phone_id, state, plain)) = self.open_up(topic, payload) else {
+            self.count_message(true, "rejected", payload.len());
             return;
         };
+        self.count_message(true, &plain.t, payload.len());
         let now = self.now();
         if plain.t != "traffic.usage" {
             self.announce_traffic();
         }
-        let phone_id = env.f.clone();
         if (plain.ts - now).abs() > CLOCK_SKEW_MS {
             self.send_error(
                 &phone_id,
@@ -1363,19 +1385,24 @@ impl Actor {
         let Some(keys) = self.store.keys(phone_id).cloned() else {
             return false;
         };
+        // The list streams go compressed to a phone that said it opens them (docs/specs/ios-traffic-reduction.md §3.3).
+        let compress = wire::is_compressible(msg_type)
+            && self.rt.get(phone_id).is_some_and(|rt| rt.compression);
         let now = self.now();
         let plain = Plain::new(msg_type, body, now);
         let topic = wire::topic_down(&self.user, phone_id);
-        let bytes = envelope::seal_plain(
+        let bytes = envelope::seal_plain_with(
             &keys.m2p,
             Scope::Topic(&topic),
             &self.mac_id,
             keys.kid,
             &plain,
+            compress,
         );
         if bytes.len() > wire::MAX_ENVELOPE_BYTES {
             return false;
         }
+        self.count_message(false, msg_type, bytes.len());
         self.outbox
             .send_with_traffic(topic, bytes, false, msg_type != "traffic.usage");
         true
@@ -1424,14 +1451,23 @@ impl Actor {
             phone.lifecycle_results = hello.lifecycle_results;
             self.store.save_state();
         }
+        let caps = self.host.caps();
         if let Some(rt) = self.rt.get_mut(phone_id) {
             rt.hello_at = Some(now);
-            rt.traffic_sync = hello.traffic_usage && self.host.caps().traffic_usage;
+            rt.traffic_sync = hello.traffic_usage && caps.traffic_usage;
             rt.traffic_sent_at = None;
             rt.lean_watch = hello.lean_watch;
+            rt.lean_agents = hello.lean_agents && caps.lean_agents;
+            rt.compression = hello.compression;
             rt.device_name = sanitize_name(&hello.device_name);
+            // A hello starts a session: the phone dropped what it held and what it had open. It asks for its live
+            // views again after the snapshot it is sent now, and the snapshots below become the baseline that
+            // `catch_up` compares with.
+            rt.watches.clear();
+            rt.sent_streams.clear();
         }
         self.send_hello_sync(phone_id, &hello.nonce);
+        self.refresh_status();
     }
 
     fn send_hello_sync(&mut self, phone_id: &str, nonce: &str) {
@@ -1454,7 +1490,22 @@ impl Actor {
         }
     }
 
+    /// What a phone that has become live since its `hello` may have missed, and nothing else: each stream is sent
+    /// only when it differs from what the phone was last sent of it (docs/specs/ios-traffic-reduction.md §3.1).
+    /// A stream without a baseline counts as different. The Agents list goes as a delta, not as a snapshot: the
+    /// list is the large one, and the phone's own gap detection asks for a snapshot when a delta does not fit.
+    fn catch_up(&mut self, phone_id: &str) {
+        for stream in ["inbox", "agents", "follow", "slot", "away"] {
+            self.sync_stream(phone_id, stream, true);
+        }
+    }
+
     pub(crate) fn send_stream_snapshot(&mut self, phone_id: &str, stream: &str) {
+        self.sync_stream(phone_id, stream, false);
+    }
+
+    /// Sends the state of one stream; with `only_changed`, only when the phone was not already sent exactly this.
+    fn sync_stream(&mut self, phone_id: &str, stream: &str, only_changed: bool) {
         match stream {
             "inbox" => {
                 if !self.inbox_ready() {
@@ -1462,7 +1513,11 @@ impl Actor {
                     return;
                 }
                 let snapshot = self.inbox_snapshot();
-                self.send(phone_id, &snapshot);
+                self.send_baselined(phone_id, "inbox", &snapshot, only_changed);
+            }
+            "agents" if only_changed => {
+                self.refresh_agents_if_stale();
+                self.send_agents_delta(phone_id);
             }
             "agents" => self.send_agents_snapshot(phone_id),
             "follow" => {
@@ -1472,33 +1527,53 @@ impl Actor {
                     .phone(phone_id)
                     .map(|p| p.follow_set.clone())
                     .unwrap_or_default();
-                self.send(
-                    phone_id,
-                    &wire::FollowState {
-                        rev: self.revs.follow,
-                        keys,
-                        error: None,
-                    },
-                );
+                let state = wire::FollowState {
+                    rev: self.revs.follow,
+                    keys,
+                    error: None,
+                };
+                self.send_baselined(phone_id, "follow", &state, only_changed);
             }
             "slot" => {
                 let slot = self.host.slot();
-                self.send(
-                    phone_id,
-                    &wire::SlotState {
-                        rev: self.revs.slot,
-                        active: slot.active,
-                        auto_activation: slot.auto_activation,
-                    },
-                );
+                let state = wire::SlotState {
+                    rev: self.revs.slot,
+                    active: slot.active,
+                    auto_activation: slot.auto_activation,
+                };
+                self.send_baselined(phone_id, "slot", &state, only_changed);
             }
             "away" => {
                 if let Some(view) = self.host.away() {
                     let state = away_state(self.revs.away, view);
-                    self.send(phone_id, &state);
+                    self.send_baselined(phone_id, "away", &state, only_changed);
                 }
             }
             _ => {}
+        }
+    }
+
+    /// Sends the snapshot of a stream and remembers its body as what the phone holds of it. With `only_changed`,
+    /// a body equal to the one the phone was last sent is not sent again.
+    fn send_baselined<M: Msg>(
+        &mut self,
+        phone_id: &str,
+        stream: &'static str,
+        message: &M,
+        only_changed: bool,
+    ) {
+        let body = message.to_value();
+        let held = self
+            .rt
+            .get(phone_id)
+            .and_then(|rt| rt.sent_streams.get(stream));
+        if only_changed && held == Some(&body) {
+            return;
+        }
+        if self.send(phone_id, message) {
+            if let Some(rt) = self.rt.get_mut(phone_id) {
+                rt.sent_streams.insert(stream, body);
+            }
         }
     }
 

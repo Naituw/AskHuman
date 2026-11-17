@@ -113,6 +113,40 @@ pub struct Traffic {
     pub msgs_out: u64,
 }
 
+/// What one kind of message added up to: how many, and how many bytes of envelope.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct KindCount {
+    pub msgs: u64,
+    pub bytes: u64,
+}
+
+/// The gateway's own account of where its traffic goes this month, by direction and message type
+/// (docs/specs/ios-traffic-reduction.md T6): `out:agents.delta`, `in:hello`, `in:presence`, … A diagnostic for the
+/// person running this Mac. It stays on this Mac, is read with `channel ios status --json`, and never goes on the wire.
+///
+/// It counts the envelopes the gateway sealed and queued, and the messages it received, so it is close to, not
+/// exactly, the broker ledger in [`Traffic`] (which counts what the broker confirmed).
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", default)]
+pub struct TrafficBreakdown {
+    /// `YYYY-MM` the counters belong to.
+    pub month: String,
+    pub kinds: BTreeMap<String, KindCount>,
+}
+
+impl TrafficBreakdown {
+    /// The kind of an inbound or outbound message as it is counted: the registered type, or `other`. A phone chooses
+    /// the type string it sends, so an unknown one must not become a key of its own.
+    pub fn kind_of(msg_type: &str) -> &str {
+        match msg_type {
+            "presence" | "pair" | "rejected" => msg_type,
+            known if super::wire::ALL_TYPES.contains(&known) => known,
+            _ => "other",
+        }
+    }
+}
+
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", default)]
 pub struct IosState {
@@ -120,6 +154,8 @@ pub struct IosState {
     pub mac_id: String,
     pub phones: Vec<PhoneRecord>,
     pub traffic: Traffic,
+    /// Where this month's traffic went, by message type; local only (see [`TrafficBreakdown`]).
+    pub traffic_breakdown: TrafficBreakdown,
     pub traffic_broker: Option<String>,
     pub traffic_records: Vec<super::traffic::TrafficRecord>,
     pub traffic_synced_at: BTreeMap<String, i64>,
@@ -160,6 +196,24 @@ impl IosState {
             self.traffic.bytes_out = self.traffic.bytes_out.saturating_add(bytes as u64);
             self.traffic.msgs_out = self.traffic.msgs_out.saturating_add(1);
         }
+    }
+
+    /// Adds one message to the breakdown by type, rolling over when the month changed.
+    pub fn count_message(&mut self, month: &str, inbound: bool, msg_type: &str, bytes: usize) {
+        if self.traffic_breakdown.month != month {
+            self.traffic_breakdown = TrafficBreakdown {
+                month: month.to_string(),
+                ..TrafficBreakdown::default()
+            };
+        }
+        let key = format!(
+            "{}:{}",
+            if inbound { "in" } else { "out" },
+            TrafficBreakdown::kind_of(msg_type)
+        );
+        let kind = self.traffic_breakdown.kinds.entry(key).or_default();
+        kind.msgs = kind.msgs.saturating_add(1);
+        kind.bytes = kind.bytes.saturating_add(bytes as u64);
     }
 }
 
@@ -655,5 +709,81 @@ mod tests {
         state.count_traffic("2026-11", true, 5);
         assert_eq!(state.traffic.month, "2026-11");
         assert_eq!((state.traffic.bytes_in, state.traffic.bytes_out), (5, 0));
+    }
+
+    #[test]
+    fn the_breakdown_counts_by_direction_and_type_and_rolls_over_with_the_month() {
+        let mut state = IosState::default();
+        state.count_message("2026-10", false, "agents.delta", 300);
+        state.count_message("2026-10", false, "agents.delta", 200);
+        state.count_message("2026-10", true, "hello", 150);
+        let kinds = &state.traffic_breakdown.kinds;
+        assert_eq!(state.traffic_breakdown.month, "2026-10");
+        assert_eq!(
+            kinds["out:agents.delta"],
+            KindCount {
+                msgs: 2,
+                bytes: 500
+            }
+        );
+        assert_eq!(
+            kinds["in:hello"],
+            KindCount {
+                msgs: 1,
+                bytes: 150
+            }
+        );
+        assert_eq!(kinds.len(), 2, "one key per direction and type");
+
+        state.count_message("2026-11", false, "agents.delta", 7);
+        assert_eq!(state.traffic_breakdown.month, "2026-11");
+        assert_eq!(
+            state.traffic_breakdown.kinds["out:agents.delta"],
+            KindCount { msgs: 1, bytes: 7 }
+        );
+        assert_eq!(
+            state.traffic_breakdown.kinds.len(),
+            1,
+            "last month's counts are gone"
+        );
+    }
+
+    #[test]
+    fn a_type_a_phone_makes_up_never_becomes_a_key_of_its_own() {
+        let mut state = IosState::default();
+        for index in 0..50 {
+            state.count_message("2026-11", true, &format!("made.up.{index}"), 10);
+        }
+        state.count_message("2026-11", true, "presence", 40);
+        state.count_message("2026-11", true, "pair", 40);
+        state.count_message("2026-11", false, "rejected", 40);
+        state.count_message("2026-11", true, "watch.open", 10);
+        let kinds = &state.traffic_breakdown.kinds;
+        assert_eq!(
+            kinds["in:other"],
+            KindCount {
+                msgs: 50,
+                bytes: 500
+            }
+        );
+        assert!(kinds.contains_key("in:presence"));
+        assert!(kinds.contains_key("in:pair"));
+        assert!(kinds.contains_key("out:rejected"));
+        assert!(kinds.contains_key("in:watch.open"));
+        assert_eq!(
+            kinds.len(),
+            5,
+            "fifty invented types made {} keys",
+            kinds.len()
+        );
+    }
+
+    #[test]
+    fn a_state_file_from_before_the_breakdown_loads_with_an_empty_one() {
+        let state: IosState = serde_json::from_str(r#"{"version":1,"macId":"m"}"#).unwrap();
+        assert_eq!(state.traffic_breakdown, TrafficBreakdown::default());
+        let again: IosState =
+            serde_json::from_str(&serde_json::to_string(&state).unwrap()).unwrap();
+        assert_eq!(again, state);
     }
 }

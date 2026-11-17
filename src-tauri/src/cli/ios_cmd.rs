@@ -574,6 +574,7 @@ mod tests {
             phones,
             pairing: None,
             traffic: Traffic::default(),
+            traffic_breakdown: Default::default(),
             traffic_records: Vec::new(),
             traffic_storage_issue: false,
             traffic_synced_at: Default::default(),

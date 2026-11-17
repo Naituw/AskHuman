@@ -87,6 +87,9 @@ sys-locale = "0.3.2"
 pulldown-cmark = { version = "0.13.6", default-features = false, features = ["html"] }
 # Package DOCX with the patched ZIP writer; enable only the existing zlib-rs deflate backend.
 zip = { version = "9.0.5", default-features = false, features = ["deflate-flate2-zlib-rs"] }
+# Raw DEFLATE for the compressed envelopes of the iOS channel (docs/specs/ios-traffic-reduction.md §3.3); the same
+# zlib-rs backend the ZIP writer above already builds, so no new crate enters the tree.
+flate2 = { version = "1.1", default-features = false, features = ["zlib-rs"] }
 roxmltree = "0.20"
 # Shared channel conversion and Popup codecs; keep default codecs disabled to control size.
 # ICO reuses PNG/BMP, and TGA/PNM add no external decoder crates.

@@ -170,6 +170,7 @@ impl Host for DaemonHost {
             annotations: true,
             session_history: true,
             history_pictures: true,
+            lean_agents: true,
         }
     }
 

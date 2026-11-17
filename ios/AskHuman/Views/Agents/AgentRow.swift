@@ -24,9 +24,12 @@ struct AgentRow: View {
                             .foregroundStyle(.secondary)
                             .accessibilityLabel("Will notify you")
                     }
-                    RelativeTimeText(date: item.lastActivity)
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
+                    // A working Agent nobody watches is not told to the phone step by step, so this time would be old.
+                    if store.showsLiveActivity(of: item) {
+                        RelativeTimeText(date: item.lastActivity)
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
                 }
                 Text(verbatim: subtitle)
                     .font(.footnote)
@@ -50,7 +53,7 @@ struct AgentRow: View {
                     case .away: Chip(text: "Away", systemImage: "moon.fill", tint: AwayStyle.tint)
                     case .follow, .normal: EmptyView()
                     }
-                    if item.view.state == "working" {
+                    if item.view.state == "working", store.showsLiveActivity(of: item) {
                         if let tool = item.view.currentTool, !tool.isEmpty {
                             // The tool may carry a whole command: the chip shortens it to the row.
                             Chip(verbatim: tool, systemImage: "wrench.and.screwdriver")
