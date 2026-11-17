@@ -50,6 +50,11 @@ extension PhoneEngine {
         for item in outbox.values.sorted(by: { $0.createdAt < $1.createdAt }) where item.macId == macId && timers["ack." + item.clientMsgId] == nil {
             await transmit(item)
         }
+        // What the user has read of the Mac's requests is told again (once per session; the Mac takes it
+        // as often as it comes): `request.seen` is what keeps it from pushing a request that was read.
+        for runtime in requests.values where runtime.cached.macId == macId && !runtime.cached.unread {
+            await tellSeen(macId, requestId: runtime.cached.requestId)
+        }
         if recoveredUpdate { await resumeTransfers(macId) }
         await ensureForegroundPresence()
     }
@@ -207,6 +212,7 @@ extension PhoneEngine {
         guard let runtime = requests.removeValue(forKey: key) else { return }
         let cached = runtime.cached
         macs[cached.macId]?.fetching.remove(cached.requestId)
+        macs[cached.macId]?.seenSent.remove(cached.requestId)
         for item in outbox.values where item.macId == cached.macId && item.subject == cached.requestId {
             outbox[item.clientMsgId] = nil
             store.removeOutbox(item.clientMsgId)
@@ -248,11 +254,19 @@ extension PhoneEngine {
             requests[key] = runtime
             persistRequest(key)
         }
-        if !runtime.seenSent, macs[macId]?.sync == .synced {
-            requests[key]?.seenSent = true
-            await send(RequestSeen(requestId: requestId), to: macId)
-        }
+        await tellSeen(macId, requestId: requestId)
         publish()
+    }
+
+    /// Tells the Mac the user has seen the request, once per session. The user opens a request once, so
+    /// this is the phone's to keep true: what could not be told (the Mac was away, the link was going
+    /// down) or may not have been heard is told again when the next snapshot comes in.
+    func tellSeen(_ macId: String, requestId: String) async {
+        guard requests[CachedRequest.key(macId, requestId)] != nil, macs[macId]?.sync == .synced,
+              macs[macId]?.seenSent.contains(requestId) == false
+        else { return }
+        macs[macId]?.seenSent.insert(requestId)
+        if await send(RequestSeen(requestId: requestId), to: macId) == false { macs[macId]?.seenSent.remove(requestId) }
     }
 
     public func submitAnswer(

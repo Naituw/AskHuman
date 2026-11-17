@@ -104,8 +104,10 @@ extension PhoneEngine {
         mac.slotRev = nil
         mac.away = nil
         mac.awayRev = nil
-        // A Mac that restarted answers none of what was asked of its earlier self.
+        // A Mac that restarted answers none of what was asked of its earlier self, and has not been told
+        // what the user saw.
         mac.fetching = []
+        mac.seenSent = []
         mac.agents = [:]
         mac.agentsRev = nil
         mac.followRev = nil

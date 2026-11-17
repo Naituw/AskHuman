@@ -93,7 +93,9 @@
 或 Mac 回 `not_found` 之后，这条请求就被永远当成「正在拉」，之后每次快照都跳过它，页面停在 `LoadingRequest`，重启才重新拉取。修复把在途记录挪到
 `MacRuntime.fetching`（随 `resetSession()` 与新握手清空），发布失败即撤销，`not_found` 结束等待并请求收件箱快照；约束见
 [overview-ios](overview-ios.md) 的「请求的完整正文随会话拉取」与 [规格 §幂等与恢复](specs/ios-channel.md)。`RequestFetchTests` 四个用例在旧代码上全红、
-新代码上全绿，Swift 包 7 个测试包全过；诊断报告新增 `without full request M` 计数。
+新代码上全绿，Swift 包 7 个测试包全过；诊断报告新增 `without full request M` 计数。同类写法的 `request.seen`（旧 `RequestRuntime.seenSent`：发布前置位、
+丢了或 Mac 不在就永不重发，而 UI 对每个请求只调一次 `markSeen`）一并改成随会话，并在每次快照到达时对已读请求重申一次（`RequestSeenTests` 三个用例旧代码上红）；
+影响面小：Mac 不知道你读过，就可能对已读的请求多推一条。
 
 **还没出包，真机没验。** 下一步出内外 TestFlight 新版，手机上用几天确认不再复现。这是复现出的一个确定缺陷，但是否就是用户手机上那几次的**全部**原因要看修复后还出不出：
 若仍复现，卡住时（别重启）用开发者模式的「复制诊断信息」，看连接状态与 `inbox N (… without full request M)`——在线、同步完成而 M > 0 说明这条路径还没封死，否则是另一个原因。

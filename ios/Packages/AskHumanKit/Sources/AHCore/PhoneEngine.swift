@@ -773,6 +773,9 @@ struct MacRuntime {
     /// answer to one that was still on its way when the session ended is not coming, so `resetSession()`
     /// voids these with the rest, and the snapshot of the next session asks again.
     var fetching: Set<String> = []
+    /// Requests the Mac was told, in this session, that the user has seen. Void with the session too: the
+    /// Mac may not have heard what was told before, so the next session tells it again.
+    var seenSent: Set<String> = []
     var agents: [String: AgentView] = [:]
     var agentsRev: UInt64?
     /// Agent keys the Mac says are followed.
@@ -813,6 +816,7 @@ struct MacRuntime {
         awayRev = nil
         inboxRev = nil
         fetching = []
+        seenSent = []
         agents = [:]
         agentsRev = nil
         followRev = nil
@@ -828,5 +832,4 @@ enum RequestInternalState: Equatable {
 struct RequestRuntime {
     var cached: CachedRequest
     var state: RequestInternalState
-    var seenSent = false
 }
