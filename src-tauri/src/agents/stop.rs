@@ -25,6 +25,7 @@ enum StopDecision {
 struct LastAssistantMessage {
     display: Option<String>,
     user_confirmed_end_turn: bool,
+    quiet: bool,
 }
 
 /// Entry point for `AskHuman __stop-hook <agent> [track] [confirm]`.
@@ -100,7 +101,7 @@ fn run_inner(args: &[String]) -> Option<Value> {
     }
 
     let last_message = last_assistant_message(kind, &input);
-    if last_message.user_confirmed_end_turn {
+    if last_message.user_confirmed_end_turn || last_message.quiet {
         if track || confirm {
             report_turn_end(kind, session_id, cwd, &input);
         }
@@ -313,7 +314,17 @@ fn last_assistant_message(kind: AgentKind, input: &Value) -> LastAssistantMessag
             .filter(|text| !text.trim().is_empty())
             .map(str::to_string),
     };
-    normalize_last_assistant_message(raw.as_deref())
+    let heartbeat = (kind == AgentKind::Codex)
+        .then(|| raw.as_deref().and_then(super::codex_heartbeat::parse))
+        .flatten();
+    let mut message = normalize_last_assistant_message(
+        heartbeat
+            .as_ref()
+            .map(|result| result.display_text)
+            .or(raw.as_deref()),
+    );
+    message.quiet = heartbeat.is_some_and(|result| !result.notify);
+    message
 }
 
 fn normalize_last_assistant_message(raw: Option<&str>) -> LastAssistantMessage {
@@ -321,6 +332,7 @@ fn normalize_last_assistant_message(raw: Option<&str>) -> LastAssistantMessage {
         return LastAssistantMessage {
             display: None,
             user_confirmed_end_turn: false,
+            quiet: false,
         };
     };
     let (cleaned, user_confirmed_end_turn) = strip_confirmed_end_turn_marker(raw);
@@ -328,6 +340,7 @@ fn normalize_last_assistant_message(raw: Option<&str>) -> LastAssistantMessage {
         display: (!cleaned.trim().is_empty())
             .then(|| truncate_preserving_layout(&cleaned, MAX_LAST_MESSAGE_CHARS)),
         user_confirmed_end_turn,
+        quiet: false,
     }
 }
 
@@ -1035,6 +1048,30 @@ mod tests {
     }
 
     #[test]
+    fn heartbeat_stop_is_quiet_without_claiming_user_approval() {
+        let raw = super::super::codex_heartbeat::QUIET;
+        let input = json!({"last_assistant_message": raw});
+        let quiet = last_assistant_message(AgentKind::Codex, &input);
+        assert!(quiet.quiet);
+        assert!(!quiet.user_confirmed_end_turn);
+        assert!(!quiet.display.unwrap().contains("<heartbeat>"));
+        assert!(!last_assistant_message(AgentKind::Claude, &input).quiet);
+        let notify = last_assistant_message(
+            AgentKind::Codex,
+            &json!({"last_assistant_message": raw.replace("DONT_NOTIFY", "NOTIFY")}),
+        );
+        assert!(!notify.quiet);
+        assert!(!notify.display.unwrap().contains("<heartbeat>"));
+        assert!(
+            !last_assistant_message(
+                AgentKind::Codex,
+                &json!({"last_assistant_message": "Next user task is complete."})
+            )
+            .quiet
+        );
+    }
+
+    #[test]
     fn last_message_threshold_preserves_layout_and_unicode() {
         let short = "第一行\n第二行";
         assert_eq!(truncate_preserving_layout(short, 20), short);
@@ -1057,7 +1094,8 @@ mod tests {
             last_assistant_message(AgentKind::Claude, &json!({"last_assistant_message":"  "})),
             LastAssistantMessage {
                 display: None,
-                user_confirmed_end_turn: false
+                user_confirmed_end_turn: false,
+                quiet: false,
             }
         );
     }

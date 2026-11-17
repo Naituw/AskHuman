@@ -643,7 +643,9 @@ fn push_events_codex(v: &Value, out: &mut Vec<Ev>) {
                 if let Some(t) = value_text(payload.get("content")) {
                     let t = t.trim();
                     if !t.is_empty() {
-                        out.push(Ev::Text(t.to_string()));
+                        out.push(Ev::Text(
+                            super::codex_heartbeat::display_text(t).to_string(),
+                        ));
                     }
                 }
             }
@@ -690,7 +692,9 @@ fn push_events_codex(v: &Value, out: &mut Vec<Ev>) {
             if let Some(t) = payload.get("message").and_then(|m| m.as_str()) {
                 let t = t.trim();
                 if !t.is_empty() {
-                    out.push(Ev::Text(t.to_string()));
+                    out.push(Ev::Text(
+                        super::codex_heartbeat::display_text(t).to_string(),
+                    ));
                 }
             }
         }
@@ -720,7 +724,9 @@ fn push_codex_item_completed(item: Option<&Value>, out: &mut Vec<Ev>) {
             if let Some(text) = value_text(item.get("content")) {
                 let text = text.trim();
                 if !text.is_empty() {
-                    out.push(Ev::Text(text.to_string()));
+                    out.push(Ev::Text(
+                        super::codex_heartbeat::display_text(text).to_string(),
+                    ));
                 }
             }
         }
@@ -1687,6 +1693,27 @@ mod tests {
         assert_eq!(step.tool.label, ToolLabel::Write);
         assert_eq!(step.tool.object.as_deref(), Some("probe.txt"));
         assert_eq!(step.state, StepState::Done);
+    }
+
+    #[test]
+    fn heartbeat_activity_and_completed_observation_share_readable_text() {
+        let raw = super::super::codex_heartbeat::QUIET;
+        for entry in [
+            serde_json::json!({"type":"response_item", "payload":{"type":"message", "role":"assistant", "content":[{"type":"output_text", "text":raw}]}}),
+            serde_json::json!({"type":"event_msg", "payload":{"type":"agent_message", "message":raw}}),
+            serde_json::json!({"type":"event_msg", "payload":{"type":"item_completed", "item":{"type":"AgentMessage", "content":[{"type":"Text", "text":raw}]}}}),
+        ] {
+            let lines = vec![entry.to_string()];
+            let activity = analyze(AgentKind::Codex, &lines).unwrap();
+            let expected = super::super::codex_heartbeat::display_text(raw);
+            assert_eq!(activity.text.as_deref(), Some(expected));
+            assert_eq!(
+                super::super::transcript_full::latest_text_from_lines(AgentKind::Codex, &lines)
+                    .unwrap()
+                    .text,
+                expected
+            );
+        }
     }
 
     #[test]

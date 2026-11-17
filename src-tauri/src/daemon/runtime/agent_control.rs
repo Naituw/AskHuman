@@ -80,6 +80,7 @@ fn apply_cursor_failure(state: &Arc<ServerState>, failure: &crate::agents::curso
     let observation = Observation {
         turn_id: Some(failure.request_id.clone()),
         result: Some(TurnResult {
+            notify: None,
             source: Some("cursorLog".into()),
             id: String::new(),
             outcome: TurnOutcome::Failed,
@@ -857,6 +858,22 @@ fn desktop_observation(turn: &Value) -> Option<(LifecycleEvent, Observation)> {
         _ => Some(TurnOutcome::Unknown),
     };
     let result = outcome.map(|outcome| TurnResult {
+        notify: (outcome == TurnOutcome::Completed)
+            .then(|| {
+                crate::codex_desktop::protocol::entities(&turn["items"])
+                    .into_iter()
+                    .rev()
+                    .find(|item| {
+                        matches!(
+                            item["type"].as_str(),
+                            Some("agentMessage" | "assistantMessage")
+                        )
+                    })
+                    .and_then(|item| item["text"].as_str())
+                    .and_then(crate::agents::codex_heartbeat::parse)
+                    .map(|output| output.notify)
+            })
+            .flatten(),
         source: Some("codexDesktop".into()),
         id: String::new(),
         outcome,
@@ -1234,6 +1251,7 @@ mod tests {
     fn completed() -> Observation {
         Observation {
             result: Some(TurnResult {
+                notify: None,
                 source: Some("test".into()),
                 id: String::new(),
                 outcome: TurnOutcome::Completed,
@@ -1824,6 +1842,20 @@ mod tests {
     }
 
     #[test]
+    fn heartbeat_native_result_reads_this_turn_and_does_not_hide_failure() {
+        for status in ["completed", "failed"] {
+            let (_, observation) = desktop_observation(&json!({"turnId":"t", "status":status,
+                "items":[{"type":"agentMessage", "phase":"final_answer", "text":crate::agents::codex_heartbeat::QUIET}]})).unwrap();
+            let result = observation.result.unwrap();
+            assert_eq!(result.notify, (status == "completed").then_some(false));
+        }
+        let (_, next) = desktop_observation(&json!({"turnId":"next", "status":"completed",
+            "items":[{"type":"agentMessage", "text":"Ordinary completion"}]}))
+        .unwrap();
+        assert_eq!(next.result.unwrap().notify, None);
+    }
+
+    #[test]
     fn native_results_are_independent_of_idle_and_never_assume_success() {
         for (status, outcome) in [
             ("failed", TurnOutcome::Failed),
@@ -1851,6 +1883,7 @@ mod tests {
         let directory = tempfile::tempdir().unwrap();
         let state = state(directory.path());
         let result = TurnResult {
+            notify: None,
             id: "failure".into(),
             outcome: TurnOutcome::Failed,
             source: Some("cursorLog".into()),

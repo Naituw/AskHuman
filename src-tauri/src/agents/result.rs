@@ -35,6 +35,10 @@ pub struct TurnResult {
     #[serde(default)]
     pub id: String,
     pub outcome: TurnOutcome,
+    /// Codex heartbeat intent. Only completion notifications consume it; failures keep their
+    /// existing behavior. Absence preserves the legacy result and its serialized shape.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub notify: Option<bool>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub source: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -186,6 +190,14 @@ pub fn observation(
         _ => (TurnOutcome::Unknown, Some("unknown")),
     };
     observation.result = Some(TurnResult {
+        notify: (kind == AgentKind::Codex && outcome == TurnOutcome::Completed)
+            .then(|| {
+                text("last_assistant_message")
+                    .or_else(|| text("lastAssistantMessage"))
+                    .and_then(super::codex_heartbeat::parse)
+                    .map(|output| output.notify)
+            })
+            .flatten(),
         source: Some(
             if kind == AgentKind::Pi {
                 "piExtension"
@@ -226,6 +238,25 @@ pub fn observation(
 mod tests {
     use super::*;
     use serde_json::json;
+
+    #[test]
+    fn heartbeat_hook_result_preserves_completion_and_old_serialization() {
+        let input = serde_json::json!({"hook_event_name":"Stop", "turn_id":"t",
+            "last_assistant_message": super::super::codex_heartbeat::QUIET});
+        let result = observation(
+            AgentKind::Codex,
+            super::super::LifecycleEvent::TurnEnd,
+            Some(&input),
+        )
+        .result
+        .unwrap();
+        assert_eq!(result.outcome, TurnOutcome::Completed);
+        assert_eq!(result.notify, Some(false));
+        let old = serde_json::json!({"id":"r", "outcome":"completed", "at":123});
+        let restored: TurnResult = serde_json::from_value(old.clone()).unwrap();
+        assert_eq!(restored.notify, None);
+        assert_eq!(serde_json::to_value(restored).unwrap(), old);
+    }
 
     #[test]
     fn a_claude_subagent_failure_is_not_a_main_session_failure_card() {

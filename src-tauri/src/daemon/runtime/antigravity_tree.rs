@@ -699,6 +699,7 @@ mod tests {
 
     fn end(outcome: TurnOutcome) -> TurnResult {
         TurnResult {
+            notify: None,
             id: String::new(),
             outcome,
             source: Some("hook".into()),

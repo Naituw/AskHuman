@@ -63,6 +63,10 @@
 
 结果发生时，对通知集里的每部手机各自处理：
 
+2026-11-17 增量：Codex heartbeat 的 completed 结果若携带 `notify=false`，仍保存回合结果，
+但不入完成通知队列、不标记已通知、不消耗一次性资格；既有回合绑定不转移到后续检查。
+true 或缺省沿用下表，failed／incomplete／interrupted 保持既有处理。见 [heartbeat 输出适配](codex-heartbeat-output.md)。
+
 | 情形 | 处理 |
 |---|---|
 | 手机在看（在线 + 前台 + 已 hello） | 发应用内横幅（现状不变）；视为已送达 |

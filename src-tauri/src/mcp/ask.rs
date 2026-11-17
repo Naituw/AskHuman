@@ -629,7 +629,7 @@ earlier answer — follow its instructions). Answers to multiple questions come 
     /// End-of-task handoff for requesting a separate next task.
     #[tool(
         name = "whats_next",
-        description = "End-of-task handoff: ask the human for a separate next task. You MUST call \
+        description = "End-of-task handoff: ask the human for a separate next task. Explicit background-check exceptions in the applicable interaction protocol do not require this handoff. Otherwise, you MUST call \
 this only after the current task is fully complete and before ending; use `ask` for any question, \
 decision, or next step within the current task. Optionally pass `message` with a completion report \
 and `files` with report documents. The human replies with the next task (start it immediately), or \

@@ -1075,7 +1075,7 @@ fn push_codex(
                     }
                 } else if role == "assistant" {
                     out.push(TranscriptEvent::AssistantText {
-                        text: trunc(t, text_limit),
+                        text: trunc(super::codex_heartbeat::display_text(t), text_limit),
                         at: event_time(v),
                         at_label: None,
                     });
@@ -1146,7 +1146,7 @@ fn push_codex(
                 let t = t.trim();
                 if !t.is_empty() {
                     out.push(TranscriptEvent::AssistantText {
-                        text: trunc(t, text_limit),
+                        text: trunc(super::codex_heartbeat::display_text(t), text_limit),
                         at: event_time(v),
                         at_label: None,
                     });
@@ -1192,7 +1192,7 @@ fn push_codex_item_completed(v: &Value, item: Option<&Value>, out: &mut Vec<Tran
         "AgentMessage" => {
             if let Some(text) = codex_turn_item_text(item) {
                 out.push(TranscriptEvent::AssistantText {
-                    text: trunc(&text, MAX_TEXT_CHARS),
+                    text: trunc(super::codex_heartbeat::display_text(&text), MAX_TEXT_CHARS),
                     at: event_time(v),
                     at_label: None,
                 });
@@ -2807,6 +2807,21 @@ mod tests {
                 eprintln!("  {l}");
             }
         }
+    }
+
+    #[test]
+    fn heartbeat_transcript_keeps_user_examples_and_projects_assistant_results() {
+        let raw = super::super::codex_heartbeat::QUIET;
+        let file = write_jsonl(&[
+            serde_json::json!({"type":"event_msg", "payload":{"type":"user_message", "message":raw}}),
+            serde_json::json!({"type":"event_msg", "payload":{"type":"agent_message", "message":raw}}),
+        ]);
+        let doc = load_path(AgentKind::Codex, file.path()).unwrap();
+        assert!(doc
+            .events
+            .iter()
+            .any(|event| matches!(event, TranscriptEvent::UserText {text,..} if text == raw)));
+        assert!(doc.events.iter().any(|event| matches!(event, TranscriptEvent::AssistantText {text,..} if text == super::super::codex_heartbeat::display_text(raw))));
     }
 
     #[test]

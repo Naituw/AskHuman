@@ -254,6 +254,7 @@ pub fn agent_help_text(lang: Lang) -> String {
             ));
             out.push(String::new());
             out.push("End-of-task handoff (--whats-next):".to_string());
+            out.push("  Explicit background-check exceptions in the applicable interaction protocol do not require this handoff.".to_string());
             out.push(format!(
                 "  {prog} --whats-next [\"<completion report>\"] [-o[!] \"<suggested task>\" ...] [-f \"<file>\" ...] [--stdin]"
             ));
@@ -333,6 +334,7 @@ pub fn agent_help_text(lang: Lang) -> String {
             ));
             out.push(String::new());
             out.push("任务完成后的交接（--whats-next）:".to_string());
+            out.push("  当前交互协议明确豁免的后台检查不需要这项交接。".to_string());
             out.push(format!(
                 "  {prog} --whats-next [\"<完成报告>\"] [-o[!] \"<建议任务>\" ...] [-f \"<文件>\" ...] [--stdin]"
             ));

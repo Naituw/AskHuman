@@ -42,6 +42,8 @@ iOS Agent 详情页也复用 `Operation::Send`，支持运行中补充、空闲�
   不参与接收判定。patch 失配废弃控制资格并重新订阅，不猜测增量或自动切换执行器。
 - SQLite 只发现最近 24 条未归档桌面会话，排除 CLI 和子 agent；历史文件不产生待审批。
   Hook 与桌面状态按真实 session ID 合并；Watch 文本可取原生最新回复，回复出现不等于完成。
+  Codex heartbeat 结果由共用解析器转换为可读正文／message；DONT_NOTIFY 不触发结束确认或手机完成提醒。
+  同轮通知决策沿已有结果链传递，不做额外来源核验或改变原生调度，见 [heartbeat 输出适配](codex-heartbeat-output.md)。
 - 原生 `requestUserInput` 和异步问题进入现有 AskHuman 提问协调器；原生请求 ID 参与去重，
   避免相同题面重放上一轮答案。回答前重新验证 owner 和请求内容，请求消失即撤销等待。
 - 命令、文件和权限申请支持单次批准 / 拒绝；权限申请限定本 turn。沿用 Codex 权限开关；

@@ -235,6 +235,7 @@ mod tests {
     #[test]
     fn a_failure_is_not_a_natural_stop_or_a_replayable_equal_question() {
         let result = TurnResult {
+            notify: None,
             id: "r1".into(),
             outcome: super::super::result::TurnOutcome::Failed,
             source: None,
@@ -267,6 +268,7 @@ mod tests {
 
     fn result(outcome: TurnOutcome, reason: Option<&str>, summary: Option<&str>) -> TurnResult {
         TurnResult {
+            notify: None,
             id: "r1".into(),
             outcome,
             source: None,

@@ -15,8 +15,12 @@ pub const SUBAGENT_PROTOCOL_RULE: &str =
 pub const SUBAGENT_DELEGATION_RULE: &str =
     "**When starting a subagent, tell it that it is a subagent and must not use AskHuman.**";
 
-fn protocol_scope_rules() -> String {
-    format!("{SUBAGENT_PROTOCOL_RULE}\n{SUBAGENT_DELEGATION_RULE}")
+fn protocol_scope_rules(agent: Option<AgentKind>) -> String {
+    let mut rules = format!("{SUBAGENT_PROTOCOL_RULE}\n{SUBAGENT_DELEGATION_RULE}");
+    if agent == Some(AgentKind::Codex) {
+        rules.push_str("\n\n**Codex heartbeat exception:** A host-scheduled heartbeat check does not require an AskHuman completion report, a whats-next handoff, or user approval to end that check. Complete the host's heartbeat response directly. AskHuman remains available for a genuine question or required approval. This exception applies only to the scheduled check, not ordinary user conversations, and does not authorize the user-confirmed-end marker without actual user approval.");
+    }
+    rules
 }
 
 pub const fn subagent_guard_context() -> &'static str {
@@ -119,7 +123,7 @@ fn cli_reference_with_agent(agent: Option<AgentKind>) -> String {
         ""
     };
     let collab = collaboration_section_from_config(agent);
-    let scope_rules = protocol_scope_rules();
+    let scope_rules = protocol_scope_rules(agent);
 
     format!(
         r#"<mandatory_interaction_protocol>
@@ -167,7 +171,7 @@ pub fn mcp_reference_for(agent: AgentKind) -> String {
 
 fn mcp_reference_with_agent(agent: Option<AgentKind>) -> String {
     let collab = collaboration_section_from_config(agent);
-    let scope_rules = protocol_scope_rules();
+    let scope_rules = protocol_scope_rules(agent);
     format!(
         r#"<mandatory_interaction_protocol>
 {scope_rules}
@@ -554,6 +558,18 @@ mod tests {
         assert!(cli_reference().contains(&expected));
         assert!(mcp_reference().contains(&expected));
         assert!(grok_skill_body().contains(&expected));
+    }
+
+    #[test]
+    fn heartbeat_handoff_exception_is_scoped_to_codex() {
+        for agent in AgentKind::ALL {
+            for prompt in [cli_reference_for(agent), mcp_reference_for(agent)] {
+                assert_eq!(
+                    prompt.contains("Codex heartbeat exception"),
+                    agent == AgentKind::Codex
+                );
+            }
+        }
     }
 
     #[test]

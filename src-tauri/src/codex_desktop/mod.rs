@@ -113,6 +113,7 @@ impl Session {
                     Some("agentMessage" | "assistantMessage")
                 ) {
                     if let Some(text) = item["text"].as_str().filter(|s| !s.is_empty()) {
+                        let text = crate::agents::codex_heartbeat::display_text(text);
                         return Some(
                             text.chars()
                                 .rev()
@@ -140,9 +141,12 @@ impl Session {
                     continue;
                 }
                 let (kind, text) = match item["type"].as_str() {
-                    Some("agentMessage" | "assistantMessage") => {
-                        ("assistant", item["text"].as_str().map(str::to_string))
-                    }
+                    Some("agentMessage" | "assistantMessage") => (
+                        "assistant",
+                        item["text"].as_str().map(|text| {
+                            crate::agents::codex_heartbeat::display_text(text).to_string()
+                        }),
+                    ),
                     Some("reasoning") => (
                         "thinking",
                         native_text_parts(&item["summary"])
@@ -771,6 +775,19 @@ fn save(path: &std::path::Path, value: &Value) -> Result<(), String> {
 mod tests {
     use super::launch::select_target;
     use super::*;
+    #[test]
+    fn heartbeat_native_views_show_the_status_message() {
+        let session = Session {
+            state: Arc::new(json!({"turns":[{"turnId":"t", "status":"completed",
+            "items":[{"id":"m", "type":"agentMessage", "text":crate::agents::codex_heartbeat::QUIET}]}]})),
+            ..Session::default()
+        };
+        let expected =
+            crate::agents::codex_heartbeat::display_text(crate::agents::codex_heartbeat::QUIET);
+        assert_eq!(session.latest_text().as_deref(), Some(expected));
+        assert_eq!(session.latest_observation_text().unwrap().text, expected);
+    }
+
     #[test]
     fn observation_only_publishes_completed_native_items() {
         let mut session = Session {

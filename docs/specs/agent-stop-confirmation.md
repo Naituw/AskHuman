@@ -76,13 +76,16 @@
 - 正常 Stop 确认仅自然完成触发；整轮最终失败共用开关，走独立错误卡服务。用户主动取消不发卡。
 - Codex 的内部 thread 与**委派运行**不触发结束确认。Codex 的 Stop hook 输入里没有 `thread_source`
   （`StopCommandInput` 在 0.144.1–0.163.0 字段一致，见 `codex-delegated-run-silence.md` F14），所以
-  Stop 静默只看两类信号：`transcript_path` 字段明确为 `null`（未创建 rollout 的 ephemeral thread；字段缺失
+  内部／委派线程的判定看两类信号：`transcript_path` 字段明确为 `null`（未创建 rollout 的 ephemeral thread；字段缺失
   不按 ephemeral 处理，Claude / Cursor 不受影响），以及委派判定——SessionStart hook 写下的标记，标记缺失时
   再做一次有界祖先探测（`codex exec` / `e` / `review`，命中则补写标记，让 exec 的静默不依赖 SessionStart hook 是否已迁移 /
   已信任）。「允许被委派的 Codex 运行使用 AskHuman」开关打开后，委派判定不介入（null transcript 仍静默）。
   `track` 路径照常上报 `TurnEnd`。命中后向 `~/.askhuman/daemon.log` 写一条结构化审计，`reason` 为
   `codex_transcript_path_null`、`codex_delegated_marker:<signal>` 或 `codex_delegated_exec_process`。
   `thread_source` 拦截集合仍由 MCP guard 使用，见 `mcp.md`。
+- Codex 最后回复是完整的 DONT_NOTIFY heartbeat 结果时，不创建结束确认，仍上报 `TurnEnd`；
+  NOTIFY 沿用开关，卡片显示可读正文／message。此规则只消费输出协议，不禁用会话、不伪造用户批准。
+  详见 [heartbeat 输出适配](codex-heartbeat-output.md)。
 
 ### 3.2 确认卡
 

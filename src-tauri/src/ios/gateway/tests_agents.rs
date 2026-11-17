@@ -26,6 +26,7 @@ fn event(agent_key: &str, event: AgentEventKind, failed: bool) -> AgentEventInfo
         event,
         failed,
         result: (event == AgentEventKind::TurnEnd).then(|| crate::agents::result::TurnResult {
+            notify: None,
             source: None,
             id: "result".into(),
             outcome: if failed {
@@ -271,6 +272,39 @@ async fn ended_sessions_leave_the_follow_set_silently() {
 }
 
 // ---------------------------------------------------------------- notifications
+
+#[tokio::test(start_paused = true)]
+async fn heartbeat_quiet_completion_does_not_notify_or_consume_follow() {
+    let (fx, mut phone) = away_follower().await;
+    fx.host.set_alert_after(0);
+    let mut quiet = turn_end(false);
+    quiet.result.as_mut().unwrap().notify = Some(false);
+    fx.gateway.agent_event(quiet.clone());
+    fx.gateway.agent_event(quiet);
+    assert!(!phone.gets(t::FOLLOW_EVENT, 5 * SECOND).await);
+    assert_eq!(fx.pusher.count(), 0);
+    assert!(!follows_nothing(&mut phone).await);
+    phone.set_presence(true, true).await;
+    fx.gateway
+        .agent_event(event("claude:s1", AgentEventKind::TurnStart, false));
+    let mut notify = turn_end(false);
+    notify.result.as_mut().unwrap().notify = Some(true);
+    fx.gateway.agent_event(notify);
+    let seen: wire::FollowEvent = phone.recv_body(t::FOLLOW_EVENT).await;
+    assert_eq!(seen.kind, "done");
+}
+
+#[tokio::test(start_paused = true)]
+async fn heartbeat_quiet_flag_never_hides_a_runtime_failure() {
+    let (fx, mut phone) = with_agent().await;
+    phone.send(&follow("claude:s1", true)).await;
+    phone.recv(t::FOLLOW_STATE).await;
+    let mut failure = turn_end(true);
+    failure.result.as_mut().unwrap().notify = Some(false);
+    fx.gateway.agent_event(failure);
+    let seen: wire::FollowEvent = phone.recv_body(t::FOLLOW_EVENT).await;
+    assert_eq!(seen.kind, "failed");
+}
 
 #[tokio::test(start_paused = true)]
 async fn done_is_announced_after_a_quiet_period_and_cancelled_by_new_work() {

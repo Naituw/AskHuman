@@ -410,6 +410,7 @@ impl Actor {
                         old.turn_id == result.turn_id
                             && old.outcome == result.outcome
                             && old.reason == result.reason
+                            && old.notify == result.notify
                     }) {
                         return;
                     }
@@ -435,9 +436,16 @@ impl Actor {
                     if !carded {
                         self.announce(&key, "incomplete", now);
                     }
-                } else if outcome == TurnOutcome::Completed && !self.followers(&key).is_empty() {
+                } else if outcome == TurnOutcome::Completed {
                     self.live.failed.remove(&key);
-                    self.live.done_at.insert(key, now + DONE_DEBOUNCE_MS);
+                    let quiet = self
+                        .live
+                        .results
+                        .get(&key)
+                        .is_some_and(|result| result.notify == Some(false));
+                    if !quiet && !self.followers(&key).is_empty() {
+                        self.live.done_at.insert(key, now + DONE_DEBOUNCE_MS);
+                    }
                 } else if outcome == TurnOutcome::Interrupted {
                     self.live.failed.remove(&key);
                     let turn = self

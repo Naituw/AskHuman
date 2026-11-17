@@ -447,6 +447,36 @@ impl AgentRegistry {
             if observation.subagent {
                 return AppliedObservation::default();
             }
+            // A second source may complete the same result with notification intent. Enrich
+            // that result in place; it is not a new turn or a new completion receipt.
+            if event == LifecycleEvent::TurnEnd {
+                if let Some(new) = observation
+                    .result
+                    .as_ref()
+                    .filter(|result| result.notify.is_some())
+                {
+                    let state = &mut *inner;
+                    if let Some(old) = state
+                        .active
+                        .iter_mut()
+                        .chain(state.ended.iter_mut())
+                        .find(|record| record.kind == kind && record.session_id == session_id)
+                        .and_then(|record| record.last_turn_result.as_mut())
+                        .filter(|old| {
+                            old.turn_id.is_some()
+                                && old.turn_id == observation.turn_id
+                                && old.outcome == new.outcome
+                                && old.notify.is_none()
+                        })
+                    {
+                        old.notify = new.notify;
+                        return AppliedObservation {
+                            accepted: true,
+                            changed: true,
+                        };
+                    }
+                }
+            }
             if let Some(record) = inner
                 .active
                 .iter()
@@ -717,6 +747,7 @@ impl AgentRegistry {
                 if let Some(turn_id) = r.active_turn_id.take() {
                     if r.last_turn_result.is_none() {
                         r.last_turn_result = Some(TurnResult {
+                            notify: None,
                             source: None,
                             id: uuid::Uuid::new_v4().to_string(),
                             outcome: super::result::TurnOutcome::Unknown,
@@ -1644,6 +1675,7 @@ mod tests {
         Observation {
             turn_id: Some(turn.into()),
             result: outcome.map(|outcome| TurnResult {
+                notify: None,
                 source: None,
                 id: String::new(),
                 outcome,
@@ -1654,6 +1686,76 @@ mod tests {
             }),
             ..Observation::default()
         }
+    }
+
+    #[test]
+    fn heartbeat_intent_enriches_the_same_result_without_a_new_receipt() {
+        use super::super::result::TurnOutcome;
+        let r = reg();
+        r.apply_observed(
+            AgentKind::Codex,
+            LifecycleEvent::TurnStart,
+            "s",
+            None,
+            None,
+            100,
+            Some(&observed("t", None)),
+        );
+        let mut end = observed("t", Some(TurnOutcome::Completed));
+        r.apply_observed(
+            AgentKind::Codex,
+            LifecycleEvent::TurnEnd,
+            "s",
+            None,
+            None,
+            101,
+            Some(&end),
+        );
+        let before = r.last_turn_result(AgentKind::Codex, "s").unwrap();
+        end.result.as_mut().unwrap().notify = Some(false);
+        assert!(
+            r.apply_observed(
+                AgentKind::Codex,
+                LifecycleEvent::TurnEnd,
+                "s",
+                None,
+                None,
+                102,
+                Some(&end)
+            )
+            .accepted
+        );
+        let after = r.last_turn_result(AgentKind::Codex, "s").unwrap();
+        assert_eq!(after.id, before.id);
+        assert_eq!(after.at, before.at);
+        assert_eq!(after.notify, Some(false));
+        end.result.as_mut().unwrap().notify = None;
+        assert!(
+            !r.apply_observed(
+                AgentKind::Codex,
+                LifecycleEvent::TurnEnd,
+                "s",
+                None,
+                None,
+                103,
+                Some(&end)
+            )
+            .accepted
+        );
+        assert_eq!(
+            r.last_turn_result(AgentKind::Codex, "s").unwrap().notify,
+            Some(false)
+        );
+        r.apply_observed(
+            AgentKind::Codex,
+            LifecycleEvent::TurnStart,
+            "s",
+            None,
+            None,
+            104,
+            Some(&observed("next", None)),
+        );
+        assert!(r.last_turn_result(AgentKind::Codex, "s").is_none());
     }
 
     #[test]

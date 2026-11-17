@@ -2259,6 +2259,7 @@ async fn control_loop(reader: &mut Reader, w: &mut Writer, state: &Arc<ServerSta
                             };
                             if ev == LifecycleEvent::TurnEnd {
                                 legacy.result = Some(TurnResult {
+                                    notify: None,
                                     source: Some("legacyHook".into()),
                                     id: String::new(),
                                     outcome: if failed {

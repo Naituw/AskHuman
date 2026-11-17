@@ -14,6 +14,7 @@ pub mod activity;
 pub mod antigravity_hook;
 pub mod antigravity_workspaces;
 pub mod codex_cli;
+pub mod codex_heartbeat;
 pub mod context_recovery;
 pub mod control;
 pub mod cursor_log;
