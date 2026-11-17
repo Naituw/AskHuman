@@ -106,7 +106,7 @@ EMQX Serverless 控制台配置（见 §10）：认证加一组用户名 / 密�
 
 ### 3.2 信封与加密
 
-信封（UTF-8 JSON）：`{"v":1,"f":"<发送方 id>","k":<kid>,"n":"<base64url 12B>","c":"<base64url 密文‖标签>"}`。`z` 字段保留给未来压缩，v1 出现即拒绝。
+信封（UTF-8 JSON）：`{"v":1,"f":"<发送方 id>","k":<kid>,"n":"<base64url 12B>","c":"<base64url 密文‖标签>"}`。`z` 字段只在协商后使用：手机在 `hello` 里声明 `compression` 之后，Mac→手机方向的列表类消息可带 `"z":1`（明文是 raw DEFLATE，AAD 末尾追加 `|z1`，解压后不得超过 512 KiB）；其余信封（推送、手机→Mac、未协商的手机）出现 `z` 仍一律拒绝，`z` 为 1 以外的值也拒绝（见 [流量收敛](../specs/ios-traffic-reduction.md)）。
 
 - AEAD：ChaCha20-Poly1305，每条消息 12 字节随机 nonce；AAD = `"ah1|" + 完整话题 + "|" + f + "|" + k`；推送信封的 AAD 为 `"ah1|push|" + f + "|" + k`。
 - 明文消息：`{"i":<msgId>,"t":<type>,"ts":<毫秒>,"b":<body>}`。
@@ -174,7 +174,7 @@ EMQX Serverless 控制台配置（见 §10）：认证加一组用户名 / 密�
 
 | 类型 | 方向 | body 要点 |
 |---|---|---|
-| `agents.snapshot` / `agents.delta` | Mac→手机 | `AgentView{key, kind, kindLabel, sessionId, title, project, state(working/idle/waiting/ended), startedAt, lastActivityAt, activeElapsedSecs, turnSteps, currentTool?, waitingRequestId?, waitingPreview?, pendingInterject, lastTurnFailed, canInterject{ok, reason?}, followed}`；delta 为 upsert / remove，500 ms 合并，仅发给前台手机 |
+| `agents.snapshot` / `agents.delta` | Mac→手机 | `AgentView{key, kind, kindLabel, sessionId, title, project, state(working/idle/waiting/ended), startedAt, lastActivityAt, activeElapsedSecs, turnSteps, currentTool?, waitingRequestId?, waitingPreview?, pendingInterject, lastTurnFailed, canInterject{ok, reason?}, followed}`；delta 为 upsert / remove，500 ms 合并，仅发给前台手机；声明 `leanAgents` 的手机不收没被 Watch 的工作中 Agent 的 `lastActivityAt` / `turnSteps` / `currentTool` 变化；≥ 512 B 时在协商后可带 `z:1`（见信封一节） |
 | `follow.set` / `follow.state` | 手机→Mac / Mac→手机 | 开关关注；Mac 校验 ≤ 5 并回当前集合 |
 | `follow.event` | Mac→手机 | `agentKey, kind(done/waiting/failed), preview`；手机前台时用，后台走推送 |
 | `watch.open` / `watch.close` | 手机→Mac | 开始 / 停止实时帧；每手机 ≤ 2 |

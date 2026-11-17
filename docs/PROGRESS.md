@@ -1156,6 +1156,33 @@ WebKit 可刷新页面缩放，但 Popup / 历史窗口的几何仍沿用旧值�
 覆盖折叠 / 展开、预览开关、约束 / 最大化、在途几何事务和多屏；自动测试与 Linux 原生运行都通过后删除本节。
 
 
+## 待核验：iOS 流量收敛（进前台只补变化、Agents 分级、列表压缩、本地流量计数）
+
+2026-11-17 Owner 批准并要求一次做完的 [iOS 渠道同步流量收敛](specs/ios-traffic-reduction.md)（R1 + L1′ + C + T2 b + T6）已在主工作树实现，
+Rust 全量、Swift 全量与「真实 daemon + 真实手机引擎 + 本地 broker」的端到端都通过（实现记录与实测数字见规格 §8）。
+Mac 端已装进日常环境。整月用量预计从约 2.6 GB 降到约 0.73 GB（范围 0.65–0.85，最坏约 1.0）——**这是推算，不是实测**。
+
+- [ ] 数日后核对实际用量：读 `AskHuman channel ios status --json` 的 `trafficBreakdown`（按「方向:类型」的条数与字节，随月份清零）
+  与 EMQX 控制台，看月用量是否落在上述范围；由此直接得出进前台、前台增量与 Watch 帧各占多少（规格 §1「没测到」的那部分）。
+- [ ] 手机核验（要装上新的 TestFlight 构建，且 Mac 已升级）：Agents 页里没打开的「工作中」会话不再显示工具 / 步数 / 相对时间，
+  打开详情仍实时；从后台回前台只补变化、没有整套刷新；Watch 一个会话时帧与列表活动照常。新旧版本互配（旧手机配新 Mac、新手机配旧 Mac）
+  都照旧工作，只是没省到流量。
+
+## 待办：6 个陈旧 / 依赖系统语言的 iOS 端到端用例
+
+整套 `AHE2ETests`（`AH_E2E_BIN` + `AH_E2E_BROKER_DIR`，71 项，8 项默认跳过）里下面六个用例在流量收敛改动**之前**（用 `34fd3b02` 单独构建的二进制对照过）
+就失败，与流量收敛无关；其余 57 项通过。它们不是产品缺陷，也没有顺手改（超出当时的范围）：
+
+- `AgentE2ETests.testAMessageToAnAgentThatIsNotWorkingIsRefused`、`testSessionsOfTheMacAreListedWithTheirState`：期望 `notWorking` / `ended`，
+  现在空闲会话给出 `idleUnsupported`（`agent_control::can_send_with`）。
+- `AgentE2ETests.testAFollowedSessionReportsWhenItsTurnEnds`：用例的 `turn-end` 载荷没有 `hook_event_name: "Stop"`，现在的结果判定
+  （`agents/result.rs`）给出 `Unknown`，不再宣告「完成」；真实 Claude 的 Stop 钩子带这个字段。
+- `E2ETests.testCancellingFromThePhoneEndsTheAskWithACancelledStatus`、`AnnotationE2ETests.testCancellingDropsTheNotes`、
+  `CodexStopHookE2ETests.testTheStopHookAsksWhileAwayAndIsSilentWhenMuted`：按英文输出断言（`canceled`、`on since`），而测试台的 Mac 用系统语言
+  （本机是中文），CLI 输出是中文；英文系统上大概率通过，没有验证。
+
+下一步：把前三项的期望改成现行行为，后三项让测试台固定语言（或断言与语言无关的部分），`swift test --filter AHE2ETests` 全绿后删除本节。
+
 ## 待真机核验：多设备报文流量统计
 
 2026-11-12 用户批准的 [流量统计修正](specs/ios-traffic.md) 已在主工作树实现并运行
