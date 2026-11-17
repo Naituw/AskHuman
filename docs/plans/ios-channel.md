@@ -1536,3 +1536,56 @@ INSTALLED、1 位 INVITED，Friends 1 位 INSTALLED，自动通知关闭，Frien
 • 流量提醒：本月流量接近某个 GB 时收件箱是否出现提示，关闭按钮好不好点，关闭后是否要到下一个 GB 才再出现；Macs 页的「流量提醒」选项是否合适。
 • 手机的日期与时间正常时，不应再出现「时钟相差太多」的提示；如果仍出现，请截图发给我。
 ```
+
+## 2026-11-18：TestFlight 内部与外部构建 28
+
+版本 **0.1.0 (28)**，干净主工作树归档源码 `ec57bab725ed0c6ec5dff772421e130d2bd68d07`，
+基线 `ios-testflight-27` → `972dafc9a88b44bf9ee28de7203295890c8daba1`。
+起因是用户批准一次做完 [iOS 流量收敛](../specs/ios-traffic-reduction.md)后交代「完成之后提交 push，确定 ci 没有问题，发 patch 版本，发 TestFlight」：
+按默认同时发 Internal 与 Friends 两组，与桌面补丁 [v0.17.3](https://github.com/Naituw/AskHuman/releases/tag/v0.17.3) 配套（手机一侧的省流量要 Mac 升级后才生效，旧 Mac 照常使用）。本节时间均为北京时间。
+自基线以来 `ios/` 下的 4 条提交如下（28 个文件，+944 / −45）。
+
+- `b8e0b866`（2026-11-17）点开一个提问一直「加载完整内容」、重启才好：「已经在取」的标记属于会话而不是请求，连接断了之后不再挡住后面的重取；取不到时 Mac 的 `not_found` 会结束等待并要一份收件箱快照。
+- `fbd33b32`（2026-11-17）「这条已读」的标记同样改为属于会话：消息没发出去、被拒或 Mac 当时离开，重连后会再告诉 Mac 一次，不再让 Mac 把你读过的提问又推送过来。
+- `34fd3b02`（2026-11-17）仍在加载的提问页显示连接状态（连接中 / 已中断重试 / 被拒 / 不可达 / Mac 离线或更新中），不再只转圈。
+- `e506910e`（2026-11-18）流量收敛的手机一侧：握手声明 `leanAgents` 与 `compression`，能解 `z:1` 的压缩信封；Agents 页没打开的「工作中」会话不再显示工具、步数、相对时间（Mac 声明 `leanAgents` 时）。
+
+同一区间另有 7 条不改 `ios/` 的提交（流量收敛的文档、Codex 心跳与 `whats-next` 提示词两处修复、v0.17.2 发布与 build 27 交付的记录、一条引导页测试），不在测试说明里；
+流量收敛的 Mac 端代码与手机端在同一条提交 `e506910e` 里，随桌面补丁 v0.17.3 发布。
+没有用户说过「先不出」的 iOS 改动（查了 `PROGRESS.md` 与相关文档）。
+
+出包前的验证在这份 `ios/` 源码上现场做的：`swift test`（`ios/Packages/AskHumanKit`）7 个测试包共 1058 项，987 项运行通过、0 失败，另 71 项要真实 daemon / broker 的端到端用例按预期跳过；
+真实 daemon + 本地 broker 的整套端到端（`AH_E2E_BIN`）71 项里 57 项通过、8 项跳过、6 项失败，这 6 项在流量收敛之前的二进制（`34fd3b02`）上同样失败，是用例陈旧或依赖系统语言（见 `PROGRESS.md`「6 个陈旧 / 依赖系统语言的 iOS 端到端用例」）；
+新增的两个端到端用例（进前台一轮、Watch 与列表活动）通过。CI 两次的 `iOS Swift package (swift test)` 作业都通过。
+**没有跑的**：模拟器上的 UI 用例（只做了 Release 归档编译）、iPad / 其他系统版本；**真机一项都没有验过**。
+
+上传前确认了 Apple 的构建列表里最新是 27、`changes.mjs` 建议 28；Release 归档（构建号 28）成功，上传脚本的预检通过（版本 0.1.0、构建号 28、外部受众、非仅内部、凭据来自 Keychain）。
+**当天 Apple 的 App Store Connect 宕机**（Apple 系统状态页自 11-17 11:05 PST 起列出，期间 Xcode Cloud 等也受影响），出包被拖长：
+导出前两次（02:30、02:32）都死在 Xcode 的「下载 App 信息」（`GET /v1/apps?filter[bundleId]=…` 返回 HTTP 500），没有上传任何东西（`status.mjs` 确认没有 build 28），
+第三次（02:39:19）得到 `Upload succeeded` / EXPORT SUCCEEDED，之后没有再传。此后 `status.mjs` 与 `external-status` 在约 12 分钟里持续 500 / 404（`buildBetaDetail` 连老构建都 404），
+02:51 能读到 build 28 为 VALID。Apple build `5aea0a4a-72dd-42ca-a5bd-57be42c1d3c2`，VALID / APP_STORE_ELIGIBLE / 未过期（至 2027-02-15），加密申报已解析（不含非豁免加密）。
+中英文测试说明（中文 412、英文 1210 字符）在 500 / 超时重试后于 02:57 写入并读回一致，05:18 读回仍在；Internal 组自动拿到 build 28。
+外部一侧的 update / submit / start 要等 Apple 的接口恢复：05:18 之后 `update` 成功（Friends 加入 build 28，自动通知关闭，读回 verified），
+`submit` 提交后直接 APPROVED，`start` 之后读回 Internal 与 Friends 均为 IN_BETA_TESTING。成员为 Internal 1 位 INSTALLED、1 位 INVITED，Friends 1 位 INSTALLED，
+Friends 公开链接关闭，没有新增或重新邀请。
+本地附注标签 `ios-testflight-28` 固定实际归档源码 `ec57bab7`，标签留在本地，不推送。打标签前 HEAD 已前进到 `d24fd52f`（`chore(release): prepare v0.17.3`），
+核对过 `git diff ec57bab7 HEAD -- ios` 为空，所以用这个明确的提交号打标签（没有用 HEAD），没有为此停下来问。
+隐私政策与接入指南的 4 个公开网址（中英文各两个）是**上传之后**才核对的（技能写的是上传前），不登录都返回 200；这几个页面这次没有改动。
+
+手机更新与原有 Mac 连接确认尚待用户反馈。真机上要看的见 `PROGRESS.md`「待核验：iOS 流量收敛」一节，也就是测试说明里的三项。
+
+简体中文测试说明如下，中英文完整说明随交付报告提供。
+
+```text
+构建 28 · 源码 ec57bab
+
+• 修复：偶尔点开一个提问一直加载不出来、要重启应用才好。现在连接中断后会重新取回完整内容。
+• 修复：重新连上后会再告诉 Mac 哪些提问你已经看过，避免已经读过的提问又被推送提醒。
+• 改进：提问还在加载时，页面会显示当前连接状态，能分清是网络问题还是还在加载。
+• 省流量：从后台回到前台只同步有变化的内容；Agents 页里没打开的「工作中」会话不再逐步更新当前工具、步数和相对时间（打开详情仍然实时）；Agents 与收件箱的列表消息经过压缩。需要 Mac 升级到 0.17.3 才生效，旧版 Mac 照常使用，只是省得少。
+
+请重点看
+• Agents 页：没打开的「工作中」会话不再显示工具、步数和相对时间；点开详情后仍然实时更新。
+• 切到后台再回来：收件箱和 Agents 列表都在，没有空白或旧内容。
+• 信号不好时点开提问：加载页显示连接状态，恢复后内容能出来。
+```

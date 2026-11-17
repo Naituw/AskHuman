@@ -1160,7 +1160,11 @@ WebKit 可刷新页面缩放，但 Popup / 历史窗口的几何仍沿用旧值�
 
 2026-11-17 Owner 批准并要求一次做完的 [iOS 渠道同步流量收敛](specs/ios-traffic-reduction.md)（R1 + L1′ + C + T2 b + T6）已在主工作树实现，
 Rust 全量、Swift 全量与「真实 daemon + 真实手机引擎 + 本地 broker」的端到端都通过（实现记录与实测数字见规格 §8）。
-Mac 端已装进日常环境。整月用量预计从约 2.6 GB 降到约 0.73 GB（范围 0.65–0.85，最坏约 1.0）——**这是推算，不是实测**。
+Mac 端已装进日常环境，并随桌面补丁 [v0.17.3](https://github.com/Naituw/AskHuman/releases/tag/v0.17.3) 发布（2026-11-18）；
+手机端随内外 TestFlight `0.1.0 (28)` 分发（源码 `ec57bab7`，见 [Build 28 交付记录](plans/ios-channel.md#2026-11-18testflight-内部与外部构建-28)）。
+v0.17.3 第一次发布时，两个 macOS 构建都死在「Sign macOS binary (Developer ID)」一步（各 16 秒；没有登录 GitHub，看不到日志，原因没查实，
+同日 Apple 开发者服务大面积宕机），没有发出任何东西；同一提交删掉未发布的标签重推后一次成功。再遇到同一步失败时要先看日志（`gh auth login` 或浏览器）。
+整月用量预计从约 2.6 GB 降到约 0.73 GB（范围 0.65–0.85，最坏约 1.0）——**这是推算，不是实测**。
 
 - [ ] 数日后核对实际用量：读 `AskHuman channel ios status --json` 的 `trafficBreakdown`（按「方向:类型」的条数与字节，随月份清零）
   与 EMQX 控制台，看月用量是否落在上述范围；由此直接得出进前台、前台增量与 Watch 帧各占多少（规格 §1「没测到」的那部分）。
