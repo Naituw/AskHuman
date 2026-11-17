@@ -141,7 +141,7 @@ fn cli_reference_with_agent(agent: Option<AgentKind>) -> String {
 
 - When asking through `{program}`, provide predefined options whenever applicable, mark your recommended option(s) with `-o!`, and briefly explain your rationale.
 - I can ONLY see what is delivered through `{program}`. Anything I need to review , or that I ask for — questions, options, recommendations, summaries, reports, or files (plans, specs, docs, configs) — MUST go through `{program}`, inline or attached with `-f`. Never rely on direct output which is invisible to me, and never just give me a path.
-- After fully completing the current task—and never for questions, decisions, or next steps within it—you MUST run `{program} --whats-next` for the end-of-task handoff before ending, to ask me for a separate next task.
+- After fully completing the current task—and never for questions, decisions, or next steps within it—you MUST run `{program} --whats-next` for the end-of-task handoff before ending, to ask me for a separate next task, with your suggestions as options.
 - If it returns a task, start working on it immediately and repeat this protocol when done. Do NOT end the turn/conversation or mark the request as complete unless `{program} --whats-next` returned that I approved ending the turn and there are no more tasks.
 - After the user explicitly approves ending the turn, you MUST append the `{end_marker}` marker on a new final line at the end of your final output. Without that approval, you MUST NEVER output this marker.
 - The end-of-turn rules above have one preauthorized exception for Cursor. If AskHuman returns an automatic status receipt beginning with `[cursor_away_report_saved]`, the user has enabled saving Cursor away escalations for later reading and authorizes ending immediately. Treat that receipt from either ask or whats-next as approval, append the end marker, and end without another handoff or waiting for the report to be read.
@@ -187,7 +187,7 @@ fn mcp_reference_with_agent(agent: Option<AgentKind>) -> String {
 
 - When asking through the AskHuman `ask` tool, provide predefined options whenever applicable, mark your recommended option(s) as recommended, and briefly explain your rationale.
 - I can ONLY see what is delivered through the AskHuman `ask` tool. Anything I need to review, or that I ask for — questions, options, recommendations, summaries, reports, or files (plans, specs, docs, configs) — MUST go through the AskHuman `ask` tool, inline or attached as files. Never rely on direct output which is invisible to me, and never just give me a path.
-- After fully completing the current task—and never for questions, decisions, or next steps within it—you MUST call the AskHuman `whats_next` tool for the end-of-task handoff before ending, to ask me for a separate next task.
+- After fully completing the current task—and never for questions, decisions, or next steps within it—you MUST call the AskHuman `whats_next` tool for the end-of-task handoff before ending, to ask me for a separate next task, with your suggestions as options.
 - If it returns a task, start working on it immediately and repeat this protocol when done. Do NOT end the turn/conversation or mark the request as complete unless the `whats_next` result says I approved ending the turn and there are no more tasks.
 - After the user explicitly approves ending the turn, you MUST append the `{end_marker}` marker on a new final line at the end of your final output. Without that approval, you MUST NEVER output this marker.
 - The end-of-turn rules above have one preauthorized exception for Cursor. If AskHuman returns an automatic status receipt beginning with `[cursor_away_report_saved]`, the user has enabled saving Cursor away escalations for later reading and authorizes ending immediately. Treat that receipt from either ask or whats-next as approval, append the end marker, and end without another handoff or waiting for the report to be read.
@@ -581,6 +581,8 @@ mod tests {
         assert!(cli.contains("After fully completing the current task"));
         assert!(cli.contains("never for questions, decisions, or next steps within it"));
         assert!(cli.contains("--whats-next` for the end-of-task handoff before ending"));
+        // The handoff offers the agent's own suggestions by default (spec todo-whats-next D4).
+        assert!(cli.contains("a separate next task, with your suggestions as options."));
         assert!(cli.contains("If it returns a task, start working on it immediately"));
         assert!(cli.contains("returned that I approved ending the turn"));
         assert!(!cli.contains("Pass suggested next tasks"));
@@ -593,6 +595,7 @@ mod tests {
             assert!(
                 p.contains("AskHuman `whats_next` tool for the end-of-task handoff before ending")
             );
+            assert!(p.contains("a separate next task, with your suggestions as options."));
             assert!(p.contains("If it returns a task, start working on it immediately"));
             assert!(p.contains("unless the `whats_next` result says I approved ending the turn"));
             assert!(!p.contains("Pass suggested next tasks"));

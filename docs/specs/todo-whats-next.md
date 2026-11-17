@@ -200,6 +200,12 @@ MCP 版 `mcp_reference()` 对应前两行调整为：
   （如“稍后再做”）时要求 Agent 添加项目待办；不得把 Agent 自己的内部计划或尚未被用户接受的建议
   擅自入队。CLI 版调用 `<program> todo add "<concise task>"`，MCP 版与 Grok skill 调用
   `AskHuman todo add "<concise task>"`；Rules 只用 `concise` 轻量提示，不重复具体长度。
+- （2026-11-17 补充）建议任务改为**默认提供**。实测 Codex（MCP）whats-next 仅 3/22 带建议，
+  Cursor（CLI）41/42：MCP 版把「给预选项」绑在 `ask` 工具上，whats-next 自己的说明又只有
+  「可选 / 无建议时省略」，全链路没有一处要求默认给出。Rules 的 whats-next 条与 MCP 工具描述首句
+  各补一句 `with your suggestions as options`；其余措辞不动，「无建议时省略」「不得传结束 /
+  停止项」保留。不加示例、不新增条目。若改后 Codex 仍明显偏低，再考虑删去字段说明与
+  `--agent-help` 里的「可选 / 无建议时省略」。
 
 ### D5 与 Stop 结束确认、插话的关系；Stop 卡待办派发（兜底送达点）
 
