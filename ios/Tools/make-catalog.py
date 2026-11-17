@@ -487,6 +487,8 @@ ZH = {
     "It was answered or cancelled.": "它已被回答或取消。",
     "Request unavailable": "请求不可用",
     "Loading the full request…": "正在加载完整请求…",
+    "The Mac is offline. The request loads when it is back.": "Mac 已离线，恢复后会自动加载这条请求。",
+    "Your Mac is updating. The request loads when it is back.": "Mac 正在更新，完成后会自动加载这条请求。",
     "Your Mac is not reachable": "连不上你的 Mac",
     "The request shows up here when it is back, if it is still waiting.": "Mac 恢复连接后，如果它还在等你，请求会显示在这里。",
     "No reply needed": "无需回复",

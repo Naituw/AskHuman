@@ -372,23 +372,46 @@ private struct HintCard: View {
     }
 }
 
+/// A request the phone knows by its summary, whose full text has not come yet. It is only on its way while the link to
+/// its Mac is up: the line under the summary says what is wrong with the link otherwise, as the forms' bars do
+/// (`RequestConnectionNotice`), and is the spinner and "Loading…" when nothing is.
 private struct LoadingRequest: View {
     let item: InboxItem
+    @Environment(AppStore.self) private var store
 
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 16) {
                 RequestHeader(item: item)
                 Text(MarkdownParser.plainText(item.summary.preview)).font(.body)
-                HStack(spacing: 8) {
-                    ProgressView()
-                    Text("Loading the full request…").foregroundStyle(.secondary)
-                }
+                status
             }
             .readableWidth()
             .padding()
         }
         .background(Color(.systemGroupedBackground))
+    }
+
+    @ViewBuilder
+    private var status: some View {
+        let notice = store.state.requestConnection(macId: item.macId).notice(
+            offlineText: "The Mac is offline. The request loads when it is back.",
+            updatingText: "Your Mac is updating. The request loads when it is back."
+        )
+        HStack(spacing: 8) {
+            if let notice {
+                if notice.progressing {
+                    ProgressView()
+                } else {
+                    Image(systemName: "wifi.exclamationmark").foregroundStyle(notice.color).accessibilityHidden(true)
+                }
+                Text(notice.text).foregroundStyle(notice.color).accessibilityIdentifier("request-connection")
+            } else {
+                ProgressView()
+                Text("Loading the full request…").foregroundStyle(.secondary).accessibilityIdentifier("request-loading")
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
     }
 }
 

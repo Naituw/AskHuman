@@ -5511,6 +5511,16 @@
         }
       }
     },
+    "The Mac is offline. The request loads when it is back." : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Mac 已离线，恢复后会自动加载这条请求。"
+          }
+        }
+      }
+    },
     "The Mac is offline. Try again when it is back." : {
       "localizations" : {
         "zh-Hans" : {
@@ -6765,6 +6775,16 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "连不上你的 Mac"
+          }
+        }
+      }
+    },
+    "Your Mac is updating. The request loads when it is back." : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Mac 正在更新，完成后会自动加载这条请求。"
           }
         }
       }

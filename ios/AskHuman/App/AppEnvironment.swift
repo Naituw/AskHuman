@@ -61,6 +61,12 @@ struct LaunchOptions {
     var syncDelay: Double?
     /// The `syncing` scenario starts with the requests the phone kept from the last run.
     var cachedInbox = false
+    /// `-AHSummaries YES`: every request starts as the Macs' snapshot sends it, a summary without the full text (which the
+    /// mock never delivers), so that its page stays on the one that waits for it.
+    var summariesOnly = false
+    /// `-AHLink online|connecting|macOffline|brokerDown`: the mock's Macs go to that link right after the start (the scenarios
+    /// have them all online, or all out of reach for good), to look at a page for each state of the link.
+    var macLink: MacLink?
     /// Seconds the receipt of a sent request stays up, and the next page takes to settle (UI tests
     /// stretch them to have time to look; the app's own values are made for the eye).
     var advanceHold: Double?
@@ -154,6 +160,14 @@ struct LaunchOptions {
         if defaults.object(forKey: "AHDeveloperMode") != nil { developerMode = defaults.bool(forKey: "AHDeveloperMode") }
         if defaults.object(forKey: "AHSyncDelay") != nil { syncDelay = defaults.double(forKey: "AHSyncDelay") }
         cachedInbox = defaults.bool(forKey: "AHCached")
+        summariesOnly = defaults.bool(forKey: "AHSummaries")
+        macLink = switch defaults.string(forKey: "AHLink") {
+        case "online": .online
+        case "connecting": .connecting
+        case "macOffline": .macOffline
+        case "brokerDown": .brokerDown
+        default: nil
+        }
         if defaults.object(forKey: "AHAdvanceHold") != nil { advanceHold = defaults.double(forKey: "AHAdvanceHold") }
         if defaults.object(forKey: "AHAdvanceSettle") != nil { advanceSettle = defaults.double(forKey: "AHAdvanceSettle") }
         if defaults.object(forKey: "AHEndedCountdown") != nil { endedCountdown = max(0.1, defaults.double(forKey: "AHEndedCountdown")) }
@@ -194,9 +208,13 @@ final class AppEnvironment {
         let drafts: DraftStore
         if launch.mock {
             let backend = MockBackend(
-                scenario: launch.scenario, latency: launch.latency, syncDelay: launch.syncDelay, cachedInbox: launch.cachedInbox
+                scenario: launch.scenario, latency: launch.latency, syncDelay: launch.syncDelay, cachedInbox: launch.cachedInbox,
+                summariesOnly: launch.summariesOnly
             )
             mock = backend
+            if let link = launch.macLink {
+                Task { for id in [MockData.homeMacId, MockData.officeMacId] { await backend.setLink(link, for: id) } }
+            }
             if launch.holdInterjects { Task { await backend.setInterjectConsumeDelay(nil) } }
             if launch.historyFail > 0 { Task { await backend.setFailNextSessionHistory(launch.historyFail) } }
             if let delay = launch.historyDelay { Task { await backend.setSessionHistoryDelay(realSeconds: delay) } }

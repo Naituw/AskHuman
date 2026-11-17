@@ -210,10 +210,12 @@ public actor MockBackend: RemoteBackend {
     public var failNextSubmission = false
 
     /// `syncDelay` (real seconds) ends the `syncing` scenario that long after the start; `cachedInbox`
-    /// lets that scenario begin with the requests the phone kept from the last run.
+    /// lets that scenario begin with the requests the phone kept from the last run. `summariesOnly` strips the full
+    /// request from every inbox item, as a Mac's snapshot has them before the phone asks for the text (the mock never
+    /// delivers it): the pages of those requests stay on the one that waits for it.
     public init(
         scenario: Scenario = .demo, latency: Double = 1, syncDelay: Double? = nil, cachedInbox: Bool = false,
-        now: @escaping @Sendable () -> Date = { Date() }
+        summariesOnly: Bool = false, now: @escaping @Sendable () -> Date = { Date() }
     ) {
         let (stateStream, stateContinuation) = AsyncStream<EngineState>.makeStream(bufferingPolicy: .bufferingNewest(1))
         let (eventStream, eventContinuation) = AsyncStream<EngineEvent>.makeStream()
@@ -302,6 +304,9 @@ public actor MockBackend: RemoteBackend {
         }
         if scenario == .awayOn {
             MockData.applyAwayOn(to: &initial, now: date)
+        }
+        if summariesOnly {
+            for index in initial.inbox.indices { initial.inbox[index].view = nil }
         }
         for index in initial.macs.indices {
             initial.macs[index].pendingCount = initial.inbox.filter { $0.macId == initial.macs[index].id }.count
