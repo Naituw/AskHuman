@@ -104,6 +104,8 @@ extension PhoneEngine {
         mac.slotRev = nil
         mac.away = nil
         mac.awayRev = nil
+        // A Mac that restarted answers none of what was asked of its earlier self.
+        mac.fetching = []
         mac.agents = [:]
         mac.agentsRev = nil
         mac.followRev = nil
@@ -154,13 +156,17 @@ extension PhoneEngine {
         macs[macId] = mac
     }
 
-    func onError(_ macId: String, _ error: ErrorBody) {
+    func onError(_ macId: String, _ error: ErrorBody) async {
         switch error.code {
         case "clock_skew":
             markClockSkew(macId, hello: error.ref)
         case "not_paired":
             // The Mac forgot this phone (it was revoked there while we were away).
             Task { await self.onUnpaired(macId) }
+        case "not_found":
+            // The Mac's answer to a `request.get` for a request it has no trace of (`ref` is the request
+            // id): there is no full view to wait for, and what became of the request is for its inbox to say.
+            if macs[macId]?.fetching.remove(error.ref) != nil { await requestResync(macId, stream: "inbox") }
         default:
             break
         }

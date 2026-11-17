@@ -356,7 +356,7 @@ public final class AppStore {
         var lines = [
             "tab \(tab.rawValue); inbox stack \(inboxPath.count), agents stack \(agentPath.count)",
             "connection \(Self.diagnosticName(of: state.phase)); sync \(syncStatus); lists \(listReadiness); foreground \(state.foreground)",
-            "macs \(state.macs.count)\(links.isEmpty ? "" : " (\(links))"); inbox \(state.inbox.count) (unread \(unreadCount)); agents \(state.agents.count); history \(history.count)",
+            "macs \(state.macs.count)\(links.isEmpty ? "" : " (\(links))"); inbox \(state.inbox.count) (unread \(unreadCount), without full request \(state.inbox.filter { $0.view == nil }.count)); agents \(state.agents.count); history \(history.count)",
             "ended while open \(finished.count) (countdown \(endedCountdown != nil)); arrivals showing \(requestArrivals.count); banner \(banner != nil); receipt \(receipt != nil)",
             "new task sheet \(taskComposer != nil); task progress sheet \(viewingTask != nil)",
             "auto-advance \(autoAdvance); developer mode \(developer.enabled)",

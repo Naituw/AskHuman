@@ -607,7 +607,7 @@ public actor PhoneEngine: RemoteBackend {
         do {
             switch plain.t {
             case Wire.T.helloAck: try await onHelloAck(macId, plain.body(as: HelloAck.self))
-            case Wire.T.error: onError(macId, try plain.body(as: ErrorBody.self))
+            case Wire.T.error: await onError(macId, try plain.body(as: ErrorBody.self))
             case Wire.T.pong: break
             case Wire.T.macInfo: onMacInfo(macId, try plain.body(as: MacInfo.self))
             case Wire.T.unpaired: await onUnpaired(macId)
@@ -769,6 +769,10 @@ struct MacRuntime {
     var away: AwayState?
     var awayRev: UInt64?
     var inboxRev: UInt64?
+    /// Requests whose `request.get` is in the air. A question belongs to the session it was asked in: the
+    /// answer to one that was still on its way when the session ended is not coming, so `resetSession()`
+    /// voids these with the rest, and the snapshot of the next session asks again.
+    var fetching: Set<String> = []
     var agents: [String: AgentView] = [:]
     var agentsRev: UInt64?
     /// Agent keys the Mac says are followed.
@@ -808,6 +812,7 @@ struct MacRuntime {
         away = nil
         awayRev = nil
         inboxRev = nil
+        fetching = []
         agents = [:]
         agentsRev = nil
         followRev = nil
@@ -823,7 +828,5 @@ enum RequestInternalState: Equatable {
 struct RequestRuntime {
     var cached: CachedRequest
     var state: RequestInternalState
-    /// `request.get` is in flight.
-    var fetching = false
     var seenSent = false
 }

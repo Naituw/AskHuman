@@ -86,6 +86,18 @@
 `/tmp/askhuman-codex-receipt-regression-before-run.log`、`/tmp/askhuman-codex-receipt-tests.log`。
 这项修复只需更新 Mac；下一步在手机日常给空闲 Codex 会话发一条消息，确认不再误报，完成后删除本节。
 
+## 待真机验收：iOS 详情页一直停在「Loading the full request…」
+
+2026-11-17 用户反馈：经常点开一个提问后一直加载不出来，重启 App 再点就出来了。已用测试复现出同一状态并修复：手机拉完整正文（`request.get`）的「在途」标记
+（旧 `RequestRuntime.fetching`）只在收到 `request.full` 时才复位，所以答复随连接断开丢掉（clean session，断线期间 Mac 发来的消息不留存）、发布失败、
+或 Mac 回 `not_found` 之后，这条请求就被永远当成「正在拉」，之后每次快照都跳过它，页面停在 `LoadingRequest`，重启才重新拉取。修复把在途记录挪到
+`MacRuntime.fetching`（随 `resetSession()` 与新握手清空），发布失败即撤销，`not_found` 结束等待并请求收件箱快照；约束见
+[overview-ios](overview-ios.md) 的「请求的完整正文随会话拉取」与 [规格 §幂等与恢复](specs/ios-channel.md)。`RequestFetchTests` 四个用例在旧代码上全红、
+新代码上全绿，Swift 包 7 个测试包全过；诊断报告新增 `without full request M` 计数。
+
+**还没出包，真机没验。** 下一步出内外 TestFlight 新版，手机上用几天确认不再复现。这是复现出的一个确定缺陷，但是否就是用户手机上那几次的**全部**原因要看修复后还出不出：
+若仍复现，卡住时（别重启）用开发者模式的「复制诊断信息」，看连接状态与 `inbox N (… without full request M)`——在线、同步完成而 M > 0 说明这条路径还没封死，否则是另一个原因。
+
 ## 待真机验收：iOS 标签栏常驻
 
 2026-11-12 用户确认在主工作树取消请求／确认、Agent、项目待办详情的主动隐藏规则；列表与详情都保留系统标签栏，不再由尺寸类、字号或导航深度控制显隐。键盘与模态呈现仍由系统管理。约定见 [作答流程 §3.9](specs/ios-answer-flow.md#39-详情页保留标签栏2026-11-12) 与 [大屏规格](specs/ios-large-screen.md)。
