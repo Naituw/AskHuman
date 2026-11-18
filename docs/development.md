@@ -100,12 +100,19 @@ Current prototypes:
   this page). The **real** `PopupView` runs against `mockIPC` (`annotationsMock.ts`) inside a fake window
   (`AnnotationsFrame.vue`); nothing on the page is prototype-only UI. `?scene=idle|select|editor|notes|list|edit` plays
   the gestures that reach that state through the real UI (select text, type, click) and every state can also be
-  reached by hand. `shape=message|direct|three` picks the request (a Message and one question / a direct ask / a
-  Message and three questions), plus `theme=dark`, `platform=win`, `w=`, `h=`. Use `w=420` with a 420 px viewport to
+  reached by hand. `shape=message|direct|three|files` picks the request (a Message and one question / a direct ask / a
+  Message and three questions / a direct ask with two files, whose question is shown as the Message above them), plus `theme=dark`, `platform=win`, `w=`, `h=`. Use `w=420` with a 420 px viewport to
   check the narrowest window, whose footer must keep Send / Next inside it.
 - `ios-annotations.html` — a static mock of the same flow on the iPhone answer page, not product code and not a
   screenshot: `?board=flow|direct|bar&cells=1,2`. The `bar` board's widths are estimates; the real ones are measured by
   `AskHumanBarUITests` at 375 pt.
+- `popup-todo-actions.html` · `popup-todo-actions-board.html` · `ios-todo-actions.html` — the design-round prototypes
+  of complete / delete / add on every todo list of a request page (spec `docs/specs/todo-list-actions.md`; the images in
+  `docs/assets/todo-list-actions/` were rendered from them). The popup pages run the real `PopupView` against `mockIPC`
+  (`todoActionsMock.ts`) and **inject** the hover buttons and the add row into its DOM (`TodoActionsFrame.vue`); the
+  product now draws those itself (`TodoRowActions.vue`, `TodoAddRow.vue`), so the injected copies double them up. Treat
+  the pages as the historical baseline of the images, and use the real popup or its vitest suites for current
+  behaviour. `ios-todo-actions.html` is a static mock of the iPhone states, not product code.
 
 **Workflow:** iterate UI ideas on the prototype first (cheap, instant feedback, user can review
 in a browser), get the design confirmed, then port to the real views. Keep the prototype in
@@ -123,6 +130,11 @@ This installs a `pre-commit` hook that runs `cargo fmt --check` for staged chang
 `src-tauri/**/*.rs`. Git LFS hooks keep their separate role.
 
 CI enforces `cargo clippy --all-targets -- -D warnings` on Linux, Windows, and native macOS arm64.
+The `dead_code` lint is enforced on macOS only: `main.rs` relaxes it on other targets, where code
+reached only through another platform's `cfg` branches would be reported unused. An item that only
+Windows or Linux uses carries `#[cfg_attr(target_os = "macos", allow(dead_code))]` so the macOS
+build stays quiet; a symbol that no platform calls should be deleted, or gated by `#[cfg(test)]`
+when only tests need it.
 For local lint feedback, run `node scripts/machine-health.mjs` before Clippy.
 
 ```bash
@@ -174,6 +186,15 @@ copy/sign when the built and installed binary state is unchanged (local macOS si
 request a network timestamp). After a successful copy it enforces per-profile target budgets with
 Cargo-coordinated cleanup: local package artifacts are removed first, while dependency caches are
 retained whenever they fit.
+
+The installer builds with `--message-format=json-render-diagnostics` and installs the executable that
+cargo reports for the `AskHuman` target (`scripts/cargo-artifact.mjs`). It prints that path
+(`编译产物:`) and stops when cargo reports none. A path rebuilt from the repository layout broke as
+soon as `CARGO_TARGET_DIR` moved the artifacts (some sandboxes and CI set one): the installer took an
+older build from `src-tauri/target` and said nothing. It compares no modification times either,
+because cargo leaves the file untouched when nothing changed. The cache log and the budgets below
+still assume `src-tauri/target`, so with `CARGO_TARGET_DIR` set they look at an empty directory and
+clean nothing.
 
 The budgets are 4 / 6 / 6 / 4 GiB for `local-install` / `dev` / `full-debug` / `release` in the main
 checkout and 3 / 5 / 5 / 3 GiB in a linked git worktree, where several copies of `target/` add up.

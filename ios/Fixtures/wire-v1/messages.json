@@ -11,8 +11,11 @@
     {"type": "pair.done", "name": "full", "body": {"name": "Wutian iPhone", "handle": "v1.AAAA", "env": "sandbox", "expiresAt": 1808000000}},
 
     {"type": "hello", "body": {"nonce": "q3ZkL1m0Xw4", "proto": 1, "appVer": "1.0 (1)", "deviceName": "Wutian iPhone"}},
+    {"type": "hello", "name": "lean-watch", "body": {"nonce": "q3ZkL1m0Xw4", "proto": 1, "appVer": "1.0 (1)", "deviceName": "Wutian iPhone", "lifecycleResults": true, "trafficUsage": true, "leanWatch": true}},
+    {"type": "hello", "name": "lean-agents-and-compression", "body": {"nonce": "q3ZkL1m0Xw4", "proto": 1, "appVer": "1.0 (1)", "deviceName": "Wutian iPhone", "lifecycleResults": true, "trafficUsage": true, "leanWatch": true, "leanAgents": true, "compression": true}},
     {"type": "hello.ack", "body": {"nonce": "q3ZkL1m0Xw4", "epoch": "0123456789abcdef", "macName": "Home Mac", "caps": {"newTask": false, "interject": true, "watch": true, "todos": false, "answerTodos": false, "away": false}, "slot": {"active": true, "autoActivation": true}}},
     {"type": "hello.ack", "body": {"nonce": "q3ZkL1m0Xw4", "epoch": "0123456789abcdef", "macName": "Home Mac", "caps": {"newTask": false, "interject": true, "watch": true, "todos": false, "answerTodos": false, "away": false, "liveUpdate": true}, "slot": {"active": true, "autoActivation": true}}, "name": "live-update"},
+    {"type": "hello.ack", "name": "lean-agents", "body": {"nonce": "q3ZkL1m0Xw4", "epoch": "0123456789abcdef", "macName": "Home Mac", "caps": {"newTask": true, "interject": true, "watch": true, "todos": true, "answerTodos": true, "away": true, "leanAgents": true}, "slot": {"active": true, "autoActivation": true}}},
     {"type": "error", "name": "min", "body": {"ref": "m1", "code": "unknown_type"}},
     {"type": "error", "name": "full", "body": {"ref": "m2", "code": "clock_skew", "message": "message timestamp outside the allowed window"}},
     {"type": "resync", "body": {"stream": "inbox"}},
@@ -82,6 +85,22 @@
         "questions": [{"text": "Which table next?", "options": [{"text": "orders", "recommended": true}]}],
         "selectOnly": false, "single": false,
         "annotatable": true
+      }
+    }}},
+    {"type": "request.new", "name": "todoQueue", "body": {"rev": 16, "full": true, "request": {
+      "id": "req6", "kind": "ask", "createdAt": 1792900005000,
+      "agent": {"kind": "claude", "label": "Claude Code"}, "project": {"key": "p1", "name": "HumanInLoop"},
+      "source": "hook", "contentHash": "sha256-tq",
+      "ask": {
+        "isMarkdown": false,
+        "message": {"text": "Claude Code wants to stop.", "files": []},
+        "questions": [{"text": "What next?", "options": [
+          {"text": "Fix the flaky test", "recommended": false, "todo": true},
+          {"text": "Continue the conversation", "recommended": false},
+          {"text": "End the conversation", "recommended": false}
+        ]}],
+        "selectOnly": false, "single": true,
+        "todoQueue": true
       }
     }}},
     {"type": "request.new", "name": "confirm", "body": {"rev": 9, "full": false, "request": {
@@ -162,6 +181,8 @@
     {"type": "watch.close", "body": {"agentKey": "claude:s1"}},
     {"type": "watch.frame", "body": {"agentKey": "claude:s1", "seq": 5, "frame": {"kind": "tool", "text": "Edit src/main.rs"}}},
     {"type": "watch.frame", "name": "model", "body": {"agentKey": "claude:s1", "seq": 6, "frame": {"phase": "working", "title": "Refactor gateway", "model": "model-b", "reasoning": "high"}}},
+    {"type": "watch.frame", "name": "lean-words", "body": {"agentKey": "claude:s1", "seq": 7, "frame": {"phase": "working", "title": "Refactor gateway", "latestText": {"id": "stable", "revision": "r1", "kind": "thinking", "text": "Checking the gateway first.", "truncated": false}}}},
+    {"type": "watch.frame", "name": "lean-reference", "body": {"agentKey": "claude:s1", "seq": 8, "frame": {"phase": "working", "title": "Refactor gateway", "latestText": {"id": "stable", "kind": "thinking", "revision": "r1", "same": true}}}},
     {"type": "watch.closed", "body": {"agentKey": "claude:s1", "reason": "ended"}},
     {"type": "interject.send", "body": {"clientMsgId": "c6", "agentKey": "claude:s1", "text": "Also add tests", "files": ["u3"]}},
     {"type": "interject.ack", "name": "min", "body": {"clientMsgId": "c6", "agentKey": "claude:s1", "status": "queued", "pending": 1}},

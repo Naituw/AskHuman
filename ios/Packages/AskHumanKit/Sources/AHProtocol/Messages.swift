@@ -35,12 +35,18 @@ public struct Caps: Codable, Equatable, Sendable {
     /// their questions) and answers `history.exchange.get` (docs/specs/ios-history-pictures.md). A Mac without it
     /// has none, so the phone asks for neither. Left out of the wire when false, like `sessionHistory`.
     @OmitFalse public var historyPictures: Bool
+    /// The Mac leaves the live activity of a working Agent nobody watches (its tool, step count and last activity time)
+    /// out of the Agents list for a phone that asked for it (`Hello.leanAgents`; docs/specs/ios-traffic-reduction.md
+    /// §3.2). A phone reads it to know that the Mac understood. Left out of the wire when false.
+    @OmitFalse public var leanAgents: Bool
 
     public init(
         newTask: Bool, interject: Bool, watch: Bool, todos: Bool = false, answerTodos: Bool = false,
         away: Bool = false, annotations: Bool = false, liveUpdate: Bool = false, sessionHistory: Bool = false,
-        historyPictures: Bool = false, trafficSync: Bool = false, trafficUsage: Bool = false
+        historyPictures: Bool = false, trafficSync: Bool = false, trafficUsage: Bool = false,
+        leanAgents: Bool = false
     ) {
+        self.leanAgents = leanAgents
         self.trafficUsage = trafficUsage
         self.trafficSync = trafficSync
         self.liveUpdate = liveUpdate
@@ -69,6 +75,7 @@ public struct Caps: Codable, Equatable, Sendable {
         liveUpdate = try c.decodeIfPresent(Bool.self, forKey: .liveUpdate) ?? false
         sessionHistory = try c.decodeIfPresent(Bool.self, forKey: .sessionHistory) ?? false
         historyPictures = try c.decodeIfPresent(Bool.self, forKey: .historyPictures) ?? false
+        leanAgents = try c.decodeIfPresent(Bool.self, forKey: .leanAgents) ?? false
     }
 }
 
@@ -170,8 +177,22 @@ public struct Hello: WireMessage {
     @OmitFalse public var trafficUsage: Bool
     @OmitFalse public var lifecycleResults: Bool
     @OmitFalse public var trafficSync: Bool
+    /// The phone merges lean watch frames: a latest text it already holds comes as a reference to it, and a frame that has
+    /// `latestText` has no legacy `text`.
+    @OmitFalse public var leanWatch: Bool
+    /// The phone shows a working Agent nobody watches without its live tool, step count and activity time, so the Mac
+    /// need not send a change that only touches them (docs/specs/ios-traffic-reduction.md §3.2). The Mac answers with
+    /// `Caps.leanAgents`.
+    @OmitFalse public var leanAgents: Bool
+    /// The phone opens compressed envelopes (`"z":1`, raw DEFLATE; docs/specs/ios-traffic-reduction.md §3.3). The Mac
+    /// compresses only the list streams, and only for a phone that said so in its latest `hello`.
+    @OmitFalse public var compression: Bool
 
-    public init(nonce: String, proto: Int = Wire.proto, appVer: String, deviceName: String, lifecycleResults: Bool = false, trafficSync: Bool = false, trafficUsage: Bool = false) {
+    public init(
+        nonce: String, proto: Int = Wire.proto, appVer: String, deviceName: String, lifecycleResults: Bool = false,
+        trafficSync: Bool = false, trafficUsage: Bool = false, leanWatch: Bool = false, leanAgents: Bool = false,
+        compression: Bool = false
+    ) {
         self.nonce = nonce
         self.proto = proto
         self.appVer = appVer
@@ -179,6 +200,9 @@ public struct Hello: WireMessage {
         self.lifecycleResults = lifecycleResults
         self.trafficUsage = trafficUsage
         self.trafficSync = trafficSync
+        self.leanWatch = leanWatch
+        self.leanAgents = leanAgents
+        self.compression = compression
     }
 }
 
@@ -329,10 +353,15 @@ public struct AskView: Codable, Equatable, Hashable, Sendable {
     /// (docs/specs/message-annotations.md). Only a Mac that takes notes sets it, so an older Mac never does;
     /// an older phone ignores it.
     @OmitFalse public var annotatable: Bool
+    /// The todo options of this question are the project's live queue, like What's next's: a Stop confirmation of a
+    /// project (docs/specs/todo-list-actions.md D10). The phone lists the queue itself, with the actions every todo
+    /// list has, instead of the todos the question was made with. Only a Mac that knows it sets it; an older phone
+    /// ignores it and shows the question as it was made.
+    @OmitFalse public var todoQueue: Bool
 
     public init(
         isMarkdown: Bool, message: MessageView, questions: [QuestionView], selectOnly: Bool, single: Bool,
-        whatsNext: Bool = false, quickReplies: [String] = [], annotatable: Bool = false
+        whatsNext: Bool = false, quickReplies: [String] = [], annotatable: Bool = false, todoQueue: Bool = false
     ) {
         self.isMarkdown = isMarkdown
         self.message = message
@@ -342,7 +371,11 @@ public struct AskView: Codable, Equatable, Hashable, Sendable {
         self.whatsNext = whatsNext
         self.quickReplies = quickReplies
         self.annotatable = annotatable
+        self.todoQueue = todoQueue
     }
+
+    /// The todos among the options are the project's live queue: What's next's, or a Stop confirmation's.
+    public var listsTodoQueue: Bool { whatsNext || todoQueue }
 }
 
 public struct ConfirmFieldView: Codable, Equatable, Hashable, Sendable {

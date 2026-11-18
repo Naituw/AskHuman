@@ -59,7 +59,7 @@
 - `AppStore.requestNavigation`／`RequestNavigation` 保存本次范围与稳定 ID 队列；逐请求阅读位置存于非观察缓存，不让每帧滚动触发页面重绘。
 - `InboxScreen` 保留原有 NavigationLink；首次 `inboxPath` 入栈捕获当前筛选和 `inboxSections` 展开顺序。显式 `open` 和自动前进建立全部范围，返回列表清理浏览缓存。
 - `RequestScreen` 安装唯一的右侧工具栏和手动换页流程，继续单页 `.id(id)` 隔离；现有 ask／confirm 的更多菜单保留动作并统一位置，避免重复菜单。
-- `AnswerComposer` 按题持有 `AttachmentPreparationState`，Reply AttachmentMenu 换页保留处理任务与状态，结束草稿取消；其他表单的附件菜单仍保留原取消行为。发送中的原表单暂不可编辑，其他请求不受影响。未改变线协议或 Mac 的请求协调。
+- `AnswerComposer` 按题持有 `AttachmentPreparationState`，Reply AttachmentMenu 换页保留处理任务与状态，结束草稿取消；新任务表单的 `TaskComposer` 同样持有处理状态（附件行变长会让添加按钮滚出屏幕，不能因此取消），关闭表单才取消；插话栏的附件菜单仍保留原取消行为。发送中的原表单暂不可编辑，其他请求不受影响。未改变线协议或 Mac 的请求协调。
 - `RequestScrollPosition` 用公开 UIKit 视图锚点与 KVO 保存／恢复位置，等待正文 Markdown 就绪，不替换 scroll delegate 或获取焦点。
 - `advance` 继续使用现有全收件箱目标规则。以导航／操作代次识别用户已切走，不能只比较请求 ID，以免切走后又回来被旧发送回调推进。
 - 自动检查覆盖：筛选与全部入口、稳定顺序、新到／结束、首尾／单条、跨 Mac 同名 ID、草稿与附件隔离、阅读恢复、发送后台完成与失败，以及原自动前进目标规则不变。

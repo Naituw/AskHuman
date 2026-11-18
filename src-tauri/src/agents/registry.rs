@@ -374,6 +374,17 @@ impl AgentRegistry {
         cache.retain(|(sid, _), _| sid != session_id);
     }
 
+    /// Whether a hook has reported this session with the path of its transcript. A record made
+    /// ahead of the first hook (a task an app just created) has not been reported yet.
+    pub fn has_transcript(&self, kind: AgentKind, session_id: &str) -> bool {
+        let inner = self.inner.lock().unwrap();
+        inner.active.iter().chain(inner.ended.iter()).any(|record| {
+            record.kind == kind
+                && record.session_id == session_id
+                && record.transcript_path.is_some()
+        })
+    }
+
     /// Retain an already validated transcript path and invalidate the lazily cached title.
     pub fn set_transcript_path(&self, kind: AgentKind, session_id: &str, path: String) -> bool {
         let mut inner = self.inner.lock().unwrap();
@@ -435,6 +446,36 @@ impl AgentRegistry {
         if let Some(observation) = observation {
             if observation.subagent {
                 return AppliedObservation::default();
+            }
+            // A second source may complete the same result with notification intent. Enrich
+            // that result in place; it is not a new turn or a new completion receipt.
+            if event == LifecycleEvent::TurnEnd {
+                if let Some(new) = observation
+                    .result
+                    .as_ref()
+                    .filter(|result| result.notify.is_some())
+                {
+                    let state = &mut *inner;
+                    if let Some(old) = state
+                        .active
+                        .iter_mut()
+                        .chain(state.ended.iter_mut())
+                        .find(|record| record.kind == kind && record.session_id == session_id)
+                        .and_then(|record| record.last_turn_result.as_mut())
+                        .filter(|old| {
+                            old.turn_id.is_some()
+                                && old.turn_id == observation.turn_id
+                                && old.outcome == new.outcome
+                                && old.notify.is_none()
+                        })
+                    {
+                        old.notify = new.notify;
+                        return AppliedObservation {
+                            accepted: true,
+                            changed: true,
+                        };
+                    }
+                }
             }
             if let Some(record) = inner
                 .active
@@ -706,6 +747,7 @@ impl AgentRegistry {
                 if let Some(turn_id) = r.active_turn_id.take() {
                     if r.last_turn_result.is_none() {
                         r.last_turn_result = Some(TurnResult {
+                            notify: None,
                             source: None,
                             id: uuid::Uuid::new_v4().to_string(),
                             outcome: super::result::TurnOutcome::Unknown,
@@ -741,6 +783,21 @@ impl AgentRegistry {
             .chain(inner.ended.iter())
             .find(|r| r.kind == kind && r.session_id == session_id)
             .and_then(|r| r.last_turn_result.clone())
+    }
+
+    /// Drops a conversation's record. A conversation that turned out to belong to another one (a
+    /// sub-agent that reported before its parent said so, spec D17) is not a session of its own.
+    /// Returns whether a record existed.
+    pub fn forget_session(&self, kind: AgentKind, session_id: &str) -> bool {
+        let mut inner = self.inner.lock().unwrap();
+        let before = inner.active.len() + inner.ended.len();
+        inner
+            .active
+            .retain(|record| !(record.kind == kind && record.session_id == session_id));
+        inner
+            .ended
+            .retain(|record| !(record.kind == kind && record.session_id == session_id));
+        inner.active.len() + inner.ended.len() != before
     }
 
     /// Whether the session is tracked, active or recently ended. Read-only: unlike an observation it
@@ -1618,6 +1675,7 @@ mod tests {
         Observation {
             turn_id: Some(turn.into()),
             result: outcome.map(|outcome| TurnResult {
+                notify: None,
                 source: None,
                 id: String::new(),
                 outcome,
@@ -1628,6 +1686,76 @@ mod tests {
             }),
             ..Observation::default()
         }
+    }
+
+    #[test]
+    fn heartbeat_intent_enriches_the_same_result_without_a_new_receipt() {
+        use super::super::result::TurnOutcome;
+        let r = reg();
+        r.apply_observed(
+            AgentKind::Codex,
+            LifecycleEvent::TurnStart,
+            "s",
+            None,
+            None,
+            100,
+            Some(&observed("t", None)),
+        );
+        let mut end = observed("t", Some(TurnOutcome::Completed));
+        r.apply_observed(
+            AgentKind::Codex,
+            LifecycleEvent::TurnEnd,
+            "s",
+            None,
+            None,
+            101,
+            Some(&end),
+        );
+        let before = r.last_turn_result(AgentKind::Codex, "s").unwrap();
+        end.result.as_mut().unwrap().notify = Some(false);
+        assert!(
+            r.apply_observed(
+                AgentKind::Codex,
+                LifecycleEvent::TurnEnd,
+                "s",
+                None,
+                None,
+                102,
+                Some(&end)
+            )
+            .accepted
+        );
+        let after = r.last_turn_result(AgentKind::Codex, "s").unwrap();
+        assert_eq!(after.id, before.id);
+        assert_eq!(after.at, before.at);
+        assert_eq!(after.notify, Some(false));
+        end.result.as_mut().unwrap().notify = None;
+        assert!(
+            !r.apply_observed(
+                AgentKind::Codex,
+                LifecycleEvent::TurnEnd,
+                "s",
+                None,
+                None,
+                103,
+                Some(&end)
+            )
+            .accepted
+        );
+        assert_eq!(
+            r.last_turn_result(AgentKind::Codex, "s").unwrap().notify,
+            Some(false)
+        );
+        r.apply_observed(
+            AgentKind::Codex,
+            LifecycleEvent::TurnStart,
+            "s",
+            None,
+            None,
+            104,
+            Some(&observed("next", None)),
+        );
+        assert!(r.last_turn_result(AgentKind::Codex, "s").is_none());
     }
 
     #[test]
@@ -2971,6 +3099,26 @@ mod tests {
 
     fn secs(base: Instant, n: u64) -> Instant {
         base + Duration::from_secs(n)
+    }
+
+    #[test]
+    fn a_session_made_ahead_of_its_first_hook_has_no_transcript_until_one_reports() {
+        let r = reg();
+        // An app created the conversation: registered under its id before any hook ran.
+        r.apply_event(
+            AgentKind::Antigravity,
+            LifecycleEvent::TurnStart,
+            "conv-1",
+            None,
+            Some("/work/app".into()),
+            0,
+        );
+        assert!(!r.has_transcript(AgentKind::Antigravity, "conv-1"));
+        assert!(r.set_transcript_path(AgentKind::Antigravity, "conv-1", "/t/transcript".into()));
+        assert!(r.has_transcript(AgentKind::Antigravity, "conv-1"));
+        // Another family's session of the same id, and an unknown one, have none.
+        assert!(!r.has_transcript(AgentKind::Codex, "conv-1"));
+        assert!(!r.has_transcript(AgentKind::Antigravity, "other"));
     }
 
     fn title_of(r: &AgentRegistry, kind: AgentKind, session_id: &str) -> Option<String> {

@@ -4,6 +4,10 @@
 //! `ios/Packages/AskHumanKit/Sources/AHProtocol`; `ios/Fixtures/wire-v1/messages.json` holds one
 //! sample per message type that both implementations must decode and re-encode identically.
 
+// This file defines the whole protocol for both sides. The Mac does not use every constant or
+// message type (it only receives some, and tests round-trip all of them against the fixtures).
+#![allow(dead_code)]
+
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
@@ -18,6 +22,9 @@ pub const KID_PAIR: u32 = 1;
 /// EMQX caps a single message at 1 MB.
 pub const MAX_ENVELOPE_BYTES: usize = 900_000;
 pub const MAX_PLAIN_BYTES: usize = 512 * 1024;
+/// The smallest plaintext (JSON of `{"i","t","ts","b"}`) the Mac compresses for a phone that said
+/// `Hello::compression`; anything shorter gains too little to be worth the CPU and the extra field.
+pub const MIN_COMPRESS_BYTES: usize = 512;
 /// Requests up to this size are sent in full; larger ones as summaries fetched with `request.get`.
 pub const INLINE_REQUEST_BYTES: usize = 128 * 1024;
 pub const THUMB_MAX_BYTES: usize = 24 * 1024;
@@ -211,6 +218,16 @@ pub mod t {
     pub const UPLOAD_CANCEL: &str = "upload.cancel";
 }
 
+/// The messages the Mac compresses for a phone that said `Hello::compression`: the list streams, which are
+/// titles, projects, states and previews. Not the text of an Agent's question, a request or the history, which
+/// can carry attacker-chosen text next to a secret (docs/specs/ios-traffic-reduction.md §3.3, T5).
+pub fn is_compressible(msg_type: &str) -> bool {
+    matches!(
+        msg_type,
+        t::AGENTS_SNAPSHOT | t::AGENTS_DELTA | t::INBOX_SNAPSHOT
+    )
+}
+
 /// A typed message body with its wire type string.
 pub trait Msg: Serialize {
     const TYPE: &'static str;
@@ -279,6 +296,12 @@ pub struct Caps {
     /// Macs do not send it, and the phone then asks for neither. Left out when false, like `session_history`.
     #[serde(default, skip_serializing_if = "is_false")]
     pub history_pictures: bool,
+    /// The Mac does not send a phone that said `Hello::lean_agents` the changes of a working Agent nobody watches that
+    /// only touch its live activity (`last_activity_at`, `turn_steps`, `current_tool`;
+    /// docs/specs/ios-traffic-reduction.md §3.2), so the phone must not show those for such an Agent. Older Macs do
+    /// not send it, and the phone then shows them as before. Left out when false, like `history_pictures`.
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub lean_agents: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -370,6 +393,18 @@ pub struct Hello {
     pub device_name: String,
     #[serde(default, skip_serializing_if = "is_false")]
     pub lifecycle_results: bool,
+    /// The phone merges lean watch frames: a latest text it already holds is sent as a reference
+    /// instead of in full, and a frame that carries `latestText` leaves out the legacy `text`.
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub lean_watch: bool,
+    /// The phone shows a working Agent nobody watches without its live tool, step count and last-activity time, so the
+    /// Mac may leave out the changes that only touch those (docs/specs/ios-traffic-reduction.md §3.2).
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub lean_agents: bool,
+    /// The phone opens envelopes that carry `z` (raw DEFLATE before the encryption). The Mac then compresses the list
+    /// messages it sends (`is_compressible`) when that makes them smaller (docs/specs/ios-traffic-reduction.md §3.3).
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub compression: bool,
 }
 msg!(Hello, t::HELLO);
 
@@ -500,6 +535,12 @@ pub struct AskView {
     pub single: bool,
     #[serde(default, skip_serializing_if = "is_false")]
     pub whats_next: bool,
+    /// The options that carry a todo are the project's live queue, which the phone lists itself with
+    /// its complete / delete / add actions (docs/specs/todo-list-actions.md D10): a Stop confirmation
+    /// of a project. What's next is a live queue too and says so with `whatsNext`. Additive: older
+    /// phones ignore it and show the options as they are, older Macs never send it.
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub todo_queue: bool,
     /// The quick replies the answer screen's menu offers, in the order they are shown (the Mac's own list
     /// when the question was created; docs/specs/special-replies.md D27, N8). Empty for what takes no reply
     /// of the kind. Additive: older phones ignore it, older Macs never send it.
@@ -1982,6 +2023,117 @@ mod tests {
         assert_eq!(AnswerAck::TYPE, "answer.ack");
     }
 
+    /// A phone that merges lean watch frames says so in its hello; one that does not leaves the
+    /// field out, and a Mac that does not know it reads the hello as before.
+    #[test]
+    fn the_lean_watch_bit_of_a_hello_is_additive_in_both_directions() {
+        let hello = |lean_watch: bool| Hello {
+            traffic_usage: false,
+            traffic_sync: false,
+            nonce: "n".into(),
+            proto: PROTO,
+            app_ver: "1".into(),
+            device_name: "phone".into(),
+            lifecycle_results: true,
+            lean_watch,
+            lean_agents: false,
+            compression: false,
+        };
+        assert!(serde_json::to_value(hello(false))
+            .unwrap()
+            .get("leanWatch")
+            .is_none());
+        assert_eq!(
+            serde_json::to_value(hello(true)).unwrap()["leanWatch"],
+            true
+        );
+        let old: Hello = serde_json::from_value(serde_json::json!({
+            "nonce": "n", "proto": PROTO, "appVer": "1", "deviceName": "phone", "lifecycleResults": true
+        }))
+        .unwrap();
+        assert!(!old.lean_watch);
+        let new: Hello =
+            serde_json::from_value(serde_json::to_value(hello(true)).unwrap()).unwrap();
+        assert!(new.lean_watch);
+    }
+
+    /// The traffic reduction bits are additive (docs/specs/ios-traffic-reduction.md §4): a phone that shows the Agent
+    /// list leaner and opens compressed envelopes says so in its hello, a Mac that leaves the changes out says so in
+    /// its capabilities, and a peer that predates them neither sends nor needs them.
+    #[test]
+    fn the_traffic_reduction_bits_are_additive_in_both_directions() {
+        let hello = |lean_agents: bool, compression: bool| Hello {
+            traffic_usage: false,
+            traffic_sync: false,
+            nonce: "n".into(),
+            proto: PROTO,
+            app_ver: "1".into(),
+            device_name: "phone".into(),
+            lifecycle_results: true,
+            lean_watch: false,
+            lean_agents,
+            compression,
+        };
+        let plain = serde_json::to_value(hello(false, false)).unwrap();
+        assert!(plain.get("leanAgents").is_none() && plain.get("compression").is_none());
+        let both = serde_json::to_value(hello(true, true)).unwrap();
+        assert_eq!(both["leanAgents"], true);
+        assert_eq!(both["compression"], true);
+        let back: Hello = serde_json::from_value(both).unwrap();
+        assert!(back.lean_agents && back.compression);
+        // A hello from a phone that predates them reads as "neither".
+        let old: Hello = serde_json::from_value(serde_json::json!({
+            "nonce": "n", "proto": PROTO, "appVer": "1", "deviceName": "phone", "lifecycleResults": true
+        }))
+        .unwrap();
+        assert!(!old.lean_agents && !old.compression);
+
+        // The Mac's bit is left out when false, so the capability sets pinned by the fixtures keep their shape.
+        let caps = |lean_agents: bool| Caps {
+            traffic_usage: false,
+            traffic_sync: false,
+            live_update: false,
+            new_task: true,
+            interject: true,
+            watch: true,
+            todos: true,
+            answer_todos: true,
+            away: true,
+            annotations: false,
+            session_history: false,
+            history_pictures: false,
+            lean_agents,
+        };
+        assert!(serde_json::to_value(caps(false))
+            .unwrap()
+            .get("leanAgents")
+            .is_none());
+        assert_eq!(
+            serde_json::to_value(caps(true)).unwrap()["leanAgents"],
+            true
+        );
+        let old: Caps = serde_json::from_value(serde_json::json!({
+            "newTask": true, "interject": true, "watch": true
+        }))
+        .unwrap();
+        assert!(!old.lean_agents);
+    }
+
+    /// Only the list streams are compressed (docs/specs/ios-traffic-reduction.md T5): never the text of a question,
+    /// a request or the history, which may carry attacker-chosen text beside a secret.
+    #[test]
+    fn only_the_list_streams_are_compressible() {
+        let mut compressible: Vec<&str> = ALL_TYPES
+            .iter()
+            .copied()
+            .filter(|ty| is_compressible(ty))
+            .collect();
+        compressible.sort_unstable();
+        let mut expected = [t::INBOX_SNAPSHOT, t::AGENTS_SNAPSHOT, t::AGENTS_DELTA];
+        expected.sort_unstable();
+        assert_eq!(compressible, expected);
+    }
+
     /// Notes on the message are additive (docs/specs/message-annotations.md E1): absent from
     /// older peers, never sent when there is nothing to say, and read as "no" when missing.
     #[test]
@@ -1999,6 +2151,7 @@ mod tests {
             annotations,
             session_history: false,
             history_pictures: false,
+            lean_agents: false,
         };
         assert!(serde_json::to_value(caps(false))
             .unwrap()
@@ -2106,6 +2259,7 @@ mod tests {
             annotations: false,
             session_history,
             history_pictures: false,
+            lean_agents: false,
         };
         assert!(serde_json::to_value(caps(false))
             .unwrap()
@@ -2312,6 +2466,7 @@ mod tests {
             annotations: false,
             session_history: true,
             history_pictures,
+            lean_agents: false,
         };
         assert!(serde_json::to_value(caps(false))
             .unwrap()
@@ -2416,8 +2571,8 @@ mod tests {
             assert_eq!(page.items.len(), 3, "round {round}");
             assert!(!page.more, "round {round}");
             assert_eq!(thumbs_of(&page.items[oldest_first]), 0, "round {round}");
-            for newer in 0..oldest_first {
-                assert_eq!(thumbs_of(&page.items[newer]), 2, "round {round}");
+            for newer in page.items.iter().take(oldest_first) {
+                assert_eq!(thumbs_of(newer), 2, "round {round}");
             }
         }
         // The pictures stayed, only the thumbnails went.

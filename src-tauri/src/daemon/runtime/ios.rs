@@ -48,7 +48,7 @@ impl ConnKey {
 
 /// A running gateway and the settings it was started with.
 pub(super) struct IosSlot {
-    gateway: Arc<IosGateway>,
+    pub(super) gateway: Arc<IosGateway>,
     key: ConnKey,
 }
 
@@ -170,6 +170,7 @@ impl Host for DaemonHost {
             annotations: true,
             session_history: true,
             history_pictures: true,
+            lean_agents: true,
         }
     }
 
@@ -432,14 +433,9 @@ fn build_gateway(state: &Arc<ServerState>, cfg: &IosChannelConfig) -> Arc<IosGat
     }))
 }
 
-/// The running gateway, if any (no side effects).
+/// The running gateway, if any (no side effects). Never waits for a gateway that is being built.
 pub(super) fn ios_gateway(state: &ServerState) -> Option<Arc<IosGateway>> {
-    state
-        .ios
-        .lock()
-        .unwrap()
-        .as_ref()
-        .map(|slot| slot.gateway.clone())
+    state.ios.current().map(|slot| slot.gateway.clone())
 }
 
 /// Whether a phone is paired and the channel is configured, i.e. an iOS surface is worth
@@ -453,26 +449,63 @@ pub(super) fn ios_can_deliver(state: &ServerState, config: &AppConfig) -> bool {
 /// channel is enabled and complete, replaces it when the connection settings changed, stops it
 /// when the channel was disabled. Requests held by a replaced gateway go to its successor.
 pub(super) async fn ensure_ios_gateway(state: &Arc<ServerState>) -> Option<Arc<IosGateway>> {
-    let config = state.config_snapshot();
-    let wanted = crate::app::is_ios_active(&config).then(|| ConnKey::of(&config.channels.ios));
+    reconcile_ios_gateway(state, build_gateway).await
+}
 
-    let (current, retired) = {
-        let mut slot = state.ios.lock().unwrap();
-        match (&wanted, slot.as_ref()) {
-            (Some(key), Some(running)) if *key == running.key => {
-                return Some(running.gateway.clone());
-            }
-            (Some(key), _) => {
-                let retired = slot.take();
-                let gateway = build_gateway(state, &config.channels.ios);
-                *slot = Some(IosSlot {
-                    gateway: gateway.clone(),
-                    key: key.clone(),
-                });
-                (Some(gateway), retired)
-            }
-            (None, _) => (None, slot.take()),
+/// `ensure_ios_gateway` with the construction of a gateway injected, so tests can supply one that
+/// talks to a loopback broker instead of a real one.
+async fn reconcile_ios_gateway(
+    state: &Arc<ServerState>,
+    build: impl FnOnce(&Arc<ServerState>, &IosChannelConfig) -> Arc<IosGateway>,
+) -> Option<Arc<IosGateway>> {
+    // A gateway must not start once the daemon is on its way out: during a live-update handoff the
+    // successor owns the broker session (the same MQTT client id would kick it off), and at
+    // shutdown nothing is left to serve.
+    let leaving = || handoff_suspending(state) || state.closing.load(Ordering::SeqCst);
+    if leaving() {
+        return None;
+    }
+
+    let (current, retired, config) = {
+        // One (re)build at a time, and never while anything that has to answer promptly can be
+        // waiting for it: building opens the store and spawns the transport and a subprocess, and
+        // readers of the slot (`ios_gateway`, Status, the handoff) do not take this gate.
+        let attempt = state.ios.begin_connect().await;
+        // Look again now that it is this call's turn. A handoff or shutdown that began while it
+        // queued only waited for the connect that held the gate, so it has already been past the
+        // slot and will not wait for this call: nothing may be built after it. (The routers
+        // re-check the same way, see `ensure_dd_router`.)
+        if leaving() {
+            return None;
         }
+        // Read after the gate. Whoever ran before this call has already applied the configuration
+        // it saw, so the last caller always reconciles against the newest one.
+        let config = state.config_snapshot();
+        let wanted = crate::app::is_ios_active(&config).then(|| ConnKey::of(&config.channels.ios));
+        let (current, retired) = match wanted {
+            Some(key) => {
+                if let Some(running) = attempt.current().filter(|running| running.key == key) {
+                    return Some(running.gateway.clone());
+                }
+                let gateway = build(state, &config.channels.ios);
+                let slot = Arc::new(IosSlot {
+                    gateway: gateway.clone(),
+                    key,
+                });
+                match attempt.install(&slot, leaving) {
+                    Installed::Shared { replaced } => (Some(gateway), replaced),
+                    // The daemon started leaving, or the slot was emptied for good, while this was
+                    // being built: nobody will use it. The gate is still held, so a handoff waits
+                    // for the gateway to be gone before the process is replaced.
+                    Installed::Private | Installed::Suspended => {
+                        gateway.retire().await;
+                        (None, None)
+                    }
+                }
+            }
+            None => (None, attempt.clear()),
+        };
+        (current, retired, config)
     };
     let replaced = retired.is_some();
     if let Some(old) = retired {
@@ -495,8 +528,9 @@ pub(super) async fn ensure_ios_gateway(state: &Arc<ServerState>) -> Option<Arc<I
 
 /// Graceful end of the daemon: tell the phones this Mac is going offline.
 pub(super) async fn stop_ios_gateway(state: &Arc<ServerState>) {
-    let slot = state.ios.lock().unwrap().take();
-    if let Some(slot) = slot {
+    // Never waits for a gateway that is still being built: that one finds the slot invalidated
+    // when it is done and shuts itself down (see `ensure_ios_gateway`).
+    if let Some(slot) = state.ios.invalidate() {
         slot.gateway.shutdown().await;
     }
 }
@@ -593,6 +627,167 @@ pub(super) fn ios_session_ref(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::ios::gateway::testkit::Fixture;
+
+    /// Settings the channel counts as complete; two hosts give two different connections.
+    fn configure(state: &ServerState, enabled: bool, host: &str) {
+        let mut config = state.config.lock().unwrap();
+        let ios = &mut config.channels.ios;
+        ios.enabled = enabled;
+        ios.host = host.into();
+        ios.username = "u1".into();
+        ios.password = "pw".into();
+    }
+
+    /// A gateway on a loopback broker, plus what has to stay alive for it to keep running.
+    async fn loopback_gateway() -> (Arc<IosGateway>, Box<dyn std::any::Any>) {
+        let Fixture {
+            gateway,
+            broker,
+            transport,
+            host,
+            pusher,
+            dir,
+            ..
+        } = Fixture::new().await;
+        (
+            Arc::new(gateway),
+            Box::new((broker, transport, host, pusher, dir)),
+        )
+    }
+
+    /// A retired gateway's actor is gone, so it takes no more commands. (On a live gateway this
+    /// would stop it, which is also an answer: the assertions below expect it to be gone.)
+    async fn is_retired(gateway: &IosGateway) -> bool {
+        gateway.suspend().await.is_err()
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn the_gateway_follows_the_configuration() {
+        let dir = tempfile::tempdir().unwrap();
+        let state = super::super::test_state(dir.path());
+        let (first, _keep_first) = loopback_gateway().await;
+        let (second, _keep_second) = loopback_gateway().await;
+
+        // Nothing is built for a channel that is not complete.
+        configure(&state, false, "broker-a");
+        assert!(
+            reconcile_ios_gateway(&state, |_, _| panic!("a disabled channel builds nothing"))
+                .await
+                .is_none()
+        );
+
+        // Complete: started, and kept as long as the connection settings stay the same.
+        configure(&state, true, "broker-a");
+        let started = reconcile_ios_gateway(&state, |_, _| first.clone())
+            .await
+            .expect("started");
+        assert!(Arc::ptr_eq(&started, &first));
+        let kept = reconcile_ios_gateway(&state, |_, _| panic!("unchanged settings build nothing"))
+            .await
+            .expect("kept");
+        assert!(Arc::ptr_eq(&kept, &first));
+
+        // Other connection settings: a new gateway takes over and the old one is shut down.
+        configure(&state, true, "broker-b");
+        let replaced = reconcile_ios_gateway(&state, |_, _| second.clone())
+            .await
+            .expect("replaced");
+        assert!(Arc::ptr_eq(&replaced, &second));
+        assert!(Arc::ptr_eq(&ios_gateway(&state).unwrap(), &second));
+        assert!(
+            is_retired(&first).await,
+            "the replaced gateway is shut down"
+        );
+
+        // Switched off: stopped.
+        configure(&state, false, "broker-b");
+        assert!(
+            reconcile_ios_gateway(&state, |_, _| panic!("a disabled channel builds nothing"))
+                .await
+                .is_none()
+        );
+        assert!(ios_gateway(&state).is_none());
+        assert!(
+            is_retired(&second).await,
+            "the disabled gateway is shut down"
+        );
+    }
+
+    /// A handoff or a shutdown that begins while a gateway is still being built must not leave
+    /// that gateway running: nothing would ever use it, and it would hold the broker session the
+    /// successor daemon needs.
+    #[tokio::test(start_paused = true)]
+    async fn a_gateway_built_while_the_daemon_is_leaving_is_shut_down_not_installed() {
+        let dir = tempfile::tempdir().unwrap();
+        let state = super::super::test_state(dir.path());
+        configure(&state, true, "broker-a");
+        let (built, _keep) = loopback_gateway().await;
+
+        let outcome = reconcile_ios_gateway(&state, |state, _| {
+            state.closing.store(true, Ordering::SeqCst);
+            built.clone()
+        })
+        .await;
+
+        assert!(outcome.is_none());
+        assert!(ios_gateway(&state).is_none());
+        assert!(is_retired(&built).await);
+
+        // Once leaving, nothing is built at all.
+        assert!(
+            reconcile_ios_gateway(&state, |_, _| panic!("a leaving daemon builds nothing"))
+                .await
+                .is_none()
+        );
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn a_gateway_built_while_the_slot_is_emptied_for_good_is_shut_down_not_installed() {
+        let dir = tempfile::tempdir().unwrap();
+        let state = super::super::test_state(dir.path());
+        configure(&state, true, "broker-a");
+        let (built, _keep) = loopback_gateway().await;
+
+        // The same invalidation `stop_ios_gateway` and live-update preparation perform.
+        let outcome = reconcile_ios_gateway(&state, |state, _| {
+            assert!(state.ios.invalidate().is_none());
+            built.clone()
+        })
+        .await;
+
+        assert!(outcome.is_none());
+        assert!(ios_gateway(&state).is_none());
+        assert!(is_retired(&built).await);
+    }
+
+    /// A caller that found the daemon staying and then queued behind a connect has to look again
+    /// when its turn comes: a handoff that began meanwhile only waits for the connect that holds
+    /// the gate, so it has already gone past the slot and does not wait for callers still queued.
+    #[tokio::test(start_paused = true)]
+    async fn a_reconcile_queued_behind_the_gate_builds_nothing_once_the_daemon_is_leaving() {
+        let dir = tempfile::tempdir().unwrap();
+        let state = super::super::test_state(dir.path());
+        configure(&state, true, "broker-a");
+
+        let in_progress = state.ios.begin_connect().await;
+        let mut queued = Box::pin(reconcile_ios_gateway(&state, |_, _| {
+            panic!("a leaving daemon builds nothing")
+        }));
+        assert!(
+            tokio::time::timeout(std::time::Duration::from_millis(50), &mut queued)
+                .await
+                .is_err(),
+            "the reconcile waits for the gate"
+        );
+
+        // The daemon starts leaving while the reconcile is queued; then its turn comes.
+        state.closing.store(true, Ordering::SeqCst);
+        drop(in_progress);
+
+        assert!(queued.await.is_none());
+        assert!(ios_gateway(&state).is_none());
+    }
 
     #[test]
     fn the_phone_is_never_asked_to_take_over() {

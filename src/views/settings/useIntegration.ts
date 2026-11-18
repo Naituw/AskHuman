@@ -90,7 +90,7 @@ export function useIntegration(
     { id: "claude", title: "Claude Code", hasTimeoutHook: true, hasCli: true, hasMcp: true, instructionKind: "rule", recommended: "cli" },
     { id: "codex", title: "Codex", hasTimeoutHook: false, hasCli: true, hasMcp: true, instructionKind: "hook", recommended: "mcp" },
     { id: "grok", title: "Grok", hasTimeoutHook: false, hasCli: false, hasMcp: true, instructionKind: "skill", recommended: "mcp" },
-    { id: "antigravity", title: "Antigravity", hasTimeoutHook: false, hasCli: true, hasMcp: true, instructionKind: "rule", recommended: "cli" },
+    { id: "antigravity", title: "Antigravity", hasTimeoutHook: false, hasCli: true, hasMcp: true, instructionKind: "rule", recommended: "mcp" },
     { id: "pi", title: "Pi", hasTimeoutHook: true, hasCli: true, hasMcp: false, instructionKind: "rule", recommended: "cli" },
   ];
 
@@ -147,6 +147,8 @@ export function useIntegration(
     agentVersion: null,
     minimumVersion: null,
     versionSupported: true,
+    hostPluginDisabled: false,
+    mcpGrant: null,
   });
   const modes = ref<Record<AgentId, AgentModeStatus>>({
     cursor: emptyMode(),
@@ -154,7 +156,7 @@ export function useIntegration(
     codex: emptyMode(),
     grok: emptyMode(),
     pi: emptyMode(),
-    antigravity: { ...emptyMode(), lifecycle: { ...emptyMode().lifecycle, supported: false } },
+    antigravity: emptyMode(),
   });
   const modeBusy = ref<Record<AgentId, boolean>>({
     cursor: false,

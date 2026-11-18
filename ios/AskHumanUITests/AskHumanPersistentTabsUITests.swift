@@ -94,6 +94,24 @@ final class AskHumanPersistentTabsUITests: XCTestCase {
         checkTabs(clearOf: ["send-button"])
     }
 
+    /// Where the tab bar and the toolbar share one vertical strip (the outer screen of the Duo, 466 pt wide), the
+    /// system's default folds "next request" and the menu into one overflow button to keep all five tabs. The
+    /// buttons must stay: the tab bar gives way instead (it becomes the button of the open tab).
+    /// (Elsewhere the buttons sit in the navigation bar, and this holds without the preference.)
+    func testRequestKeepsEveryToolbarButtonBesideTheTabs() throws {
+        launch(["-AHOpen", "req-next"])
+        require("request-title")
+        try XCTSkipIf(app.windows.firstMatch.frame.width >= 600, "A wide window shows the list beside the request: no back button.")
+        for id in ["BackButton", "previous-request", "next-request", "request-menu"] {
+            let button = require(id)
+            XCTAssertTrue(button.isHittable, id)
+            XCTAssertTrue(app.windows.firstMatch.frame.contains(button.frame), "\(id) is clipped")
+        }
+        XCTAssertFalse(app.descendants(matching: .any).matching(identifier: "BottomOverflowBarButtonItem").firstMatch.exists,
+                       "the buttons are not folded into the system's overflow menu")
+        shot("request-buttons")
+    }
+
     func testConfirmationKeepsTabsAndSubmitClear() {
         launch(["-AHOpen", "req-permission"])
         checkTabs(clearOf: ["submit-button"])

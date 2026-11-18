@@ -391,6 +391,57 @@ public enum MockData {
         )
     }
 
+    /// A Stop confirmation, which a Mac that lists the live todo queue sends as an ask (`todoQueue`, docs/specs/todo-list-actions.md
+    /// D10): the project's todos stand where the first option is, then "continue" and "end".
+    public static func stopAsk(now: Date = Date()) -> RequestView {
+        RequestView(
+            id: "req-stop-ask", kind: "ask", createdAt: ms(now.addingTimeInterval(-2_000)), agent: claude,
+            project: ProjectRef(key: "proj-humaninloop", name: "HumanInLoop"), sessionTitle: "收尾待办列表的操作",
+            source: "claude", contentHash: hash("stop-ask"),
+            ask: AskView(
+                isMarkdown: true,
+                message: MessageView(text: "Claude Code 想结束这一轮工作。", files: []),
+                questions: [
+                    QuestionView(text: "接下来做什么？", options: [
+                        OptionView(text: "⚡ 补全 Agents 列表的空态", recommended: false, todo: true),
+                        OptionView(text: "继续对话", recommended: false),
+                        OptionView(text: "结束对话", recommended: false),
+                    ]),
+                ],
+                selectOnly: false, single: true, todoQueue: true
+            )
+        )
+    }
+
+    /// An ask whose project has no todo at all.
+    public static func freshProjectAsk(now: Date = Date()) -> RequestView {
+        RequestView(
+            id: "req-fresh", kind: "ask", createdAt: ms(now.addingTimeInterval(-1_000)), agent: claude,
+            project: ProjectRef(key: "proj-fresh", name: "fresh"), sessionTitle: "Start the fresh project",
+            source: "claude", contentHash: hash("fresh"),
+            ask: AskView(
+                isMarkdown: true,
+                message: MessageView(text: "新项目的第一个问题。", files: []),
+                questions: [
+                    QuestionView(text: "要先做哪一步？", options: [
+                        OptionView(text: "搭好骨架", recommended: true),
+                        OptionView(text: "先写文档", recommended: false),
+                    ]),
+                ],
+                selectOnly: false, single: true
+            )
+        )
+    }
+
+    /// The demo's requests and, for the `todoPick` scenario, the two that show the todo list in its other places: a Stop
+    /// confirmation of the same project and an ask of a project with no todos.
+    public static func todoPickInbox(now: Date = Date()) -> [InboxItem] {
+        inbox(now: now) + items([
+            (homeMacId, "Home MacBook Pro", stopAsk(now: now), false, -2_000),
+            (homeMacId, "Home MacBook Pro", freshProjectAsk(now: now), false, -1_000),
+        ], now: now)
+    }
+
     public static func permissionConfirm(now: Date = Date()) -> RequestView {
         RequestView(
             id: "req-permission", kind: "confirm", createdAt: ms(now.addingTimeInterval(-40)), agent: claude,

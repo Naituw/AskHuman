@@ -1,6 +1,6 @@
 [package]
 name = "humaninloop"
-version = "0.17.1"
+version = "0.17.3"
 description = "HumanInLoop - Human-in-the-loop interaction tool (Rust + Tauri)"
 authors = ["Naituw"]
 license = "MIT"
@@ -87,6 +87,9 @@ sys-locale = "0.3.2"
 pulldown-cmark = { version = "0.13.6", default-features = false, features = ["html"] }
 # Package DOCX with the patched ZIP writer; enable only the existing zlib-rs deflate backend.
 zip = { version = "9.0.5", default-features = false, features = ["deflate-flate2-zlib-rs"] }
+# Raw DEFLATE for the compressed envelopes of the iOS channel (docs/specs/ios-traffic-reduction.md §3.3); the same
+# zlib-rs backend the ZIP writer above already builds, so no new crate enters the tree.
+flate2 = { version = "1.1", default-features = false, features = ["zlib-rs"] }
 roxmltree = "0.20"
 # Shared channel conversion and Popup codecs; keep default codecs disabled to control size.
 # ICO reuses PNG/BMP, and TGA/PNM add no external decoder crates.
@@ -167,7 +170,7 @@ objc2 = "0.6"
 # cold-build time and target size in every profile. `std` is the one non-binding feature that the
 # default set also provided. A missing binding fails to compile, so add it here when needed.
 objc2-foundation = { version = "0.3", default-features = false, features = ["std", "NSString", "NSArray", "NSURL", "NSGeometry", "NSData", "NSError", "NSLocale", "NSDictionary"] }
-objc2-app-kit = { version = "0.3", default-features = false, features = ["std", "NSResponder", "NSEvent", "NSApplication", "NSImage", "NSDockTile"] }
+objc2-app-kit = { version = "0.3", default-features = false, features = ["std", "NSResponder", "NSEvent", "NSApplication", "NSImage", "NSDockTile", "NSWindow"] }
 # 语音输入回调桥（block2 创建 @convention(block) 闭包供 Swift SpeechAnalyzer 回调）。
 block2 = "0.6"
 
@@ -182,8 +185,7 @@ drag = { path = "vendor/drag" }
 # Keep the original macOS mouse-down event across WebView IPC; see vendor/tao/ASKHUMAN-PATCH.md.
 tao = { path = "vendor/tao" }
 
-# 较快的 release 配置（不启用 LTO，避免原 Rust 版的慢链接）。
-# 编译性能将在功能完成后专门评测（见 docs/plans/rust-tauri.md §21）。
+# Release profile that favors link time and binary size: no LTO, opt-level "z".
 [profile.release]
 opt-level = "z"
 codegen-units = 16

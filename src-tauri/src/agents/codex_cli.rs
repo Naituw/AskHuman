@@ -157,6 +157,7 @@ fn failure(thread: &Value, turns: &Value, session: &str, expected: &str) -> Opti
     Some(Observation {
         turn_id: Some(expected.into()),
         result: Some(TurnResult {
+            notify: None,
             id: String::new(),
             outcome: TurnOutcome::Failed,
             source: Some("codexCli".into()),

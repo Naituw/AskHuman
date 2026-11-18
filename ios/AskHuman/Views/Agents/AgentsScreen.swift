@@ -32,8 +32,9 @@ struct AgentsScreen: View {
             }
             .modifier(AgentsBar())
             .navigationDestination(for: String.self) { id in
-                AgentDetailScreen(id: id)
+                AgentDetailScreen(id: id).prefersToolbarItemsOverTabBar()
             }
+            .prefersToolbarItemsOverTabBar()
         }
     }
 }

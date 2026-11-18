@@ -62,9 +62,9 @@
       runner:()=>${refs.runner.name},setRunner:value=>{${refs.runner.name}=value;},
       encoder:()=>${refs.encoder.name},setEncoder:value=>{${refs.encoder.name}=value;}})`;
   }
-  async function host(activate) {
+  async function moduleLoader(activate) {
     let loader;
-    for (const scope of await scopes(activate)) {
+    for (const scope of (await scopes(activate)).reverse()) {
       // Node's non-paused scope mirrors are only enumerable through CDP, unlike the paused
       // renderer scope. The loader's own objects can then be inspected without invoking it.
       const found = (await properties(scope)).result.filter(item => item.value?.type === "function" &&
@@ -73,15 +73,9 @@
       if (found.length === 1) { loader = found[0].value.objectId; break; }
     }
     if (!loader) throw new Error("Cursor Agent Host module loader is unavailable");
-    const modules = await call(loader, `function() {
-      return Object.entries(this.m).flatMap(([id,factory]) => {
-        const source = Function.prototype.toString.call(factory);
-        const decoder = /stallDetectorConfig\\s*:\\s*\\{\\s*turn\\s*:/.test(source);
-        return decoder || /stallRetryElapsedMs\\s*:/.test(source) ? [{id,decoder}] : [];
-      });
-    }`);
-    if (modules.length < 1 || modules.length > 8) throw new Error("Cursor Agent Host stall modules are unavailable or ambiguous");
-    const ids = modules.map(item => item.id);
+    return loader;
+  }
+  async function moduleCache(loader, ids) {
     let cache;
     for (const scope of await scopes(loader)) {
       for (const item of (await properties(scope)).result) {
@@ -99,7 +93,71 @@
       }
       if (cache) break;
     }
-    if (!cache) throw new Error("Cursor has not loaded its Agent Host stall modules");
+    if (!cache) throw new Error("Cursor has not loaded the expected Agent Host modules");
+    return cache;
+  }
+  async function isolation(activate) {
+    const loader = await moduleLoader(activate);
+    const ids = await call(loader, `function() {
+      return Object.entries(this.m).flatMap(([id, factory]) => {
+        const source = Function.prototype.toString.call(factory);
+        return source.includes("http2SessionOptions") && source.includes("registerRequest") &&
+          source.includes("notifyResponseByteRead") ? [id] : [];
+      });
+    }`);
+    if (ids.length > 8) throw new Error("Cursor HTTP/2 session module is missing or ambiguous");
+    const candidates = [];
+    for (const id of ids) {
+      const cache = await moduleCache(loader, [id]).catch(() => undefined);
+      if (!cache) continue;
+      const exports = (await send("Runtime.callFunctionOn", {
+        objectId: cache, functionDeclaration: "function(id) { return this[id].exports; }",
+        arguments: [{value: id}],
+      })).result?.objectId;
+      if (!exports) continue;
+      const matches = await call(exports, `function() {
+      const matches = value => typeof value === "function" &&
+        Function.prototype.toString.call(value).includes("http2SessionOptions") &&
+        typeof value.prototype?.notifyResponseByteRead === "function";
+      return Object.entries(Object.getOwnPropertyDescriptors(this)).flatMap(([key, entry]) => {
+        if (matches(entry.value)) return [{ key, direct: true }];
+        if (typeof entry.get !== "function") return [];
+        const name = /^\\s*\\(\\s*\\)\\s*=>\\s*([A-Za-z_$][\\w$]*)\\s*$/.exec(entry.get.toString())?.[1];
+        return name && matches(Reflect.apply(entry.get, this, [])) ? [{ key, name }] : [];
+      });
+      }`);
+      candidates.push(...matches.map(binding => ({cache, exports, id, ...binding})));
+    }
+    if (!ids.length) {
+      for (const scope of await scopes(activate)) {
+        const fns = (await properties(scope)).result.filter(item =>
+          item.value?.type === "function" && item.value.objectId &&
+          (item.value.description ?? "").includes("http2SessionOptions") &&
+          (item.value.description ?? "").includes("registerRequest"));
+        if (!fns.length) continue;
+        if (fns.length > 8) throw new Error("Cursor HTTP/2 scope is ambiguous");
+        for (const item of fns) {
+          const ok = await call(item.value.objectId,
+            "function() { return typeof this.prototype?.notifyResponseByteRead === \"function\"; }");
+          if (ok) candidates.push({ objectId: item.value.objectId, name: item.name });
+        }
+      }
+    }
+    if (candidates.length !== 1) throw new Error("Cursor HTTP/2 manager export is missing or ambiguous");
+    return candidates[0];
+  }
+  async function host(activate) {
+    const loader = await moduleLoader(activate);
+    const modules = await call(loader, `function() {
+      return Object.entries(this.m).flatMap(([id,factory]) => {
+        const source = Function.prototype.toString.call(factory);
+        const decoder = /stallDetectorConfig\\s*:\\s*\\{\\s*turn\\s*:/.test(source);
+        return decoder || /stallRetryElapsedMs\\s*:/.test(source) ? [{id,decoder}] : [];
+      });
+    }`);
+    if (modules.length < 1 || modules.length > 8) throw new Error("Cursor Agent Host stall modules are unavailable or ambiguous");
+    const ids = modules.map(item => item.id);
+    const cache = await moduleCache(loader, ids);
     const candidates = await call(cache, `function(ids) {
       const describe = ${describe};
       return ids.flatMap(id => Object.entries(Object.getOwnPropertyDescriptors(this[id].exports)).flatMap(([key, entry]) => {
@@ -143,5 +201,5 @@
     const decoder = unique(tables, "decoder");
     return { cache, runner, classifier, decoder };
   }
-  return { renderer, host };
+  return { renderer, host, isolation };
 })

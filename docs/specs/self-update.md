@@ -52,7 +52,7 @@ daemon 已具备**优雅排空换新（graceful drain）**：盘上二进制内�
 | D6 | 外部更新也提示 | daemon 已监听二进制指纹变化；**任何来源**导致盘上二进制变化（如用户在终端跑了 `npm i -g`、另一处装了新版）都触发「待生效」提示——不限于应用内点更新。 |
 | D7 | 版本门槛 | 仅当「远端正式版 > 本地 `CARGO_PKG_VERSION`」才提示更新（数字段逐段比较）。故本地同版本开发构建不会被误判为有更新。 |
 | D8 | 检查时机 / 频率 | daemon **启动时 + 周期性（约每 24h）** 后台检查；设置与菜单栏内可**手动「检查更新」**。手动检查要求上游缓存重新验证，避免刚发布的版本仍命中旧 `/latest` 响应。检查结果（最新版本、检查时间）落 `~/.askhuman/update.json`；多进程读改写由 `update.lock` 串行化，已观察到的最高版本不会被短暂旧响应降级。 |
-| D9 | 「忽略此版本」 | 某版本被用户忽略后**不再主动弹该版本**（设置里仍可见、可更新）；**手动检查重置**忽略记录。忽略集合持久化（随 `update.json` 或前端 localStorage，见计划）。 |
+| D9 | 「忽略此版本」 | 入口是弹窗更新浮层里的「忽略此版本」（`update_dismiss`）。某版本被忽略后**不再主动弹该版本**——弹窗导航栏的更新入口与菜单栏更新项都不再出现，设置里仍可见、可更新；下一个新版本照常提示；**手动检查重置**忽略记录。忽略集合持久化在 `update.json`（`dismissedVersions`）；写入后以 best-effort IPC 让已运行 daemon 重载并转播给所有弹窗与托盘（同 D10），daemon 停止时不为此而启动。 |
 | D10 | 检查 / 广播归属 | **daemon** 负责后台周期检查、存状态、并向**所有打开的弹窗** GUI Helper 广播「有更新 / 待生效」；弹窗经 IPC 读取/接收。**设置窗 / GUI Host 自行**按需检查与触发更新；成功后立即刷新 Host 内存，并以 best-effort IPC 让已运行 daemon 重载同一持久化快照、转播给弹窗。daemon 停止时不为同步结果而额外启动。 |
 | D11 | 弹窗 UI | 有更新时显示版本与日志。Unix 显示自动更新；Windows 显示“查看手动更新步骤”，只打开设置定位，不从在途 Popup 排空或关窗。 |
 | D12 | 设置 UI（关于区） | 设置「通用」Tab 显示当前/最新版本与日志。Windows 显示中性手动说明、Direct release 链接或 npm 命令，以及二次确认的“准备手动更新”按钮。 |
@@ -91,4 +91,4 @@ Direct 和 npm 更新继续使用既有的主程序替换方式，连旧版本 D
 7. **安全**：macOS 校验签名 / TeamID；Windows 所有自动 apply 入口 fail closed，未签名 release 不被运行时执行。
 8. **发布流程**：打 tag 发布时，Release body 由 git-cliff 生成（仅 feat/fix/perf 等、emoji 分组、scope 粗体、Full Changelog 链接）；若存在 `docs/release-notes/v<版本>.md` 则改用其内容（D15/D16/D17）。
 9. **门槛 / 回归**：本地等于或高于最新版时不提示更新（D7）；正常提问 / drain / 设置 / 历史等既有功能不受影响。
-10. **Windows 手动闭环**：`AskHuman update prepare` 在 daemon 未运行/运行/有在途与 GUI Host 打开时均可靠处理；返回 0 后 Direct/npm 可手动替换，下次调用按既有 lazy-start 拉起新 daemon。保留的事务 worker 继续通过 installer/负向测试。
+10. **Windows 手动闭环**：`AskHuman update prepare` 在 daemon 未运行/运行/有在途与 GUI Host 打开时均可靠处理；返回 0 后 Direct/npm 可手动替换，下次调用按既有 lazy-start 拉起新 daemon。daemon 接受连接却不应答（沉默）不算已停止：开始时直接以非 0 退出，排空等待中继续等，收尾检查时同样不报就绪。保留的事务 worker 继续通过 installer/负向测试。

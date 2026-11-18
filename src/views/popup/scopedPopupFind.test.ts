@@ -16,7 +16,7 @@ function setup() {
   const scope = effectScope(); cleanups.push(() => scope.stop());
   const find = scope.run(() => usePopupFind({
     contentRef: ref(content), isConfirm: ref(false), confirmRequest: ref(null), messageText: ref("alpha alpha"),
-    viewSource: ref(false), attachments: ref([]), questions: ref([]), whatsNext: ref(false), todoPrefix: ref(""),
+    viewSource: ref(false), attachments: ref([]), questions: ref([]), liveTodoOptions: ref(false), todoPrefix: ref(""),
     confirmChoiceTexts: ref([]), confirmTitle: ref(""), confirmSummary: ref(""), confirmToolName: ref(""),
     confirmBodyText: ref(""), currentQ: ref(0), verticalMode: ref(false), revealQuestion: vi.fn(),
     previewOpen, previewIndex, active,

@@ -15,8 +15,12 @@ pub const SUBAGENT_PROTOCOL_RULE: &str =
 pub const SUBAGENT_DELEGATION_RULE: &str =
     "**When starting a subagent, tell it that it is a subagent and must not use AskHuman.**";
 
-fn protocol_scope_rules() -> String {
-    format!("{SUBAGENT_PROTOCOL_RULE}\n{SUBAGENT_DELEGATION_RULE}")
+fn protocol_scope_rules(agent: Option<AgentKind>) -> String {
+    let mut rules = format!("{SUBAGENT_PROTOCOL_RULE}\n{SUBAGENT_DELEGATION_RULE}");
+    if agent == Some(AgentKind::Codex) {
+        rules.push_str("\n\n**Codex heartbeat exception:** A host-scheduled heartbeat check does not require an AskHuman completion report, a whats-next handoff, or user approval to end that check. Complete the host's heartbeat response directly. AskHuman remains available for a genuine question or required approval. This exception applies only to the scheduled check, not ordinary user conversations, and does not authorize the user-confirmed-end marker without actual user approval.");
+    }
+    rules
 }
 
 pub const fn subagent_guard_context() -> &'static str {
@@ -119,7 +123,7 @@ fn cli_reference_with_agent(agent: Option<AgentKind>) -> String {
         ""
     };
     let collab = collaboration_section_from_config(agent);
-    let scope_rules = protocol_scope_rules();
+    let scope_rules = protocol_scope_rules(agent);
 
     format!(
         r#"<mandatory_interaction_protocol>
@@ -137,7 +141,7 @@ fn cli_reference_with_agent(agent: Option<AgentKind>) -> String {
 
 - When asking through `{program}`, provide predefined options whenever applicable, mark your recommended option(s) with `-o!`, and briefly explain your rationale.
 - I can ONLY see what is delivered through `{program}`. Anything I need to review , or that I ask for — questions, options, recommendations, summaries, reports, or files (plans, specs, docs, configs) — MUST go through `{program}`, inline or attached with `-f`. Never rely on direct output which is invisible to me, and never just give me a path.
-- After fully completing the current task—and never for questions, decisions, or next steps within it—you MUST run `{program} --whats-next` for the end-of-task handoff before ending, to ask me for a separate next task.
+- After fully completing the current task—and never for questions, decisions, or next steps within it—you MUST run `{program} --whats-next` for the end-of-task handoff before ending, to ask me for a separate next task, with your suggestions as options.
 - If it returns a task, start working on it immediately and repeat this protocol when done. Do NOT end the turn/conversation or mark the request as complete unless `{program} --whats-next` returned that I approved ending the turn and there are no more tasks.
 - After the user explicitly approves ending the turn, you MUST append the `{end_marker}` marker on a new final line at the end of your final output. Without that approval, you MUST NEVER output this marker.
 - The end-of-turn rules above have one preauthorized exception for Cursor. If AskHuman returns an automatic status receipt beginning with `[cursor_away_report_saved]`, the user has enabled saving Cursor away escalations for later reading and authorizes ending immediately. Treat that receipt from either ask or whats-next as approval, append the end marker, and end without another handoff or waiting for the report to be read.
@@ -167,7 +171,7 @@ pub fn mcp_reference_for(agent: AgentKind) -> String {
 
 fn mcp_reference_with_agent(agent: Option<AgentKind>) -> String {
     let collab = collaboration_section_from_config(agent);
-    let scope_rules = protocol_scope_rules();
+    let scope_rules = protocol_scope_rules(agent);
     format!(
         r#"<mandatory_interaction_protocol>
 {scope_rules}
@@ -183,7 +187,7 @@ fn mcp_reference_with_agent(agent: Option<AgentKind>) -> String {
 
 - When asking through the AskHuman `ask` tool, provide predefined options whenever applicable, mark your recommended option(s) as recommended, and briefly explain your rationale.
 - I can ONLY see what is delivered through the AskHuman `ask` tool. Anything I need to review, or that I ask for — questions, options, recommendations, summaries, reports, or files (plans, specs, docs, configs) — MUST go through the AskHuman `ask` tool, inline or attached as files. Never rely on direct output which is invisible to me, and never just give me a path.
-- After fully completing the current task—and never for questions, decisions, or next steps within it—you MUST call the AskHuman `whats_next` tool for the end-of-task handoff before ending, to ask me for a separate next task.
+- After fully completing the current task—and never for questions, decisions, or next steps within it—you MUST call the AskHuman `whats_next` tool for the end-of-task handoff before ending, to ask me for a separate next task, with your suggestions as options.
 - If it returns a task, start working on it immediately and repeat this protocol when done. Do NOT end the turn/conversation or mark the request as complete unless the `whats_next` result says I approved ending the turn and there are no more tasks.
 - After the user explicitly approves ending the turn, you MUST append the `{end_marker}` marker on a new final line at the end of your final output. Without that approval, you MUST NEVER output this marker.
 - The end-of-turn rules above have one preauthorized exception for Cursor. If AskHuman returns an automatic status receipt beginning with `[cursor_away_report_saved]`, the user has enabled saving Cursor away escalations for later reading and authorizes ending immediately. Treat that receipt from either ask or whats-next as approval, append the end marker, and end without another handoff or waiting for the report to be read.
@@ -282,12 +286,46 @@ pub fn interject_deny_reason(
     message: &str,
     attachments: &[crate::models::FileAttachment],
 ) -> String {
-    let mut prompt = format!(
-        r#"[USER INTERJECTION] The user sent you the message below while you were working.
-This tool call was blocked only to deliver it — the tool is not forbidden; re-issue
-the same call if still appropriate.
+    interject_text(
+        "This tool call was blocked only to deliver it — the tool is not forbidden; re-issue\nthe same call if still appropriate.\n\n",
+        message,
+        attachments,
+    )
+}
+
+/// The same interjection for a host that injects it as a user message instead of blocking a tool
+/// call (Antigravity's `PreInvocation`): nothing was blocked, so the sentence about it is gone.
+pub fn interject_injection(message: &str, attachments: &[crate::models::FileAttachment]) -> String {
+    interject_text("\n", message, attachments)
+}
+
+/// A message the user sent from the phone, IM or console to an Antigravity conversation that is
+/// idle, delivered through `agentapi send-message`. Antigravity hands it to the model as a system
+/// message "not actually sent by the user" from `sender=system`, so the text itself says whose it
+/// is. Measured: without this the model still answers, but it has no way to tell the user's own
+/// instruction from a notice.
+pub fn antigravity_idle_message(message: &str) -> String {
+    format!(
+        r#"[USER MESSAGE] The user sent you the message below. It is the user's own instruction, not a system notice.
 
 <user_message>
+{message}
+</user_message>
+
+If anything is unclear, ask the user as instructed."#
+    )
+}
+
+/// The shared body of both interjection texts: `delivery_note` goes between the first sentence
+/// and the message, and ends with the blank line before it.
+fn interject_text(
+    delivery_note: &str,
+    message: &str,
+    attachments: &[crate::models::FileAttachment],
+) -> String {
+    let mut prompt = format!(
+        r#"[USER INTERJECTION] The user sent you the message below while you were working.
+{delivery_note}<user_message>
 {message}
 </user_message>"#
     );
@@ -433,6 +471,17 @@ mod tests {
     }
 
     #[test]
+    fn an_idle_antigravity_message_says_it_is_the_users() {
+        let p = antigravity_idle_message("run the tests again");
+        assert!(p.starts_with("[USER MESSAGE]"));
+        assert!(p.contains("<user_message>\nrun the tests again\n</user_message>"));
+        assert!(p.contains("not a system notice"));
+        assert!(p.contains("ask the user as instructed"));
+        // Like the interjection texts, it never names the asking tool.
+        assert!(!p.contains("AskHuman"));
+    }
+
+    #[test]
     fn interject_deny_reason_lists_attachment_paths() {
         let attachment = crate::models::FileAttachment {
             path: "/tmp/a file.png".into(),
@@ -443,6 +492,20 @@ mod tests {
         let p = interject_deny_reason("", &[attachment]);
         assert!(p.contains("<attachments>\n- \"/tmp/a file.png\"\n</attachments>"));
         assert!(p.contains("Open and use them as inputs"));
+    }
+
+    #[test]
+    fn an_injected_interjection_says_nothing_was_blocked() {
+        let injected = interject_injection("改用方案 B", &[]);
+        assert!(injected.starts_with("[USER INTERJECTION]"));
+        assert!(injected.contains("<user_message>\n改用方案 B\n</user_message>"));
+        assert!(injected.contains("ask the user as instructed"));
+        assert!(!injected.contains("blocked"));
+        assert!(!injected.contains("re-issue"));
+        // The one place the two texts differ is the sentence about the blocked call.
+        let denied = interject_deny_reason("改用方案 B", &[]);
+        let note = "This tool call was blocked only to deliver it — the tool is not forbidden; re-issue\nthe same call if still appropriate.\n";
+        assert_eq!(denied.replace(note, ""), injected);
     }
 
     #[test]
@@ -498,6 +561,18 @@ mod tests {
     }
 
     #[test]
+    fn heartbeat_handoff_exception_is_scoped_to_codex() {
+        for agent in AgentKind::ALL {
+            for prompt in [cli_reference_for(agent), mcp_reference_for(agent)] {
+                assert_eq!(
+                    prompt.contains("Codex heartbeat exception"),
+                    agent == AgentKind::Codex
+                );
+            }
+        }
+    }
+
+    #[test]
     fn default_prompts_require_whats_next_before_ending() {
         // spec todo-whats-next D4：结束前必调 whats-next；旧「请求反馈」两行不再出现；
         // CLI / MCP / Grok skill 三处一致（Grok 复用 MCP 版）。
@@ -506,6 +581,8 @@ mod tests {
         assert!(cli.contains("After fully completing the current task"));
         assert!(cli.contains("never for questions, decisions, or next steps within it"));
         assert!(cli.contains("--whats-next` for the end-of-task handoff before ending"));
+        // The handoff offers the agent's own suggestions by default (spec todo-whats-next D4).
+        assert!(cli.contains("a separate next task, with your suggestions as options."));
         assert!(cli.contains("If it returns a task, start working on it immediately"));
         assert!(cli.contains("returned that I approved ending the turn"));
         assert!(!cli.contains("Pass suggested next tasks"));
@@ -518,6 +595,7 @@ mod tests {
             assert!(
                 p.contains("AskHuman `whats_next` tool for the end-of-task handoff before ending")
             );
+            assert!(p.contains("a separate next task, with your suggestions as options."));
             assert!(p.contains("If it returns a task, start working on it immediately"));
             assert!(p.contains("unless the `whats_next` result says I approved ending the turn"));
             assert!(!p.contains("Pass suggested next tasks"));

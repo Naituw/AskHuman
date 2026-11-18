@@ -110,9 +110,16 @@ pub fn session_id_from_env_map(kind: AgentKind, env: &HashMap<String, String>) -
         .filter(|s| !s.is_empty())
 }
 
-/// 读取本进程 env 取会话 ID。
-pub fn session_id_from_env(kind: AgentKind) -> Option<String> {
-    session_id_from_env_map(kind, &env_snapshot())
+/// The conversation an Antigravity tool process names in its environment.
+///
+/// The host sets it for the tools it runs, but a process started from such a tool inherits it
+/// unchanged, so it is not authority by itself. Callers pass it on as a candidate and the daemon
+/// accepts it only for a conversation its lifecycle hooks have registered as live.
+pub fn antigravity_session_candidate(env: &HashMap<String, String>) -> Option<String> {
+    let value = env.get(session_id_env_var(AgentKind::Antigravity))?.trim();
+    uuid::Uuid::parse_str(value)
+        .ok()
+        .map(|id| id.hyphenated().to_string())
 }
 
 /// A copy of this process's environment. Entries that are not valid Unicode are skipped:
@@ -272,11 +279,6 @@ pub fn walk_agent_pid(kind: AgentKind, start_pid: u32) -> Option<u32> {
         return None;
     }
     Some(matched.pid)
-}
-
-/// 从当前进程向上 walk 定位指定家族的 Agent pid。
-pub fn walk_agent_pid_from_self(kind: AgentKind) -> Option<u32> {
-    walk_agent_pid(kind, std::process::id())
 }
 
 /// 从 `start_pid` 向上回溯，返回最近的（非自身）Agent 祖先及其家族。
@@ -1534,6 +1536,13 @@ mod antigravity_detection_tests {
         assert!(!matches_agent(&process, AgentKind::Antigravity));
         process.comm = "sh".into();
         process.command = "sh -c echo agy".into();
+        assert!(!matches_agent(&process, AgentKind::Antigravity));
+        // The App runs hooks under one language server shared by all of its conversations, so no
+        // process id may be bound to a single conversation (the registry falls back to its TTL).
+        process.comm = "language_server_macos_arm".into();
+        process.command =
+            "/Applications/Antigravity.app/Contents/Resources/app/bin/language_server_macos_arm --lsp"
+                .into();
         assert!(!matches_agent(&process, AgentKind::Antigravity));
         let env = HashMap::from([("ANTIGRAVITY_CONVERSATION_ID".into(), "not-authority".into())]);
         assert_eq!(session_id_from_env_map(AgentKind::Antigravity, &env), None);

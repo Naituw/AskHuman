@@ -3,8 +3,8 @@
 pub(crate) mod actions;
 mod launch;
 pub use launch::{
-    available, catalog_runtime, integration_enabled, launch_status, resolve_launch, LaunchStatus,
-    UnavailableReason,
+    available, catalog_runtime, integration_enabled, launch_status, resolve_launch, select_target,
+    LaunchStatus, UnavailableReason,
 };
 mod models;
 pub use models::list_models;
@@ -113,6 +113,7 @@ impl Session {
                     Some("agentMessage" | "assistantMessage")
                 ) {
                     if let Some(text) = item["text"].as_str().filter(|s| !s.is_empty()) {
+                        let text = crate::agents::codex_heartbeat::display_text(text);
                         return Some(
                             text.chars()
                                 .rev()
@@ -140,9 +141,12 @@ impl Session {
                     continue;
                 }
                 let (kind, text) = match item["type"].as_str() {
-                    Some("agentMessage" | "assistantMessage") => {
-                        ("assistant", item["text"].as_str().map(str::to_string))
-                    }
+                    Some("agentMessage" | "assistantMessage") => (
+                        "assistant",
+                        item["text"].as_str().map(|text| {
+                            crate::agents::codex_heartbeat::display_text(text).to_string()
+                        }),
+                    ),
                     Some("reasoning") => (
                         "thinking",
                         native_text_parts(&item["summary"])
@@ -351,12 +355,6 @@ impl Bridge {
         else {
             return;
         };
-        if message["version"] != 11 {
-            s.connected = false;
-            s.error = Some("Incompatible Codex App protocol".into());
-            *self.error.lock().unwrap() = s.error.clone();
-            return;
-        }
         let change = &message["params"]["change"];
         let owner = message["sourceClientId"].as_str();
         if owner.is_none() {
@@ -778,6 +776,19 @@ mod tests {
     use super::launch::select_target;
     use super::*;
     #[test]
+    fn heartbeat_native_views_show_the_status_message() {
+        let session = Session {
+            state: Arc::new(json!({"turns":[{"turnId":"t", "status":"completed",
+            "items":[{"id":"m", "type":"agentMessage", "text":crate::agents::codex_heartbeat::QUIET}]}]})),
+            ..Session::default()
+        };
+        let expected =
+            crate::agents::codex_heartbeat::display_text(crate::agents::codex_heartbeat::QUIET);
+        assert_eq!(session.latest_text().as_deref(), Some(expected));
+        assert_eq!(session.latest_observation_text().unwrap().text, expected);
+    }
+
+    #[test]
     fn observation_only_publishes_completed_native_items() {
         let mut session = Session {
             state: Arc::new(json!({"turns":[{"id":"turn","status":"inProgress","items":[
@@ -1117,7 +1128,7 @@ mod tests {
     }
 
     #[test]
-    fn owner_revision_and_protocol_must_match_before_control() {
+    fn owner_and_revision_must_match_across_stream_versions() {
         let b = bridge();
         b.sessions
             .lock()
@@ -1130,11 +1141,10 @@ mod tests {
         b.event(json!({"method":"thread-stream-state-changed","version":11,"sourceClientId":"owner","params":{"hostId":"local","conversationId":"s","change":{"type":"patches","baseRevision":0,"revision":2,"patches":[]}}}));
         assert!(!b.session("s").unwrap().connected);
         assert!(b.session("s").unwrap().owner.is_none());
-        b.event(snapshot("new-owner", 11, json!(5)));
+        b.event(snapshot("new-owner", 13, json!(5)));
         assert!(b.session("s").unwrap().connected);
-        b.event(snapshot("new-owner", 12, json!(6)));
-        assert!(!b.session("s").unwrap().connected);
-        b.event(snapshot("new-owner", 11, Value::Null));
+        assert_eq!(b.session("s").unwrap().revision, Some(5));
+        b.event(snapshot("new-owner", 13, Value::Null));
         assert!(!b.session("s").unwrap().connected);
     }
 
@@ -1158,7 +1168,7 @@ mod tests {
         b.event(native);
         assert_eq!(title(), "Generated title");
         let patch = |owner: &str, base: u64, revision: u64, title: &str| {
-            json!({"method":"thread-stream-state-changed","version":11,"sourceClientId":owner,
+            json!({"method":"thread-stream-state-changed","version":13,"sourceClientId":owner,
                 "params":{"hostId":"local","conversationId":"s","change":{
                     "type":"patches","baseRevision":base,"revision":revision,
                     "patches":[{"op":"replace","path":"/title","value":title}]}}})

@@ -16,7 +16,7 @@
   const decoded = new WeakSet();
   let runnerIntact, decoderIntact, retryWindowMs, pendingRunner;
   const state = {
-    owner, revision,
+    owner, revision, contract: 1,
     status() {
       return runnerIntact?.() && decoderIntact?.() ? { pid: process.pid, token, retryWindowMs } : undefined;
     },

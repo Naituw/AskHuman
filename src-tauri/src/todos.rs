@@ -338,23 +338,6 @@ pub fn add_auto(project: &str, text: &str) -> Result<TodoEntry, AddError> {
     add_auto_at(&todos_file(), &todos_lock(), project, text)
 }
 
-/// Append an entry created by a recognized Agent CLI invocation.
-pub fn add_from_agent(
-    project: &str,
-    text: &str,
-    auto: bool,
-    agent: crate::agents::AgentKind,
-) -> Result<TodoEntry, AddError> {
-    add_impl(
-        &todos_file(),
-        &todos_lock(),
-        project,
-        text,
-        auto,
-        Some(agent.as_str()),
-    )
-}
-
 /// Append a GUI/CLI/MCP todo with files resolved relative to `cwd`.
 pub fn add_with_attachments(
     project: &str,
@@ -457,13 +440,6 @@ pub fn set_auto(project: &str, id: &str, auto: bool) -> Option<bool> {
     set_auto_at(&todos_file(), &todos_lock(), project, id, auto)
 }
 
-/// Update the text of one pending entry (GUI double-click edit). Keeps id / created_at / auto /
-/// agent_kind. Returns the stored text after trim, or `None` if the entry is missing or the
-/// new text is empty after trim.
-pub fn set_text(project: &str, id: &str, text: &str) -> Option<String> {
-    set_text_at(&todos_file(), &todos_lock(), project, id, text)
-}
-
 /// Front-most auto-run entry of a project (whats-next auto-dispatch, round 17).
 pub fn first_auto(project: &str) -> Option<TodoEntry> {
     list(project).into_iter().find(|e| e.auto)
@@ -477,11 +453,6 @@ pub fn remove(project: &str, id: &str) -> bool {
 /// User-facing remove variant that distinguishes a missing entry from a failed disk commit.
 pub fn remove_checked(project: &str, id: &str) -> Result<bool, MutationError> {
     remove_checked_at(&todos_file(), &todos_lock(), project, id)
-}
-
-/// Clear a project's queue; returns how many entries were removed.
-pub fn clear(project: &str) -> usize {
-    clear_at(&todos_file(), &todos_lock(), project)
 }
 
 /// User-facing clear variant that never reports removed entries when the disk commit failed.
@@ -509,12 +480,6 @@ pub fn history(project: &str) -> Vec<DoneTodoEntry> {
 /// Returns whether the entry existed in history.
 pub fn restore(project: &str, id: &str) -> bool {
     restore_at(&todos_file(), &todos_lock(), project, id)
-}
-
-/// Clear a project's execution history (GUI history section, round 18). Returns the number
-/// of entries removed.
-pub fn clear_history(project: &str) -> usize {
-    clear_history_at(&todos_file(), &todos_lock(), project)
 }
 
 pub fn clear_history_checked(project: &str) -> Result<usize, MutationError> {
@@ -957,6 +922,9 @@ pub fn remove_checked_at(
     Ok(true)
 }
 
+/// Clear a project's queue without reporting persistence failures (simulation and test helper;
+/// production callers use [`clear_checked`]).
+#[cfg(test)]
 pub fn clear_at(path: &Path, lock: &Path, project: &str) -> usize {
     clear_checked_at(path, lock, project).unwrap_or(0)
 }
@@ -978,6 +946,9 @@ fn clear_checked_at(path: &Path, lock: &Path, project: &str) -> Result<usize, Mu
     Ok(removed)
 }
 
+/// Clear a project's execution history without reporting persistence failures (simulation and
+/// test helper; production callers use [`clear_history_checked`]).
+#[cfg(test)]
 pub fn clear_history_at(path: &Path, lock: &Path, project: &str) -> usize {
     clear_history_checked_at(path, lock, project).unwrap_or(0)
 }

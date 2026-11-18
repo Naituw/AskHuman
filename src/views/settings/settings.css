@@ -1377,17 +1377,8 @@
 .ios-traffic {
   margin: 0 0 var(--space-2);
 }
-.ios-traffic-warning {
+.ios-traffic-note {
   margin: 0 0 var(--space-3);
-  font-size: 12px;
-}
-.ios-traffic.warn,
-.ios-traffic-warning.warn {
-  color: #ff9f0a;
-}
-.ios-traffic.full,
-.ios-traffic-warning.full {
-  color: #ff453a;
 }
 .ios-section-title {
   margin: 0 0 var(--space-2);

@@ -8,6 +8,7 @@ import type { HistoryAnswer, HistoryEntry } from "../lib/types";
 import {
   agentKindOf,
   customSourceOf,
+  draftOf as draftOfEntry,
   historySessionOf,
   shortSessionId,
   workspaceNameOf,
@@ -108,6 +109,15 @@ function answerOf(i: number): HistoryAnswer | null {
   return props.entry.answers[i] ?? null;
 }
 
+// —— 调用方断开时没提交的内容（docs/specs/popup-draft-on-cancel.md D8）：只读，不是回答 ——
+const draft = computed(() => draftOfEntry(props.entry));
+/** The draft of question `i` when it holds something; a question nothing was typed in shows no box. */
+function draftAnswerOf(i: number): HistoryAnswer | null {
+  const answer = draft.value?.answers[i] ?? null;
+  return isAnswerEmpty(answer) ? null : answer;
+}
+const hasDraftNotes = computed(() => (draft.value?.annotations?.length ?? 0) > 0);
+
 // —— 复制整条记录为纯文本（便于直接粘贴给 agent）——
 const copied = ref(false);
 
@@ -156,29 +166,66 @@ function buildPlainText(): string {
       lines.push(t("history.unanswered"));
       return;
     }
-    if ((a?.userInput ?? "").trim()) {
-      lines.push(t("history.copyReply"), (a?.userInput ?? "").trimEnd());
-    }
-    if ((a?.images ?? []).length) {
-      lines.push(t("history.copyReplyImages"));
-      for (const img of a?.images ?? []) lines.push(`- ${img}`);
-    }
-    if ((a?.files ?? []).length) {
-      lines.push(t("history.copyReplyFiles"));
-      for (const f of a?.files ?? []) lines.push(`- ${f}`);
-    }
+    lines.push(...replyLines(a));
   });
 
   if (e.annotations?.length) {
     lines.push("", t("history.copyAnnotations"));
-    // Same shape as the [user_annotations] block the Agent received: the quote line, the note, a blank line between.
-    e.annotations.forEach((note, i) => {
-      if (i > 0) lines.push("");
-      lines.push(`> ${note.quote}`, note.note.trimEnd());
-    });
+    lines.push(...annotationLines(e.annotations));
   }
 
+  if (draft.value) lines.push("", ...draftLines());
+
   return lines.join("\n");
+}
+
+/** The reply text, pictures and files of one answer (or draft), as the lines a copy holds. */
+function replyLines(a: HistoryAnswer | null): string[] {
+  const lines: string[] = [];
+  if ((a?.userInput ?? "").trim()) {
+    lines.push(t("history.copyReply"), (a?.userInput ?? "").trimEnd());
+  }
+  if ((a?.images ?? []).length) {
+    lines.push(t("history.copyReplyImages"));
+    for (const img of a?.images ?? []) lines.push(`- ${img}`);
+  }
+  if ((a?.files ?? []).length) {
+    lines.push(t("history.copyReplyFiles"));
+    for (const f of a?.files ?? []) lines.push(`- ${f}`);
+  }
+  return lines;
+}
+
+/** Same shape as the [user_annotations] block the Agent received: the quote line, the note, a blank line between. */
+function annotationLines(notes: ReadonlyArray<{ quote: string; note: string }>): string[] {
+  const lines: string[] = [];
+  notes.forEach((note, i) => {
+    if (i > 0) lines.push("");
+    lines.push(`> ${note.quote}`, note.note.trimEnd());
+  });
+  return lines;
+}
+
+/** What the draft holds, question by question and then its notes; empty when there is no draft. */
+function draftLines(): string[] {
+  const d = draft.value;
+  if (!d) return [];
+  const lines: string[] = [t("history.copyDraftHeading")];
+  props.entry.questions.forEach((_, i) => {
+    const a = draftAnswerOf(i);
+    if (!a) return;
+    lines.push("");
+    if (isMulti.value) lines.push(t("history.questionIndexed", { i: i + 1, n: props.entry.questions.length }));
+    if (a.selectedOptions.length) {
+      lines.push(t("history.copySelectedOptions"));
+      for (const option of a.selectedOptions) lines.push(`- ${option}`);
+    }
+    lines.push(...replyLines(a));
+  });
+  if (d.annotations?.length) {
+    lines.push("", t("history.copyAnnotations"), ...annotationLines(d.annotations));
+  }
+  return lines;
 }
 
 async function copyEntry() {
@@ -189,6 +236,18 @@ async function copyEntry() {
   }
   copied.value = true;
   setTimeout(() => (copied.value = false), 1500);
+}
+
+const copiedDraft = ref(false);
+
+async function copyDraft() {
+  try {
+    await navigator.clipboard.writeText(draftLines().join("\n"));
+  } catch {
+    /* 忽略：剪贴板不可用时静默 */
+  }
+  copiedDraft.value = true;
+  setTimeout(() => (copiedDraft.value = false), 1500);
 }
 
 function isAnswerEmpty(a: HistoryAnswer | null): boolean {
@@ -242,6 +301,7 @@ onMounted(() => {
 
 const imagePaths = computed(() => [
   ...props.entry.answers.flatMap(answer => answer.images),
+  ...(draft.value?.answers ?? []).flatMap(answer => answer.images),
   ...props.entry.message.files.filter(file => file.isImage).map(file => file.path),
 ]);
 const images = useLocalImageUrls(imagePaths, { owner: computed(() => props.entry), lazy: true });
@@ -264,6 +324,23 @@ const thumbs = images.urls;
         <svg v-if="copied" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5" /></svg>
         <svg v-else viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" /><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1" /></svg>
         <span>{{ copied ? t("history.copied") : t("history.copy") }}</span>
+      </button>
+    </div>
+
+    <!-- What was typed but not submitted when the ask was cancelled, and whether a new question took it (spec D8) -->
+    <div v-if="draft" class="draft-line">
+      <span class="draft-tag">{{ t("history.draft") }}</span>
+      <span class="draft-line-text">{{ t("history.draftNote") }}</span>
+      <span class="draft-line-state" :class="{ loaded: !!draft.claimedBy }">{{ draft.claimedBy ? t("history.draftLoaded") : t("history.draftNotLoaded") }}</span>
+      <button
+        class="copy-btn"
+        type="button"
+        :title="t('history.copyDraft')"
+        @click.stop="copyDraft"
+      >
+        <svg v-if="copiedDraft" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5" /></svg>
+        <svg v-else viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" /><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1" /></svg>
+        <span>{{ copiedDraft ? t("history.copied") : t("history.copyDraft") }}</span>
       </button>
     </div>
 
@@ -431,12 +508,70 @@ const thumbs = images.urls;
           </div>
         </div>
       </template>
+
+      <!-- The unsent content of a cancelled ask under its question: read-only, and not an answer -->
+      <div v-if="draftAnswerOf(i)" class="draft-block" data-draft>
+        <div class="draft-tag">{{ t("history.draft") }}</div>
+        <div v-if="draftAnswerOf(i)!.selectedOptions.length" class="draft-options">
+          <span v-for="(option, oi) in draftAnswerOf(i)!.selectedOptions" :key="oi" class="draft-option">✓ {{ option }}</span>
+        </div>
+        <div v-if="(draftAnswerOf(i)!.userInput ?? '').trim()" class="reply-block">
+          <pre class="reply-text">{{ draftAnswerOf(i)!.userInput }}</pre>
+        </div>
+        <div v-if="draftAnswerOf(i)!.images.length" class="thumbs">
+          <div
+            v-for="(img, ii) in draftAnswerOf(i)!.images"
+            :key="ii"
+            :ref="el => images.observe(el, img)"
+            class="thumb previewable"
+            :class="{ selected: replyPreviewQuestion === i && selectedReplyImage === ii }"
+            :title="img"
+          >
+            <button
+              class="thumb-preview"
+              type="button"
+              :data-question-index="i"
+              :data-image-index="ii"
+              :aria-label="`${t('popup.preview.title')}: ${fileName(img)}`"
+              :aria-pressed="replyPreviewQuestion === i && selectedReplyImage === ii"
+              @click="selectReplyImage(i, ii, $event)"
+            >
+              <img v-if="thumbs[img]" :src="thumbs[img]" alt="" loading="lazy" decoding="async" draggable="false" @error="images.fail(img, $event)" />
+              <div v-else class="thumb-missing">{{ t("history.imageUnavailable") }}</div>
+            </button>
+          </div>
+        </div>
+        <div v-if="draftAnswerOf(i)!.files.length" class="reply-files">
+          <div
+            v-for="(f, fi) in draftAnswerOf(i)!.files"
+            :key="fi"
+            class="reply-file"
+            :title="f"
+            @click="open(f)"
+          >
+            <span class="rf-icon">📄</span>
+            <span class="rf-name">{{ fileName(f) }}</span>
+          </div>
+        </div>
+      </div>
     </div>
 
     <!-- Notes written on the Agent's text together with this reply (docs/specs/message-annotations.md D23) -->
     <div v-if="entry.annotations?.length" class="q-block with-divider annotations">
       <div class="q-header"><span class="annotations-label">{{ t("history.annotations") }}</span></div>
       <div v-for="(note, i) in entry.annotations" :key="i" class="annotation">
+        <span class="annotation-num">{{ i + 1 }}</span>
+        <div class="annotation-body">
+          <div class="annotation-quote">{{ note.quote }}</div>
+          <pre class="reply-text">{{ note.note }}</pre>
+        </div>
+      </div>
+    </div>
+
+    <!-- Notes of the draft: written on the Agent's text but never sent -->
+    <div v-if="hasDraftNotes" class="q-block with-divider annotations" data-draft-annotations>
+      <div class="q-header"><span class="annotations-label">{{ t("history.annotations") }}</span> <span class="draft-tag">{{ t("history.draft") }}</span></div>
+      <div v-for="(note, i) in draft!.annotations" :key="i" class="annotation">
         <span class="annotation-num">{{ i + 1 }}</span>
         <div class="annotation-body">
           <div class="annotation-quote">{{ note.quote }}</div>
@@ -707,6 +842,68 @@ const thumbs = images.urls;
   color: var(--text-primary);
   white-space: pre-wrap;
   word-break: break-word;
+}
+/* The unsent content of a cancelled ask (docs/specs/popup-draft-on-cancel.md D8): a dashed box under its question, and a
+   line under the status banner that says what it is. */
+.draft-tag {
+  display: inline-flex;
+  align-items: center;
+  padding: 1px 7px;
+  border-radius: 999px;
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.3px;
+  background: color-mix(in srgb, var(--accent) 16%, transparent);
+  color: var(--accent);
+}
+.draft-line {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 12px;
+  border-radius: var(--radius-sm, 8px);
+  background: color-mix(in srgb, var(--accent) 7%, transparent);
+  font-size: 12px;
+}
+.draft-line-text {
+  flex: 1 1 auto;
+  min-width: 0;
+  font-weight: 600;
+  color: var(--text-primary);
+}
+.draft-line-state {
+  flex: 0 0 auto;
+  color: var(--text-secondary);
+}
+.draft-line-state.loaded {
+  color: var(--accent);
+}
+.draft-block {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: var(--space-2);
+  padding: 10px 12px;
+  border: 1px dashed color-mix(in srgb, var(--accent) 45%, transparent);
+  border-radius: var(--radius-sm, 8px);
+  background: color-mix(in srgb, var(--accent) 4%, transparent);
+}
+.draft-block > .reply-block {
+  align-self: stretch;
+}
+.draft-options {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.draft-option {
+  display: inline-flex;
+  align-items: center;
+  padding: 2px 9px;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--accent) 14%, transparent);
+  color: var(--text-primary);
+  font-size: 12px;
 }
 /* Notes written on the Agent's text */
 .annotations-label {

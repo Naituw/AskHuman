@@ -8,12 +8,16 @@ final class AskHumanRequestConnectionUITests: XCTestCase {
 
     override func setUp() async throws { continueAfterFailure = false }
 
-    private func launch(request: String, scenario: String = "syncing") {
+    /// `summaries`: the requests are the Macs' summaries, without the full text the pages are made of (`-AHSummaries`).
+    /// `link`: the Macs go to that link at the start (`-AHLink`).
+    private func launch(request: String, scenario: String = "syncing", summaries: Bool = false, link: String? = nil) {
         app = XCUIApplication()
         app.launchArguments = ["-AHMock", "YES", "-AHScenario", scenario, "-AHLatency", "0.05",
                                "-AHCached", "YES", "-AHSyncDelay", "18", "-AHOpen", request,
                                "-AHWebMarkdown", "NO", "-AHAutoAdvance", "NO",
                                "-AppleLanguages", "(\(language))", "-AppleLocale", language == "en" ? "en_US" : "zh_CN"]
+            + (summaries ? ["-AHSummaries", "YES"] : [])
+            + (link.map { ["-AHLink", $0] } ?? [])
         app.launch()
         _ = require("request-connection")
     }
@@ -75,5 +79,35 @@ final class AskHumanRequestConnectionUITests: XCTestCase {
             XCTAssertFalse(button.isEnabled)
             shot(request == "req-select" ? "answer-retrying" : "confirm-retrying")
         }
+    }
+
+    // MARK: a request whose full text has not come
+
+    func testALoadingRequestSaysWhyNothingLoadsUntilTheLinkIsUp() {
+        launch(request: "req-select", summaries: true)
+        XCTAssertEqual(require("request-connection").label, localized("Connecting…", "正在连接…"))
+        XCTAssertFalse(element("request-loading").exists, "nothing is on its way before the link is up")
+        shot("loading-connecting")
+        // Once the Macs have answered the text is the only thing it waits for, and the page says so.
+        XCTAssertEqual(require("request-loading", timeout: 25).label, localized("Loading the full request…", "正在加载完整请求…"))
+        XCTAssertFalse(element("request-connection").exists)
+        shot("loading-linked")
+    }
+
+    func testALoadingRequestSaysWhenTheConnectionIsInterrupted() {
+        launch(request: "req-select", scenario: "offline", summaries: true)
+        XCTAssertEqual(require("request-connection").label, localized("Connection interrupted. Retrying…", "连接已中断，正在重试…"))
+        XCTAssertFalse(element("request-loading").exists)
+        shot("loading-retrying")
+    }
+
+    func testALoadingRequestOfAnOfflineMacSaysItLoadsWhenTheMacIsBack() {
+        launch(request: "req-select", scenario: "demo", summaries: true, link: "macOffline")
+        XCTAssertEqual(
+            require("request-connection").label,
+            localized("The Mac is offline. The request loads when it is back.", "Mac 已离线，恢复后会自动加载这条请求。")
+        )
+        XCTAssertFalse(element("request-loading").exists)
+        shot("loading-mac-offline")
     }
 }

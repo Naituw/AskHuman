@@ -18,12 +18,16 @@ struct HistoryScreen: View {
                 HistoryList()
                     .awayStrip()
                     .navigationDestination(for: String.self) { id in
-                        if let entry = store.history.first(where: { $0.id == id }) {
-                            HistoryDetailScreen(entry: entry)
-                        } else {
-                            ContentUnavailableView("Entry removed", systemImage: "trash")
+                        Group {
+                            if let entry = store.history.first(where: { $0.id == id }) {
+                                HistoryDetailScreen(entry: entry)
+                            } else {
+                                ContentUnavailableView("Entry removed", systemImage: "trash")
+                            }
                         }
+                        .prefersToolbarItemsOverTabBar()
                     }
+                    .prefersToolbarItemsOverTabBar()
             }
         }
     }

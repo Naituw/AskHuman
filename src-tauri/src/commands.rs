@@ -2,7 +2,6 @@
 
 use crate::app::AppState;
 use crate::config::{AppConfig, ThemeMode, WindowEffect};
-use crate::integrations::cursor_hook;
 use crate::models::{InteractionRequest, QuestionAnswer};
 use crate::telegram::TelegramClient;
 use serde::{Deserialize, Serialize};
@@ -474,6 +473,77 @@ pub async fn popup_inbox_idle(app: AppHandle) -> Result<(), String> {
     }
     inbox.idle(&app);
     Ok(())
+}
+
+/// The page's reply to a `popup-inbox-terminal` event that asked for the draft (spec
+/// `popup-draft-on-cancel` D5): what the card held when its caller went away, or `None` when it
+/// held nothing or was already gone. Always settles the host's record of that request, so nothing
+/// waits on a page that has nothing to give. A report for a request the host is not keeping a
+/// draft for (late, repeated) is ignored.
+#[tauri::command]
+pub async fn popup_inbox_draft(
+    app: AppHandle,
+    request_id: String,
+    draft: Option<crate::app::popup_draft::DraftSave>,
+) -> Result<(), String> {
+    let inbox = app
+        .try_state::<crate::app::popup_inbox::Inbox>()
+        .ok_or("popup inbox is unavailable")?;
+    let Some(key) = inbox.pending_draft(&request_id) else {
+        return Ok(());
+    };
+    if let Some(save) = draft {
+        let id = request_id.clone();
+        let lang = crate::i18n::Lang::current();
+        let kept = tauri::async_runtime::spawn_blocking(move || {
+            crate::app::popup_draft::keep(&id, key, save, lang)
+        })
+        .await
+        .unwrap_or(false);
+        crate::daemon::lifecycle::log_runtime_event(
+            "popup_host",
+            if kept { "draft_kept" } else { "draft_not_kept" },
+            Some(&request_id),
+        );
+    }
+    inbox.settle_draft(&request_id);
+    Ok(())
+}
+
+/// A new card asks whether an abandoned ask of the same session and question left a draft for it
+/// (spec `popup-draft-on-cancel` D6). `None` when there is nothing to load: the card names no
+/// session, nothing matches, or the draft was taken already. The card that was closed a moment ago
+/// may still be handing its draft to the history, so a draft being kept under the same question is
+/// waited for first (bounded, event-driven).
+#[tauri::command]
+pub async fn popup_draft_claim(
+    app: AppHandle,
+    request_id: String,
+) -> Result<Option<crate::app::popup_draft::DraftLoad>, String> {
+    let inbox = app
+        .try_state::<crate::app::popup_inbox::Inbox>()
+        .ok_or("popup inbox is unavailable")?;
+    let Some(key) = inbox
+        .request(&request_id)?
+        .draft_key
+        .filter(|key| key.session_key.is_some())
+    else {
+        return Ok(None);
+    };
+    inbox.drafts_kept(Some(&key)).await;
+    let id = request_id.clone();
+    let loaded =
+        tauri::async_runtime::spawn_blocking(move || crate::app::popup_draft::claim(&key, &id))
+            .await
+            .map_err(|error| error.to_string())?;
+    if loaded.is_some() {
+        crate::daemon::lifecycle::log_runtime_event(
+            "popup_host",
+            "draft_loaded",
+            Some(&request_id),
+        );
+    }
+    Ok(loaded)
 }
 
 #[tauri::command]
@@ -967,12 +1037,6 @@ pub async fn todo_attachment_thumbnail(
 #[tauri::command]
 pub fn todos_set_auto(project: String, id: String, auto: bool) -> Option<bool> {
     crate::todos::set_auto(&project, &id, auto)
-}
-
-/// 修改待办正文（GUI 双击编辑）；返回落盘后的文本，条目不存在或空文本返回 None。
-#[tauri::command]
-pub fn todos_set_text(project: String, id: String, text: String) -> Option<String> {
-    crate::todos::set_text(&project, &id, &text)
 }
 
 #[tauri::command]
@@ -2019,17 +2083,6 @@ pub fn popup_preview_menu(
         .map_err(|e| e.to_string())
 }
 
-/// 关闭当前 QuickLook 预览（点击附件以外区域时调用）。
-#[tauri::command]
-pub fn close_preview(#[allow(unused_variables)] app: AppHandle) {
-    #[cfg(target_os = "macos")]
-    {
-        let _ = app.run_on_main_thread(|| {
-            crate::macos_quicklook::hide();
-        });
-    }
-}
-
 /// Read an image file into a base64 data URL. Shared by `read_image_data_url` and the popup's
 /// drop reader (`popup_drop::popup_drop_read_image`), which needs the `io::Error` to say why.
 pub(crate) fn image_data_url(path: &str) -> std::io::Result<String> {
@@ -2126,7 +2179,7 @@ fn open_with_system(path: &str) -> Result<(), String> {
     })
 }
 
-fn image_mime_from_path(path: &str) -> &'static str {
+pub(crate) fn image_mime_from_path(path: &str) -> &'static str {
     let ext = std::path::Path::new(path)
         .extension()
         .and_then(|e| e.to_str())
@@ -3059,9 +3112,11 @@ pub async fn new_task_launch(
     if resolved == crate::codex_desktop::LaunchTarget::Desktop {
         if !matches!(
             parsed_kind,
-            crate::agents::AgentKind::Codex | crate::agents::AgentKind::Cursor
+            crate::agents::AgentKind::Codex
+                | crate::agents::AgentKind::Cursor
+                | crate::agents::AgentKind::Antigravity
         ) {
-            return Err("Only Codex and Cursor support desktop tasks".into());
+            return Err("Only Codex, Cursor and Antigravity support desktop tasks".into());
         }
         let id = operation_id.ok_or("Desktop tasks require a stable operation ID")?;
         uuid::Uuid::parse_str(&id).map_err(|_| "Invalid operation ID")?;
@@ -3109,6 +3164,25 @@ pub async fn new_task_launch(
                 title: None,
                 dry_run: false,
             })
+            .await?;
+        } else if parsed_kind == crate::agents::AgentKind::Antigravity {
+            // The daemon creates it through the folder's sidecar; an `Err` is the reason in the
+            // user's language.
+            crate::client::antigravity_desktop(crate::antigravity_desktop::Operation::Create(
+                crate::antigravity_desktop::CreateRequest {
+                    cwd: workspace,
+                    text: crate::integrations::agent_launch::task_with_attachments(
+                        &task,
+                        &delivery.files,
+                        &[],
+                    ),
+                    permission,
+                    id,
+                    model: choice.model,
+                    title: None,
+                    dry_run: false,
+                },
+            ))
             .await?;
         } else {
             crate::client::codex_desktop(crate::codex_desktop::Operation::Create {
@@ -3478,7 +3552,6 @@ fn apply_collaboration_targets(
 }
 
 /// Compatibility entry point for setup: refresh agents that inherit the default.
-#[tauri::command]
 pub fn collaboration_style_apply_integrations() -> Result<(), String> {
     use crate::agents::AgentKind;
     let config = AppConfig::load_without_secrets();
@@ -3648,22 +3721,6 @@ pub fn set_theme(app: AppHandle, theme: String) {
     apply_theme_to_windows(&app, &theme);
 }
 
-/// 从弹窗导航栏切换主题：写入配置并实时应用到所有窗口。
-#[tauri::command]
-pub fn update_theme(app: AppHandle, theme: String) -> Result<(), String> {
-    // Only the theme changes; load without resolving secrets so save() neither reads nor rewrites
-    // the keychain (blank secret fields are left as-is by save()).
-    let mut cfg = AppConfig::load_without_secrets();
-    cfg.general.theme = match theme.as_str() {
-        "light" => ThemeMode::Light,
-        "dark" => ThemeMode::Dark,
-        _ => ThemeMode::System,
-    };
-    cfg.save().map_err(|e| e.to_string())?;
-    apply_theme_to_windows(&app, &theme);
-    Ok(())
-}
-
 /// Apply native appearance to every WebView window and refresh Solid's native safety backing.
 pub(crate) fn apply_theme_to_windows(app: &AppHandle, theme: &str) {
     let t = match theme {
@@ -3754,152 +3811,14 @@ pub fn speech_available() -> bool {
     false
 }
 
-// ===== Cursor Hook =====
-
-#[derive(Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct HookStatus {
-    installed: bool,
-    /// 已安装但脚本与最新内置版本不一致 → 需更新。
-    outdated: bool,
-    hooks_json_exists: bool,
-    supported: bool,
-}
-
-#[tauri::command]
-pub fn cursor_hook_status() -> HookStatus {
-    HookStatus {
-        installed: cursor_hook::is_installed(),
-        outdated: cursor_hook::needs_update(),
-        hooks_json_exists: cursor_hook::hooks_json_exists(),
-        supported: cursor_hook::supported(),
-    }
-}
-
-#[tauri::command]
-pub fn cursor_hook_install() -> Result<String, String> {
-    cursor_hook::install().map_err(|e| e.to_string())
-}
-
-#[tauri::command]
-pub fn cursor_hook_update() -> Result<String, String> {
-    cursor_hook::update().map_err(|e| e.to_string())
-}
-
-#[tauri::command]
-pub fn cursor_hook_uninstall() -> Result<String, String> {
-    cursor_hook::uninstall().map_err(|e| e.to_string())
-}
-
-#[tauri::command]
-pub fn cursor_hook_reveal() {
-    cursor_hook::reveal();
-}
-
-// ===== Claude Code Hook（PreToolUse 超时延长） =====
-
-use crate::integrations::claude_hook;
-
-/// Claude Code Hook 安装状态（与 Cursor Hook 对称，驱动设置页徽标与按钮）。
-#[derive(Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct ClaudeHookStatus {
-    installed: bool,
-    /// 已安装但脚本与最新内置版本不一致 → 需更新。
-    outdated: bool,
-    settings_exists: bool,
-    supported: bool,
-}
-
-#[tauri::command]
-pub fn claude_hook_status() -> ClaudeHookStatus {
-    ClaudeHookStatus {
-        installed: claude_hook::is_installed(),
-        outdated: claude_hook::needs_update(),
-        settings_exists: claude_hook::settings_exists(),
-        supported: claude_hook::supported(),
-    }
-}
-
-#[tauri::command]
-pub fn claude_hook_install() -> Result<String, String> {
-    claude_hook::install().map_err(|e| e.to_string())
-}
-
-#[tauri::command]
-pub fn claude_hook_update() -> Result<String, String> {
-    claude_hook::update().map_err(|e| e.to_string())
-}
-
-#[tauri::command]
-pub fn claude_hook_uninstall() -> Result<String, String> {
-    claude_hook::uninstall().map_err(|e| e.to_string())
-}
-
-#[tauri::command]
-pub fn claude_hook_reveal() {
-    claude_hook::reveal();
-}
-
 // ===== Agent 全局规则（Cursor / Claude Code / Codex） =====
 
 use crate::integrations::agent_rules::{self, AgentTarget};
-
-/// Rules 安装状态（驱动设置页 Agent 分组的徽标与按钮）。
-#[derive(Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct RuleStatus {
-    installed: bool,
-    /// 已安装但提示词正文与最新内置版本不一致 → 需更新。
-    outdated: bool,
-    /// 展示用文件路径（home 折叠为 ~）。
-    path: String,
-    supported: bool,
-}
 
 fn parse_agent(agent: &str) -> Result<AgentTarget, String> {
     AgentTarget::parse(agent).ok_or_else(|| {
         crate::i18n::tr(crate::i18n::Lang::current(), "cmd.unknownAgent").to_string()
     })
-}
-
-#[tauri::command]
-pub fn agent_rule_status(agent: String) -> Result<RuleStatus, String> {
-    let a = parse_agent(&agent)?;
-    if a == agent_rules::AgentTarget::Antigravity {
-        let (_, updates, installed) =
-            agent_mode::antigravity_status().map_err(|e| e.to_string())?;
-        return Ok(RuleStatus {
-            installed,
-            outdated: updates.rule,
-            path: agent_rules::display_path(a),
-            supported: true,
-        });
-    }
-    Ok(RuleStatus {
-        installed: agent_rules::is_installed(a),
-        outdated: agent_rules::needs_update(a),
-        path: agent_rules::display_path(a),
-        supported: agent_rules::supported(a),
-    })
-}
-
-#[tauri::command]
-pub fn agent_rule_install(agent: String) -> Result<String, String> {
-    let a = parse_agent(&agent)?;
-    agent_rules::install(a).map_err(|e| e.to_string())
-}
-
-#[tauri::command]
-pub fn agent_rule_update(agent: String) -> Result<String, String> {
-    let a = parse_agent(&agent)?;
-    agent_rules::update(a).map_err(|e| e.to_string())
-}
-
-#[tauri::command]
-pub fn agent_rule_uninstall(agent: String) -> Result<String, String> {
-    let a = parse_agent(&agent)?;
-    agent_rules::uninstall(a).map_err(|e| e.to_string())
 }
 
 #[tauri::command]
@@ -3920,7 +3839,7 @@ pub fn agent_rule_open(agent: String) -> Result<(), String> {
 
 use crate::integrations::{
     agent_ask_question, agent_context_recovery, agent_delegated, agent_mode, agent_permission,
-    agent_stop, mcp_config,
+    agent_stop, antigravity_plugin, mcp_config,
 };
 
 /// 某家 Agent 的模式聚合状态（驱动设置页三态分段控件 + 产物清单）。
@@ -3964,6 +3883,12 @@ pub struct AgentModeStatus {
     agent_version: Option<String>,
     minimum_version: Option<String>,
     version_supported: bool,
+    /// Antigravity only: the user switched the AskHuman plugin off inside Antigravity, so it does
+    /// not run. Read from the host's configuration; nothing here writes it.
+    host_plugin_disabled: bool,
+    /// Antigravity MCP mode only: whether the user's "always allow" list covers the MCP tool
+    /// (`None` when the question does not apply). A hint, since the host's format is private.
+    mcp_grant: Option<bool>,
 }
 
 #[tauri::command]
@@ -3990,6 +3915,8 @@ fn agent_mode_status_sync(agent: &str) -> Result<AgentModeStatus, String> {
     let recovery = agent_context_recovery::status(a, mode);
     let permission_needs_update = permission.needs_update;
     let mcp_supported = mcp_config::supported(a);
+    let host = (a == agent_rules::AgentTarget::Antigravity && mode != agent_mode::Mode::None)
+        .then(antigravity_plugin::host_view);
     Ok(AgentModeStatus {
         mode: mode.as_str().to_string(),
         needs_update: updates.rule || updates.hook || updates.mcp,
@@ -4027,6 +3954,10 @@ fn agent_mode_status_sync(agent: &str) -> Result<AgentModeStatus, String> {
         agent_version: None,
         minimum_version: None,
         version_supported: true,
+        host_plugin_disabled: host.is_some_and(|host| host.plugin_disabled),
+        mcp_grant: host
+            .filter(|_| mode == agent_mode::Mode::Mcp)
+            .map(|host| host.mcp_allowed),
     })
 }
 
@@ -4162,12 +4093,6 @@ fn parse_agent_kind(agent: &str) -> Result<AgentKind, String> {
 }
 
 #[tauri::command]
-pub fn agent_lifecycle_status(agent: String) -> Result<agent_lifecycle::LifecycleStatus, String> {
-    let k = parse_agent_kind(&agent)?;
-    Ok(agent_lifecycle::status(k))
-}
-
-#[tauri::command]
 pub fn agent_lifecycle_install(app: AppHandle, agent: String) -> Result<String, String> {
     let k = parse_agent_kind(&agent)?;
     let msg = agent_lifecycle::install(k).map_err(|e| e.to_string())?;
@@ -4200,31 +4125,6 @@ pub fn agent_force_idle(session_id: String) {
 }
 
 // ===== Agent 插话（spec agent-interject）=====
-
-/// 打开某 agent 的插话 composer 窗口（AgentsView「发送消息」按钮）：路由到统一宿主
-/// （每 session 全局单窗），失败兜底本进程建窗。`kind`/`cwd` 仅用于窗口头部展示。
-#[tauri::command]
-pub fn open_interject(
-    app: AppHandle,
-    session_id: String,
-    kind: Option<String>,
-    cwd: Option<String>,
-) -> Result<(), String> {
-    let target = crate::gui_host::InterjectTarget {
-        session: session_id,
-        agent: kind,
-        cwd,
-    };
-    route_open_window(
-        app,
-        crate::gui_host::WindowKind::Interject,
-        false,
-        None,
-        Some(target),
-        None,
-    );
-    Ok(())
-}
 
 /// 插话窗口初始化负载：主题 + 语言 + 待送达预填全文、条数与附件。
 #[derive(Serialize)]
@@ -5362,7 +5262,7 @@ pub async fn update_get_notes(aggregate: bool) -> Result<String, String> {
 }
 
 /// 应用更新：把新二进制落盘（不 restart；换新交给 daemon drain）。下载进度经
-/// `update_download_progress` 事件回传；完成发 `update_apply_finished`。
+/// `update_download_progress` 事件回传。
 #[tauri::command]
 pub async fn update_apply(app: AppHandle) -> Result<(), String> {
     crate::update::ensure_automatic_apply_allowed().map_err(|e| e.to_string())?;
@@ -5374,7 +5274,6 @@ pub async fn update_apply(app: AppHandle) -> Result<(), String> {
     updater.apply(Some(cb)).await.map_err(|e| e.to_string())?;
     crate::update::state::set_pending(true);
     crate::client::notify_update_applied().await;
-    let _ = app.emit("update_apply_finished", ());
     #[cfg(windows)]
     app.exit(0);
     Ok(())
@@ -5387,10 +5286,13 @@ pub fn update_prepare() -> Result<(), String> {
     crate::update::spawn_manual_prepare().map_err(|error| error.to_string())
 }
 
-/// 忽略某版本（不再主动弹该版本提示；设置内手动检查可重置）。
+/// Stop proactively prompting for one version (spec D9). Settings still lists it and a manual
+/// check clears the record. The running daemon reloads the persisted state, so every open popup
+/// and the tray drop the prompt at once; a stopped daemon is not started for it.
 #[tauri::command]
-pub fn update_dismiss(version: String) {
+pub async fn update_dismiss(version: String) {
     crate::update::state::dismiss(&version);
+    crate::client::notify_update_state_changed().await;
 }
 
 /// 设置内更新后「重启设置页面」：用新二进制重开设置进程，再退出当前设置窗。
@@ -5412,77 +5314,6 @@ pub fn restart_settings(app: AppHandle) -> Result<(), String> {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn public_rule_update_rejects_antigravity_generic_writer() {
-        let error = agent_rule_update("antigravity".to_string()).unwrap_err();
-        assert!(error.contains("AskHuman agents update antigravity"));
-        for variant in [agent_rules::Variant::Cli, agent_rules::Variant::Mcp] {
-            assert!(
-                agent_rules::update_variant(agent_rules::AgentTarget::Antigravity, variant)
-                    .is_err()
-            );
-        }
-    }
-
-    #[cfg(unix)]
-    #[test]
-    fn public_rule_commands_preserve_antigravity_mcp_bundle() {
-        use std::os::unix::fs::PermissionsExt;
-        const CHILD: &str = "ASKHUMAN_TEST_RULE_COMMAND_CHILD";
-        if std::env::var_os(CHILD).is_none() {
-            let root = tempfile::tempdir().unwrap();
-            // Keep the child HOME free of temporary-root aliases such as macOS /var.
-            let root_path = root.path().canonicalize().unwrap();
-            let state = root_path.join("state");
-            std::fs::create_dir(&state).unwrap();
-            std::fs::set_permissions(&state, std::fs::Permissions::from_mode(0o700)).unwrap();
-            let result = std::process::Command::new(std::env::current_exe().unwrap())
-                .args([
-                    "--exact",
-                    "commands::tests::public_rule_commands_preserve_antigravity_mcp_bundle",
-                    "--nocapture",
-                ])
-                .env(CHILD, "1")
-                .env("HOME", &root_path)
-                .env("ASKHUMAN_HOME", state)
-                .output()
-                .unwrap();
-            assert!(
-                result.status.success(),
-                "stdout: {}\nstderr: {}",
-                String::from_utf8_lossy(&result.stdout),
-                String::from_utf8_lossy(&result.stderr)
-            );
-            return;
-        }
-        let target = agent_rules::AgentTarget::Antigravity;
-        agent_mode::set(target, agent_mode::Mode::Mcp).unwrap();
-        let files = [
-            crate::paths::antigravity_rule_file(),
-            crate::paths::antigravity_mcp_config_json(),
-            crate::paths::integration_state_file(),
-        ];
-        let before = files.each_ref().map(|path| std::fs::read(path).unwrap());
-        for variant in [agent_rules::Variant::Cli, agent_rules::Variant::Mcp] {
-            assert!(agent_rules::install_variant(target, variant).is_err());
-            assert!(agent_rules::update_variant(target, variant).is_err());
-            assert_eq!(
-                files.each_ref().map(|path| std::fs::read(path).unwrap()),
-                before
-            );
-        }
-        for command in [agent_rule_install, agent_rule_update, agent_rule_uninstall] {
-            assert!(command("antigravity".to_string()).is_err());
-            assert_eq!(
-                files.each_ref().map(|path| std::fs::read(path).unwrap()),
-                before
-            );
-            let (mode, _, installed) = agent_mode::antigravity_status().unwrap();
-            assert_eq!(mode, agent_mode::Mode::Mcp);
-            assert!(installed);
-        }
-    }
 
     #[cfg(unix)]
     #[test]
@@ -5516,7 +5347,7 @@ mod tests {
         config.general.collaboration_style = CollaborationStyle::Custom;
         config.general.collaboration_style_custom_text = "default A".to_string();
         config.save_to(&crate::paths::config_file()).unwrap();
-        agent_rules::install_variant(AgentTarget::Cursor, Variant::Cli).unwrap();
+        agent_rules::install_variant_unlocked(AgentTarget::Cursor, Variant::Cli).unwrap();
         crate::integrations::grok_skill::install().unwrap();
         let codex_file = crate::paths::codex_agents_md();
         std::fs::create_dir_all(codex_file.parent().unwrap()).unwrap();
@@ -6098,6 +5929,27 @@ pub async fn cursor_launch_status(
     })
     .await
     .map_err(|e| e.to_string())
+}
+
+/// Where a new Antigravity task would run now: the App through a sidecar, or `agy` in a terminal.
+#[tauri::command]
+pub async fn antigravity_launch_status(
+    force: Option<bool>,
+) -> Result<crate::antigravity_desktop::LaunchStatus, String> {
+    tokio::task::spawn_blocking(move || {
+        crate::antigravity_desktop::launch_status(force.unwrap_or(false))
+    })
+    .await
+    .map_err(|e| e.to_string())
+}
+
+/// What Settings does with the sidecars AskHuman keeps for the Antigravity App: list them, remove
+/// one or all, change the rules a whitelisted one has.
+#[tauri::command]
+pub async fn antigravity_desktop(
+    operation: crate::antigravity_desktop::Operation,
+) -> Result<serde_json::Value, String> {
+    crate::client::antigravity_desktop(operation).await
 }
 
 #[tauri::command]

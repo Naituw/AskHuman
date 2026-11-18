@@ -28,7 +28,7 @@
 - **独立 Popup Helper**（可选 `channels.popup.windowMode=independent`）：每请求一个窗口，沿用旧冷热池及焦点仲裁；模式切换只影响新请求，保留在途窗口和草稿。
 - **GUI Host**（macOS/Linux/Windows 每用户至多 1 个、长命）：承载菜单栏/托盘，以及全局唯一的设置、历史、待办、Agent、Interject、新建任务与 Fork 窗口；各打开入口通过自有 IPC 路由到宿主。
 
-**关键约定**：每种 IM 渠道全局只保留一条连接；每个请求仅首个终态回答生效；IPC 和运行状态均为用户私有；既有 stdout、结果区块、退出码和配置兼容契约保持不变。Daemon 排空换新见 `docs/specs/daemon-graceful-drain.md`。自身盘上更新在全部在途调用与窗口具备恢复能力时保存原题并即时交接，CLI/窗口重连，IM 接管原卡，iOS 保留草稿与提交；能力不足时保留旧服务并继续受理兼容新题，旧调用结束后接班。macOS/Linux exec 稳定安装入口，不依赖托盘或新 CLI；显式停止、信号和闲退不自启，崩溃自愈仍未提供。恢复身份、可靠首答、交接屏障及首次上线边界见 [即时换新](specs/daemon-live-update.md)。
+**关键约定**：每种 IM 渠道全局只保留一条连接；每个请求仅首个终态回答生效；IPC 和运行状态均为用户私有；既有 stdout、结果区块、退出码和配置兼容契约保持不变。Daemon 排空换新见 `docs/specs/daemon-graceful-drain.md`。自身盘上更新在全部在途调用与窗口具备恢复能力时保存原题并即时交接，CLI/窗口重连，IM 接管原卡，iOS 保留草稿与提交；能力不足时保留旧服务并继续受理兼容新题，旧调用结束后接班。macOS/Linux exec 稳定安装入口，不依赖托盘或新 CLI；显式停止、信号和闲退不自启，崩溃自愈仍未提供。恢复身份、可靠首答、交接屏障及首次上线边界见 [即时换新](specs/daemon-live-update.md)。Daemon 不得因某个渠道卡在建连而不应答：渠道连接放在连接槽里，`Status`、托盘与关停从不等待建连；客户端对 Hello / Status / Stop 各有 5 秒上限，沉默的 Daemon 在 macOS 上会被替换，测不出的二进制指纹不当作「已变化」（[排空 D15–D17、§9](specs/daemon-graceful-drain.md#9-渠道建连卡住时-daemon-仍然应答2026-11-15-事故补充)）。
 
 **多份二进制并存**：握手比较的是二进制内容指纹，所以内容不同的两份 AskHuman（npm 全局安装 + `install.sh` 本地构建等）会轮流把对方的 Daemon 顶掉。Daemon 因此记录每次让位的原因与客户端，并在同一对二进制 10 分钟内互顶 ≥2 次后不再为「内容不同但协议号相同」的客户端让位（hold）；`daemon status`、`doctor` 与 `install.sh` 会指出多份安装、PATH 遮蔽和 hold。设计见同一份 spec 的 D10–D12 与 §6。
 
@@ -92,6 +92,7 @@ AskHuman/
   src-tauri/                 Rust 后端
     Cargo.toml               Rust 依赖与 feature
     vendor/drag/             drag 2.1.1 的本地补丁副本（[patch.crates-io]，只改 objc2 特性声明；原因见 docs/development.md）
+    vendor/tao/              tao 0.35.3 的本地补丁副本（[patch.crates-io]，只改 macOS 的窗口拖动事件；见其中的 ASKHUMAN-PATCH.md）
     tauri.conf.json          Tauri 构建和窗口配置
     capabilities/default.json 窗口能力权限
     src/
@@ -156,6 +157,7 @@ AskHuman/
       popup_drop.rs          Popup 拖入文件：失败带原因与位置类别的图片读取，以及不含路径的拖拽诊断日志
       codex_desktop/               可选 macOS Codex App 原生会话与创建适配器
       cursor_desktop/              可选 macOS Cursor Desktop 会话防护（后台完成续跑拦截与 Agents 窗口运行中会话保护两个独立守卫）、私有运行桥，以及 Agents 窗口新建任务（create/launch）
+      antigravity_desktop/         macOS Antigravity App 路线（规格 antigravity-deep-integration §10.2、§12）：全局 sidecar 的清单 / 注册表（`sidecar`）、App 起的 sidecar 进程（`sidecar_run`，只执行 daemon 下发的固定 `agentapi` 调用）与它和 daemon 的私有连接帧（`link`）、新建任务（`create` 操作与持久回执 `receipt`、`launch` 选路、`runtime` 无焦点启动 App）、对空闲会话发消息（`message`），以及 `config.json` 里 `sidecars.askhuman-*` 的最小读-改-写（`host_config`）
       integrations/agent_launch.rs  新建/Fork 共用一次性 LaunchRecord、readiness 与固定 argv adapter
 
       app/
@@ -219,13 +221,14 @@ AskHuman/
         agent_permission.rs  Claude/Codex 权限审批集成
         cursor_hook.rs       Cursor 超时 Hook 管理
         claude_hook.rs       Claude Code 超时 Hook 管理
-        agent_lifecycle.rs   五家已适配 Agent 的生命周期管理（原生 Hook + Pi Extension；Antigravity 不支持）
+        agent_lifecycle.rs   六家 Agent 的生命周期管理（原生 Hook、Pi Extension、Antigravity 托管插件里的 hooks）
         agent_launch.rs      Agent readiness、一次性启动记录与 Terminal.app / Windows Terminal helper
         agent_start.rs       「这家 Agent 现在能不能启动任务」的唯一判定（CLI 就绪，或 Codex 桌面 App / Cursor Agents 窗口路线可用），手机 / IM / 向导 / 文字向导 / 设置页共用，并给出不能启动时的原因
         agent_rules.rs       Agent 全局 Rules 管理
         agent_subagent_guard.rs  Claude/Codex SubagentStart 提示 Hook
         agent_context_recovery.rs  集成 mode 托管的压缩恢复/会话绑定 Hook
-        antigravity_rule.rs Antigravity 共享规则的严格所有权、恢复日志与 Unix 写入
+        antigravity_plugin.rs Antigravity 托管插件（规则 + MCP + hooks）：实例账本所有权、一次 rename 发布、逐文件原子更新；只读检测宿主是否停用插件
+        antigravity_rule.rs  更早版本的 Antigravity 共享规则（严格所有权、恢复日志）；现在只用于迁移时清理
         codex_protocol.rs    Codex 协议载体（SessionStart Hook）的状态、版本门槛与旧 AGENTS.md 区块迁移
         agent_delegated.rs   「允许被委派的 Codex 运行使用 AskHuman」偏好（delegated-preferences.json）
         grok_skill.rs        Grok interaction-protocol skill 管理
@@ -233,6 +236,7 @@ AskHuman/
         pi_extension.rs      Pi CLI/生命周期/插话/Stop 共用 Extension 管理
         agent_mode.rs        None/CLI/MCP 模式编排
         agent_stop.rs        Agent Stop 结束确认配置
+        antigravity_sidecars.rs  `agents sidecars [list|remove <id>|remove --all]`：AskHuman 为 Antigravity App 管理的 sidecar；另有不进 help 的 `__antigravity-desktop`（stdin JSON 的 `Operation`）与 `__antigravity-sidecar`（App 起的 sidecar 进程）
         login_item.rs        macOS/Linux/Windows GUI Host 与 daemon 登录项
 
       onboarding/            安装后设置向导的后端（spec onboarding）：Agent / 远程渠道 / 后台三域的「已决定」判定（只把用户的明确选择写进 ui-state.json 的 `onboarding` 字段，其余从机器现状推导）、Agent 表 · 检测 · 应用 · 将改文件预览、环境体检、终端文字流程 `text.rs`，以及可选验证 `probe*.rs`
@@ -252,10 +256,14 @@ AskHuman/
         runtime/
           mod.rs             状态与类型、serve 主循环、连接分发与请求提交
           live_update.rs     可恢复调用、恢复屏障、渠道暂停/接管与后台自动交接
+          inherited.rs       换代继承来的子进程：启动时接管并回收（不留僵尸），被放弃的接管宿主据此终止
+          conn_slot.rs       渠道连接槽（四个 IM Router、iOS Gateway）：已发布连接与建连互不阻塞，读者永不等建连
           watch.rs           watch 订阅持久化、tick 刷新与卡片回调
           select.rs          跨渠道单选卡发送、路由与回调分发
           inbound.rs         IM 入站命令层与共享命令处理
           fork.rs            IM /fork 选择、权限、指令与启动流程
+          antigravity_link.rs  App 起的 sidecar 连接的 daemon 端：登记、下发固定命令、收结果
+          antigravity_tree.rs  Antigravity 子会话归并成树（D17）：从父会话 transcript 认出子会话，根在整棵树都 `Stop(fullyIdle)` 且没有未读跨会话消息后才算结束，Stop 门据此放行
           todo.rs            IM /todo·/todo-rm·/todo-auto 命令与待办管理卡
           subs.rs            GUI/托盘/Agent 订阅广播与 Interject 连接
           detect.rs          渠道自动识别流程
@@ -282,7 +290,7 @@ AskHuman/
         control.rs           原会话消息的一次性回执与 Pi 控制连接
         context_recovery.rs  压缩后提示、MCP token 注入与 Grok pending 上报；Codex 协议注入决策
         delegated.rs         Codex 委派运行判定（信号、有界探测、会话标记）与静默策略
-        title.rs             五家会话标题解析
+        title.rs             会话标题解析（五家取原生标题；Antigravity 没有可读的原生标题，取会话 transcript 里的首条用户请求）
         session_info.rs      原生工作区 / 模型 / 上下文与 Hook 私有快照
         activity.rs          transcript 尾部活动解析
         session_paths.rs     Pi 自定义 sessionDir transcript 路径校验与缓存
@@ -292,6 +300,8 @@ AskHuman/
         registry.rs          Agent 状态推导、持久化与快照
         interject.rs         插话队列、等待与持久化
         stop.rs              Stop Hook 捕获与原生 continuation
+        antigravity_hook.rs  Antigravity 三个 hook 的载荷 → 统一生命周期事件；`PreInvocation` 的插话注入与 `Stop` 的确认门；静默契约（退出码 0、stdout 为空）
+        antigravity_workspaces.rs  只读 Antigravity 摘要库，给 IM 新任务的最近目录冷启动补种
 
   cliff.toml                 git-cliff 配置
   docs/release-notes/        每版本可选的 release notes 覆盖文件
@@ -322,10 +332,10 @@ CLI、Popup Host、GUI Host 与 Daemon 共用 NDJSON 消息类型（`ClientMsg` 
 
 +1 的代价是每个跨号的客户端与 Daemon 互相让位、旧客户端无法与新 Daemon 共存，所以能用「加可选字段」解决的不要 +1。+1 时：改常量，在下面的历史补一行（日期、提交、变更点），并在 `daemon-graceful-drain.md` 记下升级过渡期的影响。
 
-**历史**（当前为 5）：1 = Daemon 骨架（`9660532`，2026-06-07）；2 = 结构化确认（`2c76c44`，2026-07-11）；3 = 共享作答窗口，新增 `PopupHostHello` / `PopupHostIdle` / `PopupHostAccepted` / `PopupSubmissionAck` / `PopupRequestKind` 等（`799334f`，2026-10-06）；4 = iOS 渠道管理，新增 `ClientMsg::Ios` / `ServerMsg::Ios`（`IosOp` / `IosResult`）（`128bffd`，2026-10-25）；5 = Cursor Desktop 新建任务，新增 `ClientMsg::CursorDesktop`（载荷 `Operation`）/ `ServerMsg::CursorDesktop`（载荷 `Result<Value, String>`），与 Codex Desktop 同构（`2600561`，2026-11-03）；协议 5 还含 Mac 控制台给 Cursor Desktop 聊天直发消息的 `ClientMsg::AgentMessage`（载荷 `ConsoleMessage`）/ `ServerMsg::AgentMessage`（载荷 `Result<Value, String>`）（2026-11-04）；还有离开模式的 `ClientMsg::Away`（载荷 `AwayOp`）/ `ServerMsg::Away`（载荷 `AwaySnapshot`）（2026-11-05；`Answer.directive`、`TaskRequest.escalate`、`AskRequest.escalated` / `quick_reply` / `quick_replies` 与托盘 / Agent 快照里的 `away` 都是带 `#[serde(default)]` 的可选字段，不另计）——这些变体在 0.17.0 发布前一并纳入 5；5 已随 0.17.0 发布，之后新增旧端可能收到的变体就必须 +1。对应发布版：0.4.3–0.8.2 为 1，0.9.1–0.13.2 为 2，0.14.2–0.15.1 为 3，0.16.0 为 4，0.17.0 起为 5。排空相关的增量（`HelloStatus::Draining`、`ServerMsg::Draining`、`Stop.force`、`StatusInfo.draining`）和 `StatusInfo` 的二进制信息字段都没有 +1。
+**历史**（当前为 6）：1 = Daemon 骨架（`9660532`，2026-06-07）；2 = 结构化确认（`2c76c44`，2026-07-11）；3 = 共享作答窗口，新增 `PopupHostHello` / `PopupHostIdle` / `PopupHostAccepted` / `PopupSubmissionAck` / `PopupRequestKind` 等（`799334f`，2026-10-06）；4 = iOS 渠道管理，新增 `ClientMsg::Ios` / `ServerMsg::Ios`（`IosOp` / `IosResult`）（`128bffd`，2026-10-25）；5 = Cursor Desktop 新建任务，新增 `ClientMsg::CursorDesktop`（载荷 `Operation`）/ `ServerMsg::CursorDesktop`（载荷 `Result<Value, String>`），与 Codex Desktop 同构（`2600561`，2026-11-03）；协议 5 还含 Mac 控制台给 Cursor Desktop 聊天直发消息的 `ClientMsg::AgentMessage`（载荷 `ConsoleMessage`）/ `ServerMsg::AgentMessage`（载荷 `Result<Value, String>`）（2026-11-04）；还有离开模式的 `ClientMsg::Away`（载荷 `AwayOp`）/ `ServerMsg::Away`（载荷 `AwaySnapshot`）（2026-11-05；`Answer.directive`、`TaskRequest.escalate`、`AskRequest.escalated` / `quick_reply` / `quick_replies` 与托盘 / Agent 快照里的 `away` 都是带 `#[serde(default)]` 的可选字段，不另计）——这些变体在 0.17.0 发布前一并纳入 5；5 已随 0.17.0 发布，之后新增旧端可能收到的变体就必须 +1；6 = Antigravity App 新建任务的 sidecar 通道，新增 `ClientMsg::AntigravityDesktop`（载荷 `Operation`：列出 / 移除 sidecar、改规则）/ `ServerMsg::AntigravityDesktop`（载荷 `Result<Value, String>`），以及 App 起的 sidecar 进程与 Daemon 之间的长连接帧 `ClientMsg::AntigravitySidecar`（载荷 `Up`：报到、命令结果）/ `ServerMsg::AntigravitySidecar`（载荷 `Down`：欢迎、拒绝、命令）（2026-11-16，未发布）。sidecar 连接**不发 `Hello`**（旧构建的 sidecar 不能让新 Daemon 让位）、**不保活**，帧的演进由它自己的 `LINK_VERSION` 协商，不占 `PROTOCOL_VERSION`。对应发布版：0.4.3–0.8.2 为 1，0.9.1–0.13.2 为 2，0.14.2–0.15.1 为 3，0.16.0 为 4，0.17.0 起为 5。排空相关的增量（`HelloStatus::Draining`、`ServerMsg::Draining`、`Stop.force`、`StatusInfo.draining`）和 `StatusInfo` 的二进制信息字段都没有 +1。Antigravity 的 Stop 确认门同样没有 +1：`AgentEvent.stop_gate` 是带默认值的可选字段，`InterjectAction::Skip` 只会作为该查询的答案出现；旧 Daemon 忽略字段、不作答，hook 把它读成「没有信息」并放行（2026-11-16）。
 
 恢复能力另用带默认值的 `StatusInfo.recoveryVersion` 协商，`Recover` / `Recovery` 信封只在声明能力的连接间使用。
-旧端始终走原入口并只收到原消息，所以保持协议号 5。稳定恢复入口绕过指纹让位，避免存活旧 CLI/窗口将新后台换回旧构建。
+旧端始终走原入口并只收到原消息，所以恢复能力本身不改变协议号。稳定恢复入口绕过指纹让位，避免存活旧 CLI/窗口将新后台换回旧构建。
 每次扩展继续审计全部发送点和窗口广播，具体约束见 [即时换新](specs/daemon-live-update.md)。
 
 ## 前端 ↔ 后端命令（`commands.rs` ↔ `lib/ipc.ts`）
@@ -333,19 +343,19 @@ CLI、Popup Host、GUI Host 与 Daemon 共用 NDJSON 消息类型（`ClientMsg` 
 - 弹窗：按 request ID 的 `popup_init`、`submit_popup`、`confirm_popup`、`cancel_popup`；共享容器 `popup_inbox_init` / `activate` / `layout` / `commit` / `idle`
 - 附件面板（Popup 提问附件与历史详情）：`popup_preview_prepare` / `layout`、`popup_preview_read` / `cancel_read` / `thumbnail`、`popup_preview_reveal` / `menu`（命令名沿用；`request_id` 实为所有者 ID：Popup 请求 ID，或历史窗口的 `history:<条目 ID>`）；原文件打开仍用 `open_path`
 - Popup 拖入文件（`popup_drop.rs`）：`popup_drop_read_image`（读拖入的图片，失败时拒绝出 `{reason, where, message}`）、`popup_drop_log`（把每次拖拽的结果写进 `daemon.log` 的 `askhuman_drop` 行，只记标签与计数，不记路径和文件名）
-- 其他附件入口：`preview_attachments`、`close_preview`、`read_image_data_url`、`file_icon_data_url`、`show_attachment_menu`、`attachments_exist`（逐路径答复原文件是否还在，只有 `NotFound` 算不存在；弹窗与历史的胶囊据此标出已不存在的附件并拒绝拖出）
+- 其他附件入口：`preview_attachments`、`read_image_data_url`、`file_icon_data_url`、`show_attachment_menu`、`attachments_exist`（逐路径答复原文件是否还在，只有 `NotFound` 算不存在；弹窗与历史的胶囊据此标出已不存在的附件并拒绝拖出）
 - 离开模式与快捷回复：`away_end`（弹窗 / 控制台里「结束离开模式」，经 `client::away_op`）、`quick_reply_defaults`（设置卡的出厂预设，中英各一份）、`capsule_init` / `capsule_resize` / `capsule_dismiss_welcome` / `capsule_focus_waiting`（桌面胶囊窗口，仅 macOS）
-- 设置：`get_settings`、`save_settings`、`get_prompt`、`set_theme`、`update_theme`、`open_settings`、`popup_sound_support`、`play_popup_sound`
+- 设置：`get_settings`、`save_settings`、`get_prompt`、`set_theme`、`open_settings`、`popup_sound_support`、`play_popup_sound`
 - 历史：`open_history`、`history_init`、`get_history`、`get_history_projects`、`history_count`、`trim_history`、`resolve_history_session_titles`、`delete_history_entries`、`clear_all_history`
-- Cursor / Claude 超时 Hook 与 Pi Extension：前两者保留专用命令；统一设置入口走 `agent_mode_*` 与 `agent_hook_reveal` / `open`
-- Agent Rules：`agent_rule_status` / `install` / `update` / `uninstall` / `reveal` / `open`
+- Cursor / Claude 超时 Hook 与 Pi Extension：统一设置入口走 `agent_mode_*` 与 `agent_hook_reveal` / `open`
+- Agent Rules：`agent_rule_reveal` / `open`（安装、更新与卸载走 `agent_mode_*`）
 - Agent 模式与配置文件：`agent_mode_status` / `set` / `update`、`mcp_config_reveal` / `open`、`agent_hook_reveal` / `open`、`mcp_command_path`（`agent_mode_status` 只聚合本地集成产物；Agent CLI 是否在 PATH / Pi 版本由 `agent_task_readiness` 负责，它同时带上统一的「现在能不能启动任务」结论 `startable` / `startRoute`，见 `integrations/agent_start.rs`）
 - 渠道测试与识别：`telegram_test`；钉钉、飞书、Slack 各自的 `*_test` / `*_detect_prepare` / `*_detect_wait`；共用 `detect_cancel`
 - iOS 渠道（设置页「实验」Tab）：`ios_op`（状态 / 配对 / 撤销 / 重命名，经 IPC 的 `ClientMsg::Ios`）、`ios_test`、`ios_pair_qr`、`ios_connection_export` / `ios_connection_import`
 - iCloud 待办同步（设置页「实验」Tab 与待办窗口侧栏）：`todo_sync_*`（状态 / 启用 / 停用 / 立即同步 / 清除 / 修复，以及 iCloud 模式窗口用的项目列表、详情与移除；全部在阻塞线程上跑），见 `docs/overview-todo-sync.md`
 - 版本自更新：`get_app_version`、`update_check`、`update_get_notes`、`update_apply`、`update_dismiss`、`popup_update_state`、`restart_settings`
 - Agent 生命周期：`agents_init`、`agent_force_idle`；自动集成卡内的 capability 通过
-  `agent_mode_status` 聚合，并由 `agent_lifecycle_status` / `install` / `uninstall` 查询或切换
+  `agent_mode_status` 聚合，并由 `agent_lifecycle_install` / `uninstall` 切换
 - Agent 控制台（spec gui-agent-console）：`agents_focus`（焦点会话，daemon 推 `agent-detail` 帧）、`focus_request`（去回答）、`interject_append` / `interject_peek`（输入框追加与待送达气泡）、`agents_message`（空闲或已结束的 Cursor Desktop 聊天——快照带 `canMessage` 的那些——直接送进原聊天，经 `ClientMsg::AgentMessage`，答复 `accepted` / `rejected` / `unknown`）、`console_transcript`（完整会话分页）、`console_diff_stat` / `console_diff_file` / `console_stage`（项目 diff 状态条与暂存）
 - 新建 Agent 任务（GUI）：`open_new_task`、`new_task_init`、`new_task_projects`(+`_refreshed`)、`project_key_of`、`new_task_launch`
 
@@ -454,11 +464,11 @@ Daemon 里的又一个渠道：手机上的 AskHuman App 回答问题、看 / �
 
 > 需求 `docs/specs/agent-interject.md`，计划 `docs/plans/agent-interject.md`。
 
-- 插话依赖生命周期追踪，对工作中的 Claude Code、Codex、Cursor、Pi 开放；Grok 与 Antigravity 不支持。Pi Extension 在 `tool_call` 等待同一 daemon 裁决，并把消息转换为原生 `{block, reason}`。
+- 插话依赖生命周期追踪，对工作中的 Claude Code、Codex、Cursor、Pi、Antigravity 开放；Grok 不支持。Pi Extension 在 `tool_call` 等待同一 daemon 裁决，并把消息转换为原生 `{block, reason}`。Antigravity 的注入点是 `PreInvocation` hook（每次模型调用前）：队列里有消息就输出 `injectSteps[].userMessage`，composer 打开时 hook 阻塞等待，送达粒度是下一次模型调用；注入文本沿用 `[USER INTERJECTION]` 协议包装（transcript 里是 `SYSTEM_SDK` 的 `USER_INPUT`）；App 与 `agy` 会话都支持工作中注入（`docs/specs/antigravity-deep-integration.md` §10）。
 - Daemon 按 session 维护并持久化待送达队列；GUI composer 整体覆盖，IM `/msg` 追加。
 - Agent 下一次 PreToolUse 读取并原子消费消息；composer 已打开时 hook 可等待提交或取消，热路径不做文件 IO。
 - 排队消息被实际读取后向来源 IM 发阅读回执；即时送达、撤回、覆盖或未消费的消息不回执。
-- 手机另有按原生能力开放的空闲消息（错误卡的「要求继续」走同一条原生通道）：macOS Codex Desktop／Cursor Desktop，以及存活的 Pi Extension；由 `daemon/runtime/agent_control.rs` 联合 `agents/control.rs` 处理，普通工具前插话队列不能唤醒空闲 CLI。registry 标为「已结束」的 Cursor Desktop 聊天（一小时无活动的判定，聊天本身还在）只要仍在 Cursor 的会话库里也算数；Mac 控制台对这类聊天走同一个提交服务直发（快照 `canMessage`，见 `docs/specs/agent-lifecycle-results-and-recovery.md` §5.4）。真实新回合开始后，来源手机只登记该轮的一次结果通知。
+- 手机另有按原生能力开放的空闲消息（错误卡的「要求继续」走同一条原生通道）：macOS Codex Desktop／Cursor Desktop、存活的 Pi Extension，以及 Antigravity App 的空闲／已结束会话（经任一在线 sidecar 的 `agentapi send-message`，没有在线 sidecar 时现建一个无授权的 `askhuman-ctl` 并拉起 App；`agy` 会话没有这条通道；宿主把 `send-message` 的内容当 `SYSTEM_MESSAGE` 交给模型，所以内容前另加固定的 `[USER MESSAGE]` 包装）；由 `daemon/runtime/agent_control.rs` 联合 `agents/control.rs` 处理，普通工具前插话队列不能唤醒空闲 CLI。registry 标为「已结束」的 Cursor Desktop 聊天（一小时无活动的判定，聊天本身还在）只要仍在 Cursor 的会话库里也算数；Mac 控制台对这类聊天走同一个提交服务直发（快照 `canMessage`，见 `docs/specs/agent-lifecycle-results-and-recovery.md` §5.4）。真实新回合开始后，来源手机只登记该轮的一次结果通知。
 - 入口为 Agent 状态窗口、托盘菜单和 IM `/msg`；队列实现位于 `agents/interject.rs`。
 
 ## 项目待办 + whats-next
@@ -466,8 +476,8 @@ Daemon 里的又一个渠道：手机上的 AskHuman App 回答问题、看 / �
 > 规格 `docs/specs/todo-whats-next.md`、`docs/specs/todo-attachments.md`。
 
 - 待办按统一项目身份（可信会话工作区的 git 根 / cwd 回退）归属，`~/.askhuman/state/todos.json` 是唯一数据源：所有进程直读直写 + 文件锁串行化，不依赖 daemon 存活，跨平台。GUI / CLI / MCP 可在创建时或对已有 Todo 独立管理附件；GUI 默认折叠附件摘要，支持新增区 / 每条 Pending Todo 拖入、新增输入框粘贴图片，以及选中行后粘贴剪贴板图片。单文件 ≤10 MiB 由 AskHuman 托管，>10 MiB 保留绝对路径引用（无稳定源路径的剪贴板图片超过阈值则拒绝），每条最多 20 个，并生成最长边 128 px 的图片缓存缩略图。用户可见写操作在落盘失败时必须报错。
-- Agent 完成任务后必须调 `AskHuman --whats-next`（MCP 为 `whats_next` 工具）：固定提问 + 可选的 Agent 建议任务 + 待办 chip + 恒有「结束本轮」；顺序固定为建议任务、待办、结束，总选项最多 10 条。建议任务仅在确有建议时通过 `-o`/`-o!`（MCP `options`）传入，选择结果保持普通 Ask 的 `[selected_options]` 语义；待办派活为 `[user_input]`，准许结束为 `[selected_options]`（带附注的「结束本轮」不算准许结束，只回 `[user_annotations]`，见 `docs/specs/message-annotations.md`），取消为 `[status]`。选中的待办按 id best-effort 出队（Coordinator 汇聚点统一处理）。标记为「自动执行」（⚡）的待办优先级不变：whats-next 时不发卡、直接按队列顺序派发最靠前一条。
-- 送达面：whats-next / 普通提问 Popup 折叠待办区 / Stop 确认卡（兜底）都以选项形式呈现待办（iOS 在提问里另有「待办」卡、What's next 里看完整队列，选中的 id 随回答上报，由 Mac 网关按同一规则并进回答，见 `docs/specs/special-replies.md` D28–D29）；GUI / IM 新建 Agent 任务也可直接执行待办。所有出口在执行前按卡片附件快照与最新 Todo 求交集，托管文件建立请求级交付副本，失效项转为 warning，选项只显示 `【N 个附件】`（支持富文本颜色时为灰色）而不向 IM 上传本地文件。输入面：CLI `todo` 子命令、Popup 内新增、GUI 待办窗口（托盘/AgentsView 入口）、IM `/todo`；IM 创建/管理首版仍只支持文字。
+- Agent 完成任务后必须调 `AskHuman --whats-next`（MCP 为 `whats_next` 工具）：固定提问 + 可选的 Agent 建议任务 + 待办 chip + 恒有「结束本轮」；顺序固定为建议任务、待办、结束，总选项最多 10 条。建议任务由 Agent 默认通过 `-o`/`-o!`（MCP `options`）附上，选择结果保持普通 Ask 的 `[selected_options]` 语义；待办派活为 `[user_input]`，准许结束为 `[selected_options]`（带附注的「结束本轮」不算准许结束，只回 `[user_annotations]`，见 `docs/specs/message-annotations.md`），取消为 `[status]`。选中的待办按 id best-effort 出队（Coordinator 汇聚点统一处理）。标记为「自动执行」（⚡）的待办优先级不变：whats-next 时不发卡、直接按队列顺序派发最靠前一条。
+- 送达面：whats-next / 普通提问 Popup 折叠待办区 / Stop 确认卡（兜底）都以选项形式呈现待办（Popup 与 iOS 上的 Stop 卡是随项目待办实时刷新的队列选项，请求带可选标记 `todo_queue`；iOS 在提问里另有「待办」卡、What's next 里看完整队列，选中的 id 随回答上报，由 Mac 网关按同一规则并进回答，见 `docs/specs/special-replies.md` D28–D29）；GUI / IM 新建 Agent 任务也可直接执行待办。所有出口在执行前按卡片附件快照与最新 Todo 求交集，托管文件建立请求级交付副本，失效项转为 warning，选项只显示 `【N 个附件】`（支持富文本颜色时为灰色）而不向 IM 上传本地文件。输入面：CLI `todo` 子命令、请求页里的页内待办清单（Popup 的折叠待办区 / What's next / Stop 卡的待办行与 iPhone 提问页的待办卡，都能就地选、完成、删除、添加，见 `docs/specs/todo-list-actions.md`）、GUI 待办窗口（托盘/AgentsView 入口，Popup 顶栏的待办按钮也直接打开它）、IM `/todo`；IM 创建/管理首版仍只支持文字。
 - IM `/todo`（管理卡：飞书代码卡自带输入表单，钉钉复用提问卡模板 `allow_input`，TG/Slack 文本 + 命令提示）、`/todo-rm`（复用单选卡逐条删除、就地刷新）与 `/todo-auto`（切换自动执行标记）由跨平台 daemon 承载，实现在共享 server core 的 `daemon/runtime/todo.rs`。
 - macOS 与 Windows 上，待办窗口每条待办另有「创建任务」按钮：预选项目与该待办打开新建任务窗口，Terminal.app 或 Windows Terminal 启动成功后按快照出队（spec `docs/specs/gui-agent-task-launch.md`）。
 - **跨 Mac 同步（实验，仅 macOS，每台 Mac 单独开启）**：同一 Apple ID 的多台 Mac 经 iCloud（CloudKit）共享待办与执行历史，规格 `docs/specs/todo-sync.md`，实现地图 `docs/overview-todo-sync.md`。不变量：`todos.json` 仍是本机唯一数据源且 `todos.rs` 的写函数不变，同步核心 `todo_sync/` 经旁路状态 `state/todo-sync/` 做字段级合并（项目身份 = git remote，同仓库的多个目录是副本，无 remote 的目录不同步），云端访问全部经 CloudKit helper `.app`（Rust 侧只有 `Transport` 抽象）；开关是标记文件，关闭时各入口只多一次 `stat`，Dev Instance 恒关闭；读取钩子只做本地阶段，唯有 whats-next 在上次拉取超过 20 秒时最多等 1.5 秒；待办窗口的打开路径不得联网、拉起 helper 或 git。本机没有目录的云端项目以虚拟键 `icloud:<身份>` 住在 `todos.json` 里。
@@ -506,8 +516,10 @@ Daemon 里的又一个渠道：手机上的 AskHuman App 回答问题、看 / �
   才安装交互接管产物，None 隐藏对应设置并卸载其 active 能力。Lifecycle 也是 mode 拥有的可选
   capability：默认开、可显式关闭、None 卸载而保留偏好。Grok 仅 None/MCP 且不支持 stop/interject；
   Pi 仅 None/CLI、不提供 MCP 或内置权限模式，最低支持版本为 0.82.0。Antigravity 在 Unix 支持
-  None/CLI/MCP，推荐 CLI；Windows 集成变更明确不支持，且 Antigravity 不提供 lifecycle、Stop、
-  permission、recovery、interject 或 launch/fork 能力。详见 `docs/specs/antigravity.md`。
+  None/CLI/MCP，推荐 MCP，三种模式都安装同一个托管插件（规则、hooks，MCP 模式另带 MCP server），
+  生命周期、Stop 确认与插话走插件 hooks；Windows 集成变更明确不支持；permission 接管、recovery 与 Fork
+  不提供。新建任务（App 经全局 sidecar，终端用 `agy -i`）、Watch 与对空闲会话发消息的设计、验证和
+  未验项见 `docs/specs/antigravity-deep-integration.md`，插件与会话身份见 `docs/specs/antigravity.md`。
 - 上下文恢复 Hook 由当前 mode 独立托管，不依赖可关闭的 lifecycle tracking；CLI/MCP
   提示严格只指向用户当前选中的入口，缺失/过期并入当前 Hook 或 MCP 产物的更新状态。
   Codex 的这条 SessionStart Hook 同时是交互协议的**唯一载体**（`~/.codex/AGENTS.md` 不再写 AskHuman
@@ -528,11 +540,12 @@ Daemon 里的又一个渠道：手机上的 AskHuman App 回答问题、看 / �
 - `ask` 入参为 message/questions/files；输出为 CLI 同款结果区块文本（原样透传，无 output schema / structuredContent）加图片 ImageContent。MCP 取消会终止子 CLI，并通过 socket EOF 取消 Daemon 请求。
 - Agent 自动集成通常是 None/CLI/MCP 互斥；Grok 仅 None/MCP，其 MCP 产物是 skill + config；Pi 仅 None/CLI，其 CLI 产物是 Rules + 单个受管 Extension，自动集成 UI 不展示 MCP。
 - Codex、Grok、Claude 分别写适配自身的长超时配置；Cursor MCP 超时不可配置，推荐 CLI 模式。
-- Antigravity 在 Unix 支持 None/CLI/MCP，CLI 推荐、MCP 可选；共享规则位于
-  `~/.gemini/config/rules/askhuman-antigravity.md`，MCP 配置位于
-  `~/.gemini/config/mcp_config.json` 并写 `timeoutSeconds=86400`。Antigravity 没有可信原生
-  session：CLI `show-last` 拒绝项目级回退，MCP 只能回退到 instance + project。Windows 集成
-  变更明确不支持；MCP server 本身跨平台不等于 Antigravity 集成已获 Windows 验收。详见
+- Antigravity 在 Unix 支持 None/CLI/MCP，MCP 推荐、CLI 可选；产物是一个托管插件
+  `~/.gemini/config/plugins/askhuman/`（`rules/AGENTS.md`、MCP 模式的 `mcp_config.json` 写
+  `timeoutSeconds=86400`、`hooks.json`），App 与 `agy` 共用，用户可在 Antigravity 里整体停用（AskHuman 只读检测）。
+  会话身份是根会话 UUID：MCP 取宿主注入 `_meta` 里的会话，CLI 把环境里的会话 ID 当候选、仅在生命周期 hook 已登记时采信；
+  都没有时 CLI `show-last` 拒绝项目级回退，MCP 回退到 instance + project。更早版本的共享规则与全局 MCP 条目在发布插件后迁移清理。
+  Windows 集成变更明确不支持；MCP server 本身跨平台不等于 Antigravity 集成已获 Windows 验收。详见
   `docs/specs/antigravity.md`。
 - MCP 没有通用的 Agent session 字段：Codex 使用每调用 `_meta.threadId`，Claude/Cursor
   使用 schema 隐藏的短命一次性 token，Grok 只在进程+项目分区内参数指纹候选唯一时认领；
@@ -563,8 +576,8 @@ Cursor Desktop 另有默认关闭的实验性“Cursor 会话防护”（同一�
 由 Daemon 管理普通启动、窗口接入和还原，不依赖结束确认或逐会话结束状态。范围与验收真值见
 `docs/specs/cursor-desktop-background-followup.md`（§7 为运行中会话保护）；终端 Cursor CLI 不在该能力范围内。
 
-- 正常 Stop 处理 Claude Code、Codex、Cursor、Pi 的自然完成；同一「结束／出错时确认」开关另使整轮最终失败（`failed`，以及 Grok 因运行上限／没有进展停下的 `incomplete`）进入普通作答卡。有原会话通道时可要求继续，否则仅「知道了」（当作通知）。用户中断、工具错误、自动重试中静默；Grok 仅支持出错提醒，Antigravity 尚无可靠来源。
-- Claude Code、Codex、Cursor、Grok 的各家开关默认关，Pi 默认开，已有偏好保留；自然完成询问“继续/结束”，24h 或基础设施失败 fail-open，投放沿用活跃槽 ∪ watch 渠道。错误卡也进入 iOS 普通收件箱，沿用其空闲推送门槛，不要求手机发起资格。
+- 正常 Stop 处理 Claude Code、Codex、Cursor、Pi、Antigravity 的自然完成（Antigravity 只在根会话、`terminationReason == NO_TOOL_CALL` 且整棵会话树 `fullyIdle` 后出卡，子 Agent 归并进根，Stop hook 在门上等到那时）；同一「结束／出错时确认」开关另使整轮最终失败（`failed`，以及 Grok 因运行上限／没有进展停下的 `incomplete`）进入普通作答卡。有原会话通道时可要求继续，否则仅「知道了」（当作通知）。用户中断、工具错误、自动重试中静默；Grok 仅支持出错提醒，Antigravity 的 `terminationReason == ERROR` 走同一张错误卡（来源是 `Stop` hook）。
+- Claude Code、Codex、Cursor、Grok、Antigravity 的各家开关默认关，Pi 默认开，已有偏好保留；自然完成询问“继续/结束”，24h 或基础设施失败 fail-open，投放沿用活跃槽 ∪ watch 渠道。错误卡也进入 iOS 普通收件箱，沿用其空闲推送门槛，不要求手机发起资格。
 - Stop preference 独立保存，但只在 CLI/MCP mode 生效；关闭全量 lifecycle 时仍可安装必要的结果观察，错误卡由 daemon 持有。None 隐藏开关并删除共享 handler 与观察产物，重新集成时
   自动恢复。Active mode 内若只开 lifecycle，共享 Stop handler 只带 `track`、不弹确认卡。
 - 错误卡是处理失败的唯一入口（见 `docs/specs/agent-failure-inbox.md`）：未处理的卡写入 `~/.askhuman/state/failure-cards.json`，跨 daemon 换新保留，且作为 daemon 自持的卡（`RequestEntry::held`）不计入排空判定。未处理错误与原生接续资格从检测起独立保留 24 小时，不因会话一小时 TTL 或普通 ended 历史容量被淘汰；卡本身不刷新会话活动，临时不可用保留明确重试，发送不明则防重放。Cursor 重试用尽后既不发 `stop` 也不发 `sessionEnd`，由 `agents/cursor_log.rs` 只读尾随它的结构化日志补上；该日志只作用于 hook 已登记的会话，从不启动或探测 Cursor。

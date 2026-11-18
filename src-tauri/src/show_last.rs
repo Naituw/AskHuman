@@ -691,6 +691,7 @@ mod tests {
                 files: vec!["/tmp/file.txt".into()],
             }],
             annotations: Vec::new(),
+            draft: None,
         }
     }
 

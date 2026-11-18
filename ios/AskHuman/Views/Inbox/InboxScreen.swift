@@ -40,8 +40,9 @@ struct InboxScreen: View {
                 }
             }
             .navigationDestination(for: String.self) { id in
-                RequestScreen(id: id)
+                RequestScreen(id: id).prefersToolbarItemsOverTabBar()
             }
+            .prefersToolbarItemsOverTabBar()
         }
     }
 }

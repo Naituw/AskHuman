@@ -19,6 +19,31 @@ pub struct Fingerprint {
 }
 
 impl Fingerprint {
+    /// A fingerprint that could not be measured (the file is unreadable, or the read failed, for
+    /// example with `EMFILE`). On the wire it is the all-zero value older peers already send.
+    pub const UNKNOWN: Fingerprint = Fingerprint { size: 0, hash: 0 };
+
+    /// Whether this is [`Fingerprint::UNKNOWN`]. A hash of zero also marks the half-measured
+    /// `(size, 0)` values an older build reported when only the hashing failed.
+    pub fn is_unknown(&self) -> bool {
+        self.hash == 0
+    }
+
+    /// Whether two measurements show two different binaries. A measurement that failed says
+    /// nothing, so an unknown side never counts as a difference: a transient read failure must not
+    /// look like "the binary changed" and send the daemon into a restart.
+    pub fn differs_from(&self, other: &Fingerprint) -> bool {
+        !self.is_unknown() && !other.is_unknown() && self != other
+    }
+
+    /// Whether two measurements show the same binary. The mirror image of
+    /// [`Fingerprint::differs_from`] for gates that must fail closed, such as "is this peer the
+    /// exact build I am about to hand over to": two failed measurements are equal values but prove
+    /// nothing, so they are not the same.
+    pub fn same_as(&self, other: &Fingerprint) -> bool {
+        !self.is_unknown() && !other.is_unknown() && self == other
+    }
+
     /// Eight hex digits of the content hash: enough to tell two binaries apart in a log line or a
     /// `doctor` listing.
     pub fn short(&self) -> String {
@@ -26,14 +51,14 @@ impl Fingerprint {
     }
 }
 
-/// 计算当前可执行文件的指纹（解析失败回退到全 0）。
+/// 计算当前可执行文件的指纹（读不到时是 [`Fingerprint::UNKNOWN`]）。
 ///
 /// 哈希基于文件内容，因此每次调用都要读盘；为避免每次 CLI 调用都重哈希几 MB 的二进制，
 /// 按 (路径, mtime, size) 做持久缓存（`~/.askhuman/binhash.json`）：命中即复用已算哈希，
 /// 把稳态开销降到一次。缓存仅为加速，任何缺失/损坏都会回退到重新计算。
 pub fn current_fingerprint() -> Fingerprint {
     let Ok(path) = std::env::current_exe() else {
-        return Fingerprint { size: 0, hash: 0 };
+        return Fingerprint::UNKNOWN;
     };
     fingerprint_at(&path)
 }
@@ -43,7 +68,7 @@ pub fn current_fingerprint() -> Fingerprint {
 pub fn launch_fingerprint() -> Fingerprint {
     crate::executable::launch_path()
         .map(|path| fingerprint_at(&path))
-        .unwrap_or(Fingerprint { size: 0, hash: 0 })
+        .unwrap_or(Fingerprint::UNKNOWN)
 }
 
 /// Compute the content fingerprint at a stable executable path.
@@ -52,17 +77,24 @@ pub fn launch_fingerprint() -> Fingerprint {
 /// to a non-existent `... (deleted)` path after the running inode is replaced, so update detection
 /// and re-exec must keep using the pre-update disk path instead.
 pub fn fingerprint_at(path: &Path) -> Fingerprint {
-    let zero = Fingerprint { size: 0, hash: 0 };
+    fingerprint_at_with_cache(path, &hash_cache_path())
+}
+
+fn fingerprint_at_with_cache(path: &Path, cache: &Path) -> Fingerprint {
     let Ok(meta) = std::fs::metadata(path) else {
-        return zero;
+        return Fingerprint::UNKNOWN;
     };
     let size = meta.len();
     let mtime_ms = mtime_ms_of(&meta);
-    if let Some(hash) = cached_hash(path, size, mtime_ms) {
+    if let Some(hash) = cached_hash(cache, path, size, mtime_ms) {
         return Fingerprint { size, hash };
     }
-    let hash = hash_file(path).unwrap_or(0);
-    store_cached_hash(path, size, mtime_ms, hash);
+    // A failed read is "unknown" and is never cached: the next call has to look again instead of
+    // finding this failure recorded as the file's identity.
+    let Ok(hash) = hash_file(path) else {
+        return Fingerprint::UNKNOWN;
+    };
+    store_cached_hash(cache, path, size, mtime_ms, hash);
     Fingerprint { size, hash }
 }
 
@@ -71,9 +103,16 @@ pub fn fingerprint_at(path: &Path) -> Fingerprint {
 /// For inspecting binaries that are not this process's own (`doctor install` scans other copies on
 /// PATH): their paths would only bloat the cache, and a cached hash is useless for a one-off look.
 pub fn fingerprint_uncached(path: &Path) -> Fingerprint {
-    let size = std::fs::metadata(path).map(|meta| meta.len()).unwrap_or(0);
-    let hash = hash_file(path).unwrap_or(0);
-    Fingerprint { size, hash }
+    let Ok(meta) = std::fs::metadata(path) else {
+        return Fingerprint::UNKNOWN;
+    };
+    match hash_file(path) {
+        Ok(hash) => Fingerprint {
+            size: meta.len(),
+            hash,
+        },
+        Err(_) => Fingerprint::UNKNOWN,
+    }
 }
 
 /// 文件 mtime（毫秒）；解析失败回退 0。仅用作内容哈希缓存的键。
@@ -122,24 +161,25 @@ struct HashCacheEntry {
 
 type HashCache = HashMap<String, HashCacheEntry>;
 
-fn read_hash_cache() -> HashCache {
-    std::fs::read(hash_cache_path())
+fn read_hash_cache(cache_path: &Path) -> HashCache {
+    std::fs::read(cache_path)
         .ok()
         .and_then(|d| serde_json::from_slice(&d).ok())
         .unwrap_or_default()
 }
 
 /// 缓存命中（同路径、mtime+size 未变）则返回已算哈希；否则 `None`（需重算）。
-fn cached_hash(path: &Path, size: u64, mtime_ms: u64) -> Option<u64> {
-    let map = read_hash_cache();
+/// A zero hash is how a failed read used to be cached; it is never a hit, so a cache poisoned by
+/// an older build heals itself on the next measurement.
+fn cached_hash(cache_path: &Path, path: &Path, size: u64, mtime_ms: u64) -> Option<u64> {
+    let map = read_hash_cache(cache_path);
     let e = map.get(path.to_string_lossy().as_ref())?;
-    (e.size == size && e.mtime_ms == mtime_ms).then_some(e.hash)
+    (e.size == size && e.mtime_ms == mtime_ms && e.hash != 0).then_some(e.hash)
 }
 
 /// 写回缓存（best-effort）：原子落盘；不存在配置目录则跳过（不为缓存而创建目录，避免在
 /// 测试 / 首次运行时污染用户目录）。无变化则不写。
-fn store_cached_hash(path: &Path, size: u64, mtime_ms: u64, hash: u64) {
-    let cache_path = hash_cache_path();
+fn store_cached_hash(cache_path: &Path, path: &Path, size: u64, mtime_ms: u64, hash: u64) {
     let Some(dir) = cache_path.parent() else {
         return;
     };
@@ -147,7 +187,7 @@ fn store_cached_hash(path: &Path, size: u64, mtime_ms: u64, hash: u64) {
         return;
     }
     let key = path.to_string_lossy().into_owned();
-    let mut map = read_hash_cache();
+    let mut map = read_hash_cache(cache_path);
     if let Some(e) = map.get(&key) {
         if e.size == size && e.mtime_ms == mtime_ms && e.hash == hash {
             return;
@@ -166,7 +206,7 @@ fn store_cached_hash(path: &Path, size: u64, mtime_ms: u64, hash: u64) {
     };
     let tmp = cache_path.with_extension("json.tmp");
     if std::fs::write(&tmp, &data).is_ok() {
-        let _ = std::fs::rename(&tmp, &cache_path);
+        let _ = std::fs::rename(&tmp, cache_path);
     }
 }
 
@@ -459,6 +499,12 @@ pub fn write_meta(meta: &DaemonMeta) -> std::io::Result<()> {
     std::fs::write(meta_path(), data)
 }
 
+/// What the running daemon wrote about itself at startup (`daemon.json`), if it can be read.
+/// After a crash the file can be stale, so it identifies an instance only together with a probe.
+pub fn read_meta() -> Option<DaemonMeta> {
+    serde_json::from_slice(&std::fs::read(meta_path()).ok()?).ok()
+}
+
 /// 持有期间代表「本进程为唯一 Daemon」。Drop 时系统文件锁自动释放。
 pub type LockGuard = crate::file_lock::FileLock;
 
@@ -597,6 +643,121 @@ mod tests {
     }
 
     #[test]
+    fn only_two_measured_fingerprints_can_differ() {
+        let a = Fingerprint { size: 10, hash: 1 };
+        let b = Fingerprint { size: 10, hash: 2 };
+        // The size of an older build's half-measured value does not make it a measurement.
+        let half_measured = Fingerprint { size: 10, hash: 0 };
+
+        assert!(a.differs_from(&b) && b.differs_from(&a));
+        assert!(!a.differs_from(&a));
+        for unknown in [Fingerprint::UNKNOWN, half_measured] {
+            assert!(unknown.is_unknown());
+            assert!(!a.differs_from(&unknown), "an unknown peer is no evidence");
+            assert!(
+                !unknown.differs_from(&a),
+                "an unknown own image is no evidence"
+            );
+            assert!(!unknown.differs_from(&unknown));
+        }
+        assert!(!a.is_unknown());
+    }
+
+    #[test]
+    fn only_two_measured_fingerprints_can_be_the_same() {
+        let a = Fingerprint { size: 10, hash: 1 };
+        let b = Fingerprint { size: 10, hash: 2 };
+        let half_measured = Fingerprint { size: 10, hash: 0 };
+
+        assert!(a.same_as(&a));
+        assert!(!a.same_as(&b));
+        // Fail-closed gates: equal values that were never measured prove nothing.
+        for unknown in [Fingerprint::UNKNOWN, half_measured] {
+            assert!(
+                !unknown.same_as(&unknown),
+                "two failed reads are not a match"
+            );
+            assert!(!unknown.same_as(&a));
+            assert!(!a.same_as(&unknown));
+        }
+        // For two measurements the two predicates are exact opposites.
+        assert!(a.differs_from(&b) && !a.same_as(&b));
+        assert!(!a.differs_from(&a) && a.same_as(&a));
+    }
+
+    #[test]
+    fn a_missing_file_is_unknown_not_a_zero_sized_binary() {
+        let dir = tempfile::tempdir().unwrap();
+        let missing = dir.path().join("AskHuman");
+        let cache = dir.path().join("binhash.json");
+
+        assert_eq!(
+            fingerprint_at_with_cache(&missing, &cache),
+            Fingerprint::UNKNOWN
+        );
+        assert_eq!(fingerprint_uncached(&missing), Fingerprint::UNKNOWN);
+        assert!(
+            !cache.exists(),
+            "nothing to remember about a file that is not there"
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn an_unreadable_binary_is_unknown_and_the_failure_is_not_cached() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("AskHuman");
+        let cache = dir.path().join("binhash.json");
+        std::fs::write(&path, b"a binary that cannot be read right now").unwrap();
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o000)).unwrap();
+        if std::fs::File::open(&path).is_ok() {
+            // Running as root: permission bits do not stop the read, so there is no failure to test.
+            return;
+        }
+
+        assert_eq!(
+            fingerprint_at_with_cache(&path, &cache),
+            Fingerprint::UNKNOWN
+        );
+        assert_eq!(fingerprint_uncached(&path), Fingerprint::UNKNOWN);
+        assert!(
+            read_hash_cache(&cache).is_empty(),
+            "a failed read must not be remembered as the file's identity"
+        );
+
+        // Once the file can be read again the next call measures it for real.
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o644)).unwrap();
+        let measured = fingerprint_at_with_cache(&path, &cache);
+        assert!(!measured.is_unknown());
+        assert!(!measured.differs_from(&Fingerprint::UNKNOWN));
+        assert_eq!(read_hash_cache(&cache).len(), 1);
+    }
+
+    #[test]
+    fn a_cache_entry_poisoned_by_a_failed_read_is_ignored_and_healed() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("AskHuman");
+        let cache = dir.path().join("binhash.json");
+        std::fs::write(&path, b"the real binary content").unwrap();
+        let meta = std::fs::metadata(&path).unwrap();
+        // What an older build wrote when hashing failed once: the right key, hash zero.
+        store_cached_hash(&cache, &path, meta.len(), mtime_ms_of(&meta), 0);
+        assert_eq!(read_hash_cache(&cache).len(), 1);
+
+        let measured = fingerprint_at_with_cache(&path, &cache);
+
+        assert_eq!(measured, fingerprint_uncached(&path));
+        assert!(!measured.is_unknown());
+        let entry = read_hash_cache(&cache)
+            .remove(path.to_string_lossy().as_ref())
+            .unwrap();
+        assert_eq!(entry.hash, measured.hash, "the poisoned entry was replaced");
+        // And the healed entry is what the next call uses.
+        assert_eq!(fingerprint_at_with_cache(&path, &cache), measured);
+    }
+
+    #[test]
     fn retained_image_identity_does_not_hide_an_installation_upgrade() {
         let dir = tempfile::tempdir().unwrap();
         let entry = dir.path().join("AskHuman");
@@ -611,7 +772,7 @@ mod tests {
         ] {
             std::fs::write(&entry, bytes).unwrap();
             assert_eq!(fingerprint_uncached(&retained), startup);
-            let own_changed = fingerprint_uncached(&entry) != startup;
+            let own_changed = fingerprint_uncached(&entry).differs_from(&startup);
             assert!(own_changed);
             assert!(!crate::daemon::restart_guard::holdable(own_changed, false));
         }

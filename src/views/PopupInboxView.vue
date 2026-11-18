@@ -10,8 +10,8 @@ import InboxSidebar from "./popup/InboxSidebar.vue";
 import InboxArrivalNotice from "./popup/InboxArrivalNotice.vue";
 import { arrivalTiming, type ArrivalEnd, type ArrivalGeometry } from "./popup/inboxArrival";
 import type { DropAim, DropReceiver, PopupScope, InboxLayout } from "./popup/usePopupCore";
-import type { DropLogEntry, DropLogTarget, PopupInboxRequest } from "../lib/types";
-import { cancelPopup, confirmPopupReady, popupDropLog, popupInboxActivate, popupInboxIdle, popupInboxInit, popupShowWindow } from "../lib/ipc";
+import type { DraftSave, DropLogEntry, DropLogTarget, PopupInboxRequest } from "../lib/types";
+import { cancelPopup, confirmPopupReady, popupDropLog, popupInboxActivate, popupInboxDraft, popupInboxIdle, popupInboxInit, popupShowWindow } from "../lib/ipc";
 import { isMac, primaryShortcutLabel } from "../lib/platform";
 import { inboxGroups, inboxKind, inboxTitle, nextInboxRequest } from "./popup/inboxQueue";
 import * as model from "./popup/inboxCollapse";
@@ -95,6 +95,8 @@ const failedIds = new Set<string>();
 const preparedIds = ref(new Set<string>());
 const readyWaiters = new Map<string, Set<() => void>>();
 const focusRestorers = new Map<string, () => void>();
+// What each form holds, readable while the form exists (spec popup-draft-on-cancel D5).
+const draftReaders = new Map<string, () => DraftSave | null>();
 const earlyArrivals = new Set<string>();
 const motion = ref<InboxMotion | null>(null);
 // Switching between requests in an expanded window (C17): the body being left fades out, then the next one fades in.
@@ -279,6 +281,7 @@ function scopeFor(id: string): PopupScope {
       unmarkLater: () => unmarkLater(id),
       shrinkWindow,
       restoreFocus: restore => { if (restore) focusRestorers.set(id, restore); else focusRestorers.delete(id); },
+      draftReader: reader => { if (reader) draftReaders.set(id, reader); else draftReaders.delete(id); },
       failed: () => { failedIds.add(id); settleReady(id); },
       sending: () => {
         const next = nextInboxRequest(ordered.value, id, terminals);
@@ -644,7 +647,15 @@ function removeLocal(id: string) {
   secondary.value.delete(id);
   if (lastBrowsed === id) lastBrowsed = null;
   readyIds.delete(id); scopes.delete(id); receivers.delete(id); remembered.delete(id); previews.delete(id); nativePreviewSync.delete(id);
-  failedIds.delete(id); preparedIds.value.delete(id); focusRestorers.delete(id); earlyArrivals.delete(id); settleReady(id);
+  failedIds.delete(id); preparedIds.value.delete(id); focusRestorers.delete(id); draftReaders.delete(id); earlyArrivals.delete(id); settleReady(id);
+}
+// The caller went away (the host closed this request with `keepDraft`): read what the form holds now, while it still
+// exists, and hand it to the host to keep. The form goes on closing at once; keeping is the host's, and nothing it
+// does or fails to do reaches the user. A form that is not mounted, or holds nothing, answers null so the host does not wait.
+function keepDraftOf(id: string) {
+  let draft: DraftSave | null = null;
+  try { draft = draftReaders.get(id)?.() ?? null; } catch { draft = null; }
+  void popupInboxDraft(id, draft).catch(() => {});
 }
 async function finishRound() {
   pendingArrivals.clear(); shownArrivals.clear(); arriving.value.clear(); arrivalNotice.value?.clear(); hostPresented = false;
@@ -905,8 +916,10 @@ onMounted(async () => {
     }
     void enqueue(() => add(show));
   }));
-  listeners.push(await listen<{ requestId: string; winner: string; completion?: CompletionFeedback }>("popup-inbox-terminal", event => {
-    const { requestId, winner, completion } = event.payload;
+  listeners.push(await listen<{ requestId: string; winner: string; completion?: CompletionFeedback; keepDraft?: boolean }>("popup-inbox-terminal", event => {
+    const { requestId, winner, completion, keepDraft } = event.payload;
+    // Before anything may drop the event: the host holds on until it is answered, even if only with nothing.
+    if (keepDraft) keepDraftOf(requestId);
     if (terminals.has(requestId)) return;
     terminals.add(requestId); settleReady(requestId); cancelArrival(requestId);
     if (motion.value?.incoming === requestId) { motion.value.incoming = null; motion.value.phase = "prepare"; }

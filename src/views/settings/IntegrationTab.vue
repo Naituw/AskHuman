@@ -5,6 +5,7 @@
 import { isMac } from "../../lib/platform";
 import type { AgentId } from "../../lib/types";
 import BrandBadge from "../setup/BrandBadge.vue";
+import AntigravityDesktopSettings from "./AntigravityDesktopSettings.vue";
 import CodexDesktopSettings from "./CodexDesktopSettings.vue";
 import CursorDesktopSettings from "./CursorDesktopSettings.vue";
 import CollaborationStyleEditor from "./CollaborationStyleEditor.vue";
@@ -335,6 +336,20 @@ const messageUnderHeader = (id: AgentId) =>
     </button>
 
     <p v-if="a.id === 'antigravity'" class="card-desc">{{ t("settings.integration.antigravityScope") }}</p>
+    <p
+      v-if="a.id === 'antigravity' && !modeReadError?.[a.id] && modes[a.id].hostPluginDisabled"
+      class="result err"
+      data-testid="antigravity-plugin-disabled"
+    >
+      {{ t("settings.integration.antigravityPluginDisabled") }}
+    </p>
+    <p
+      v-else-if="a.id === 'antigravity' && !modeReadError?.[a.id] && modes[a.id].mcpGrant === false"
+      class="card-desc agent-hint"
+      data-testid="antigravity-grant-hint"
+    >
+      {{ t("settings.integration.antigravityGrantHint") }}
+    </p>
     <button v-if="modeReadError?.[a.id]" type="button" class="btn" @click="refreshMode(a.id)">{{ t("settings.integration.retryStatus") }}</button>
 
     <div
@@ -708,7 +723,15 @@ const messageUnderHeader = (id: AgentId) =>
           </label>
         </div>
         <p class="card-desc agent-hint">
-          {{ t(a.id === 'grok' ? "settings.integration.stopGrokHint" : "settings.integration.stopHint") }}
+          {{
+            t(
+              a.id === 'grok'
+                ? "settings.integration.stopGrokHint"
+                : a.id === 'antigravity'
+                  ? "settings.integration.stopAntigravityHint"
+                  : "settings.integration.stopHint",
+            )
+          }}
         </p>
         <p
           v-if="modes[a.id].stop.otherHandlersDetected"
@@ -899,11 +922,12 @@ const messageUnderHeader = (id: AgentId) =>
         </label>
       </div>
       <p class="card-desc agent-hint">
-        {{ t(a.id === 'antigravity' ? "settings.integration.antigravityLifecycleUnsupported" : "settings.integration.lifecycleHint") }}
+        {{ t(a.id === 'antigravity' ? "settings.integration.antigravityLifecycleHint" : "settings.integration.lifecycleHint") }}
       </p>
 
       <CodexDesktopSettings v-if="isMac && a.id === 'codex'" />
       <CursorDesktopSettings v-if="a.id === 'cursor'" />
+      <AntigravityDesktopSettings v-if="a.id === 'antigravity'" />
 
       <p
         v-if="modeMessage[a.id] && agentExpanded[a.id]"

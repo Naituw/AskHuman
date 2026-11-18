@@ -290,8 +290,11 @@ ZH = {
     "Questions": "提问",
     "Confirmations": "确认",
     "The broker refused the connection. Its settings may have changed, or this month's free data allowance may be used up. Check on your Mac, then pair again.": "Broker 拒绝了连接。可能是它的设置变了，也可能是本月的免费流量额度已用完。请在 Mac 上检查，然后重新配对。",
-    "This month's data use is close to the broker's free allowance. The service pauses when it runs out.": "本月流量快用完 Broker 的免费额度了。用完后服务会暂停。",
-    "This month's free data allowance may be used up, so the broker may refuse connections.": "本月的免费流量额度可能已用完，Broker 可能会拒绝连接。",
+    "This month's data use is close to %lld GB.": "本月流量快到 %lld GB 了。",
+    "This month's data use is over %lld GB.": "本月流量已超过 %lld GB。",
+    "Data use reminders": "流量提醒",
+    "Every %lld GB": "每 %lld GB",
+    "The Inbox says so when this month's use gets close to each step. Close a reminder and the next one comes at the next step.": "本月流量快到每一档时，收件箱会提醒你。关掉一条提醒后，要到快到下一档时才会再提醒。",
     "Can't reach the broker, so this may be out of date. Pull down to try again.": "连不上 Broker，这里的内容可能已过期。下拉可重试。",
     "This phone's clock differs too much from a Mac's, so some messages are ignored. Check Date & Time in Settings.": "这部手机的时间与 Mac 相差过大，部分消息会被忽略。请检查“设置”中的日期与时间。",
     "%@ is offline. Its requests cannot be answered until it is back.": "%@ 已离线，在它恢复前无法回答它的请求。",
@@ -484,6 +487,8 @@ ZH = {
     "It was answered or cancelled.": "它已被回答或取消。",
     "Request unavailable": "请求不可用",
     "Loading the full request…": "正在加载完整请求…",
+    "The Mac is offline. The request loads when it is back.": "Mac 已离线，恢复后会自动加载这条请求。",
+    "Your Mac is updating. The request loads when it is back.": "Mac 正在更新，完成后会自动加载这条请求。",
     "Your Mac is not reachable": "连不上你的 Mac",
     "The request shows up here when it is back, if it is still waiting.": "Mac 恢复连接后，如果它还在等你，请求会显示在这里。",
     "No reply needed": "无需回复",
@@ -615,8 +620,6 @@ ZH = {
     "That is too long: %lld of %lld characters.": "内容太长了：%lld / %lld 个字符。",
     "This project is no longer on %@. Choose another.": "这个项目已不在 %@ 上，请另选一个。",
     "Update AskHuman on %@ to add todos from here.": "请先更新 %@ 上的 AskHuman，才能在这里添加待办。",
-    # The request page's "Add todo…" (docs/specs/todo-quick-add.md); the rest of its words are the quick-add's
-    "Add todo…": "添加待办…",
     # Large screens (docs/specs/ios-large-screen.md): what the empty detail column says. These were put into the
     # catalog by hand once; they are here so that the script reproduces the catalog again.
     "Pick one from the list to follow it and talk to it.": "从列表里选一个，查看它的进展并与它对话。",
@@ -631,7 +634,12 @@ ZH = {
     "Select an entry": "选择一条记录",
     # Project todos in the answer form (docs/specs/special-replies.md D28/D29)
     "%lld selected": "已选 %lld",
-    "Picked todos are sent to the Agent with your answer and removed from the list.": "选中的待办会和你的回答一起发给 Agent，并从待办里移除。",
+    "Picked todos are sent to the Agent with your answer and removed from the list. Swipe right to complete, left to delete.": "选中的待办会和你的回答一起发给 Agent，并从待办里移除。右滑完成，左滑删除。",
+    # Completing, deleting and adding todos in place (docs/specs/todo-list-actions.md)
+    "Complete": "完成",
+    "Completed “%@”": "已完成「%@」",
+    "Undo": "撤销",
+    "Todos can be changed when the Mac is reachable.": "Mac 可连接时才能修改待办。",
     "Show all %lld todos": "显示全部 %lld 条待办",
     "Show less": "收起",
     "Expanded": "已展开",

@@ -13,6 +13,28 @@ impl Actor {
         }
     }
 
+    /// This month's breakdown by message type (empty when nothing was counted since the month began).
+    pub(super) fn current_breakdown(&self) -> TrafficBreakdown {
+        if self.store.state.traffic_breakdown.month == month_of(self.now()) {
+            self.store.state.traffic_breakdown.clone()
+        } else {
+            TrafficBreakdown {
+                month: month_of(self.now()),
+                ..TrafficBreakdown::default()
+            }
+        }
+    }
+
+    /// Counts one message by direction and type for the local diagnostic (docs/specs/ios-traffic-reduction.md T6).
+    /// Saved with the next periodic flush: the ledger above writes the state per message already, and this is only
+    /// bookkeeping about it.
+    pub(super) fn count_message(&mut self, inbound: bool, msg_type: &str, bytes: usize) {
+        self.store
+            .state
+            .count_message(&month_of(self.now()), inbound, msg_type, bytes);
+        self.dirty = true;
+    }
+
     pub(super) fn traffic_records(&self) -> Vec<TrafficRecord> {
         let broker = broker_id(&self.cfg.host);
         let month = month_of(self.now());

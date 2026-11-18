@@ -246,15 +246,6 @@ impl State {
     pub fn project_of(&self, key: &str) -> Option<&str> {
         self.links.get(key).and_then(|l| l.p.as_deref())
     }
-
-    /// Entity ids per project identity, in id order.
-    pub fn by_project(&self) -> BTreeMap<&str, Vec<&str>> {
-        let mut out: BTreeMap<&str, Vec<&str>> = BTreeMap::new();
-        for (id, rec) in &self.entities {
-            out.entry(rec.e.p.as_str()).or_default().push(id.as_str());
-        }
-        out
-    }
 }
 
 /// Encode an entity as the cloud `payload` bytes.

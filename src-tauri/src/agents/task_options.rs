@@ -62,6 +62,14 @@ fn catalog_source(kind: AgentKind, target: LaunchTarget) -> Option<CatalogSource
             codex_home: Some(home),
         });
     }
+    if kind == AgentKind::Antigravity && target == LaunchTarget::Desktop {
+        // The App route does not need `agy`: without it the three documented aliases are offered.
+        return Some(CatalogSource {
+            kind,
+            executable: readiness.executable.unwrap_or_default(),
+            codex_home: None,
+        });
+    }
     Some(CatalogSource {
         kind,
         executable: readiness.executable?,

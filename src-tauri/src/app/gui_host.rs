@@ -89,7 +89,6 @@ fn release_lock() {
 
 #[derive(Clone, Default)]
 pub struct TrayData {
-    pub running: bool,
     pub version: String,
     pub uptime_secs: u64,
     pub active_requests: usize,
@@ -2215,7 +2214,9 @@ fn start_status_subscription(app: AppHandle) {
                     loop {
                         match ipc::read_msg::<_, ServerMsg>(&mut reader).await {
                             Ok(Some(ServerMsg::TrayState {
-                                running,
+                                // Always true in a frame from a live daemon; the host takes
+                                // liveness from the connection itself (`set_daemon_up`).
+                                running: _,
                                 version,
                                 uptime_secs,
                                 active_requests,
@@ -2242,7 +2243,6 @@ fn start_status_subscription(app: AppHandle) {
                                     );
                                 if let Some(state) = app.try_state::<HostState>() {
                                     *state.data.lock().unwrap() = TrayData {
-                                        running,
                                         version,
                                         uptime_secs,
                                         active_requests,
@@ -2496,7 +2496,7 @@ fn update_binary_stale(app: &AppHandle) {
     let Some(state) = app.try_state::<HostState>() else {
         return;
     };
-    let stale = host_disk_fingerprint(&state) != state.startup_fp;
+    let stale = host_disk_fingerprint(&state).differs_from(&state.startup_fp);
     if state.binary_stale.swap(stale, Ordering::SeqCst) != stale {
         refresh_tray(app);
     }
@@ -2511,7 +2511,8 @@ fn maybe_refresh_binary(app: &AppHandle) {
         return;
     }
     // 以「自身盘上二进制内容是否变化」为准（pending 仅作提示）；新实例会捕获新指纹，不会循环。
-    if host_disk_fingerprint(&state) == state.startup_fp {
+    // An unreadable binary is not a changed one (see `Fingerprint::differs_from`).
+    if !host_disk_fingerprint(&state).differs_from(&state.startup_fp) {
         return;
     }
     restart_host(app);
@@ -2639,7 +2640,6 @@ mod tests {
             true,
             Lang::Zh,
             &TrayData {
-                running: true,
                 agents_working: 1,
                 agents: vec![ipc::TrayAgentInfo {
                     session_id: "child".to_string(),
@@ -2843,7 +2843,6 @@ mod tests {
             true,
             Lang::En,
             &TrayData {
-                running: true,
                 version: "1.1.0".to_string(),
                 active_requests: 2,
                 draining: true,
@@ -2995,7 +2994,6 @@ mod tests {
     #[test]
     fn tray_menu_offers_to_turn_away_mode_on_when_it_is_off() {
         let nodes = menu_for(&TrayData {
-            running: true,
             ..Default::default()
         });
         assert_eq!(item(&nodes, "away_start"), ("Turn On Away Mode", true));
@@ -3008,7 +3006,6 @@ mod tests {
             true,
             lang,
             &TrayData {
-                running: true,
                 ..Default::default()
             },
             &[],
@@ -3067,7 +3064,6 @@ mod tests {
     fn tray_menu_shows_how_long_away_mode_has_been_on_and_the_way_out() {
         let now = now_ms_u64();
         let nodes = menu_for(&TrayData {
-            running: true,
             away: Some(away_snapshot(now - (83 * 60_000 + 5_000))),
             ..Default::default()
         });
@@ -3150,7 +3146,6 @@ mod tests {
 
         // Nothing set: both off; a click asks for away / mute.
         let plain = menu_for(&TrayData {
-            running: true,
             agents: vec![agent(None)],
             ..Default::default()
         });
@@ -3170,7 +3165,6 @@ mod tests {
 
         // Muted: the second switch is marked and a click lifts the mute.
         let muted = menu_for(&TrayData {
-            running: true,
             agents: vec![agent(Some("mute"))],
             ..Default::default()
         });
@@ -3184,7 +3178,6 @@ mod tests {
 
         // Away for everyone: this session is away too and a click opts it out.
         let global = menu_for(&TrayData {
-            running: true,
             agents: vec![agent(None)],
             away: Some(away_snapshot(0)),
             ..Default::default()
@@ -3245,7 +3238,6 @@ mod tests {
             )
         };
         let plain = TrayData {
-            running: true,
             ..Default::default()
         };
         let away = TrayData {

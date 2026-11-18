@@ -49,7 +49,9 @@ const readinessRows = computed(() =>
       issues: readinessIssues(item),
       outside: startsOutsideTheCli(item),
       blockers:
-        state === "notReady" && item.launch && (item.kind === "codex" || item.kind === "cursor")
+        state === "notReady" &&
+        item.launch &&
+        (item.kind === "codex" || item.kind === "cursor" || item.kind === "antigravity")
           ? startBlockers(item, t)
           : [],
     };
@@ -63,13 +65,13 @@ const STATE_TEXT: Record<ReadinessState, string> = {
   unsupported: "settings.agentTasks.unsupported",
 };
 /** The tag of an Agent that starts outside its CLI says where, so a ready tag never hides the route. */
+const OUTSIDE_TAG: Record<string, string> = {
+  codex: "settings.agentTasks.readyCodexApp",
+  antigravity: "settings.agentTasks.readyAntigravityApp",
+};
 function tagText(row: { item: { kind: string }; state: ReadinessState; outside: boolean }): string {
   if (!row.outside) return t(STATE_TEXT[row.state]);
-  return t(
-    row.item.kind === "codex"
-      ? "settings.agentTasks.readyCodexApp"
-      : "settings.agentTasks.readyCursorWindow",
-  );
+  return t(OUTSIDE_TAG[row.item.kind] ?? "settings.agentTasks.readyCursorWindow");
 }
 /** The CLI's own conditions: not needed by an Agent that starts in its app or window. */
 const CLI_ONLY: ReadinessIssue[] = ["binary", "lifecycle"];

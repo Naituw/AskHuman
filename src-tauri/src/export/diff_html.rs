@@ -1,6 +1,6 @@
 //! Self-contained HTML for unstaged git diffs.
 
-use crate::gitutil::{DiffLine, DiffModel, FileChangeKind, LineKind};
+use crate::gitutil::{DiffLine, DiffModel, LineKind};
 
 pub fn render(model: &DiffModel, meta_title: &str) -> String {
     let mut body = String::new();
@@ -152,15 +152,4 @@ h2 {{ font-size: 1.05rem; margin: 1.5rem 0 0.5rem; border-bottom: 1px solid #303
         title = esc(title),
         body = body
     )
-}
-
-// silence unused import warning if FileChangeKind only used in Debug
-#[allow(dead_code)]
-fn _kind_label(k: FileChangeKind) -> &'static str {
-    match k {
-        FileChangeKind::Modified => "modified",
-        FileChangeKind::Deleted => "deleted",
-        FileChangeKind::Untracked => "untracked",
-        FileChangeKind::Binary => "binary",
-    }
 }

@@ -90,6 +90,7 @@ impl Failpoints {
     }
 
     /// Crash at the `n`-th (0-based) failpoint.
+    #[cfg(test)]
     pub fn crash_at(n: u32) -> Failpoints {
         Failpoints {
             countdown: AtomicI64::new(i64::from(n)),
@@ -98,6 +99,7 @@ impl Failpoints {
     }
 
     /// How many failpoints were passed (for enumerating crash points).
+    #[cfg(test)]
     pub fn seen(&self) -> u64 {
         self.seen.load(Ordering::Relaxed)
     }

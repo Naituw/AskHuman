@@ -22,6 +22,10 @@ Mac 使用现有 `macId`，手机使用钥匙串中的 `phoneId`。线字段 `ma
 EMQX 的计费还包含 MQTT 控制报文、TCP/TLS 开销和其他客户端的用量。界面标明报文口径与
 记录完整性，并提供控制台入口。
 
+负载字节数按实际发布和收到的信封计，所以[消息压缩](ios-traffic-reduction.md)（信封带 `z`）省下的字节自动体现在台账里，
+口径不变。Mac 另有一份只存本机的「方向 × 消息类型」诊断计数（`trafficBreakdown`，`channel ios status --json`），
+用来回答流量花在哪；它按入队与收到的消息计，不经 Broker 确认，不同步、不合并，也不属于这份台账。
+
 ## 合并与历史完整性
 
 合并按每个设备累计字段的最大值进行。副本保存各来源的独立记录，重复转发和乱序保持幂等。
@@ -65,6 +69,27 @@ Mac 的 `ios/state.json` 保存本机累计量、所属实例、设备记录集�
 - 更换 Broker 或月份时，展示对应实例与月份的记录。
 - 全部副本同时丢失后，历史需要依赖各来源仍保留的本机计数恢复，并反映覆盖情况。
 
+## 用量提醒
+
+2026-11-15 经 AskHuman 确认。早先的黄色、红色预警把「本月流量快用完了」说成对 Broker 免费额度的判断，
+而这个判断既依赖只含负载的估算，也不知道用户有没有升级套餐或充值，充值后提示会变成错的。现在提醒只数
+本月已记录的报文流量，不涉及套餐、消费上限或余额；Broker 拒绝连接另有独立的提示，不受影响。
+
+**规则**：按步长 S GB（1 GB = 2³⁰ 字节）取本月已记录字节数。落在某个 S 的整数倍之前最后五分之一 S
+以内（含起点）时，提示「本月流量快到 N GB」，N 为该倍数；已越过某个倍数、尚未进入下一个倍数的最后
+五分之一时，提示「本月流量已超过 N GB」，N 为最近越过的倍数；其余时候不提示。步长 1 GB 时，0.8 GB 起
+提示「快到 1 GB」，1 GB 起「已超过 1 GB」，1.8 GB 起「快到 2 GB」；步长 2 GB 时，1.6 GB 起「快到 2 GB」。
+月份取统计自带的 UTC 月份，新月份从头开始。
+
+**手机**：提示显示在收件箱顶部，是中性的灰色一行，右侧有一个 ✕。关掉后，该倍数及更小倍数的提示在本月
+不再出现，用量走到下一个倍数的最后五分之一时下一条才会出现，所以每个 GB 提醒一次、每次都可以关掉。
+关闭记录为（UTC 月份，倍数），保存在 `UserDefaults` 的 `ah.closedTrafficReminder`。Macs 页「本月」
+上方的「流量提醒」选择步长：已关闭 / 每 1 GB（默认）/ 每 2 GB / 每 5 GB / 每 10 GB，保存在
+`ah.trafficReminderStep`；无法识别的值按默认处理。改步长不清除关闭记录。
+
+**Mac**：设置页的流量行在同一规则下追加同样措辞的一句话，步长固定为 1 GB，没有按钮也没有选项。
+两端不同步提醒的步长和关闭状态。
+
 ## 实现地图与验收
 
 Rust 的 `ios/traffic.rs` 实现记录合并，`ios/gateway/traffic.rs` 承载保存、迁移与同步。
@@ -73,7 +98,14 @@ Swift 的 `AHProtocol/Traffic.swift`、`AHStore/TrafficLedger.swift` 和
 `AHCore/PhoneEngine+Traffic.swift` 对齐协议、手机计数与副本行为。
 Mac 设置页与手机 Macs 页显示设备汇总和来源详情。
 
+用量提醒的规则在 Swift 的 `AHStore/TrafficReminder.swift`（`TrafficReminder.due`、
+`ClosedTrafficReminder`）与 Mac 的 `src/views/settings/iosTraffic.ts`（`trafficReminder`）里各有一份，
+两边的测试用同样的用例；手机的步长、关闭记录与 `closeTrafficReminder()` 在
+`AHCore/AppStore+Traffic.swift`，收件箱的提示行在 `ConnectionNotices.swift`。
+
 回归覆盖重复、乱序、多来源、跨实例、跨月、保存失败、重新打开存储、解除配对保留记录、
 手机向第二台 Mac 转送、静止后的停止发送、排队与 PUBACK 的计数边界、拒绝发送以及历史完整性。
 真实 daemon 与 Swift 引擎通过本地 Broker 验证两台 Mac 和一部手机的记录并集、重连补同步与
-解除配对后的保留。
+解除配对后的保留。用量提醒另有规则边界、各步长、关闭后在下一个倍数回来、跨月重新开始、
+重启后保留步长与关闭记录的单元测试，以及 UI 测试：Mock 场景里提示一行可读、✕ 是够大的点按目标、
+关掉后流量涨到下一个 GB 时提示回来、Macs 页能改步长（`-AHTrafficStep`、`-AHTrafficGate`）。

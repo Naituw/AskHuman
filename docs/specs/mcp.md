@@ -1,6 +1,6 @@
 # 需求：MCP 模式支持（Codex / Claude Code / Cursor / Grok / Antigravity）
 
-> 状态：已实现，覆盖 Codex / Claude Code / Cursor / Grok；Antigravity 在 Unix 上支持 MCP。
+> 状态：已实现，覆盖 Codex / Claude Code / Cursor / Grok；Antigravity 在 Unix 上支持 MCP（作为托管插件的一部分）。
 > Pi Agent 明确不进入 MCP 能力面：Pi 集成只提供 None/CLI，并由受管 Extension 处理超时与生命周期；见 `docs/plans/pi-agent-integration.md`。
 > 关联计划：`docs/plans/mcp.md`
 > 影响面：新增 `AskHuman mcp` 子命令（STDIO MCP server）、MCP 工具与参考提示词、五家 MCP 配置集成、设置「Agent」Tab 的模式选择、`agents`/`doctor` CLI 状态、i18n 与 `rmcp`依赖。上下文恢复另追加了向后兼容的 daemon IPC 内部消息，**不改** stdout 结果区块契约、退出码语义、四个 IM 渠道和弹窗交互。
@@ -67,7 +67,7 @@
 - **MCP（STDIO）拿不到 turn 级生命周期**：MCP server 由客户端在 **session 期间**拉起常驻，协议无 turn-start/turn-end 通知，server 只在「工具被调用」时知情。故 MCP **替代不了** lifecycle hook 的 turn 追踪。
 
 MCP 模式当前覆盖 Codex、Claude Code、Cursor、Grok 与 Unix 上的 Antigravity。各客户端按自身能力提供
-**None / CLI / MCP** 的适用子集：Grok 仅 None/MCP，Antigravity 在 Unix 提供三者并推荐 CLI。
+**None / CLI / MCP** 的适用子集：Grok 仅 None/MCP，Antigravity 在 Unix 提供三者并推荐 MCP。
 
 ## 2. 目标形态
 
@@ -87,12 +87,12 @@ MCP 模式当前覆盖 Codex、Claude Code、Cursor、Grok 与 Unix 上的 Antig
 | D4 | 工具与 Schema | `ask` 入参为 `message`、`questions[{question, options[{text, recommended}]}]`、`files[]`；`whats_next` 承载完成报告/建议，`show_last` 对模型为零业务参数；`todo_add` 写项目待办，`todo_list` 只读列稳定 Todo/附件 ID，`todo_update` 按稳定 ID 增删附件。会话 token 字段可被托管 Hook 注入但必须从 `tools/list` schema 隐藏。`questions` / `options` item 直接内联，不得依赖本地 `$ref` |
 | D5 | 输出（文本区块透传 + 图片直返）| `ask` **不声明 output schema**、不返回 `structuredContent`：子进程以默认文本模式调用，stdout 的结果区块（`[selected_options]` / `[user_input]` / `[files]` / `[user_annotations]` / `[status]`，多题 `# Qn` 分组）**原样透传**为 `content[0]` 的 `TextContent`，与 CLI 契约同一份字节。**取消时**即 `[status]` 区块引导文案（必须重新确认直到用户明确答复，不得当作放行）。区块格式说明放在工具 description（tools/list 每会话必达，替代 CLI 侧 `--agent-help` 的对应两节）。人类回复中的图片按 `[files]` 区块路径读出后以 `ImageContent`(base64+mimeType) 一并放入 `content` 直返模型；非图片文件以路径出现在 `[files]` 区块中。`[user_annotations]`（用户在弹窗或手机上给 Agent 消息的某段原文写的批注：`> 原文` 一行加附注，`docs/specs/message-annotations.md`）同样原样透传，**工具 description 只多一句**说明它是什么（不教用法，消息附注规格 D9）；`whats_next` 的 description 另有一句：只有 `[user_annotations]` 的回复不批准结束，先回应附注再调用一次。`[files]` 区块以空行结束，所以后面的 `[user_annotations]` 里的引文不会被当成文件路径去读图。三个 Todo 工具返回包含稳定 ID 的文本结果。（二轮定案 2026-07-25，依据见 §10） |
 | D6 | 超时 | MCP 模式**不需要超时 Hook**，但需按各家机制配置工具超时（否则长等待被取消）：**Codex** 写 `tool_timeout_sec=86400`(秒)+`startup_timeout_sec=30`；**Grok** 另写 `tool_timeouts = { ask = 86400 }`；**Claude Code(CLI)** 在 `mcpServers.askhuman` 写 `timeout=86400000`(**毫秒**,24h)；**Cursor** 工具/elicitation 超时 ~60s **硬编码不可配置**，不写 timeout（Cursor 推荐 CLI 模式）；**Antigravity** 写 `timeoutSeconds=86400`。这些都是配置预算，不证明真实 24h 等待已验证。 |
-| D7 | MCP 配置落点 | **用户级全局**（与现有 Rules/Hook 一致）：Codex `~/.codex/config.toml`、Grok `~/.grok/config.toml`、Claude `~/.claude.json`（top-level `mcpServers`）、Cursor `~/.cursor/mcp.json`、Antigravity `~/.gemini/config/mcp_config.json` |
-| D8 | 模式切换 | **一键切换**：切到另一模式时自动卸载旧模式全部产物，再安装新模式。选「未集成」= 卸载当前模式全部产物。Antigravity 先发布 MCP 配置再协调规则，失败恢复为条件操作，不是跨文件原子事务；详见 `antigravity.md`。 |
-| D9 | turn 生命周期 | MCP 仍拿不到 turn 周期，因此有原生适配器的 active MCP 集成继续安装 lifecycle Hook。Lifecycle 是 mode 拥有的可选 capability：首次集成默认开、用户可显式关闭；切到 None 时卸载实际产物但保留偏好。Antigravity 没有 lifecycle 适配器，CLI/MCP 均不安装该能力。 |
+| D7 | MCP 配置落点 | **用户级全局**（与现有 Rules/Hook 一致）：Codex `~/.codex/config.toml`、Grok `~/.grok/config.toml`、Claude `~/.claude.json`（top-level `mcpServers`）、Cursor `~/.cursor/mcp.json`、Antigravity 插件内的 `~/.gemini/config/plugins/askhuman/mcp_config.json` |
+| D8 | 模式切换 | **一键切换**：切到另一模式时自动卸载旧模式全部产物，再安装新模式。选「未集成」= 卸载当前模式全部产物。Antigravity 先发布（或卸载）整个托管插件，再清理更早版本留下的规则与全局 MCP 条目，不是跨文件原子事务；详见 `antigravity.md`。 |
+| D9 | turn 生命周期 | MCP 仍拿不到 turn 周期，因此有原生适配器的 active MCP 集成继续安装 lifecycle Hook。Lifecycle 是 mode 拥有的可选 capability：首次集成默认开、用户可显式关闭；切到 None 时卸载实际产物但保留偏好。Antigravity 的 lifecycle 产物是其托管插件里的 `hooks.json`，CLI/MCP 均随插件安装。 |
 | D10 | 双版本提示词 | 新增 `prompts::mcp_reference()`：把「用 Shell 调 AskHuman、设 24h 超时、先跑 --agent-help」改为「调用 MCP 工具 `ask`」；其余交互纪律（必须提问、推荐选项、附件、结束前回执等）保留。手动集成卡支持 CLI/MCP 切换显示 |
 | D11 | 自动重连 | MCP server **不持 ask 子流程的 daemon 长连接**：每次 `ask`/`whats_next` 都新起子进程→新走 `ensure_running`/排空等待/提交。daemon 更新后 MCP server 继续存活，后续调用自动连到新 daemon |
-| D12 | 平台范围 | **macOS / Linux / Windows**。统一用 spawn 子进程：三平台子进程都是「瘦客户端→shared daemon」；传输差异留在 Unix socket / Windows named pipe adapter。MCP server 自身不直接弹窗，避免 STDIO 主循环与 Tauri 主线程冲突。Antigravity 的规则/MCP 配置写入适配器仅支持 Unix；其 MCP server 运行时跨平台不构成 Windows Antigravity 集成验收。 |
+| D12 | 平台范围 | **macOS / Linux / Windows**。统一用 spawn 子进程：三平台子进程都是「瘦客户端→shared daemon」；传输差异留在 Unix socket / Windows named pipe adapter。MCP server 自身不直接弹窗，避免 STDIO 主循环与 Tauri 主线程冲突。Antigravity 的插件写入适配器仅支持 Unix；其 MCP server 运行时跨平台不构成 Windows Antigravity 集成验收。 |
 | D13 | 漂移检测 | `needs_update` 覆盖 MCP Rule + MCP 配置：已安装但内置提示词/配置模板有更新时显示「更新」 |
 | D14 | CLI/doctor | `agents mode/update/show` 与 `doctor` 纳入 MCP 模式状态与整包操作（headless 一致可用） |
 | D15 | 命名 | 子命令 `mcp`；工具名 `ask` / `whats_next` / `show_last` / `todo_add` / `todo_list` / `todo_update`；各家配置中 server 名 `askhuman` |
@@ -249,10 +249,10 @@ argv 映射：`message`→首个位置参数（或经 `-q` 拆分）；每个 qu
 
 ## 6. 自动集成 UI（设置「Agent」Tab）
 
-- Agent 卡按自身能力展示模式选择；当前 Cursor / Claude Code / Codex / Antigravity 提供 `CLI | MCP | 未集成`，Grok 为 `MCP | 未集成`，Pi 为 `CLI | 未集成`。Antigravity 推荐 CLI、也可选择 MCP，但不安装 timeout Hook 或 lifecycle。
+- Agent 卡按自身能力展示模式选择；当前 Cursor / Claude Code / Codex / Antigravity 提供 `CLI | MCP | 未集成`，Grok 为 `MCP | 未集成`，Pi 为 `CLI | 未集成`。Antigravity 推荐 MCP、也可选择 CLI；两者都装同一个托管插件，不安装 timeout Hook，lifecycle 走插件里的 hooks。
 - 选中某模式后，其下展示该模式**绑定的产物**及安装/更新状态：
-  - **CLI**：CLI 版 Rule + 超时 Hook（Codex 与 Antigravity 无 Hook，仅 Rule）。
-  - **MCP**：MCP 版 Rule + MCP 配置（展示落点路径、可「打开/定位」；Antigravity 同样不安装 lifecycle）。
+  - **CLI**：CLI 版 Rule + 超时 Hook（Codex 与 Antigravity 无超时 Hook，仅 Rule；Antigravity 的 Rule 在插件里）。
+  - **MCP**：MCP 版 Rule + MCP 配置（展示落点路径、可「打开/定位」；Antigravity 的两者都在插件里，lifecycle 同样随插件）。
 - 切换模式：一键（自动卸旧装新）。选「未集成」：卸载当前模式全部产物。
 - 产物内容过期（提示词/配置模板更新）时显示橙色「更新」。
 - 手动集成区：参考提示词卡支持 **CLI / MCP** 切换；MCP 版附**该家 MCP 配置实例**片段。
@@ -282,11 +282,12 @@ argv 映射：`message`→首个位置参数（或经 `-q` 拆分）；每个 qu
   ```json
   { "mcpServers": { "askhuman": { "command": "<绝对路径>", "args": ["mcp"], "timeout": 86400000 } } }
   ```
-- **Antigravity**：`~/.gemini/config/mcp_config.json`（JSONC，`mcpServers.askhuman`），写秒级 `timeoutSeconds`。仅 Unix 允许 Antigravity 集成变更：
+- **Antigravity**：托管插件 `~/.gemini/config/plugins/askhuman/` 里的 `mcp_config.json`，写秒级 `timeoutSeconds`；宿主把其中的 server 命名为 `askhuman_mcp`。仅 Unix 允许 Antigravity 集成变更：
   ```json
-  { "mcpServers": { "askhuman": { "command": "<绝对路径>", "args": ["mcp"], "timeoutSeconds": 86400 } } }
+  { "mcpServers": { "mcp": { "command": "<绝对路径>", "args": ["mcp"], "timeoutSeconds": 86400 } } }
   ```
-  Antigravity 没有可信原生 session；MCP 历史恢复只回退到 MCP instance + project，实例跨会话时可能歧义，重启后开始新的历史作用域。完整行为见 [`antigravity.md`](./antigravity.md)。
+  会话绑定：宿主在每次工具调用的 `_meta` 注入 `antigravity.google/conversation_id` 与 `root_conversation_id`（UUID），MCP 取根会话作为 `AgentBinding`，因此 `show_last` 与历史按会话作用域；
+  没有这些元数据（旧宿主）时才回退到 MCP instance + project，实例跨会话时可能歧义，重启后开始新的历史作用域。完整行为见 [`antigravity.md`](./antigravity.md)。
 
 ## 8. 约束与既有规则（不可破坏）
 

@@ -1777,6 +1777,115 @@ async fn a_todo_picked_for_whats_next_is_the_next_task() {
     assert_eq!(answer.todo_ids, ["t2"]);
 }
 
+/// A Stop confirmation of the project `/tmp/proj`: one single-choice question whose options are the
+/// two built-in ones (the phone lists the todo queue itself), marked as a live queue.
+fn deliver_stop_card(fx: &Fixture, id: &str, picks: Vec<TodoPick>) -> Arc<FakeAsk> {
+    fx.host
+        .todo_pick_store
+        .lock()
+        .unwrap()
+        .insert("/tmp/proj".into(), picks);
+    let (mut ask, mut view) = sample_ask(id);
+    {
+        let ask = Arc::make_mut(&mut ask);
+        ask.todo_queue = true;
+        ask.single = true;
+        ask.questions.truncate(1);
+        ask.questions[0].predefined_options = vec![
+            crate::models::OptionItem::new("Continue the conversation", true),
+            crate::models::OptionItem::new("End the conversation", false),
+        ];
+    }
+    {
+        let view = view.ask.as_mut().unwrap();
+        view.todo_queue = true;
+        view.single = true;
+        view.questions.truncate(1);
+        view.questions[0].options.truncate(2);
+    }
+    let sink = FakeAsk::new();
+    fx.gateway.deliver(DeliverRequest {
+        view,
+        sink: Sink::Ask(sink.clone()),
+        ask: Some(ask),
+        deadline_ms: None,
+        assets: Vec::new(),
+    });
+    sink
+}
+
+#[tokio::test(start_paused = true)]
+async fn a_todo_picked_on_a_stop_card_is_the_next_task_like_in_whats_next() {
+    let fx = Fixture::new().await;
+    let mut phone = fx.live_phone().await;
+    let sink = deliver_stop_card(
+        &fx,
+        "stop1",
+        vec![
+            pick("t1", "Fix the flaky test"),
+            pick("t2", "Document escalate"),
+        ],
+    );
+    phone.recv(t::REQUEST_NEW).await;
+
+    // One todo and what the person wrote: the todo text leads, with no "also look into" line.
+    phone
+        .send(&answer_with_todos(
+            "c1",
+            "stop1",
+            vec![item(0, &[], Some("  mind the CI  "))],
+            &["t2"],
+        ))
+        .await;
+    let ack: wire::AnswerAck = phone.recv_body(t::ANSWER_ACK).await;
+    assert_eq!(ack.status, "accepted", "{ack:?}");
+    {
+        let results = sink.results.lock().unwrap();
+        let answer = &results[0].answers[0];
+        assert!(answer.selected_options.is_empty());
+        assert_eq!(
+            answer.user_input.as_deref(),
+            Some("Document escalate\n\nmind the CI")
+        );
+        assert_eq!(answer.todo_ids, ["t2"]);
+    }
+}
+
+#[tokio::test(start_paused = true)]
+async fn a_stop_card_takes_one_todo_and_no_option_beside_it() {
+    let fx = Fixture::new().await;
+    let mut phone = fx.live_phone().await;
+    let sink = deliver_stop_card(
+        &fx,
+        "stop1",
+        vec![
+            pick("t1", "Fix the flaky test"),
+            pick("t2", "Document escalate"),
+        ],
+    );
+    phone.recv(t::REQUEST_NEW).await;
+
+    let cases = [
+        // Two todos.
+        answer_with_todos("c1", "stop1", Vec::new(), &["t1", "t2"]),
+        // A todo and "Continue the conversation".
+        answer_with_todos("c2", "stop1", vec![item(0, &[0], None)], &["t1"]),
+    ];
+    for (n, submit) in cases.into_iter().enumerate() {
+        phone.send(&submit).await;
+        let ack: wire::AnswerAck = phone.recv_body(t::ANSWER_ACK).await;
+        assert_eq!(ack.status, "invalid", "case {n}");
+    }
+    assert!(sink.results.lock().unwrap().is_empty());
+
+    // The option alone is the old shape and still works.
+    phone
+        .send(&answer("c3", "stop1", vec![item(0, &[1], None)]))
+        .await;
+    let ack: wire::AnswerAck = phone.recv_body(t::ANSWER_ACK).await;
+    assert_eq!(ack.status, "accepted");
+}
+
 #[tokio::test(start_paused = true)]
 async fn legacy_single_choice_whats_next_takes_one_next_task_only() {
     let fx = Fixture::new().await;

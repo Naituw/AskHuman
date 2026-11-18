@@ -104,11 +104,6 @@ impl FeishuClient {
         self.token().await
     }
 
-    /// 仅校验凭据（换取一次 token）。供「测试连接」用。
-    pub async fn verify(&self) -> Result<(), FeishuError> {
-        self.token().await.map(|_| ())
-    }
-
     /// 通用 JSON 调用：Bearer 鉴权 + 业务码 code==0 判定成功。结果顺带登记渠道健康表（R7）。
     async fn call(
         &self,

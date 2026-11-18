@@ -21,7 +21,7 @@ use serde::{Deserialize, Serialize};
 ///
 /// 改本文件的消息类型前先读 `docs/overview.md` 的「IPC 协议号」：什么改动要 +1、什么不要，
 /// 以及 +1 时要同步更新的文档。
-pub const PROTOCOL_VERSION: u32 = 5;
+pub const PROTOCOL_VERSION: u32 = 6;
 
 fn is_zero_u32(value: &u32) -> bool {
     *value == 0
@@ -203,6 +203,12 @@ pub struct TaskRequest {
     /// 调用方 Agent 会话 ID（从 env 取，见 spec D21）。
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub agent_session_id: Option<String>,
+    /// Conversation id an Antigravity process claims through its environment. It is only a
+    /// candidate: an inherited environment can name any conversation, so the daemon adopts it as
+    /// `agent_session_id` only when a lifecycle hook has already registered that conversation as
+    /// live. An older daemon ignores the field and keeps binding by family alone.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub agent_session_candidate: Option<String>,
     /// AskHuman MCP server 进程级随机实例 ID。仅作为拿不到真实 Agent session 时的弱隔离键；
     /// 普通 CLI 与旧 MCP server 不带 → None。
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -550,6 +556,11 @@ pub struct ShowPayload {
     /// 预热弹窗领用时得到的即为提问真正到达时刻（而非热进程 spawn 时刻）。
     #[serde(default)]
     pub created_at_ms: u64,
+    /// Names this ask for the draft kept from an abandoned one (spec `popup-draft-on-cancel` D6):
+    /// the asking session plus the coalescing fingerprint. Only an identifier, never content; absent
+    /// for confirmations, which have no free input.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub draft_key: Option<crate::history::DraftKey>,
 }
 
 /// Daemon-authorized first presentation for a popup helper.
@@ -580,6 +591,19 @@ pub enum ClientMsg {
     },
     CursorDesktop {
         operation: crate::cursor_desktop::Operation,
+    },
+    /// Settings and the command line manage the sidecars AskHuman keeps for the Antigravity App
+    /// (docs/specs/antigravity-deep-integration.md §12.3); the daemon answers with
+    /// `ServerMsg::AntigravityDesktop`.
+    AntigravityDesktop {
+        operation: crate::antigravity_desktop::Operation,
+    },
+    /// A sidecar process the Antigravity App runs for the daemon: the first frame checks in, and
+    /// the connection then carries the results of the commands the daemon sends back. The
+    /// connection does not keep the daemon running. It sends no `Hello`, so a sidecar of an
+    /// older build never makes the daemon give way.
+    AntigravitySidecar {
+        frame: crate::antigravity_desktop::Up,
     },
     /// Mac 控制台给一个不在工作中的会话发消息（目前只有 Cursor Desktop 聊天）：Daemon 直接送进原聊天，
     /// 并回 `ServerMsg::AgentMessage`。同一 `id` 的重试得到同一个结果。
@@ -698,6 +722,13 @@ pub enum ClientMsg {
         failed: bool,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         observation: Option<Box<crate::agents::result::Observation>>,
+        /// An Antigravity `Stop` hook asking whether it may raise the confirmation card now. The
+        /// daemon answers with one `InterjectDecision` (`none` = ask now, `skip` = do not ask,
+        /// `hold` = a sub-agent is still running: wait for a second `release`) and applies nothing:
+        /// the hook reports the end itself once the human has decided. An old daemon ignores the
+        /// field and never answers, which the hook reads as "no information".
+        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+        stop_gate: bool,
     },
     /// Register one long-lived AskHuman MCP server process for Grok's best-effort session binding.
     McpInstanceRegister {
@@ -828,6 +859,10 @@ pub enum InterjectAction {
     Hold,
     /// 放行（Hold 后二帧：composer 取消/关窗，或消息被并发的另一个 hook 拿走）。
     Release,
+    /// Answer to a `stop_gate` query only: this Stop must not raise a card (the conversation is a
+    /// sub-agent, or the agent only paused for work that is still running). No peer is ever sent
+    /// this without asking for it, so it needs no protocol bump.
+    Skip,
 }
 
 /// Daemon → 客户端（CLI / GUI Helper）的消息。
@@ -846,6 +881,13 @@ pub enum ServerMsg {
     },
     CursorDesktop {
         result: Result<serde_json::Value, String>,
+    },
+    AntigravityDesktop {
+        result: Result<serde_json::Value, String>,
+    },
+    /// The daemon's side of a sidecar's connection: the welcome, a refusal, or a command.
+    AntigravitySidecar {
+        frame: crate::antigravity_desktop::Down,
     },
     /// `ClientMsg::AgentMessage` 的答复：`Ok` 载荷的 `status` 为 `accepted`、`rejected`（没有发出，
     /// 该 `id` 已作废）或 `unknown`（可能已发出），`message` 是给用户看的本地化文案。
@@ -923,6 +965,12 @@ pub enum ServerMsg {
     Cancel {
         request_id: String,
         winner: String,
+        /// The ask was abandoned (its caller went away, or the daemon is stopping) rather than
+        /// answered or cancelled by a person, so the popup host keeps what the user had typed
+        /// (spec `popup-draft-on-cancel` D1). Omitted when false: older hosts see the old message
+        /// and newer hosts read a missing field as false.
+        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+        keep_draft: bool,
     },
     /// 配置实时变更，下发新的 `general` 配置给活动 GUI Helper 以即时切主题/语言（D→GUI，A12）。
     ConfigChanged {
@@ -963,7 +1011,7 @@ pub enum ServerMsg {
         detail: serde_json::Value,
     },
     /// 菜单栏宿主整合状态（D→宿主，spec D10）：连上即一帧 + 变化即推。
-    /// 字段名 snake_case（与既有结构体变体一致；IPC 两端同二进制）。宿主据 `running` 与
+    /// 字段名 snake_case（与既有结构体变体一致；IPC 两端同二进制）。宿主据连接是否在线与
     /// `active_requests` 切图标三态，菜单文字取最近一帧；`pending` 触发宿主二进制换新。
     TrayState {
         /// daemon 是否在运行（本帧来自运行中的 daemon → 恒为 true；断连由宿主自行判定为「停止」）。
@@ -1395,6 +1443,46 @@ mod tests {
         assert!(matches!(msg, ClientMsg::TraySubscribe));
     }
 
+    /// The Antigravity sidecar link rides in the ordinary envelope: the sidecar's frames inside
+    /// `ClientMsg::AntigravitySidecar`, the daemon's inside `ServerMsg::AntigravitySidecar`, and
+    /// the Settings operations inside `AntigravityDesktop`.
+    #[test]
+    fn antigravity_messages_have_a_stable_wire_form() {
+        use crate::antigravity_desktop::{Down, Operation, Up};
+        let check_in = r#"{"type":"antigravitySidecar","frame":{"type":"checkIn","id":"askhuman-ws-1","linkVersion":1}}"#;
+        assert!(matches!(
+            serde_json::from_str::<ClientMsg>(check_in).unwrap(),
+            ClientMsg::AntigravitySidecar {
+                frame: Up::CheckIn(_)
+            }
+        ));
+        let welcome = serde_json::to_string(&ServerMsg::AntigravitySidecar {
+            frame: Down::Welcome,
+        })
+        .unwrap();
+        assert_eq!(
+            welcome,
+            r#"{"type":"antigravitySidecar","frame":{"type":"welcome"}}"#
+        );
+        let request: ClientMsg =
+            serde_json::from_str(r#"{"type":"antigravityDesktop","operation":{"op":"sidecars"}}"#)
+                .unwrap();
+        assert!(matches!(
+            request,
+            ClientMsg::AntigravityDesktop {
+                operation: Operation::Sidecars
+            }
+        ));
+        let answer = serde_json::to_string(&ServerMsg::AntigravityDesktop {
+            result: Ok(serde_json::json!({"status": "done"})),
+        })
+        .unwrap();
+        assert_eq!(
+            answer,
+            r#"{"type":"antigravityDesktop","result":{"Ok":{"status":"done"}}}"#
+        );
+    }
+
     #[test]
     fn refresh_update_state_roundtrip() {
         let json = serde_json::to_string(&ClientMsg::RefreshUpdateState).unwrap();
@@ -1577,6 +1665,7 @@ mod tests {
             interject_poll: false,
             failed: false,
             observation: None,
+            stop_gate: false,
         })
         .unwrap();
         assert!(!out.contains("interject_poll"));
@@ -1597,6 +1686,7 @@ mod tests {
             interject_poll: true,
             failed: false,
             observation: None,
+            stop_gate: false,
         })
         .unwrap();
         assert!(out.contains(r#""interject_poll":true"#));
@@ -1631,6 +1721,7 @@ mod tests {
             interject_poll: false,
             failed: true,
             observation: None,
+            stop_gate: false,
         })
         .unwrap();
         assert!(out.contains(r#""failed":true"#));

@@ -20,15 +20,17 @@ const phase = computed(() => !isMac ? "unsupported" : status.value?.phase ?? (en
 const detail = computed(() => error.value || status.value?.error
   || status.value?.windows.find(w => w.error)?.error
   || status.value?.windows.find(w => w.retention?.error)?.retention?.error
-  || status.value?.windows.find(w => w.stall?.error)?.stall?.error || "");
+  || status.value?.windows.find(w => w.stall?.error)?.stall?.error
+  || status.value?.windows.find(w => w.isolation?.error)?.isolation?.error || "");
 // A partly active state can name the guards that did not attach.
 const missing = computed(() => {
   const windows = status.value?.windows ?? [];
-  const names: ("completion" | "retention" | "stall")[] = [];
+  const names: ("completion" | "retention" | "stall" | "isolation")[] = [];
   if (windows.some(w => w.phase === "error")) names.push("completion");
   if (windows.some(w => w.retention?.state === "unavailable")) names.push("retention");
   if (windows.some(({stall}) => stall?.state === "unavailable" ||
     (stall?.state === "active" && (stall.timeoutMs !== 300000 || (stall.retryWindowMs ?? 0) < 600000)))) names.push("stall");
+  if (windows.some(w => w.isolation?.state === "unavailable")) names.push("isolation");
   return names;
 });
 const statusText = computed(() => {

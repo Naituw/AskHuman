@@ -13,15 +13,13 @@ import { isIntegrated } from "./agentRows";
 import { CHANNEL_DEFS } from "./channelDefs";
 import { useSetupContext } from "./useSetup";
 
-/**
- * The Agents a task can be created on, in the order the README shows them. Antigravity has no way
- * to start one, so it is not on the page.
- */
+/** The Agents a task can be created on, in the order the README shows them. */
 const FLOW_AGENTS: readonly { id: string; label: string }[] = [
   { id: "claude", label: "Claude Code" },
   { id: "codex", label: "Codex" },
   { id: "cursor", label: "Cursor" },
   { id: "grok", label: "Grok" },
+  { id: "antigravity", label: "Antigravity" },
   { id: "pi", label: "Pi" },
 ];
 

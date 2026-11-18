@@ -4,6 +4,8 @@ import { useI18n } from "vue-i18n";
 import MarkdownContent from "../../components/MarkdownContent.vue";
 import { usePopupContext } from "./context";
 import AnswerComposer from "./AnswerComposer.vue";
+import TodoAddRow from "./TodoAddRow.vue";
+import TodoRowActions from "./TodoRowActions.vue";
 import { optionDisplayText } from "./optionDisplay";
 
 const { t } = useI18n();
@@ -17,6 +19,10 @@ const {
   single,
   selectOnly,
   cardOptionHotkey,
+  liveTodoOptions,
+  isTodoCompleting,
+  addedTodoId,
+  todoAddRowIndex,
   toggle,
   setActive,
   setCardRef,
@@ -64,26 +70,36 @@ const {
     >{{ q.message }}</pre>
 
     <div v-if="q.predefinedOptions.length" class="options">
-      <div
-        v-for="(opt, i) in q.predefinedOptions"
-        :key="i"
-        class="option"
-        :class="{ selected: (chosenByQ[qi] ?? []).includes(opt.text), single }"
-        @click="toggle(qi, opt.text)"
-      >
-        <span class="check" :class="{ radio: single }" data-find-skip>{{ single ? "" : ((chosenByQ[qi] ?? []).includes(opt.text) ? "✓" : "") }}</span>
-        <span class="label">
-          <span v-if="request?.whatsNext && opt.todoId" class="todo-option-badge" data-find-skip>TODO</span>
-          <span v-if="opt.recommended" class="rec-badge" data-find-skip><span class="rec-badge-pill"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M14 9V5a3 3 0 0 0-3-3l-4 9v11h11.28a2 2 0 0 0 2-1.7l1.38-9a2 2 0 0 0-2-2.3z"></path><path d="M7 22H4a2 2 0 0 1-2-2v-7a2 2 0 0 1 2-2h3"></path></svg>{{ t("popup.recommended") }}</span></span>
-          <span :data-find-seg="`q-${qi}-opt-${i}`">{{ optionDisplayText(opt, Boolean(request?.whatsNext), t("popup.todos.optionPrefix")) }}</span>
-          <span
-            v-if="request?.whatsNext && opt.todoId && opt.todoAttachments?.length"
-            class="todo-attachment-badge"
-            data-find-skip
-          >{{ t("common.attachmentBadge", { n: opt.todoAttachments.length }) }}</span>
-        </span>
-        <kbd v-if="cardOptionHotkey(qi, i)" class="opt-sc" data-find-skip>{{ cardOptionHotkey(qi, i) }}</kbd>
-      </div>
+      <template v-for="(opt, i) in q.predefinedOptions" :key="i">
+        <!-- The add row of a live todo queue sits right after its last todo (docs/specs/todo-list-actions.md D9–D10). -->
+        <TodoAddRow v-if="todoAddRowIndex(qi) === i" />
+        <div
+          class="option"
+          :class="{
+            selected: (chosenByQ[qi] ?? []).includes(opt.text),
+            single,
+            'todo-completing': liveTodoOptions && isTodoCompleting(opt.todoId),
+            'todo-added': liveTodoOptions && !!opt.todoId && addedTodoId === opt.todoId,
+          }"
+          :data-todo-id="liveTodoOptions && opt.todoId ? opt.todoId : undefined"
+          @click="toggle(qi, opt.text)"
+        >
+          <span class="check" :class="{ radio: single }" data-find-skip>{{ liveTodoOptions && isTodoCompleting(opt.todoId) ? "✓" : single ? "" : ((chosenByQ[qi] ?? []).includes(opt.text) ? "✓" : "") }}</span>
+          <span class="label">
+            <span v-if="liveTodoOptions && opt.todoId" class="todo-option-badge" data-find-skip>TODO</span>
+            <span v-if="opt.recommended" class="rec-badge" data-find-skip><span class="rec-badge-pill"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M14 9V5a3 3 0 0 0-3-3l-4 9v11h11.28a2 2 0 0 0 2-1.7l1.38-9a2 2 0 0 0-2-2.3z"></path><path d="M7 22H4a2 2 0 0 1-2-2v-7a2 2 0 0 1 2-2h3"></path></svg>{{ t("popup.recommended") }}</span></span>
+            <span :data-find-seg="`q-${qi}-opt-${i}`">{{ optionDisplayText(opt, liveTodoOptions, t("popup.todos.optionPrefix")) }}</span>
+            <span
+              v-if="liveTodoOptions && opt.todoId && opt.todoAttachments?.length"
+              class="todo-attachment-badge"
+              data-find-skip
+            >{{ t("common.attachmentBadge", { n: opt.todoAttachments.length }) }}</span>
+          </span>
+          <TodoRowActions v-if="liveTodoOptions && opt.todoId" :todo-id="opt.todoId" />
+          <kbd v-if="cardOptionHotkey(qi, i)" class="opt-sc" data-find-skip>{{ cardOptionHotkey(qi, i) }}</kbd>
+        </div>
+      </template>
+      <TodoAddRow v-if="todoAddRowIndex(qi) >= q.predefinedOptions.length" />
     </div>
 
     <AnswerComposer v-if="!selectOnly" :q-index="qi" collapsible />

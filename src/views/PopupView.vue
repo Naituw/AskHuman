@@ -19,6 +19,7 @@ import TodoSection from "./popup/TodoSection.vue";
 import ComposerDock from "./popup/ComposerDock.vue";
 import ArmedDirectiveBar from "./popup/ArmedDirectiveBar.vue";
 import EscalatedNotice from "./popup/EscalatedNotice.vue";
+import DraftNotice from "./popup/DraftNotice.vue";
 import PopupFooter from "./popup/PopupFooter.vue";
 import PopupOverlays from "./popup/PopupOverlays.vue";
 import AttachmentPreviewPanel from "./popup/AttachmentPreviewPanel.vue";
@@ -115,6 +116,8 @@ const { beginDivider } = usePreviewDivider({ mainWidth: () => previewLayout.valu
     <PopupNavbar />
     <!-- A question that came through away mode says why, with a one-click way out (spec D21). -->
     <EscalatedNotice v-if="!isConfirm" />
+    <!-- A question that came up with what an abandoned ask of the same question was holding says so (docs/specs/popup-draft-on-cancel.md D7). -->
+    <DraftNotice v-if="!isConfirm" />
     <FindBar v-if="findActive && findScope === 'question'" />
     <p v-if="updating" class="popup-connection-notice" role="status">{{ t("popup.inbox.updating") }}</p>
     <p v-if="submissionError" class="status-error popup-submission-error" role="alert">{{ t("popup.inbox.submitError", { message: submissionError }) }}</p>

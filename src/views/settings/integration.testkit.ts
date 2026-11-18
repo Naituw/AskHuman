@@ -56,6 +56,8 @@ export function modeStatus(overrides: Partial<AgentModeStatus> = {}): AgentModeS
     agentVersion: null,
     minimumVersion: null,
     versionSupported: true,
+    hostPluginDisabled: false,
+    mcpGrant: null,
     ...overrides,
   };
 }

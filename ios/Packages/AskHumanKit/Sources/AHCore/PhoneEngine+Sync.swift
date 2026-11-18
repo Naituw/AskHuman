@@ -53,8 +53,17 @@ extension PhoneEngine {
         macs[macId] = mac
         // A slow retry that was waiting is replaced by this attempt.
         cancelTimer("hello.retry." + macId)
-        let hello = Hello(nonce: nonce, appVer: config.appVersion, deviceName: config.deviceName, lifecycleResults: true, trafficUsage: true)
-        await send(hello, to: macId)
+        // `leanAgents`: a working Agent nobody watches is shown without its live tool, step count and activity time
+        // (`AppStore.showsLiveActivity`). `compression`: the list streams may arrive compressed (`AHEnvelope.open`).
+        let hello = Hello(
+            nonce: nonce, appVer: config.appVersion, deviceName: config.deviceName, lifecycleResults: true, trafficUsage: true,
+            leanWatch: true, leanAgents: true, compression: true
+        )
+        if var plain = try? Plain(hello, nowMs: clock.nowMs()) {
+            // The Mac references the envelope ID when it rejects hello for clock skew.
+            plain.i = nonce
+            await send(plain, to: macId)
+        }
         after("hello." + macId, Self.helloTimeout) { engine in await engine.helloTimedOut(macId, nonce: nonce) }
     }
 
@@ -89,6 +98,7 @@ extension PhoneEngine {
         mac.helloNonces = []
         mac.helloRounds = 0
         mac.sync = .acked
+        mac.clockSkew = false
         mac.epoch = ack.epoch
         mac.caps = ack.caps
         mac.slot = ack.slot
@@ -96,6 +106,10 @@ extension PhoneEngine {
         mac.slotRev = nil
         mac.away = nil
         mac.awayRev = nil
+        // A Mac that restarted answers none of what was asked of its earlier self, and has not been told
+        // what the user saw.
+        mac.fetching = []
+        mac.seenSent = []
         mac.agents = [:]
         mac.agentsRev = nil
         mac.followRev = nil
@@ -146,16 +160,25 @@ extension PhoneEngine {
         macs[macId] = mac
     }
 
-    func onError(_ macId: String, _ error: ErrorBody) {
+    func onError(_ macId: String, _ error: ErrorBody) async {
         switch error.code {
         case "clock_skew":
-            clockSkew = true
+            markClockSkew(macId, hello: error.ref)
         case "not_paired":
             // The Mac forgot this phone (it was revoked there while we were away).
             Task { await self.onUnpaired(macId) }
+        case "not_found":
+            // The Mac's answer to a `request.get` for a request it has no trace of (`ref` is the request
+            // id): there is no full view to wait for, and what became of the request is for its inbox to say.
+            if macs[macId]?.fetching.remove(error.ref) != nil { await requestResync(macId, stream: "inbox") }
         default:
             break
         }
+    }
+
+    func markClockSkew(_ macId: String, hello: String) {
+        guard case .helloSent(let nonce, _) = macs[macId]?.sync, nonce == hello else { return }
+        macs[macId]?.clockSkew = true
     }
 
     func requestResync(_ macId: String, stream: String) async {

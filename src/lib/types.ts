@@ -1,4 +1,4 @@
-import type { CodexLaunchStatus, CursorLaunchStatus } from "./ipc";
+import type { AntigravityLaunchStatus, CodexLaunchStatus, CursorLaunchStatus } from "./ipc";
 
 export type OutputFormat = "text" | "json";
 
@@ -15,6 +15,12 @@ export interface AskRequest {
   outputFormat: OutputFormat;
   /** whats-next 提问（spec todo-whats-next D2/D7）：待办已是问题选项，折叠待办区只留增删。 */
   whatsNext?: boolean;
+  /**
+   * The todo options of this question are the project's live queue, not a snapshot: a Stop confirmation of a project
+   * (What's next says so with `whatsNext`). The popup lists the queue itself, with the complete / delete / add actions,
+   * and submits a picked todo as its text plus id (docs/specs/todo-list-actions.md D10). Absent = a snapshot.
+   */
+  todoQueue?: boolean;
   /** Set when the question reached the user although away mode is on (docs/specs/special-replies.md D21). */
   escalated?: EscalationReason;
   /** False for Stop confirmations, failure cards, native Codex questions and development relays (N10); absent = true. */
@@ -654,6 +660,36 @@ export interface PopupSubmission {
   annotations?: UserAnnotation[];
 }
 
+/**
+ * What a card held when its caller went away (docs/specs/popup-draft-on-cancel.md D2/D5), shaped like a submission so
+ * it is read from the same state. The host keeps it in the history; a draft carries no todos and no directive.
+ */
+export interface DraftSave {
+  answers: QuestionAnswer[];
+  annotations?: UserAnnotation[];
+}
+
+/** One question of a loaded draft, shaped like what the form holds. */
+export interface DraftLoadAnswer {
+  selectedOptions: string[];
+  userInput: string;
+  /** Read back from the files the host saved them to, as data URLs like a pasted picture. */
+  images: ImageAttachment[];
+  /** Only the paths that still lead to a file. */
+  files: string[];
+}
+
+/**
+ * What `popup_draft_claim` hands a new card (docs/specs/popup-draft-on-cancel.md D6/D7): the draft an abandoned ask of
+ * the same session and question left, one entry per question.
+ */
+export interface DraftLoad {
+  answers: DraftLoadAnswer[];
+  annotations: UserAnnotation[];
+  /** Pictures the draft had whose files are gone (the system cleared them); the card says how many. */
+  missingImages: number;
+}
+
 export type ChannelAction = "send" | "cancel";
 
 /** One question's recorded answer in history (paths only, no base64). */
@@ -687,6 +723,20 @@ export interface HistoryEntry {
   answers: HistoryAnswer[];
   /** Notes written on the Agent's text with the answer; absent on entries recorded without any. */
   annotations?: UserAnnotation[];
+  /**
+   * What the user had typed when the caller went away (docs/specs/popup-draft-on-cancel.md); only on a cancelled entry
+   * that kept one. Never part of `answers`, which keeps meaning "what was sent".
+   */
+  draft?: HistoryDraft | null;
+}
+
+/** The unsent content of an ask whose caller went away, kept on its cancel entry. */
+export interface HistoryDraft {
+  /** One per question, same shape as a sent answer (pictures and files are paths). */
+  answers: HistoryAnswer[];
+  annotations?: UserAnnotation[];
+  /** The request whose card loaded this draft; a draft is loaded at most once. Absent while it still waits. */
+  claimedBy?: string | null;
 }
 
 /** Aggregated project info for the history window's project picker. */
@@ -1266,8 +1316,8 @@ export interface AgentTaskReadiness {
   startable?: boolean;
   /** Where a task would run when `startable`; `null` when it cannot start. */
   startRoute?: "desktop" | "terminal" | null;
-  /** Codex and Cursor: the launch status behind `startable` (both routes, and why each is unavailable). */
-  launch?: CodexLaunchStatus | CursorLaunchStatus | null;
+  /** Codex, Cursor and Antigravity: the launch status behind `startable` (both routes, and why each is unavailable). */
+  launch?: CodexLaunchStatus | CursorLaunchStatus | AntigravityLaunchStatus | null;
   diagnostics: string[];
   /** Codex only: oldest version that can receive the protocol through its SessionStart hook. */
   protocolMinimumVersion?: string | null;
@@ -1278,6 +1328,8 @@ export interface AgentTaskReadiness {
 export interface AppConfig {
   codexDesktop?: {appPath: string; codexHome: string; launchPreference: "terminal" | "desktop"};
   cursorDesktop?: {suppressBackgroundCompletionFollowUp: boolean; endEscalationsWhileAway?: boolean; launchPreference?: "terminal" | "desktop"};
+  /** `launchPreference` says which route a new task tries first; `manageSidecars` is the one-time allowance to create and remove the App route's sidecars. */
+  antigravityDesktop?: {launchPreference?: "terminal" | "desktop"; manageSidecars?: boolean};
   general: GeneralConfig;
   channels: ChannelsConfig;
   agentTasks: AgentTasksConfig;
@@ -1477,20 +1529,6 @@ export interface IosConnectionFields {
   relayUrl: string;
 }
 
-export interface HookStatus {
-  installed: boolean;
-  outdated: boolean;
-  hooksJsonExists: boolean;
-  supported: boolean;
-}
-
-export interface ClaudeHookStatus {
-  installed: boolean;
-  outdated: boolean;
-  settingsExists: boolean;
-  supported: boolean;
-}
-
 export type AgentId = "cursor" | "claude" | "codex" | "grok" | "pi" | "antigravity";
 
 export interface UpdateInfo {
@@ -1518,13 +1556,6 @@ export interface PushedAgent {
   kind?: string | null;
   pid?: number | null;
   launchId?: string | null;
-}
-
-export interface RuleStatus {
-  installed: boolean;
-  outdated: boolean;
-  path: string;
-  supported: boolean;
 }
 
 /** Agent 集成模式（三态互斥）。 */
@@ -1556,6 +1587,10 @@ export interface AgentModeStatus {
   agentVersion: string | null;
   minimumVersion: string | null;
   versionSupported: boolean;
+  /** Antigravity only: the user switched the AskHuman plugin off inside Antigravity. */
+  hostPluginDisabled: boolean;
+  /** Antigravity MCP mode only: whether the "always allow" list covers the MCP tool; null = n/a. */
+  mcpGrant: boolean | null;
 }
 
 /** 接管 Claude 内置 AskUserQuestion 的开关状态（仅 Claude Code 支持）。 */

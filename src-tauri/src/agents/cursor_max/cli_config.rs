@@ -42,6 +42,8 @@ impl CliState {
     }
 
     /// The parameters to try for a model id when the config does not select it directly.
+    // The Max flow does not consult this yet; tests cover the parsing behind it.
+    #[allow(dead_code)]
     pub fn saved_for(&self, model: &str) -> Option<&[(String, String)]> {
         self.saved
             .iter()

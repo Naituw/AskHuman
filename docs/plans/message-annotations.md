@@ -13,7 +13,7 @@
 ### 1.2 哪些文字可以附注（D2、D3、N1、N2、N9）
 
 - **Message 的文字**：弹窗里渲染后的 Markdown、纯文本、「查看源码」下的源码文字都可以（D16）；iOS 上只有 Markdown 且网页渲染成功的 Message 可以（N9）。
-- **直接提问的题干**：没有 Message（既无文字也无附件）、恰好一个问题（带不带预选项都算）、且不是 What's next 时，这个问题的题干。命令行里 `AskHuman "长文" -o A -o B` 就是这种形态。弹窗里它本来就放在最上面、不带「问题」标题，版面不动；iOS 上把题干搬进上方的 Message 区（D19、D20）。
+- **直接提问的题干**：没有 Message 文字、恰好一个问题（带不带预选项都算）、且不是 What's next 时，这个问题的题干；附在 Message 上的文件不算 Message（2026-11-16 起，见文末追加；原先写的是「既无文字也无附件」）。命令行里 `AskHuman "长文" -o A -o B` 就是这种形态。弹窗里没有附件时它本来就放在最上面、不带「问题」标题，版面不动；带附件时把题干当作 Message 排在附件上面（2026-11-16，见文末追加）；iOS 上把题干搬进上方的 Message 区（D19、D20）。
 - **不可附注**：多题提问、或题目与 Message 并存时的题干；选项文字、附件、代码块的复制按钮、Mermaid 图（源码与图都不算）；What's next 的固定问句（它的 Message 可以）；确认卡（权限 / Stop / 出错）、`--select-only` 严格选择、IM 渠道；出错卡 / 复查卡、Codex 原生问题、开发中继。其中除 IM 外都靠请求级开关 `annotatable = false` 表达（E2）。
 
 ### 1.3 Agent 收到什么（D5、D7、D8、D9、D23、N6、N10、N11）
@@ -42,7 +42,7 @@
 - 底栏按钮行里第三个圆钮「附注」，与「发送」同高，有附注才出现，紫色数字角标；顺序 [快捷回复][附注][下一题][发送]；点开清单：点一条回到原文并闪一下，左滑编辑 / 删除（D18、D21）。
 - 窄屏沿用现有渐进降级（G12 / G13：计数缩写、计数独占一行、圆钮随字号变大）。需求 §4.3 的宽度是估算，落地后用 `AskHumanBarUITests` 在 375 pt、五档字号、中英文下实测；**不达标就回来找用户，不自己换方案**（D21）。
 - 附注随草稿保存，离开页面再回来还在（D6）。非 Markdown 消息与网页没起来时的原生降级渲染没有新增入口，但草稿里已有的附注仍保留、仍在清单里、仍随回答发出（N9）。Mac 太旧（没有 `Caps.annotations`）时没有入口（D24）。
-- 没有 Message（无文字、无附件）、只有一个问题、且不是 What's next 时，题干一律显示在上方的 Message 区（网页渲染），不论长短，选项卡里只剩选项与输入框（D19）。**没有别的条件**：不看 Mac 有没有 `Caps.annotations`、是不是 Markdown、是不是严格选择——用户在审批轮明确不要条件规则，这一形态的布局与以前不同是他接受的代价；What's next 的固定问句不搬（N1）。非 Markdown、网页没起来时题干在 Message 卡片里是原生文字；不可附注时（老 Mac、严格选择、非 Markdown 等）题干同样在上方，只是系统菜单里没有「添加附注」。代价：Markdown 的这类提问也要起一个网页进程，用户已接受。
+- 没有 Message 文字（附件不算，2026-11-16 起；原先是「无文字、无附件」）、只有一个问题、且不是 What's next 时，题干一律显示在上方的 Message 区（网页渲染），不论长短，选项卡里只剩选项与输入框，文件列在题干下面（D19）。**没有别的条件**：不看 Mac 有没有 `Caps.annotations`、是不是 Markdown、是不是严格选择——用户在审批轮明确不要条件规则，这一形态的布局与以前不同是他接受的代价；What's next 的固定问句不搬（N1）。非 Markdown、网页没起来时题干在 Message 卡片里是原生文字；不可附注时（老 Mac、严格选择、非 Markdown 等）题干同样在上方，只是系统菜单里没有「添加附注」。代价：Markdown 的这类提问也要起一个网页进程，用户已接受。
 
 ### 1.6 附注与回答的关系（D4、D5、D6、D15、N8）
 
@@ -172,7 +172,7 @@ P1 先于 P2 做：它只决定 P4 的路是否走得通，早知道比晚知道
 - **重绘时机**：`PopupView.vue` 里 `.content` 现在绑 `@markdown-content-updated="refreshFind"`，改成先 `annotations.reapply()` 再 `refreshFind()`；附注增删改之后、`viewSource` 切换之后也 `reapply()` 并 `refreshFind()`。
 - **历史窗口**：`src/components/HistoryDetail.vue`（含「复制为文本」）显示附注；`HistoryView.vue` 的列表不变。
 - **文案**（`src/i18n`，中英各一份）：「添加附注」/ Add annotation；「编辑该附注」/ Edit annotation；「附注 N」/ Annotations N；清单标题「附注 · N 条」/ Annotations · N；上限提示、清单里的「编辑」「删除」「找不到原文位置」。
-- **Mac 弹窗里直接提问的版面不动**，只是题干多了选字附注的能力。
+- **Mac 弹窗里没有附件的直接提问，版面不动**，只是题干多了选字附注的能力；带附件时题干当作 Message 排在附件上面（文末追加）。
 
 ### 6.4 测试与验证
 
@@ -218,7 +218,7 @@ P1 先于 P2 做：它只决定 P4 的路是否走得通，早知道比晚知道
 
 ## 8. P5：iOS 直接提问
 
-- `AHCore` 里一个纯函数（可单测，`AskView` 的扩展，不带参数）判断这一形态：Message 去空白后为空、没有附件、恰好一个问题、不是 What's next（N1）。**只有这四条**，不看 `annotatable`、Mac 能力、是否 Markdown、是否严格选择（审批轮定案）。
+- `AHCore` 里一个纯函数（可单测，`AskView` 的扩展，不带参数）判断这一形态：Message 去空白后为空、恰好一个问题、不是 What's next（N1）。**只有这三条**，不看附件、`annotatable`、Mac 能力、是否 Markdown、是否严格选择（审批轮定案；「没有附件」原是第四条，2026-11-16 去掉，见文末追加）。
 - `AnswerScreen`：满足时 `MessageCard` 显示这个问题的题干（走网页渲染）；`QuestionCard` 不再显示题干（单题没有题号圆标，所以整个题干行去掉），只剩选项与输入框。`MessageCard.drawnByWebPage`、阅读追踪（`ReadingTracker` 等「网页排版完成」的逻辑）按「有效的 Message 文字」判断，照旧工作。非 Markdown 或网页没起来时，题干在 Message 卡片里用原生文字，仍在上方。不满足这一形态时版面与现在完全一样。
 - 测试：纯函数的每个条件各一条；`AskHumanWebUITests` / `AskHumanUITests`：短题干与大段题干都在 Message 区、选项卡里没有题干、严格选择 / 老 Mac / 非 Markdown 的直接提问也一样在上方、What's next 保持原样、有 Message 的提问与多题保持原样、降级渲染。
 - `docs/specs/ios-web-markdown.md` 的 U2「题干保持原生」补一句：直接提问这一形态下题干并入 Message 网页（P6 一起改）。
@@ -470,7 +470,7 @@ P1 先于 P2 做：它只决定 P4 的路是否走得通，早知道比晚知道
 
 **与计划的差异**：
 
-1. 判断是 `AskView` 的两个属性（AHCore，`DirectQuestion.swift`）：`isDirectAsk`（四条：Message 去空白为空、没有附件、恰好一个问题、不是 What's next；不看 `annotatable`、能力位、是否 Markdown、是否严格选择）与 `messageAreaText`（Message 区该显示的文字：直接提问时是题干，否则是去空白的 Message）。`MessageCard.text(of:)` 直接取后者，`drawnByWebPage`、阅读追踪的「网页排版完成」都按它判断，所以不必另改。
+1. 判断是 `AskView` 的两个属性（AHCore，`DirectQuestion.swift`）：`isDirectAsk`（当时是四条：Message 去空白为空、没有附件、恰好一个问题、不是 What's next；2026-11-16 起没有「没有附件」这一条，见文末追加；不看 `annotatable`、能力位、是否 Markdown、是否严格选择）与 `messageAreaText`（Message 区该显示的文字：直接提问时是题干，否则是去空白的 Message）。`MessageCard.text(of:)` 直接取后者，`drawnByWebPage`、阅读追踪的「网页排版完成」都按它判断，所以不必另改。
 2. `QuestionCard` 里整个题干行（含多题才有的题号圆标）包在 `if !ask.isDirectAsk` 里；单题本来没有题号，所以去掉的就是题干。非 Markdown 的直接提问，题干在 Message 卡里是原生文字、仍在上方。`MessageCard` 只在 `ask.annotatable` 时给网页挂附注，所以严格选择或老 Mac 的直接提问也会把题干挪上去，但那一页不收附注（计划写的：只看四条）。
 3. **Mock 新增 `direct` 场景**（八条请求：短题干、大段题干、严格选择、纯文本、不收附注的 Mac、What's next、两个问题、有 Message 的提问），因为原来所有 Mock 请求都带 Message，没有直接提问的；`MockData.preview(of:)` 与 Rust 的 `preview_of` 一样，Message 为空时取第一个题干。
 4. **测试不是加在 `AskHumanWebUITests` / `AskHumanUITests`，而是新文件 `AskHumanDirectAskUITests`**（9 条）：XCUITest 看不到「卡片里装着什么」，所以用题干与第一个选项之间的间距分辨两种版面（同一张卡里约 12 pt，两张卡之间约 48 pt，阈值 30 pt）；另有「大段题干能选字写附注」「回答挪过去的题照常发送、进历史」。`DirectQuestionTests` 16 条覆盖四个条件各一条与「这些都不影响」。
@@ -535,3 +535,42 @@ SE / 26.2 在改经典栏之前量过一轮（浮动栏各状态的框，数字�
 - 中文：`AskHumanBarUITests` 没有跑 zh-Hans；清单的中文由 `testTheListSpeaksChinese` 自己启动中文来测（过）；`Localizable.xcstrings` 里的 11 条中文靠 `make-catalog.py` 与已提交的文件一致来保证。附注的其余 UI 用例是英文写的。
 - 整库 `vitest run`（`vitest.config.ts` 没排除 `todo-sync-helper/build/**`，整库会把发布产物里的源码副本再跑一遍；用户说交给另一个会话）与整库 `cargo test`（本功能之后没有重跑）。
 - 真实 Agent 端到端（会调用模型，要用户授权）；Windows / Linux 的真实弹窗；浅色主题与 420 px 窄窗口的真实弹窗；真实输入法组词；「查看源码」模式重新定位、历史窗口里的附注、共享窗口的未答标记（只有单元测试）。
+
+### 追加：附件不算 Message（2026-11-16）
+
+**起因**：用户发现弹窗里的直接提问没有变成正文，问是没实现，还是那条提问带着文件附件的缘故。查实是后者：两端的「直接提问」判断都把附件算成 Message（iOS `isDirectAsk` 要求 `message.files.isEmpty`；弹窗 `annotationTarget` 用 `showDescription`，消息文字或附件任一为真就不把题干当附注根，页面还多出「Question」小标题）。「没有附件」这一条来自本计划 §1.2 的措辞，需求和四轮问答里只写过「没有 Message」，附件没有单独问过用户。用户选了「两端都放宽：只看消息文字，附件不再算 Message」，在主工作树做。问答与取舍记在需求 §11「补充轮」。
+
+**更正**：第一版弹窗只放宽了附注的判断，版面没动（附件在上、「Question」小标题、题干在附件下面），还把「带附件时版面同样不动」写进了 D20——这一步没有问过用户。验证时他问「Message 显示在附件的下面了，这个是故意的吗？」，随后指出「就是这种情况要把提问当成 message」，并要求不理解时先问。我复述理解、他确认「对，就这样改（没有附件的直接提问不变）」之后，弹窗才改成下面的版面。这在「单题带附件」上推翻了 2026-06-04 的 D13（`plans/question-overview.md`：附件在上、问题在下），其余情形不变。经过照实记在需求 §11。
+
+**改动**：
+
+- iOS：`AskView.isDirectAsk` 去掉 `message.files.isEmpty`，只剩三条（Message 去空白为空、恰好一个问题、不是 What's next）；`messageAreaText` 不变（它本来就只取文字，文件由 `MessageCard` 的 `AssetList` 列在文字下面）。带文件时题干进上方的 Message 卡、文件在题干下面，`QuestionCard` 只剩选项与输入框。
+- 弹窗（最终版）：带附件的直接提问把题干当作 Message——题干在最上，附件紧随其后，没有「Question」小标题，选项与回复框在最下，窗口标题仍是「Message from …」；选字附注照 Message 处理。
+  - `usePopupCore.ts`：新增 `questionAsMessage`（不是确认卡、不是 What's next、恰好一个问题、Message 去空白为空、有附件、题干非空）；`annotationTarget` 去掉 `showDescription ||`，只看 Message 文字；`showQuestionHeader` 在 `questionAsMessage` 时为假，小标题随之消失；窗口标题改由 `hasMessageArea`（`showDescription || isMulti`）决定，所以带附件时标题仍是「Message from」，与改前一致。`showDescription` 仍管 Message 区本身是否出现。
+  - `MessageSection.vue`：Message 文字的分支之后加一个 `questionAsMessage` 分支，在 Message 文字的位置画题干（Markdown / 纯文本两条，附注根与查找标记都在其上），附件区紧随其后。
+  - `SequentialPane.vue`：`questionAsMessage` 时不再画题干，只剩选项与输入框（分隔线属于「Question」小标题，一并不出现）。
+  - `usePopupFind.ts`：⌘F 的访问顺序是写死的（Message → 附件 → 各题），与屏幕顺序无关；`questionAsMessage` 时改为先题干（`q-0-msg`）后附件，其余题的顺序不变。
+  - 没有附件的直接提问、有 Message 文字的请求、多题、What's next、确认卡：版面与判断都没动。
+  - 浏览器原型 `src/prototype/popup-annotations.html` 加了 `shape=files`（带两个文件的直接提问），用真实 `PopupView` 渲染，`direct` 是没有附件的对照。
+- 守护进程、IPC、协议号、历史与恢复存储都没动（`request.annotatable` 本来就与附件无关）。
+
+**测试**：
+
+- `DirectQuestionTests`：原来钉着旧行为的 `testAFileMakesItAnOrdinaryAsk`、`testOnlyFilesLeaveTheMessageAreaWithoutText` 换成五条：`testFilesAreNotAMessage`、`testAMessageBesideFilesIsStillAMessage`、`testFilesDoNotMakeSeveralQuestionsOrWhatsNextADirectAsk`、`testFilesBesideALoneQuestionLeaveItsTextInTheMessageArea`、`testFilesAloneLeaveTheMessageAreaWithoutText`。
+- `PopupView.annotations.test.ts`：
+  - 新版面：`shows a lone question as the Message above the files and lets it be annotated`（DOM 顺序 题干 → `.attachments` → `.question-pane`，没有 `.q-header`，两个选项，`q-0-msg` 只有一处，标题「Message from Codex」，选字出按钮、引用原文进编辑器）、`…that is plain text as the Message above the files too`（非 Markdown，附注根是 `PRE`）。
+  - 附注：`sends the note of a lone question that has files beside it`（附注随回答发出）、`annotates the Message, not the question, when the Message has both text and files`（并断言这种形态的版面不变：文字 → 文件 → 「Question」小标题 → 题干在 `.question-pane`）。
+  - 不动的形态：没有附件的直接提问（附注根仍在 `.question-pane` 里、没有 `.attachments`、没有小标题、标题「Question from Codex」）；多题与 What's next 只带文件时仍不可附注，且小标题在、文件在题干前。
+- `usePopupFind.test.ts`：新增 `usePopupFind reading order` 两条——题干当作 Message 时先于文件被访问（`goFind(2)` 落在 `att-0`）、不是 Message 时文件仍在前。
+- UI：Mock 的 `direct` 场景加了第 9 条 `req-direct-files`（一个问题 + 一个 Markdown 文件，没有 Message 文字）；`AskHumanDirectAskUITests` 加两条：题干在 Message 卡里、文件在题干下面、选项在文件下面（量框）；选中题干里的词写附注，附注钮显示 1，文件仍在。
+
+**验证**（iPhone 17 / iOS 26.2 模拟器、本机）：
+
+- 红→绿（iOS）：把 `isDirectAsk` 还原到 HEAD 再跑，恰好是描述新行为的测试失败（2 条），恢复后全过。
+- 红→绿（弹窗）：把 `questionAsMessage` 恒置假（即旧版面）再跑 `PopupView.annotations.test.ts` 与 `usePopupFind.test.ts`，恰好 2 条失败（上面两条新版面测试），其余 49 条不动；把 ⌘F 的 `lead` 恒置空，恰好 1 条失败（访问顺序）；两处都已还原，文件校验和与备份一致。
+- `swift test`（整个 `AskHumanKit`）555 条、0 失败；`vue-tsc --noEmit` 过；`vitest run src/views/popup src/lib` 69 个文件、959 条全过。
+- `xcodebuild test -only-testing:AskHumanUITests/AskHumanDirectAskUITests` 11 条（原 9 + 新 2）全过；截图 `68-direct-files`（题干、文件、选项依次排开）与 `69-direct-files-with-a-note`（词带紫色下划线与编号，底栏附注钮 ①）与预期一致。
+- 浏览器原型（真实 `PopupView` 跑在 `mockIPC` 上）：`shape=files` 题干在上、「附件 · 2」紧随其后、选项与回复框在下，没有「Question」小标题，间距与别处一致；`scene=notes` 在题干上加两条附注，高亮带编号、底栏「附注 ②」；`shape=direct`（没有附件）与改前一致。
+- 真窗口：重装后用新装的 AskHuman 发一条带文件、没有 Message 文字的单题，请用户在真实弹窗里确认（见 `docs/PROGRESS.md`）。
+
+**没验证**：真机（iOS 要新的 TestFlight 构建才到手机，用户决定发不发）；zh-Hans 与 iPhone SE / iOS 18.5 上这两条新 UI 用例（只在 iPhone 17 / 26.2 英文跑过）；Windows / Linux 的真实弹窗。

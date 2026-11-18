@@ -45,10 +45,12 @@ struct Preferences {
     pi: Option<bool>,
     #[serde(default)]
     grok: Option<bool>,
+    #[serde(default)]
+    antigravity: Option<bool>,
 }
 
-pub fn supported(kind: AgentKind) -> bool {
-    kind != AgentKind::Antigravity
+pub fn supported(_kind: AgentKind) -> bool {
+    true
 }
 
 pub fn enabled(kind: AgentKind) -> bool {
@@ -61,7 +63,7 @@ pub fn enabled(kind: AgentKind) -> bool {
         AgentKind::Codex => preferences.codex.unwrap_or(false),
         AgentKind::Cursor => preferences.cursor.unwrap_or(false),
         AgentKind::Grok => preferences.grok.unwrap_or(false),
-        AgentKind::Antigravity => false,
+        AgentKind::Antigravity => preferences.antigravity.unwrap_or(false),
         AgentKind::Pi => preferences.pi.unwrap_or(true),
     }
 }
@@ -78,7 +80,7 @@ pub fn set_enabled(kind: AgentKind, value: bool) -> Result<()> {
         AgentKind::Codex => preferences.codex = Some(value),
         AgentKind::Cursor => preferences.cursor = Some(value),
         AgentKind::Grok => preferences.grok = Some(value),
-        AgentKind::Antigravity => unreachable!(),
+        AgentKind::Antigravity => preferences.antigravity = Some(value),
         AgentKind::Pi => preferences.pi = Some(value),
     }
     save_preferences(&preferences)?;
@@ -127,6 +129,13 @@ pub fn status(kind: AgentKind) -> StopStatus {
             outdated: extension.stop != active || (active && extension.outdated),
             other_handlers_detected: false,
         };
+    }
+    if kind == AgentKind::Antigravity {
+        return antigravity_status(
+            enabled(kind),
+            super::agent_mode::current(target_for_kind(kind)),
+            super::antigravity_plugin::snapshot().ok(),
+        );
     }
     let track = super::agent_lifecycle::tracking_installed(kind);
     let preference_enabled = enabled(kind);
@@ -211,6 +220,34 @@ fn inspect_handler_state(
     }
 }
 
+/// The Stop handler of Antigravity is part of the AskHuman plugin. Where the plugin cannot be read
+/// at all (`None`, an unsupported platform) the switch is not offered.
+fn antigravity_status(
+    preference_enabled: bool,
+    mode: super::agent_mode::Mode,
+    plugin: Option<super::antigravity_plugin::Snapshot>,
+) -> StopStatus {
+    use super::antigravity_plugin::State;
+    let Some(plugin) = plugin else {
+        return StopStatus {
+            supported: false,
+            enabled: false,
+            installed: false,
+            outdated: false,
+            other_handlers_detected: false,
+        };
+    };
+    let active = confirmation_active(preference_enabled, mode);
+    StopStatus {
+        supported: true,
+        enabled: preference_enabled,
+        installed: plugin.present() && plugin.stop,
+        outdated: plugin.present()
+            && (plugin.stop != active || (active && plugin.state != State::OwnedCurrent)),
+        other_handlers_detected: false,
+    }
+}
+
 /// Reconcile after an integration mode change. Caller holds the integration mutation lock.
 pub(crate) fn reconcile_unlocked(kind: AgentKind, mode: super::agent_mode::Mode) -> Result<()> {
     if !supported(kind) {
@@ -218,6 +255,9 @@ pub(crate) fn reconcile_unlocked(kind: AgentKind, mode: super::agent_mode::Mode)
     }
     if kind == AgentKind::Pi {
         return super::pi_extension::set_stop_enabled(active_in_mode(kind, mode));
+    }
+    if kind == AgentKind::Antigravity {
+        return super::antigravity_plugin::set_stop(active_in_mode(kind, mode));
     }
     let track = super::agent_lifecycle::tracking_installed(kind);
     let confirm = active_in_mode(kind, mode);
@@ -630,8 +670,55 @@ mod tests {
         assert!(grok.contains(FAILURE_MARKER));
     }
 
+    fn plugin(
+        state: super::super::antigravity_plugin::State,
+        stop: bool,
+    ) -> super::super::antigravity_plugin::Snapshot {
+        super::super::antigravity_plugin::Snapshot {
+            state,
+            variant: None,
+            lifecycle: false,
+            stop,
+            reason: None,
+            location: std::path::PathBuf::from("/plugins/askhuman"),
+        }
+    }
+
+    #[test]
+    fn the_antigravity_switch_follows_the_plugin_and_never_installs_one_by_itself() {
+        use super::super::agent_mode::Mode;
+        use super::super::antigravity_plugin::State;
+        // No plugin: the preference is remembered, nothing is installed, nothing needs repair.
+        for mode in [Mode::None, Mode::Cli, Mode::Mcp] {
+            let status = antigravity_status(true, mode, Some(plugin(State::Missing, false)));
+            assert!(status.supported && status.enabled);
+            assert!(!status.installed && !status.outdated);
+        }
+        // Switched on in an integrated mode with a plugin that does not confirm yet: repair.
+        let behind = antigravity_status(true, Mode::Mcp, Some(plugin(State::OwnedCurrent, false)));
+        assert!(!behind.installed && behind.outdated);
+        // The plugin confirms and matches the switch.
+        let done = antigravity_status(true, Mode::Cli, Some(plugin(State::OwnedCurrent, true)));
+        assert!(done.installed && !done.outdated);
+        // Switched off while the plugin still confirms: repair removes it.
+        let stale = antigravity_status(false, Mode::Mcp, Some(plugin(State::OwnedCurrent, true)));
+        assert!(stale.installed && stale.outdated && !stale.enabled);
+        // The preference only counts while the integration is on.
+        let off = antigravity_status(true, Mode::None, Some(plugin(State::OwnedCurrent, false)));
+        assert!(off.enabled && !off.installed && !off.outdated);
+        // An outdated copy of the plugin is repaired even when the switch already matches.
+        let old = antigravity_status(true, Mode::Cli, Some(plugin(State::OwnedOutdated, true)));
+        assert!(old.installed && old.outdated);
+        // Someone else's plugin is never ours to touch, so it is not "outdated".
+        let foreign = antigravity_status(true, Mode::Cli, Some(plugin(State::Conflict, false)));
+        assert!(!foreign.installed && !foreign.outdated);
+        // Where the plugin cannot be read at all the switch is not offered.
+        assert!(!antigravity_status(true, Mode::Cli, None).supported);
+    }
+
     #[test]
     fn supported_matrix_and_default_off() {
+        assert!(supported(AgentKind::Antigravity));
         assert!(supported(AgentKind::Claude));
         assert!(supported(AgentKind::Codex));
         assert!(supported(AgentKind::Cursor));

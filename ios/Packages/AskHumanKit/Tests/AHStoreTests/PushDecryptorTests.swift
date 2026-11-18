@@ -84,6 +84,25 @@ final class PushDecryptorTests: XCTestCase {
         XCTAssertEqual(PushDecryptor.decrypt(userInfo: info, vault: try makeVault()), .failure(.notAuthentic))
     }
 
+    func testAPushIsNeverCompressed() throws {
+        // Compressed, authenticated with the pairing key and the marker in the associated data: still refused, because
+        // the notification extension does not inflate and a push stays small (docs/specs/ios-traffic-reduction.md §3.3).
+        let body = try AHJSON.encoder.encode(plain())
+        let nonce = Bytes.random(AHCrypto.nonceLength)
+        let aad = Data("ah1|push|\(macId)|1|z1".utf8)
+        let ciphertext = try AHCrypto.seal(key: key, nonce: nonce, aad: aad, plaintext: AHEnvelope.compress(body))
+        let fields: [String: Any] = ["f": macId, "k": 1, "n": Bytes.b64u(nonce), "c": Bytes.b64u(ciphertext), "z": 1]
+        let result = PushDecryptor.decrypt(userInfo: ["ah": fields], vault: try makeVault())
+        XCTAssertThrowsError(try result.get())
+
+        // And an ordinary push that merely says it is compressed does not open either.
+        var info = try userInfo(sealedWith: key, plain: plain())
+        var object = try XCTUnwrap(info["ah"] as? [String: Any])
+        object["z"] = 1
+        info["ah"] = object
+        XCTAssertThrowsError(try PushDecryptor.decrypt(userInfo: info, vault: try makeVault()).get())
+    }
+
     func testGarbageIsMalformed() throws {
         let vault = try makeVault()
         XCTAssertEqual(PushDecryptor.decrypt(userInfo: ["ah": "not an object"], vault: vault), .failure(.malformed))

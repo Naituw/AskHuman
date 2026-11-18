@@ -602,16 +602,6 @@
         }
       }
     },
-    "Add todo…" : {
-      "localizations" : {
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "添加待办…"
-          }
-        }
-      }
-    },
     "Added to %@" : {
       "localizations" : {
         "zh-Hans" : {
@@ -1422,12 +1412,32 @@
         }
       }
     },
+    "Complete" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "完成"
+          }
+        }
+      }
+    },
     "Completed" : {
       "localizations" : {
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
             "value" : "已完成"
+          }
+        }
+      }
+    },
+    "Completed “%@”" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "已完成「%@」"
           }
         }
       }
@@ -1648,6 +1658,16 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "当前提问"
+          }
+        }
+      }
+    },
+    "Data use reminders" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "流量提醒"
           }
         }
       }
@@ -2048,6 +2068,16 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "离开模式下的升级提问"
+          }
+        }
+      }
+    },
+    "Every %lld GB" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "每 %lld GB"
           }
         }
       }
@@ -3951,12 +3981,12 @@
         }
       }
     },
-    "Picked todos are sent to the Agent with your answer and removed from the list." : {
+    "Picked todos are sent to the Agent with your answer and removed from the list. Swipe right to complete, left to delete." : {
       "localizations" : {
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "选中的待办会和你的回答一起发给 Agent，并从待办里移除。"
+            "value" : "选中的待办会和你的回答一起发给 Agent，并从待办里移除。右滑完成，左滑删除。"
           }
         }
       }
@@ -5361,6 +5391,16 @@
         }
       }
     },
+    "The Inbox says so when this month's use gets close to each step. Close a reminder and the next one comes at the next step." : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "本月流量快到每一档时，收件箱会提醒你。关掉一条提醒后，要到快到下一档时才会再提醒。"
+          }
+        }
+      }
+    },
     "The Mac" : {
       "localizations" : {
         "zh-Hans" : {
@@ -5467,6 +5507,16 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Mac 没有确认这次修改，列表显示的是它现在的内容。"
+          }
+        }
+      }
+    },
+    "The Mac is offline. The request loads when it is back." : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Mac 已离线，恢复后会自动加载这条请求。"
           }
         }
       }
@@ -5921,22 +5971,22 @@
         }
       }
     },
-    "This month's data use is close to the broker's free allowance. The service pauses when it runs out." : {
+    "This month's data use is close to %lld GB." : {
       "localizations" : {
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "本月流量快用完 Broker 的免费额度了。用完后服务会暂停。"
+            "value" : "本月流量快到 %lld GB 了。"
           }
         }
       }
     },
-    "This month's free data allowance may be used up, so the broker may refuse connections." : {
+    "This month's data use is over %lld GB." : {
       "localizations" : {
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "本月的免费流量额度可能已用完，Broker 可能会拒绝连接。"
+            "value" : "本月流量已超过 %lld GB。"
           }
         }
       }
@@ -6159,6 +6209,16 @@
         }
       }
     },
+    "Todos can be changed when the Mac is reachable." : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Mac 可连接时才能修改待办。"
+          }
+        }
+      }
+    },
     "Too large" : {
       "localizations" : {
         "zh-Hans" : {
@@ -6225,6 +6285,16 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "开启通知后，即使 AskHuman 已关闭，新提问也能送达你。"
+          }
+        }
+      }
+    },
+    "Undo" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "撤销"
           }
         }
       }
@@ -6705,6 +6775,16 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "连不上你的 Mac"
+          }
+        }
+      }
+    },
+    "Your Mac is updating. The request loads when it is back." : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Mac 正在更新，完成后会自动加载这条请求。"
           }
         }
       }

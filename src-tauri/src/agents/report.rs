@@ -30,7 +30,9 @@ pub fn run(args: &[String]) {
     let Some(intended) = args.first().and_then(|s| AgentKind::parse(s)) else {
         return;
     };
+    // Antigravity has its own hook names (`pre-invocation`, `stop`) and its own payload.
     if intended == AgentKind::Antigravity {
+        super::antigravity_hook::run(&args[1..]);
         return;
     }
     let Some(event) = args.get(1).and_then(|s| super::LifecycleEvent::parse(s)) else {
@@ -106,6 +108,7 @@ pub fn run(args: &[String]) {
             event,
             stdin.as_ref(),
         ))),
+        stop_gate: false,
     };
     if interject_poll {
         if let crate::client::InterjectPollOutcome::Deny { text, attachments } =
@@ -164,6 +167,7 @@ pub(super) fn report_simple_event(
             event,
             Some(input),
         ))),
+        stop_gate: false,
     });
 }
 
@@ -310,9 +314,9 @@ pub(super) fn resolve_session_id(
     env: &HashMap<String, String>,
     stdin: Option<&Value>,
 ) -> String {
-    if kind == AgentKind::Antigravity {
-        return String::new();
-    }
+    // Antigravity's environment variable is never an authority on its own (the daemon checks it
+    // against the registry), so `session_id_from_env_map` returns nothing for it and a hook's
+    // payload `conversationId` is the identity.
     if let Some(s) = detect::session_id_from_env_map(kind, env) {
         return s;
     }

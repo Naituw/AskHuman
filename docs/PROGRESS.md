@@ -3,6 +3,65 @@
 记录需要跨会话保留的未完成 / 延期事项和明确下一步。任务 / 需求完成后删除其 section
 （历史留在 git）。
 
+## 进行中：Antigravity 深度集成（P1–P4 已实现并装为日常版，等用户验收）
+
+规格 [antigravity-deep-integration.md](specs/antigravity-deep-integration.md)，计划 [plans/antigravity-deep-integration.md](plans/antigravity-deep-integration.md)
+（实施记录在计划末尾，真实验证在规格附录 A.2–A.6）。P1–P4 与文档回写都已提交（提交清单见计划的实施记录；是否已推送以 `git status` 为准）；
+门 G1–G4 的真实验证做完了，测试后的环境已还原（规格附录 A.6「还原」）。
+2026-11-17 这批改动已随桌面补丁 [v0.17.2](https://github.com/Naituw/AskHuman/releases/tag/v0.17.2) 公开发布（发布说明写明「只在 macOS 验过」，
+并要求升级后执行一次 `AskHuman agents update antigravity` 迁移旧规则）；发布不代替下面的验收，各项仍然开着。下面是我做不了、或要用户决定的：
+
+- [ ] **用户验收**（规格 §18；我这边做不了）：Stop 确认卡的真人点击路径（V24，两次试验都没人应答）；sidecar 会话在 App 左侧列表里的位置（V7）；
+  你在 App 里自建的会话能否被「发给空闲会话」唤醒（V11）；`agy` 在新目录里的信任提示（V12，要先完成 `agy` 首次引导 = 同意数据使用，我没有替你做）；
+  App 登录失效时建任务的失败形态（V1 剩下的部分）；设置页与控制台的肉眼验收（Computer Use 截不到也读不到 AskHuman GUI host 的窗口，
+  shell 的 `screencapture` 没有屏幕录制权限；日常 GUI host 要等没有窗口时才换成新二进制，最后一次安装（含设置页默认路线提示的新文案）后它还没换）；手机 / IM 的 `/new` 与 Mac 弹窗的真实点击；Watch 里 Antigravity 思考文本的外观（非低档 Flash 的会话）；GUI 的终端路由真的拉起 `agy`；`agy` 的取消 / Ctrl-C（V3）；Linux（V13）。
+- [ ] **待用户决定**：要不要让我按会话 ID 直接删除我留下的测试会话文件（默认不做；见规格 §20）。
+- [ ] 可选改进（没有做，没有批准）：`Stop` 的 hook 被杀（`agy` 里 Ctrl-C、退出 App）时，登记要到 30 分钟兜底才离开「工作中」；要不要改成 hook 断开就回落（计划的风险表，G4 实测）。
+- [ ] 旧的共享规则迁移成插件没有自动迁移：用户升级后第一次执行 `AskHuman agents mode antigravity …` / `agents update antigravity` 才会做。
+  本机在测试时已经迁移完，现在是插件的 CLI 模式（hooks + 规则，没有 MCP）；其他机器上要用户自己执行，迁移时若 App 有会话在跑，先看规格 §6.5 与 V22。
+- [ ] 清理的残留：仓库外的实验目录已删；我建的测试会话还在 App（19 个）与 `agy`（21 个：G4 的 6 个 + 权限复核的 15 个）的数据目录里（没有受批准的删除办法，规格附录 A.6「还原」、A.7）；
+  G1 的 T1c 在用户的 AskHuman 历史里留下 1 条来自实验目录的 `away` 记录，G2–G4、冷启动与权限复核还留下几条被取消的弹窗记录（没有改用户的历史文件，用户想删再说）。
+
+## 待决定：2026-11-15 daemon 卡死事故修复刻意没做的部分
+
+事故与已做的修复见 [优雅排空 §9](specs/daemon-graceful-drain.md#9-渠道建连卡住时-daemon-仍然应答2026-11-15-事故补充)
+与 [统一作答窗口 §22](specs/popup-request-inbox.md#22-宿主启动失败的收束2026-11-15)。下面这些在用户确认的范围之外，
+记在这里，由用户决定要不要做，做完（或决定不做）后删除对应行，全部处理完删除本节：
+
+- [ ] 独立窗口模式（`channels.popup.windowMode=independent`）的 Helper 仍由 `spawn_and_reap` 每个请求拉一个，
+  没有「放弃即终止」，也不共用失败预算；同样形态的事故（Helper 启动后迟迟不认证）在该模式下没有收束。
+  换代后继承到的 Helper 现在会被回收（不再留僵尸），但仍不会被终止。
+- [ ] 换代后接管的作答宿主只有 daemon 自己的子进程会被终止、被立刻发现退出（`daemon/runtime/inherited.rs`）。
+  换成新 pid 的替换（launchd bootout / bootstrap）后，宿主已被 launchd 接管，不再是子进程，没有所有权证明：
+  放弃它的租约不终止进程，它退出也只能等 5 秒启动计时发现。按 pid 与出生时间核验后再 kill 有误杀风险，没有做。
+- [ ] Windows 上没有对应实现：换代是起一个新进程，不存在继承来的子进程，所以被放弃的接管宿主不会被终止，
+  退出也只能等 5 秒启动计时发现（Windows 没有僵尸，缺的只是这两点）。需要 Windows 实机才能验证，没做。
+- [ ] 宿主一侧：`run_popup_host` 等待 `PopupHostAccepted` 没有超时。现在靠 daemon 终止被放弃的宿主兜底；
+  想让宿主在认证被拒或 daemon 沉默时自己退出，要改宿主侧协议，另行设计。
+- [ ] 客户端握手之后的数据交换（提交请求、读取结果）仍无上限。那里等待是正常的（人在作答），
+  所以需要区分「等人」与「daemon 沉默」的活性探测，没有做。
+- [ ] Linux / Windows 不能替换沉默的 daemon（没有可以 bootout / bootstrap 的服务管理器），只得到有界的超时与重试；
+  Windows 后继进程的身份检查改用了 `Fingerprint::same_as`，只在 CI 编译，没有实机运行。
+- [ ] 恢复路径拒绝替换沉默的 daemon 后（没拿到拉起锁、`daemon.json` 的实例已变）不是终局：提问 / 确认接着走 Hello 路径，
+  那条阶梯是既有的，拿不到锁照样往下走、也不核对实例，最终仍可能 `Replace`。实际风险小（走到那里时该 daemon
+  已被至少三次各 5 秒的探测判为沉默；被替换的在途提问靠恢复存储续上），但 D16 写的恢复路径条件因此不是唯一入口。
+  想收紧要让「拒绝」成为恢复路径的终局（再探测或报错，而不是回落到 Hello 阶梯），会改变沉默 daemon 下提问的行为，另行决定。
+- [ ] 只读展示类调用方仍把沉默的 daemon 当作「不在」：`channel list` 与 `dev status` 显示「未运行」，设置页渠道故障横幅与
+  引导页的连接状态落到「无数据」（都走 `request_status()`，沉默与不在同为 `None`）。事故前它们在沉默的 daemon 上会一直挂住，
+  现在最多 5 秒后给出上述结果。`daemon status` 与 `doctor` 已用 `request_status_result()` 如实报告「无应答」。
+- [ ] 渠道路由器首次建连失败没有退避：失败后下一个调用者会立刻再试一次（每次最长 15 秒，由槽的门串行）。事故里这不是主因，没有改。
+- [ ] 没有提高进程的文件描述符上限（`RLIMIT_NOFILE`）：用户在本次范围里选的是修各个放大环节，不是抬上限。
+
+## 待办：安装脚本里仍写死 `src-tauri/target` 的部分
+
+`install.sh` 取产物的路径已改为采用 cargo 在本次构建里报告的那个（见 [开发指南](development.md)），`CARGO_TARGET_DIR`
+再也不会让它装进旧二进制。下面这些是同一个假设的其余落点，没有在这次范围内：
+
+- [ ] `scripts/install-windows.ps1` 仍按 `src-tauri\target\<profile>\AskHuman.exe` 取产物，与修好前的 `install.sh` 是同一个隐患
+  （设置了 `CARGO_TARGET_DIR` 就会装进旧版本且不报错）。改法同 `install.sh`；需要能在 Windows 上跑 `install-windows.cmd` 才能验证，没做。
+- [ ] `install.sh` 与 `install-windows.ps1` 的缓存日志（`askhuman-cache.log`）、各 profile 体积预算和 Swift 模块缓存预算仍写死
+  `src-tauri/target`；设置了 `CARGO_TARGET_DIR` 时它们看的是一个空目录，预算清理不生效（不会误删，只是不清）。
+
 ## 待实际重新登录观察：macOS 守护进程进入 Aqua
 
 2026-11-13 的弹窗超时发生在旧 Aqua 域退出、新域尚未建立时。旧版回退到 `setsid` 后继续持有
@@ -27,6 +86,22 @@
 `/tmp/askhuman-codex-receipt-regression-before-run.log`、`/tmp/askhuman-codex-receipt-tests.log`。
 这项修复只需更新 Mac；下一步在手机日常给空闲 Codex 会话发一条消息，确认不再误报，完成后删除本节。
 
+## 待真机验收：iOS 详情页一直停在「Loading the full request…」
+
+2026-11-17 用户反馈：经常点开一个提问后一直加载不出来，重启 App 再点就出来了。已用测试复现出同一状态并修复：手机拉完整正文（`request.get`）的「在途」标记
+（旧 `RequestRuntime.fetching`）只在收到 `request.full` 时才复位，所以答复随连接断开丢掉（clean session，断线期间 Mac 发来的消息不留存）、发布失败、
+或 Mac 回 `not_found` 之后，这条请求就被永远当成「正在拉」，之后每次快照都跳过它，页面停在 `LoadingRequest`，重启才重新拉取。修复把在途记录挪到
+`MacRuntime.fetching`（随 `resetSession()` 与新握手清空），发布失败即撤销，`not_found` 结束等待并请求收件箱快照；约束见
+[overview-ios](overview-ios.md) 的「请求的完整正文随会话拉取」与 [规格 §幂等与恢复](specs/ios-channel.md)。`RequestFetchTests` 四个用例在旧代码上全红、
+新代码上全绿，Swift 包 7 个测试包全过；诊断报告新增 `without full request M` 计数。同类写法的 `request.seen`（旧 `RequestRuntime.seenSent`：发布前置位、
+丢了或 Mac 不在就永不重发，而 UI 对每个请求只调一次 `markSeen`）一并改成随会话，并在每次快照到达时对已读请求重申一次（`RequestSeenTests` 三个用例旧代码上红）；
+影响面小：Mac 不知道你读过，就可能对已读的请求多推一条。
+
+**还没出包，真机没验。** 下一步出内外 TestFlight 新版，手机上用几天确认不再复现。这是复现出的一个确定缺陷，但是否就是用户手机上那几次的**全部**原因要看修复后还出不出：
+若仍复现，卡住时（别重启）用开发者模式的「复制诊断信息」，看连接状态与 `inbox N (… without full request M)`——在线、同步完成而 M > 0 说明这条路径还没封死，否则是另一个原因。
+这一页现在也显示连接状态（[作答流程 §3.6 补记](specs/ios-answer-flow.md#36-请求详情的连接状态2026-10-31)）：转圈那一行若是「Connecting…」「Connection interrupted. Retrying…」「The Mac is offline…」
+就是链路问题，不是正文丢了；只有仍然是「Loading the full request…」才表示链路就绪而正文没来——那才是上面这类缺陷。这一页的提示改动同样还没出包。
+
 ## 待真机验收：iOS 标签栏常驻
 
 2026-11-12 用户确认在主工作树取消请求／确认、Agent、项目待办详情的主动隐藏规则；列表与详情都保留系统标签栏，不再由尺寸类、字号或导航深度控制显隐。键盘与模态呈现仍由系统管理。约定见 [作答流程 §3.9](specs/ios-answer-flow.md#39-详情页保留标签栏2026-11-12) 与 [大屏规格](specs/ios-large-screen.md)。
@@ -37,6 +112,22 @@ iOS 27.2 Duo 外屏（466×678pt）的 XCTest 运行器在用例开始前因 `XC
 额外回归的两个既有 `AskHumanBarUITests` 严格尺寸断言仍失败：默认字号快捷回复按钮为 54×50.5pt、辅助字号待发计数文字宽 39pt（断言要求至少 40pt）；改动前的已构建 App 在同一模拟器上也复现相同数值。
 
 已随内外 TestFlight `0.1.0 (21)` 分发（源码 `a5379ab`，见 [Build 21 交付记录](plans/ios-channel.md#2026-11-13testflight-内部与外部构建-21)）。下一步在真机看底部两层栏的空间与侧边 Tab 的切换手感，含键盘弹出／收起；确认后删除本节。
+
+## 待真机验收：iOS Duo 外屏的栏位优先级与新任务多图
+
+2026-11-13 用户反馈：小屏上标签栏与页面顶部按钮同在侧边的竖栏里、放不下时，系统先压顶部按钮（Duo 外屏上复现：
+「下一条消息」与「…」菜单被收进溢出按钮）；另有新建任务一次选多张照片只加进一部分，再追加时名字重复。两项都已修复，
+随内外 TestFlight `0.1.0 (24)` 分发（源码 `f8772758`，见 [Build 24 交付记录](plans/ios-channel.md#2026-11-13testflight-内部与外部构建-24)），
+原因与自动化验证见该记录、[大屏规格](specs/ios-large-screen.md)与[任务附件规格](specs/ios-task-attachments.md)。
+
+下一步在真机上看：
+
+1. 栏位优先级：Duo 外屏（或别的小屏上标签栏与顶部按钮同在一条竖栏的情形）里，返回、上一条 / 下一条、「…」菜单是否都在，
+   标签栏折叠成当前标签的按钮后切换标签是否顺手；各标签里推进去的页面也一样。
+2. 新建任务多图：一次选 5 张以上，是否全部添加（含需要从 iCloud 下载原图的）；再追加几张，名字是否续号
+   （`Photo.jpg`、`Photo-2.jpg` …）；加载期间滑动列表或关掉半屏页不应崩溃；发送后 Agent 收到的附件文件名互不相同。
+
+模拟器上只在 Duo 外屏（iOS 27.2）验过，iPad 与真机都没有；真机确认后删除本节。
 
 ## 待真机验收：iOS 已结束页的 3 秒倒计时
 
@@ -78,14 +169,16 @@ Mac 端：此前 `./scripts/install.sh` 被会话历史开发中的 `RequestView
 2. **真实 Mac + 带签名模拟器 / 真机的一轮**：用 Agent 带两三张图问一个问题、回答里也贴一张，再发下一个，在下一个的请求页下拉；再把其中一张原文件（`/tmp` 下的）删掉，看占位。引擎到真实 daemon 的整条链已有端到端测试（`HistoryPicturesE2ETests`，含多窗口下载逐字节比对、文件被删后的 `notFound`、daemon 重启后同一 `assetId` 仍可下载），界面这一段只在 Mock Mac 上验过。
 3. 缩略图格是 6 KiB 以内的小图，格子大时偏软；若真机上觉得糊，调 `ios/views.rs` 里 `history_thumbnail` 的（长边，质量）阶梯与 `HISTORY_THUMB_MAX_BYTES`（页预算 256 KiB 还有余量，见规格 HP6），不动结构。
 
-## 待真机验收：iOS 图片查看器让图躲开顶栏
+## 待真机验收：iOS 图片查看器：图躲开顶栏，放大后能拖到栏的后面
 
-2026-11-12 用户反馈「ios 端查看图片时，顶岛可能挡住图片」。我理解为查看器顶上的栏（关闭、文件名与「N / M」、分享；iOS 26 起是玻璃按钮）盖住了竖长图的上端；现在每页从栏的下沿开始排，放大后图被裁在栏的下沿（`ImageGallery.swift`；约束写在 `overview-ios.md` 的「请求附带的图片」一条，取舍与验证见 [`ios-channel.md` §15 的 2026-11-12 一节](specs/ios-channel.md#2026-11-12-图片查看器图从顶栏的下沿开始)）。模拟器上红 → 绿都验过（iPhone 16 / iOS 18.5、iPad Pro 11 (M4)、iPhone 17 / iOS 26.2），键盘守卫用例连跑 8 次通过。
+2026-11-12 用户反馈「ios 端查看图片时，顶岛可能挡住图片」。我理解为查看器顶上的栏（关闭、文件名与「N / M」、分享；iOS 26 起是玻璃按钮）盖住了竖长图的上端；于是图从栏的下沿开始排（`ImageGallery.swift`；约束写在 `overview-ios.md` 的「请求附带的图片」一条，取舍与验证见 [`ios-channel.md` §15 的 2026-11-12 一节](specs/ios-channel.md#2026-11-12-图片查看器图从顶栏的下沿开始)）。当时放大后的图被裁在栏的下沿；2026-11-16 用户反馈「放大的时候顶导没法延伸到图的下面，顶导完全变成不透明的了」，已改成放大后的图可以拖到栏的后面（`ZoomableImage` 用内容内边距；做法、验证与没验证的见 [§15 的 2026-11-16 一节](specs/ios-channel.md#2026-11-16-图片查看器放大后的图可以拖到顶栏的后面)）。模拟器上红 → 绿都验过（iPhone 17 / iOS 26.2、iPhone 16 / iOS 18.5、iPad Pro 11 (M4) / iOS 18.5），键盘守卫用例在 iPhone 17 / iOS 26.2 上连跑 8 次通过。
 
 还没做的：
 
-1. **真机没看过**（已随内外 TestFlight `0.1.0 (21)` 分发，见 [Build 21 交付记录](plans/ios-channel.md#2026-11-13testflight-内部与外部构建-21)）。更新后在手机上打开一张竖长截图（高过 sheet 的那种），确认上端在栏的下面；再放大、平移几下，看「放大后被裁在栏的下沿」的手感是否可接受（系统照片 App 能把放大的图拖到栏的后面，这里不能；想要就在 `ZoomableImage` 里改用内容内边距，改之前先问用户）。
+1. **真机没看过。** 2026-11-12 那一版已随内外 TestFlight `0.1.0 (21)` 分发（见 [Build 21 交付记录](plans/ios-channel.md#2026-11-13testflight-内部与外部构建-21)）；2026-11-16 放大后能拖到栏后面的改动已随内外 TestFlight `0.1.0 (27)` 分发（源码 `972dafc9`，见 [Build 27 交付记录](plans/ios-channel.md#2026-11-17testflight-内部与外部构建-27)）。手机更新后在手机（iOS 26）上：打开一张竖长截图（高过 sheet 的那种），确认上端在栏的下面；放大后上下拖几下，看图拖到栏的后面时玻璃按钮与系统的边缘效果好不好看、手感合不合适，两端停的位置（拖到最下，图的上沿回到栏的下沿）自然不自然。
 2. **「顶岛」的读法**是我定的：iPhone 竖屏下查看器是 sheet，顶上留着一条缝，灵动岛碰不到它的内容，所以没有为岛另做处理。如果用户指的是别的屏幕（例如某个全屏页面），要请他指明。
+3. **iOS 25 及更早的栏**是我加的取舍（用户没提过）：栏静止时也成了一条浅灰的系统材质带（改动前是透明的），因为栏是透明的话，标题与按钮会直接印在拖到栏后面的图上；iOS 26 不受影响。要改成「只有图在栏后面时才有材质」得把状态从 `ZoomableImage` 传到画廊，没做。
+4. **iPad 上「键盘盖到查看器上」的守卫用例失败**（`testTheButtonIsAboveAFullScreenImageViewerAndThePageOpensOverItToo`：点缩略图后 `image-gallery` 没出现），改动前的代码上同样失败，原因没查；所以这条守卫目前只在 iPhone 上起作用。到达动效的 `testTheImageViewerKeepsItsHeadingAndPagingDuringAnArrival` 在 iPad 上也失败，那条是手机专属的断言，`plans/ios-arrival-motion.md` 已记。
 
 ## 待真机验收：iOS 到达动效的第一帧不再停在窗口角上
 
@@ -102,7 +195,7 @@ Mac 端：此前 `./scripts/install.sh` 被会话历史开发中的 `RequestView
 
 ## 待实际鼠标确认：作答弹窗整页滚动偏移
 
-2026-11-11 用户反馈罗技鼠标在弹窗中滚动会让整张页面（含 Sidebar）偏离窗口，停滚后不恢复。已在主工作树限定独立／合并弹窗的根节点滚动与越界回弹，正文和 Sidebar 继续独立滚动；[约定与证据](specs/popup-request-inbox.md#3-窗口与导航)。原生 WebKit 19 项检查、真实合并界面滚动、99 项相关测试、类型检查及 `./scripts/install.sh` 通过。未发布。
+2026-11-11 用户反馈罗技鼠标在弹窗中滚动会让整张页面（含 Sidebar）偏离窗口，停滚后不恢复。已在主工作树限定独立／合并弹窗的根节点滚动与越界回弹，正文和 Sidebar 继续独立滚动；[约定与证据](specs/popup-request-inbox.md#3-窗口与导航)。原生 WebKit 19 项检查、真实合并界面滚动、99 项相关测试、类型检查及 `./scripts/install.sh` 通过。已随桌面补丁 [v0.17.2](https://github.com/Naituw/AskHuman/releases/tag/v0.17.2) 发布。
 
 用户暂时无法测试。下一步用实际罗技鼠标滚到正文／Sidebar 边界，确认整页不再移走；当前证据来自合成连续事件，尚不能确认驱动实际发送的事件序列。
 
@@ -166,6 +259,26 @@ Rust 全量 2845 passed / 8 ignored，最终 Cursor 专项 12 项、定稿候选
 前端类型检查与 iOS arm64 模拟器编译通过。用户已看过真实会话内容的原生回放并确认密度，连续末尾预览已修正。
 已随 TestFlight `0.1.0 (14)` 分发。下一步在手机确认思考及时更新、展开阅读保持稳定及「有新内容」切换。
 已有项目待办 #11 `e8ddc583-a8c9-4e75-b84c-cb994f256d62`，真机确认后删除本节。
+
+2026-11-13 之后新增了五项（均已提交并推送到 `origin/main`，已随 TestFlight `0.1.0 (23)` 分发）：
+手指落在最新文字上能滚动页面；展开 / 收起重做（同字号窗口、动画、渐隐、只在放不下时才有「展开」、从页尾收起后页面滚回）；
+Mac 重启后重新订阅不再丢帧；阅读由「永不过期的锁」改为 3 秒租约（Mac 控制台同规则）；
+实时视图的看门狗与瘦帧。细节与验证见规格 §7.1 – §7.3。手机更新到构建 23 后在真机确认：
+
+- 手指在文字上滚动、长按选字、展开收起、从页尾收起都顺手；手指离开 3 秒后新思考会自己替换，不再要点「有新内容」。
+- 把手机放着看一会儿思考能及时更新，不用切走再切回；开发者模式「复制诊断信息」里 `live` 行出现的频率与 `news` / `nothing new`
+  的比例（`news` 多说明看门狗真的在补漏，一直 `nothing new` 说明触发偏松，可放宽）。
+- Watch 流量比此前省（估算减半左右，没有实测；看「流量」页同样使用下的差别）。
+
+2026-11-15 又改了一轮（用户说 Watch「依然很奇怪」：收起展开不好点，有新内容也不自己刷新，非得点一下按钮）。已提交并推送，Mac 控制台部分随桌面补丁 [v0.17.2](https://github.com/Naituw/AskHuman/releases/tag/v0.17.2) 发布，并随
+TestFlight `0.1.0 (26)` 分发：展开不再固定文字（只管窗口大小，新段落过 10 秒自己换，展开状态保留），固定只看手指与刚点「展开」后的 3 秒；
+点按区放大到 44 pt，展开的长文上方多一个「收起」；「有新内容」在固定结束时就消失；Mac 控制台同一规则（没有顶部「收起」）。
+细节、验证与没有验证的部分见规格 §7.4。手机更新到构建 26 后在真机确认：
+
+- 「展开 / 收起 / 有新内容」好点，不误点到旁边；展开长文后从文字上方的「收起」能直接关掉。
+- 展开一段长文、手不碰文字慢慢读时，10 秒内被新段落换掉是否太勤（已接受的代价，按住文字即固定）；太勤的话要放宽间隔，由用户定。
+- 点「展开」之后的 3 秒够不够读开头。
+- Mac 控制台只有单元测试，没对着实窗看过：打开有长文字的 Agent，展开后等新段落到来，确认它自己换掉、「有新内容」只在指针停在文字上时出现。
 
 ## 待真机确认：Build 11 回答框焦点卡死
 
@@ -475,23 +588,31 @@ iPhone 与折叠屏外屏不变。只在 iPad mini 与折叠屏（Duo）模拟�
 - [ ] 外屏横屏、内屏竖屏／横屏没有用最终包逐屏复查（早先的探针已经定下规则：内屏竖屏没有侧栏，内屏横屏的 sheet 按钮留在卡片顶栏）；`AskHumanLargeScreenUITests` 也没跑。真机上顺手看一眼。
 - [ ] 未定的小事（用户还没表态）：任务进度页的「关闭」在 iOS 26 起是蓝色 ✕（`.confirmationAction` 位置上的 `.close` 角色），延续了原先蓝色「Close」药丸的样子；觉得抢眼可以换成顶栏右侧的灰色 ✕。
 
-## 待真机验收：Duo 折叠后的导航按钮
+## 待根因：Duo 折叠后整组导航按钮消失（模拟器上能复现，根因未定，尚无修复）
 
-2026-11-08 用户补齐复现：内屏横屏从列表打开提问，再切外屏，返回、前后切题与 More 消失。
-本地 iOS 27.1 Duo + SDK 27.2 已复现并修复；用户真机为 TestFlight / iOS 27.3 Beta，尚未用新代码复验。
-同二进制对照定位到标签根与外层全局横幅 overlay 的共享栏承载：仅换原生 tabs 仍不足，只有恢复外层横幅 overlay 的对照会丢按钮。
-最终由同一 UIKit 父容器托管稳定 UITab / UIHostingController 和独立横幅，保留原导航、列表和草稿；没有按尺寸重建或延迟强刷。
-实现约束在 [specs/ios-large-screen.md](specs/ios-large-screen.md) §8，证据与完整结果在 [排查记录](investigations/ios-duo-fold-navigation.md)。
+2026-11-08 用户补齐复现：内屏横屏从列表打开提问，再切外屏，返回、前后切题与 More 消失。当时在 Duo 模拟器（iOS 27.1 / SDK 27.2）上复现并修复
+（UIKit 父容器承载稳定的 UITab / UIHostingController 与独立横幅，没有按尺寸重建或延迟强刷），随 TestFlight `0.1.0 (14)` 分发。
+**2026-11-14 用户在 build 24（真机 iOS 27.3 Beta）上仍复现：折叠到外屏后竖条上一个按钮都没有（返回键也没了），只剩五个标签，几乎每次折叠都会。**
 
-本地验证已完成：六条真实开合全部通过（请求每次另查四个按钮、草稿、切题、前后台与实际返回）；
-Duo 适用的大屏 / 窄内屏用例、AX 返回、配对 / 解除配对 / 未配对、到达动效均通过；外屏原始五秒横幅实际点击通过。
-宽屏横幅的瞬时自动化受换页和计时窗口影响，另以同 SHA-256 产品动态库的完整 RootView、独立 SwiftUI App Mock 持续横幅夹具，验证实际点击打开 Agent 并关闭横幅；没有修改产品代码或默认计时。
-`install.sh` 再次成功，Mac 二进制内容无变化。临时诊断开关已移除，修复已随 TestFlight `0.1.0 (14)` 分发。
-本次只操作 Duo `9E037F77-7859-4EF0-BB14-553A45928E69`，未操作其他会话的设备 / 进程。已有 AskHuman 待办 #10（`636dd45b-d512-4946-aa35-6db52918adc6`）。
+同日的经过：
+1. 在模拟器上修了较轻的一档：内屏分栏里选中请求再折叠，页面拿不到「按钮优先」偏好，外屏退回「‹ ‹ …」加完整五个标签（每个 `navigationDestination` 页面自己也挂偏好）。随 build 25 发出。
+2. 对着 build 24 真机的坏状态报告，在模拟器上复现了用户那一档：内屏**转成竖屏、停约 1.2 秒**再折叠，约一半的折叠如此（横屏直接折叠 20 次不出）；
+   系统没有把折叠时新建的导航控制器的按钮登记进竖条。
+3. 做过一个轮询式补登记（`VerticalBarRepair`，随 build 25 发出），用户否决：本项目不打补丁，要根因。已撤回；build 26（2026-11-15）起不再带它
+   （build 25 里带着它的那份还留在 TestFlight 上，helper 没有撤回 / 过期构建的操作，由 build 26 替换）。所以 build 26 上折叠到外屏后仍可能只剩五个标签；诊断信息里不再有自动恢复的记录。
+
+当前没有修复。证据、手法对照与踩过的坑（换 SwiftUI 的按钮组会崩）见[排查记录](investigations/ios-duo-fold-navigation.md)文末「2026-11-14（续）」与「（再续）」，
+规则见 [specs/ios-large-screen.md](specs/ios-large-screen.md) §8。已有 AskHuman 待办 #10（`636dd45b-d512-4946-aa35-6db52918adc6`）。
 
 下一步：
-- [ ] 安装 Build 14 后，在真机 iOS 27.3 Beta 重走内屏横屏点开提问 → 外屏，复验四个按钮、草稿、实际返回、连续开合与前后台。
-- [ ] 真机确认后删除本节；保留已有诊断功能。
+- [ ] 找根因（用户已确认路线）：用最小程序走「内屏竖屏再折叠」这条路径（原最小程序在本机证据目录 `~/Library/Logs/AskHumanDuoNavigation/Probe/`）：
+  先纯 UIKit，再 SwiftUI 的分栏 / 栈切换，分清是 UIKit 还是 SwiftUI。复现则整理最小复现并选设计级方案（不靠定时和私有类名）；
+  不复现则用同二进制开关对照，逐层加回产品的容器、横幅、分栏与栈的切换，找出触发的那一层，在那一层改结构。
+- [ ] 回答用户的问题「是不是 iOS 版本差异」：模拟器只有 27.1 / 27.2 运行时，真机是 27.3 Beta；手折时内屏是否先转到竖屏、27.3 的行为是否不同，现在分不开。
+  需要时向用户要一份新包（带竖向栏边与优先级字段）的坏状态诊断报告。
+- [ ] 根因修好后真机重走：内屏横屏点开提问 → 外屏，也试「内屏竖屏停一会儿再折叠」；确认后删除本节与待办 #10。
+- [ ] 不加补救手法（轮询、延迟重试、翻转导航项、临时关闭竖向栏、靠私有类名探测坏状态）。永久关闭竖向栏（`.disabled`）属设计取舍，
+  只有在根因查明是系统缺陷、设计上又无法避开时才向用户提。
 
 ## 待验收：iOS「做完 / 出错」通知收窄（Mac 端与 App 端都已实现，真机一轮未做）
 
@@ -526,6 +647,11 @@ iOS 在 iPhone 17（402 pt）/ 26.2 与 iPhone SE（375 pt）/ 18.5 的模拟器
 3. 与附注无关、HEAD 上就失败的 iOS 26.x 量法：`AskHumanBarUITests` 里 `answered-count` 量到的是文字（23–39 pt，断言要求 ≥ 40 pt）、`quick-reply-menu` 框 54 pt（断言要求约 50 pt 的圆）；
    `AskHumanInputVisibilityUITests.testShortAnswerAndAttachmentFitWithAccessibilityText` 的键盘焦点事件。先在 27.0 上看是不是一样，再决定改断言的量法。
 4. 整库 `vitest run`（`vitest.config.ts` 没排除 `todo-sync-helper/build/**`，另一会话处理）与整库 `cargo test` 在本功能之后没有重跑。
+5. 2026-11-16 起直接提问不再把附件算成 Message（两端：Message 没有文字、恰好一个问题、不是 What's next 就算；见需求 §11「补充轮」、计划文末「追加」）。
+   弹窗里带附件的直接提问把题干当作 Message：题干在最上、附件紧随其后、没有「Question」小标题，选项与回复框在最下；没有附件的直接提问版面不变
+   （用户 2026-11-16 定，推翻了当天先做的「版面不动」，也推翻了 2026-06-04 D13 在这一形态下的结论）。弹窗随 `./scripts/install.sh` 装到本机；
+   iOS 要**新的 TestFlight 构建**才到手机（Build 14 之后还没发，发不发、何时发等用户定）。
+   真机上看：带文件的单题，iOS 上题干在上方 Message 卡里、文件列在题干下面；弹窗里题干在最上、文件紧随其后；两边选字都能加附注。
 
 没有人在真环境里点过的：Windows / Linux 的真实弹窗；真实 macOS 弹窗里鼠标拖选（自动化的拖动不产生文字选区，只用过双击与三击）；浅色主题与 420 px 窄窗口的真实弹窗；
 真实输入法组词；「查看源码」模式重新定位、历史窗口里的附注、共享窗口的未答标记（只有单元测试）；iPhone 真机上的多词与跨块选区、系统选字菜单里的「添加附注」入口、整套手感；
@@ -606,12 +732,15 @@ SSH 到 Mac B 的旧授权已用完，需要再次操作时当次确认。上述
 - [ ] 后置（需求 §11）：手机直连 CloudKit（Mac 都不在线也能用，需用户授权开 iCloud 容器 + Swift 重实现同步核心）、附件的查看与添加、「全部待办」聚合页、清空历史、从 iCloud 移除项目、待办推送、离线编辑队列。
 - [ ] 已知局限（需求 §10）：Mac 都不在线时手机看不到待办；线协议里 `helper` 没有「未安装」状态，手机上「没装」与「没在跑」显示成同一句；单条超大待办（桌面端 / CLI 不限长度，手机端限 4000 字）可能让那个项目的 `todo.list` 装不进一条消息而超时。
 
-## 待验收：在请求里直接添加待办（弹窗顶栏浮层 + iOS 请求页；macOS 弹窗与模拟器已验，Windows / Linux 与真机未验）
+## 待验收：页内待办清单的完成 / 删除 / 添加（弹窗 + iOS 请求页；Mac 弹窗与模拟器已验，iPhone 真机与 Windows / Linux 未验）
 
-需求 `docs/specs/todo-quick-add.md`、计划 `docs/plans/todo-quick-add.md`（实施记录里有全部验证结果）。分支 `feat/todo-quick-add` 2026-11-04 快进合并进 main、已推送（该次推送的 CI 全绿），并 `./scripts/install.sh` 装为日常版；装机时另一个会话有请求在等，日常 daemon 按优雅换新等它结束，新二进制在那之后的下一次调用接手（没有 `--force`）。
+需求 `docs/specs/todo-list-actions.md`（取代 `todo-quick-add.md` 的弹窗顶栏浮层与 iOS 请求页半屏添加页）。2026-11-13 在主工作树实现并已推送到 `origin/main`，并 `./scripts/install.sh` 装为日常版；iOS 已应用户要求出了 TestFlight 内测包 **0.1.0 (22)**（Internal 与 Friends，源码 `9ed70abf`，记录见 `docs/plans/ios-channel.md`）。用户在 iOS 27 的真机上发现这个包里**手指先落在待办行上就没法上下滚动页面**（SwiftUI `DragGesture` 在 iOS 27 上的行为，见需求 §6.1），已改成 UIKit 识别器 `SwipePan` 并本地提交，模拟器上 iOS 27.2 与 18.5 都过了；**已随 TestFlight `0.1.0 (23)` 分发**（2026-11-13，Internal 与 Friends，源码 `db3f07dc`，记录见 `docs/plans/ios-channel.md`），等用户到真机上验。
 
-- [ ] Windows / Linux：在真实弹窗里按 Ctrl+T 打开浮层、添加、Esc，再在一张确认卡里验 Enter / Esc 不漏出去（需求 §6.3 要求真机确认一次；macOS 已在隔离实例里按过）
-- [ ] iOS 真机：请求页「⋯」→「添加待办…」。已随内测包 `0.1.0 (8)` 出去（2026-11-05，更新 TestFlight 即可）；对应的 Mac 也要装带这次改动的版本（本机日常版已装），否则碰到「不在待办候选里的在途项目」会回「这个项目已不在」
+- [ ] iPhone 真机（构建 23 起含修复）：**手指先落在待办行上，上下滚动页面**——慢拖、快滑、先停一下再拖、略斜着拖都试；构建 22 在 iOS 27 的真机上这样滚不动。模拟器只在 iOS 27.2 的 iPhone Duo 上复现过，真机上是否同一个原因没有直接证据。
+- [ ] iPhone 真机：滑动手感——右滑完成（含一路滑到头松手）、左滑删除、滑开后再点、与页面纵向滚动、左缘返回手势、长按菜单会不会被手势吃掉、键盘弹出时添加输入行是否可见。模拟器 UI 测试（`AskHumanTodoPickUITests`，iOS 27.2 的 Duo 上 en 与 zh-Hans、iOS 18.5 上 en 各一遍）只覆盖逻辑与手势的基本路径，需求 §6.1 要求真机看一次；手感不对先看 `SwipePan`（UIKit 识别器，头 8pt 里水平分量 > 垂直 × 1.2 才接管、左缘 20pt 让给返回手势）、`SwipeActionRow.events`（松手时按速度推算落点再吸附）与 `SwipeCoordinator.swallowsTap`（滑动之后吞掉整行的点按，否则松手会顺带选中）。
+- [ ] Windows / Linux：弹窗里 Ctrl+T 聚焦页内清单的添加行（确认卡里则打开待办窗口）、添加输入行里 Enter / Esc 不漏出去（需求 §5.1「键盘隔离」；macOS 已按过）。
+- [ ] 真实弹窗里没有按过的两处（只有单元测试）：Stop 确认卡的实时队列（要由真实 Agent 的 Stop 钩子触发）、权限确认卡上 ⌘T 与顶栏按钮开待办窗口。
+- [ ] 对应的 Mac 要装带这次改动的版本（本机日常版已装）：旧 Mac 上手机的 Stop 确认卡仍是快照选项 + 折叠待办卡，碰到「不在待办候选里的在途项目」还会回「这个项目已不在」。
 
 ## 待验收：特殊回复（手机选待办 / 离开模式 / 本会话不再使用 / 快捷回复）——P1–P4 已实现，已快进合入 main（本地，未推送）并装为日常版，已随内测包 `0.1.0 (9)` 出去
 
@@ -780,6 +909,16 @@ Swift 569 通过（43 条按设计跳过）、两条 Max 的 iOS UI 测试英文
 2026-11-11 已移除版本白名单及固定压缩符号／模块编号，改为识别运行接口并做隔离行为预检；修复版安装后，在 Cursor 3.29.15 日常 Agents 窗口重新确认 300 秒／600 秒成对生效（适配器修订 `f797c0ed2960564d`，规格 §8.4）。本次验证未发起模型请求。
 
 下一次自然停滞时，对同一请求 ID 核对是否跨过原 90 秒阈值后继续收到业务消息，以及真正持续无入站消息时何时重试。见 [会话防护规格 §8](specs/cursor-desktop-background-followup.md#8-延长无入站消息的等待与重试窗口)。
+
+## 待用量对账：Cursor 并行 Agent 的 HTTP/2 连接隔离
+
+2026-11-14 已接入现有「Cursor 会话防护（实验）」并安装。10 个抽样构建的原生模块通过独占分配回环测试，
+日常 Cursor 3.29.15 的 Agents 窗口和普通 IDE 通过真实 Agent Host 预检，见 [会话防护规格 §9](specs/cursor-desktop-background-followup.md#9-并行-agent-的-http2-连接隔离)。
+同日自然样本确认，同一个 Agents 宿主的两条 `Run` 在 Mac 分别使用 `:65369`、`:49246`，TLS 握手配对到
+两个 DMIT 出口连接。03:31:31 `:65369` 断开并单独续跑，`:49246` 继续收到下行数据，直至 03:34:12
+自身断开才续跑。两次出口均先收到 Cursor 方向 FIN。故障切片位于 `20261113T181505753394Z-follow/events/`
+的 `1794598291-b67ab1b2/` 和 `1794598453-c91833e8/`。未触发额外模型请求。
+截至 03:39 的 Usage 导出，第一次续跑在 03:31:42.219 计 1 次，第二次续跑尚无对应记录。下一步复核晚到用量。
 
 ## 待外部验收：统一作答窗口的真实渠道与其他平台
 
@@ -1016,6 +1155,37 @@ WebKit 可刷新页面缩放，但 Popup / 历史窗口的几何仍沿用旧值�
 复用现有几何队列完成合并窗口、独立弹窗与历史预览的瞬态重排，避免把比例切换存成用户尺寸。
 覆盖折叠 / 展开、预览开关、约束 / 最大化、在途几何事务和多屏；自动测试与 Linux 原生运行都通过后删除本节。
 
+
+## 待核验：iOS 流量收敛（进前台只补变化、Agents 分级、列表压缩、本地流量计数）
+
+2026-11-17 Owner 批准并要求一次做完的 [iOS 渠道同步流量收敛](specs/ios-traffic-reduction.md)（R1 + L1′ + C + T2 b + T6）已在主工作树实现，
+Rust 全量、Swift 全量与「真实 daemon + 真实手机引擎 + 本地 broker」的端到端都通过（实现记录与实测数字见规格 §8）。
+Mac 端已装进日常环境，并随桌面补丁 [v0.17.3](https://github.com/Naituw/AskHuman/releases/tag/v0.17.3) 发布（2026-11-18）；
+手机端随内外 TestFlight `0.1.0 (28)` 分发（源码 `ec57bab7`，见 [Build 28 交付记录](plans/ios-channel.md#2026-11-18testflight-内部与外部构建-28)）。
+v0.17.3 第一次发布时，两个 macOS 构建都死在「Sign macOS binary (Developer ID)」一步（各 16 秒；没有登录 GitHub，看不到日志，原因没查实，
+同日 Apple 开发者服务大面积宕机），没有发出任何东西；同一提交删掉未发布的标签重推后一次成功。再遇到同一步失败时要先看日志（`gh auth login` 或浏览器）。
+整月用量预计从约 2.6 GB 降到约 0.73 GB（范围 0.65–0.85，最坏约 1.0）——**这是推算，不是实测**。
+
+- [ ] 数日后核对实际用量：读 `AskHuman channel ios status --json` 的 `trafficBreakdown`（按「方向:类型」的条数与字节，随月份清零）
+  与 EMQX 控制台，看月用量是否落在上述范围；由此直接得出进前台、前台增量与 Watch 帧各占多少（规格 §1「没测到」的那部分）。
+- [ ] 手机核验（要装上新的 TestFlight 构建，且 Mac 已升级）：Agents 页里没打开的「工作中」会话不再显示工具 / 步数 / 相对时间，
+  打开详情仍实时；从后台回前台只补变化、没有整套刷新；Watch 一个会话时帧与列表活动照常。新旧版本互配（旧手机配新 Mac、新手机配旧 Mac）
+  都照旧工作，只是没省到流量。
+
+## 待办：6 个陈旧 / 依赖系统语言的 iOS 端到端用例
+
+整套 `AHE2ETests`（`AH_E2E_BIN` + `AH_E2E_BROKER_DIR`，71 项，8 项默认跳过）里下面六个用例在流量收敛改动**之前**（用 `34fd3b02` 单独构建的二进制对照过）
+就失败，与流量收敛无关；其余 57 项通过。它们不是产品缺陷，也没有顺手改（超出当时的范围）：
+
+- `AgentE2ETests.testAMessageToAnAgentThatIsNotWorkingIsRefused`、`testSessionsOfTheMacAreListedWithTheirState`：期望 `notWorking` / `ended`，
+  现在空闲会话给出 `idleUnsupported`（`agent_control::can_send_with`）。
+- `AgentE2ETests.testAFollowedSessionReportsWhenItsTurnEnds`：用例的 `turn-end` 载荷没有 `hook_event_name: "Stop"`，现在的结果判定
+  （`agents/result.rs`）给出 `Unknown`，不再宣告「完成」；真实 Claude 的 Stop 钩子带这个字段。
+- `E2ETests.testCancellingFromThePhoneEndsTheAskWithACancelledStatus`、`AnnotationE2ETests.testCancellingDropsTheNotes`、
+  `CodexStopHookE2ETests.testTheStopHookAsksWhileAwayAndIsSilentWhenMuted`：按英文输出断言（`canceled`、`on since`），而测试台的 Mac 用系统语言
+  （本机是中文），CLI 输出是中文；英文系统上大概率通过，没有验证。
+
+下一步：把前三项的期望改成现行行为，后三项让测试台固定语言（或断言与语言无关的部分），`swift test --filter AHE2ETests` 全绿后删除本节。
 
 ## 待真机核验：多设备报文流量统计
 

@@ -198,6 +198,17 @@ public final class AppStore {
         }
     }
 
+    /// How often the Inbox says how much data this month has used (`trafficReminder`).
+    public var trafficReminderStep: TrafficReminderStep {
+        didSet { defaults.set(trafficReminderStep.rawValue, forKey: Self.trafficReminderStepKey) }
+    }
+
+    /// The highest data-use reminder the reader closed, with its month. It and the lower ones stay away until the month
+    /// ends; the next multiple of the step is a new reminder.
+    public internal(set) var closedTrafficReminder: ClosedTrafficReminder? {
+        didSet { defaults.set(closedTrafficReminder?.stored, forKey: Self.closedTrafficReminderKey) }
+    }
+
     /// The countdown on the strip of the open page whose request ended elsewhere, while it runs (docs/specs/ios-answer-flow.md §3.8).
     public internal(set) var endedCountdown: EndedCountdown?
     /// How long that countdown is; tests shorten or stretch it.
@@ -230,9 +241,8 @@ public final class AppStore {
     @ObservationIgnored let defaults: UserDefaults
     @ObservationIgnored private var composers: [String: AnswerComposer] = [:]
     @ObservationIgnored private var confirmComposers: [String: ConfirmComposer] = [:]
-    /// The "Add todo…" sheets of the request pages, by inbox item id (memory only).
-    @ObservationIgnored private var todoComposers: [String: RequestTodoComposer] = [:]
-    /// The todos a request can be answered with, by inbox item id (memory only; what is picked is the draft's).
+    /// The todos a request can be answered with, by inbox item id (memory only; what is picked is the draft's). They are also
+    /// what the request page completes, deletes and adds todos through.
     @ObservationIgnored private var todoPickers: [String: RequestTodoPicker] = [:]
     @ObservationIgnored private var tasks: [Task<Void, Never>] = []
     @ObservationIgnored private var lastHistoryRevision = -1
@@ -246,8 +256,9 @@ public final class AppStore {
     @ObservationIgnored private var advanceTask: Task<Void, Never>?
     @ObservationIgnored private var noteTask: Task<Void, Never>?
     @ObservationIgnored public var advanceTiming = AdvanceTiming.standard
-    /// How long the "Added to <project>" note stays over a request page; tests stretch it to have time to look.
-    @ObservationIgnored public var todoNoteHold = Duration.seconds(2)
+    /// How long the notes over the list of a request page's todos stay ("Completed … · Undo", a refused write); tests
+    /// stretch it to have time to look.
+    @ObservationIgnored public var todoNoteHold = Duration.seconds(4)
     /// Arrivals whose request is not in the published state yet (events and states travel apart).
     @ObservationIgnored private var pendingArrivals: [String: RequestArrival] = [:]
     @ObservationIgnored private var presentedArrivalIds: [String: Date] = [:]
@@ -258,6 +269,8 @@ public final class AppStore {
     @ObservationIgnored var interjectComposers: [String: InterjectComposer] = [:]
 
     private static let autoAdvanceKey = "ah.autoAdvance"
+    private static let trafficReminderStepKey = "ah.trafficReminderStep"
+    private static let closedTrafficReminderKey = "ah.closedTrafficReminder"
 
     public init(backend: RemoteBackend, drafts: DraftStore, defaults: UserDefaults = .standard) {
         self.backend = backend
@@ -266,6 +279,9 @@ public final class AppStore {
         todos = TodosStore(backend: backend, defaults: defaults)
         developer = DeveloperTools(backend: backend, defaults: defaults)
         autoAdvance = defaults.object(forKey: Self.autoAdvanceKey) as? Bool ?? true
+        trafficReminderStep = (defaults.object(forKey: Self.trafficReminderStepKey) as? Int)
+            .flatMap(TrafficReminderStep.init(rawValue:)) ?? .standard
+        closedTrafficReminder = defaults.string(forKey: Self.closedTrafficReminderKey).flatMap(ClosedTrafficReminder.init(stored:))
     }
 
     // MARK: lifecycle
@@ -340,7 +356,7 @@ public final class AppStore {
         var lines = [
             "tab \(tab.rawValue); inbox stack \(inboxPath.count), agents stack \(agentPath.count)",
             "connection \(Self.diagnosticName(of: state.phase)); sync \(syncStatus); lists \(listReadiness); foreground \(state.foreground)",
-            "macs \(state.macs.count)\(links.isEmpty ? "" : " (\(links))"); inbox \(state.inbox.count) (unread \(unreadCount)); agents \(state.agents.count); history \(history.count)",
+            "macs \(state.macs.count)\(links.isEmpty ? "" : " (\(links))"); inbox \(state.inbox.count) (unread \(unreadCount), without full request \(state.inbox.filter { $0.view == nil }.count)); agents \(state.agents.count); history \(history.count)",
             "ended while open \(finished.count) (countdown \(endedCountdown != nil)); arrivals showing \(requestArrivals.count); banner \(banner != nil); receipt \(receipt != nil)",
             "new task sheet \(taskComposer != nil); task progress sheet \(viewingTask != nil)",
             "auto-advance \(autoAdvance); developer mode \(developer.enabled)",
@@ -359,7 +375,6 @@ public final class AppStore {
         todos.update(macs: next.macs, foreground: next.foreground)
         todos.update(agents: next.agents)
         developer.update(macs: next.macs)
-        for composer in todoComposers.values { composer.update(mac: next.macs.first { $0.id == composer.macId }) }
         for picker in todoPickers.values { picker.update(mac: next.macs.first { $0.id == picker.macId }) }
         let now = Date()
         presentedArrivalIds = presentedArrivalIds.filter { now.timeIntervalSince($0.value) < 600 }
@@ -388,9 +403,6 @@ public final class AppStore {
         }
         for key in confirmComposers.keys where !live.contains(key) && !inboxPath.contains(key) {
             confirmComposers[key] = nil
-        }
-        for key in todoComposers.keys where !live.contains(key) && !inboxPath.contains(key) {
-            todoComposers[key] = nil
         }
         for key in todoPickers.keys where !live.contains(key) && !inboxPath.contains(key) {
             todoPickers[key] = nil
@@ -734,21 +746,9 @@ public final class AppStore {
         return composer
     }
 
-    /// The "Add todo…" sheet of a request: its project and Mac are fixed, and what was typed stays until the
-    /// request ends. `nil` when the request names no project (there is nothing to add the todo to).
-    public func todoComposer(for item: InboxItem) -> RequestTodoComposer? {
-        guard item.hasProject else { return nil }
-        if let existing = todoComposers[item.id] { return existing }
-        let composer = RequestTodoComposer(
-            backend: backend, macId: item.macId, macName: item.macName, projectKey: item.summary.project.key,
-            projectName: item.summary.project.name, mac: state.macs.first { $0.id == item.macId }
-        )
-        todoComposers[item.id] = composer
-        return composer
-    }
-
-    /// The todos of the request's project that can be picked while answering (docs/specs/special-replies.md D28):
-    /// `nil` when there is nothing to pick them for (no project, or a request that takes no answer form).
+    /// The todos of the request's project that can be picked while answering (docs/specs/special-replies.md D28), and
+    /// completed, deleted and added in place (docs/specs/todo-list-actions.md): `nil` when there is nothing to list them
+    /// for (no project, or a request that takes no answer form).
     public func todoPicker(for item: InboxItem) -> RequestTodoPicker? {
         guard item.hasProject, let composer = composer(for: item) else { return nil }
         if let existing = todoPickers[item.id] { return existing }
@@ -768,7 +768,6 @@ public final class AppStore {
             composers[id]?.discard()
             composers[id] = nil
             confirmComposers[id] = nil
-            todoComposers[id] = nil
             todoPickers[id] = nil
             finished[id] = nil
             retained[id] = nil
@@ -878,6 +877,7 @@ public final class AppStore {
         cancelAdvance()
         inboxPath = []
         agentPath = []
+        taskComposer?.discard()
         taskComposer = nil
         await backend.forgetAll()
     }

@@ -26,6 +26,8 @@ struct AnswerScreen: View {
     @State private var messageReady = false
     /// The writing of notes on the message that this page shares with its web page (docs/specs/message-annotations.md).
     @State private var annotations = AnnotationHost()
+    /// Which row of a todo list is swiped open, and whether the page may scroll (`SwipeActionRow`).
+    @State private var swipes = SwipeCoordinator()
     @Environment(\.launchOptions) private var launch
 
     fileprivate static let space = "answer-scroll"
@@ -63,8 +65,9 @@ struct AnswerScreen: View {
                                         .padding(.bottom, 16)
                                         .id(Self.cardID(index))
                                 }
-                                // What's next lists the queue among its options; every other ask gets a card for it.
-                                if !ask.whatsNext, let picker, picker.isVisible {
+                                // What's next and the Stop confirmation list the queue among their options; every other ask gets
+                                // a card for it (a single line that adds the first todo, while the project has none).
+                                if !ask.listsTodoQueue, let picker, picker.isVisible {
                                     TodoPickCard(picker: picker)
                                         .disabled(composer.isSending || sending || ended)
                                         .padding(.bottom, 16)
@@ -85,6 +88,10 @@ struct AnswerScreen: View {
                 // A background stays between the bars, so its frame is the part of the screen the form is seen in.
                 .background(FrameReader(.visible))
                 .overlay(alignment: .bottom) { if let history { SessionReturnCapsule(history: history) } }
+                // What the todo list says of a write: "Completed … · Undo", a refusal.
+                .overlay(alignment: .bottom) { if let picker { TodoNoteCapsules(picker: picker) } }
+                .environment(swipes)
+                .modifier(SwipeScrollLock(coordinator: swipes))
                 .scrollDismissesKeyboard(.interactively)
                 .actionBar {
                     SendBar(
@@ -103,6 +110,15 @@ struct AnswerScreen: View {
                 .onPreferenceChange(ReadingKey.self) { tracker.update($0, composer: composer) }
                 // The queue is read each time the page comes up.
                 .task(id: item.id) { await picker?.load() }
+                // A todo that was just added is shown: the list scrolls to it, once its row is there.
+                .onChange(of: picker?.revealSerial) { _, _ in
+                    guard let key = picker?.revealKey else { return }
+                    Task {
+                        try? await Task.sleep(for: .milliseconds(80))
+                        withAnimation(.easeInOut(duration: 0.3)) { proxy.scrollTo("todo-\(key)", anchor: .center) }
+                    }
+                }
+                .onDisappear { picker?.clearTransient() }
                 // The Mac refused the answer because a picked todo is gone: the queue is read again (and what
                 // is gone is let go of), and the notice says what to do.
                 .onChange(of: item.state) { _, state in
@@ -477,13 +493,14 @@ private struct QuestionCard: View {
     let landing: Landing
     var focus: Binding<Int?>
     let inputReveal: InputRevealTarget
-    /// What's next lists the project's whole queue through it (D29); other asks have a card of their own.
+    /// What's next and the Stop confirmation list the project's whole queue through it (D29, docs/specs/todo-list-actions.md);
+    /// other asks have a card of their own.
     var picker: RequestTodoPicker?
 
-    /// The picker that lists the queue in place of the todos the question carries, when this is What's next
-    /// and the Mac can give the queue.
+    /// The picker that lists the queue in place of the todos the question carries, when this is What's next or the
+    /// Stop confirmation and the Mac can give the queue.
     private var queue: RequestTodoPicker? {
-        guard ask.whatsNext, let picker, picker.listsQueue else { return nil }
+        guard ask.listsTodoQueue, let picker, picker.listsQueue else { return nil }
         return picker
     }
 
@@ -513,8 +530,10 @@ private struct QuestionCard: View {
             }
             if !question.options.isEmpty {
                 let listing = self.queue
-                // The queue stands where the question's own todos are (just before "end" when it has none).
-                let slot = listing == nil ? nil : (question.options.firstIndex { $0.todo } ?? question.options.count - 1)
+                // The queue stands where the question's own todos are. With none it stands before the fixed choices that
+                // follow it: "end" for What's next, "continue" and "end" for the Stop confirmation.
+                let fixed = ask.whatsNext ? 1 : 2
+                let slot = listing == nil ? nil : (question.options.firstIndex { $0.todo } ?? max(question.options.count - fixed, 0))
                 VStack(spacing: 8) {
                     ForEach(Array(question.options.enumerated()), id: \.offset) { optionIndex, option in
                         if let listing, optionIndex == slot, listing.isVisible {
@@ -594,6 +613,8 @@ struct OptionRow: View {
     let attachments: Int
     let single: Bool
     let selected: Bool
+    /// A todo the phone just added that the Mac has not confirmed yet: it cannot be picked until it has.
+    let sending: Bool
     let action: () -> Void
 
     init(option: OptionView, single: Bool, selected: Bool, action: @escaping () -> Void) {
@@ -602,16 +623,18 @@ struct OptionRow: View {
         attachments = 0
         self.single = single
         self.selected = selected
+        sending = false
         self.action = action
     }
 
     /// A todo of the project's queue, listed like an option (docs/specs/special-replies.md D28/D29).
-    init(todo: TodoItem, single: Bool, selected: Bool, action: @escaping () -> Void) {
+    init(todo: TodoItem, single: Bool, selected: Bool, sending: Bool = false, action: @escaping () -> Void) {
         text = todo.text
         recommended = false
         attachments = Int(todo.att)
         self.single = single
         self.selected = selected
+        self.sending = sending
         self.action = action
     }
 
@@ -619,9 +642,13 @@ struct OptionRow: View {
     /// rows when the choice moves, and each of them reacting to its own change would tick twice.
     @State private var presses = 0
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    /// Only there on a page whose rows can be swiped (a todo's row is).
+    @Environment(SwipeCoordinator.self) private var swipes: SwipeCoordinator?
 
     var body: some View {
         Button {
+            // A finger that swiped the row sideways and lifted on it did not pick it.
+            guard swipes?.swallowsTap != true else { return }
             presses += 1
             action()
         } label: {
@@ -629,9 +656,12 @@ struct OptionRow: View {
                 OptionMark(single: single, selected: selected, pops: !reduceMotion)
                 Text(verbatim: text)
                     .font(.body)
-                    .foregroundStyle(.primary)
+                    .foregroundStyle(sending ? .secondary : .primary)
                     .multilineTextAlignment(.leading)
                     .frame(maxWidth: .infinity, alignment: .leading)
+                if sending {
+                    ProgressView().controlSize(.small)
+                }
                 if recommended {
                     Chip(text: "Recommended", systemImage: "star.fill", tint: .orange)
                 }
@@ -654,11 +684,13 @@ struct OptionRow: View {
 /// The look of an option row, chosen or not, pressed or not.
 private struct OptionRowStyle: ButtonStyle {
     let selected: Bool
+    /// A row that is being swiped sideways is not being pressed, however long the finger has been on it.
+    @Environment(SwipeCoordinator.self) private var swipes: SwipeCoordinator?
 
     private let shape = RoundedRectangle(cornerRadius: 12, style: .continuous)
 
     func makeBody(configuration: Configuration) -> some View {
-        let pressed = configuration.isPressed
+        let pressed = configuration.isPressed && swipes?.isSwiping != true
         configuration.label
             .background(shape.fill(fill(pressed: pressed)))
             .overlay(shape.strokeBorder(selected ? Color.accentColor : Color.clear, lineWidth: 2))

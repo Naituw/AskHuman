@@ -5,7 +5,7 @@
 
 use crate::confirm::ActionRole;
 use crate::i18n::Lang;
-use crate::models::{ConfirmFieldKind, ConfirmRequest};
+use crate::models::ConfirmRequest;
 use serde_json::{json, Value};
 
 const SELECT_PREFIX: &str = "confirm_select_";
@@ -42,21 +42,6 @@ fn bounded(input: &str, max: usize) -> String {
     } else {
         head
     }
-}
-
-fn context_markdown(request: &ConfirmRequest) -> String {
-    request
-        .context
-        .iter()
-        .map(|field| {
-            let value = match field.kind {
-                ConfirmFieldKind::Path => format!("`{}`", field.value.replace('`', "\\`")),
-                _ => field.value.clone(),
-            };
-            format!("**{}:** {}", field.label, value)
-        })
-        .collect::<Vec<_>>()
-        .join("\n")
 }
 
 fn reason_label(lang: Lang) -> &'static str {
@@ -129,19 +114,6 @@ pub(crate) fn compact_tool_markdown(request: &ConfirmRequest, max: usize, lang: 
         ));
     }
     body.push_str(&format!("**{}**", tool_name(request)));
-    if !request.detail.body_md.trim().is_empty() {
-        body.push_str("\n\n");
-        body.push_str(&request.detail.body_md);
-    }
-    bounded(&body, max)
-}
-
-pub(crate) fn request_markdown(request: &ConfirmRequest, max: usize) -> String {
-    let mut body = context_markdown(request);
-    if !body.is_empty() {
-        body.push_str("\n\n");
-    }
-    body.push_str(&format!("**{}**", request.detail.summary));
     if !request.detail.body_md.trim().is_empty() {
         body.push_str("\n\n");
         body.push_str(&request.detail.body_md);

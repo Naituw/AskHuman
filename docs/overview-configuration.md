@@ -15,11 +15,13 @@
   ⚡ 自动待办先执行。普通 ask 和 whats_next 共用此规则，详见
   [带理由升级 §9](specs/away-completion-guidance.md#9-cursor-离开升级转待阅)。
 - `cursorDesktop.suppressBackgroundCompletionFollowUp`：默认 `false`，字段名沿用；一个开关管 Cursor
-  会话防护的两个独立守卫——后台完成续跑拦截，以及 Agents 窗口里运行中会话保护（不卸载生成中会话的消息）。
+  会话防护的四项能力：后台完成续跑拦截、Agents 窗口的运行中会话保护、停滞等待与重试、并行 Agent HTTP/2 连接隔离。
   macOS Cursor 的 CLI/MCP 自动集成有效时，由 Daemon 管理实验性的 Desktop 全局接入；逐窗口、逐守卫原生行为预检
-  通过后才修改并报告 active，一个守卫不可用时另一个照常（状态 `partial`）。有效能力独立保活，不改写
+  通过后才修改并报告 active，接入失败时显示 `partial`。有效能力独立保活，不改写
   `general.daemonLifecycle`；None 停止接入但保留偏好，终端 Cursor CLI 不在范围内。
 - `cursorDesktop.launchPreference`：`terminal|desktop`，默认 `terminal`；新 Cursor 任务的运行位置。`desktop` 在 macOS 上经 Agents 窗口创建（实验）。偏好只决定两条路谁优先：首选路线不可用、另一条可用时双向自动改用另一条（与 Codex 对称，状态行说明原因）——所以只装了 Cursor Desktop、没有 CLI 也算「能启动」（`integrations/agent_start.rs` 的统一判定）；任务开始后不再改走另一条路径。
+- `antigravityDesktop.launchPreference`：`terminal|desktop`，默认 `desktop`；新 Antigravity 任务先用哪条路：`desktop` 是 macOS 上经 App 的全局 sidecar 创建，`terminal` 是 `agy -i`。与 Cursor 同形：偏好只决定谁优先，静态检查选出可用的一条，创建时才暴露的失败（sidecar 建不起来、没上线）直接拒绝并说明原因，不静默换路（规格 `antigravity-deep-integration.md` §12.1）。
+- `antigravityDesktop.manageSidecars`：默认 `false`；用户一次性允许 AskHuman 创建、改动和移除 App 路线需要的 sidecar，以及 Antigravity `config.json` 里启用它们的 `sidecars.askhuman-*` 条目（读-改-写，其余字节不动）。关掉它不会移除已有的 sidecar，要用设置页或 `AskHuman agents sidecars remove`。`agy` 路线不需要它；对空闲／已结束的 App 会话发消息（经 sidecar）也要它开着。
 - `general`
   - `collaborationStyle`、`collaborationStyleCustomText` 作为默认协作风格。`agentCollaborationStyles` 按六类 Agent 保存 `style` 与 `customText`，缺省 / 空的 `style` 跟随默认，显式自定义使用单家正文。保存与各载体的应用见 [协作风格 §10](specs/collaboration-style.md#10-按-agent-设置协作风格)。
   - `theme`、`language`、`alwaysOnTop`、`appearAnimation`、`windowEffect`（`solid|blur|glass`；配置默认 `blur`，显式 `glass` 在 macOS 26 以下有效值自动解析为 `blur`）

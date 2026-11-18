@@ -69,36 +69,21 @@ async fn send_inbound_reply(client: &SlackClient, dm: &str, reply: InboundReply,
     }
 }
 
-/// Router 归属：单进程自建一个仅挂本会话的 Router；Daemon 复用共享且常热的 Router。
-#[derive(Clone)]
-enum SlTransport {
-    Own,
-    Shared(Arc<SlRouter>),
-}
-
 /// 薄外层：接 Coordinator（并行抢答），把会话委托给 `run_conversation` + `SlackSession`。
 pub struct SlackChannel {
     config: SlackChannelConfig,
     preempt: Arc<Preemption>,
-    transport: SlTransport,
+    /// Daemon 持有的共享且常热的 Router，不在此处保活。
+    router: Arc<SlRouter>,
 }
 
 impl SlackChannel {
-    /// 单进程外层：本会话自建并独占一条连接（每进程一个 Router、仅挂本会话）。
-    pub fn new(config: SlackChannelConfig) -> Self {
-        Self {
-            config,
-            preempt: Arc::new(Preemption::new()),
-            transport: SlTransport::Own,
-        }
-    }
-
     /// Daemon 外层：复用共享且常热的 Router（跨请求复用，根治多连接抢消息）。
     pub fn shared(config: SlackChannelConfig, router: Arc<SlRouter>) -> Self {
         Self {
             config,
             preempt: Arc::new(Preemption::new()),
-            transport: SlTransport::Shared(router),
+            router,
         }
     }
 }
@@ -118,26 +103,11 @@ impl Channel for SlackChannel {
         let preempt = self.preempt.clone();
         let request = request.clone();
         let origin = origin.clone();
-        let transport = self.transport.clone();
+        let router = self.router.clone();
         tauri::async_runtime::spawn(async move {
             let lang = Lang::current();
-            // 取得本会话的事件源句柄（Own：现连一个 Router；Shared：复用）。`_keep` 持有
-            // Own Router 直至会话结束；Shared 的 Router 由 Daemon 持有。
-            let (events, _keep): (RoutedSl, Option<Arc<SlRouter>>) = match transport {
-                SlTransport::Own => match SlRouter::connect(&config).await {
-                    Ok(router) => (router.register(), Some(router)),
-                    Err(e) => {
-                        eprintln!(
-                            "{}{}",
-                            i18n::warn_prefix(lang),
-                            i18n::tr(lang, "channel.slConfigInvalidSkip").replace("{e}", &e)
-                        );
-                        sink.surface_lost("slack", &e);
-                        return;
-                    }
-                },
-                SlTransport::Shared(router) => (router.register(), None),
-            };
+            // 本会话的事件源句柄：向共享 Router 注册，会话结束时随句柄丢弃而注销。
+            let events: RoutedSl = router.register();
             let mut session = SlackSession::new(config, events);
             if let Err(e) = session.open().await {
                 eprintln!(
@@ -372,9 +342,14 @@ impl MessagingChannel for SlackSession {
                     if let Some(selection) = blockkit::parse_single_select(&payload) {
                         if ctx.single
                             && selection.index < ctx.options.len()
-                            && selection.message_ts == message_ts
-                            && (user_id.is_empty() || selection.user_id == user_id)
-                            && (selection.channel_id.is_empty() || selection.channel_id == dm)
+                            && is_own_card(
+                                &selection.message_ts,
+                                &selection.channel_id,
+                                &selection.user_id,
+                                &message_ts,
+                                dm,
+                                &user_id,
+                            )
                         {
                             selected_single = Some(selection.index);
                             let _ = ctx.save(
@@ -402,9 +377,14 @@ impl MessagingChannel for SlackSession {
                     else {
                         continue;
                     };
-                    if reply.message_ts != message_ts
-                        || (!user_id.is_empty() && reply.user_id != user_id)
-                    {
+                    if !is_own_card(
+                        &reply.message_ts,
+                        &reply.channel_id,
+                        &reply.user_id,
+                        &message_ts,
+                        dm,
+                        &user_id,
+                    ) {
                         continue;
                     }
                     let answer = QuestionAnswer {
@@ -944,10 +924,51 @@ fn event_user(event: &Value) -> &str {
     event.get("user").and_then(|v| v.as_str()).unwrap_or("")
 }
 
+/// Whether an interactive callback belongs to this question's own card: the card's message, the
+/// card's conversation and, once the user is known, the same user. A payload that carries no
+/// channel id gives no evidence against the conversation, which is how the card parsers report
+/// a callback Slack did not stamp with one.
+fn is_own_card(
+    callback_ts: &str,
+    callback_channel: &str,
+    callback_user: &str,
+    message_ts: &str,
+    dm: &str,
+    user_id: &str,
+) -> bool {
+    callback_ts == message_ts
+        && (callback_channel.is_empty() || callback_channel == dm)
+        && (user_id.is_empty() || callback_user == user_id)
+}
+
 /// 取文件扩展名（无则空串）。
 fn ext_of(name: &str) -> &str {
     std::path::Path::new(name)
         .extension()
         .and_then(|e| e.to_str())
         .unwrap_or("")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::is_own_card;
+
+    #[test]
+    fn own_card_needs_the_same_message_conversation_and_user() {
+        assert!(is_own_card("1.1", "D1", "U1", "1.1", "D1", "U1"));
+        // Another message in the same conversation is somebody else's card.
+        assert!(!is_own_card("2.2", "D1", "U1", "1.1", "D1", "U1"));
+        // The same message timestamp in another conversation is not this card either.
+        assert!(!is_own_card("1.1", "C9", "U1", "1.1", "D1", "U1"));
+        // Another user pressing the button does not answer the question.
+        assert!(!is_own_card("1.1", "D1", "U2", "1.1", "D1", "U1"));
+    }
+
+    #[test]
+    fn own_card_accepts_what_the_payload_does_not_say() {
+        // Slack did not stamp the callback with a conversation: nothing speaks against it.
+        assert!(is_own_card("1.1", "", "U1", "1.1", "D1", "U1"));
+        // The addressed user is not known yet: any sender on the right card counts.
+        assert!(is_own_card("1.1", "D1", "U2", "1.1", "D1", ""));
+    }
 }

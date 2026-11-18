@@ -50,15 +50,24 @@ extension PhoneEngine {
         for item in outbox.values.sorted(by: { $0.createdAt < $1.createdAt }) where item.macId == macId && timers["ack." + item.clientMsgId] == nil {
             await transmit(item)
         }
+        // What the user has read of the Mac's requests is told again (once per session; the Mac takes it
+        // as often as it comes): `request.seen` is what keeps it from pushing a request that was read.
+        for runtime in requests.values where runtime.cached.macId == macId && !runtime.cached.unread {
+            await tellSeen(macId, requestId: runtime.cached.requestId)
+        }
         if recoveredUpdate { await resumeTransfers(macId) }
         await ensureForegroundPresence()
     }
 
     func fetchFull(_ macId: String, requestId: String) async {
-        let key = CachedRequest.key(macId, requestId)
-        guard requests[key]?.fetching == false else { return }
-        requests[key]?.fetching = true
-        await send(RequestGet(requestId: requestId), to: macId)
+        // One question per request at a time, and only inside the session: a snapshot being worked through
+        // when the link went away has nobody left to ask.
+        guard requests[CachedRequest.key(macId, requestId)] != nil, macs[macId]?.epoch != nil,
+              macs[macId]?.fetching.contains(requestId) == false
+        else { return }
+        macs[macId]?.fetching.insert(requestId)
+        // A question that could not go out has no answer to wait for.
+        if await send(RequestGet(requestId: requestId), to: macId) == false { macs[macId]?.fetching.remove(requestId) }
     }
 
     func onRequestNew(_ macId: String, _ message: RequestNew) async {
@@ -100,9 +109,9 @@ extension PhoneEngine {
 
     func onRequestFull(_ macId: String, _ message: RequestFull) async {
         let view = message.request
+        macs[macId]?.fetching.remove(view.id)
         let key = CachedRequest.key(macId, view.id)
         guard var runtime = requests[key] else { return }
-        runtime.fetching = false
         runtime.cached.view = view
         runtime.cached.summary = summarize(view, size: runtime.cached.summary.size)
         requests[key] = runtime
@@ -202,6 +211,8 @@ extension PhoneEngine {
     ) {
         guard let runtime = requests.removeValue(forKey: key) else { return }
         let cached = runtime.cached
+        macs[cached.macId]?.fetching.remove(cached.requestId)
+        macs[cached.macId]?.seenSent.remove(cached.requestId)
         for item in outbox.values where item.macId == cached.macId && item.subject == cached.requestId {
             outbox[item.clientMsgId] = nil
             store.removeOutbox(item.clientMsgId)
@@ -243,11 +254,19 @@ extension PhoneEngine {
             requests[key] = runtime
             persistRequest(key)
         }
-        if !runtime.seenSent, macs[macId]?.sync == .synced {
-            requests[key]?.seenSent = true
-            await send(RequestSeen(requestId: requestId), to: macId)
-        }
+        await tellSeen(macId, requestId: requestId)
         publish()
+    }
+
+    /// Tells the Mac the user has seen the request, once per session. The user opens a request once, so
+    /// this is the phone's to keep true: what could not be told (the Mac was away, the link was going
+    /// down) or may not have been heard is told again when the next snapshot comes in.
+    func tellSeen(_ macId: String, requestId: String) async {
+        guard requests[CachedRequest.key(macId, requestId)] != nil, macs[macId]?.sync == .synced,
+              macs[macId]?.seenSent.contains(requestId) == false
+        else { return }
+        macs[macId]?.seenSent.insert(requestId)
+        if await send(RequestSeen(requestId: requestId), to: macId) == false { macs[macId]?.seenSent.remove(requestId) }
     }
 
     public func submitAnswer(

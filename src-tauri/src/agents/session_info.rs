@@ -198,7 +198,8 @@ pub fn workspace(kind: AgentKind, sid: &str) -> Option<String> {
     }
     workspace
 }
-/// Read current metadata on demand. Runtime reports remain authoritative for Pi estimates.
+/// Read current metadata on demand. Runtime reports remain authoritative for Pi estimates and for
+/// Antigravity's model.
 pub fn resolve(kind: AgentKind, sid: &str) -> SessionInfo {
     if !valid_sid(sid) {
         return SessionInfo::default();
@@ -208,7 +209,7 @@ pub fn resolve(kind: AgentKind, sid: &str) -> SessionInfo {
     let saved = source.map(|s| s.info).unwrap_or_default();
     let mut info = native(kind, sid);
     info.workspace = info.workspace.or(saved.workspace);
-    if kind == AgentKind::Pi
+    if matches!(kind, AgentKind::Pi | AgentKind::Antigravity)
         && runtime_report
         && saved.model.is_some()
         && saved.reported_at >= info.reported_at
@@ -457,9 +458,12 @@ pub fn capture_hook(
     if !valid_sid(&sid) {
         return;
     }
-    let runtime_report = kind == AgentKind::Pi
-        && (input.get("native_context").is_some()
-            || saved(kind, &sid).is_some_and(|s| s.runtime_report));
+    // Pi's extension reports its own model and context. Antigravity's hooks carry the current
+    // model on every event and no native file exposes it, so the latest hook is the record.
+    let runtime_report = kind == AgentKind::Antigravity
+        || (kind == AgentKind::Pi
+            && (input.get("native_context").is_some()
+                || saved(kind, &sid).is_some_and(|s| s.runtime_report)));
     let mut info = cached(kind, &sid);
     let explicit = input
         .get("workspace_roots")
@@ -472,9 +476,22 @@ pub fn capture_hook(
             AgentKind::Grok => env.get("GROK_WORKSPACE_ROOT").and_then(|s| directory(s)),
             AgentKind::Claude => env.get("CLAUDE_PROJECT_DIR").and_then(|s| directory(s)),
             AgentKind::Pi => input.get("cwd").and_then(Value::as_str).and_then(directory),
+            // One workspace root is the project; several roots name no single project.
+            AgentKind::Antigravity => input
+                .get("workspacePaths")
+                .and_then(Value::as_array)
+                .filter(|paths| paths.len() == 1)
+                .and_then(|paths| paths[0].as_str())
+                .and_then(directory),
             _ => None,
         });
     info.workspace = explicit.or(info.workspace);
+    if kind == AgentKind::Antigravity {
+        if let Some(model) = text(input, "modelName") {
+            info.model = Some(model);
+            info.reported_at = Some(crate::history::now_ms().max(0) as u64 / 1000);
+        }
+    }
     if kind == AgentKind::Pi {
         if let Some(report) = input.get("native_context") {
             info.model = text(report, "model");

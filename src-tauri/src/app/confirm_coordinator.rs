@@ -65,10 +65,6 @@ impl ConfirmCoordinator {
         })
     }
 
-    pub fn request(&self) -> &ConfirmRequest {
-        &self.request
-    }
-
     pub(crate) fn set_recovery(&self, recovery: Arc<crate::daemon::recovery::RequestContext>) {
         *self.recovery.lock().unwrap() = Some(recovery);
     }

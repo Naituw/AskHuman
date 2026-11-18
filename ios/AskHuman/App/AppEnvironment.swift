@@ -61,6 +61,12 @@ struct LaunchOptions {
     var syncDelay: Double?
     /// The `syncing` scenario starts with the requests the phone kept from the last run.
     var cachedInbox = false
+    /// `-AHSummaries YES`: every request starts as the Macs' snapshot sends it, a summary without the full text (which the
+    /// mock never delivers), so that its page stays on the one that waits for it.
+    var summariesOnly = false
+    /// `-AHLink online|connecting|macOffline|brokerDown`: the mock's Macs go to that link right after the start (the scenarios
+    /// have them all online, or all out of reach for good), to look at a page for each state of the link.
+    var macLink: MacLink?
     /// Seconds the receipt of a sent request stays up, and the next page takes to settle (UI tests
     /// stretch them to have time to look; the app's own values are made for the eye).
     var advanceHold: Double?
@@ -68,8 +74,8 @@ struct LaunchOptions {
     /// Seconds the countdown on the strip of an ended request page takes (the app's own 5 is too short for a UI test
     /// that has to look at the strip and press a button on a busy simulator).
     var endedCountdown: Double?
-    /// Seconds the "Added to <project>" note stays over a request page (the app's own 2 is too short for a
-    /// UI test that polls a busy simulator).
+    /// Seconds the notes over the todo list of a request page stay ("Completed … · Undo", a refused write; the app's own 4
+    /// is too short for a UI test that polls a busy simulator).
     var todoNoteHold: Double?
     /// Seconds the developer button's note ("Added to …", "Diagnostics copied") stays up (the app's own 1.8 is too
     /// short for a UI test that polls a busy simulator).
@@ -100,6 +106,23 @@ struct LaunchOptions {
     var historyDelay: Double?
     /// `-AHHistoryGate <path>`: a read of a session's history is held back until that file exists.
     var historyGate: String?
+    /// `-AHWatchText thinking|answer|long|short`: the working Agent's live view has a latest text of that kind (the page's
+    /// expand and collapse need one that does not fit the preview, and one that does).
+    var watchText: String?
+    /// `-AHWatchTextNext thinking|answer|long|short`: and from its third frame on (a third of a second, at the usual pace of
+    /// the frames) it says that one instead, which the page shows once its replacement interval allows (the page's tests of a
+    /// text replaced by itself).
+    var watchTextNext: String?
+    /// `-AHWatchTick 1`: the live view of the working Agent sends a frame every that many seconds (twice the latency, and not
+    /// less than 0.05, when it is not given). A test that needs one text on the screen before the next arrives slows the frames
+    /// down: at the usual pace the second text came a third of a second after the first, which a slow first render overtook.
+    var watchTick: Double?
+    /// `-AHTrafficStep 0|1|2|5|10`: how often the Inbox reminds about the month's data use, in GB (0 is off; the standard
+    /// step when it is not given).
+    var trafficStep: Int?
+    /// `-AHTrafficGate <path>`: the month's traffic takes a jump to 1.9 GB, close to the second GB, once that file exists (a
+    /// test of the reminder that comes back at the next GB closes the first one, then makes the file).
+    var trafficGate: String?
 
     init(defaults: UserDefaults = .standard) {
         mock = defaults.bool(forKey: "AHMock")
@@ -137,6 +160,14 @@ struct LaunchOptions {
         if defaults.object(forKey: "AHDeveloperMode") != nil { developerMode = defaults.bool(forKey: "AHDeveloperMode") }
         if defaults.object(forKey: "AHSyncDelay") != nil { syncDelay = defaults.double(forKey: "AHSyncDelay") }
         cachedInbox = defaults.bool(forKey: "AHCached")
+        summariesOnly = defaults.bool(forKey: "AHSummaries")
+        macLink = switch defaults.string(forKey: "AHLink") {
+        case "online": .online
+        case "connecting": .connecting
+        case "macOffline": .macOffline
+        case "brokerDown": .brokerDown
+        default: nil
+        }
         if defaults.object(forKey: "AHAdvanceHold") != nil { advanceHold = defaults.double(forKey: "AHAdvanceHold") }
         if defaults.object(forKey: "AHAdvanceSettle") != nil { advanceSettle = defaults.double(forKey: "AHAdvanceSettle") }
         if defaults.object(forKey: "AHEndedCountdown") != nil { endedCountdown = max(0.1, defaults.double(forKey: "AHEndedCountdown")) }
@@ -150,6 +181,11 @@ struct LaunchOptions {
         historyFail = max(0, defaults.integer(forKey: "AHHistoryFail"))
         if defaults.object(forKey: "AHHistoryDelay") != nil { historyDelay = max(0, defaults.double(forKey: "AHHistoryDelay")) }
         historyGate = defaults.string(forKey: "AHHistoryGate")
+        watchText = defaults.string(forKey: "AHWatchText")
+        watchTextNext = defaults.string(forKey: "AHWatchTextNext")
+        if defaults.object(forKey: "AHWatchTick") != nil { watchTick = max(0.05, defaults.double(forKey: "AHWatchTick")) }
+        if defaults.object(forKey: "AHTrafficStep") != nil { trafficStep = defaults.integer(forKey: "AHTrafficStep") }
+        trafficGate = defaults.string(forKey: "AHTrafficGate")
     }
 }
 
@@ -172,13 +208,21 @@ final class AppEnvironment {
         let drafts: DraftStore
         if launch.mock {
             let backend = MockBackend(
-                scenario: launch.scenario, latency: launch.latency, syncDelay: launch.syncDelay, cachedInbox: launch.cachedInbox
+                scenario: launch.scenario, latency: launch.latency, syncDelay: launch.syncDelay, cachedInbox: launch.cachedInbox,
+                summariesOnly: launch.summariesOnly
             )
             mock = backend
+            if let link = launch.macLink {
+                Task { for id in [MockData.homeMacId, MockData.officeMacId] { await backend.setLink(link, for: id) } }
+            }
             if launch.holdInterjects { Task { await backend.setInterjectConsumeDelay(nil) } }
             if launch.historyFail > 0 { Task { await backend.setFailNextSessionHistory(launch.historyFail) } }
             if let delay = launch.historyDelay { Task { await backend.setSessionHistoryDelay(realSeconds: delay) } }
             if let gate = launch.historyGate { Task { await backend.setSessionHistoryGate(path: gate) } }
+            if let kind = launch.watchText { Task { await backend.setWatchText(kind) } }
+            if let kind = launch.watchTextNext { Task { await backend.setWatchTextNext(kind) } }
+            if let seconds = launch.watchTick { Task { await backend.setWatchTick(seconds) } }
+            if let path = launch.trafficGate { Task { await backend.setTrafficGate(path: path) } }
             if let kind = launch.followEvent {
                 Task {
                     try? await Task.sleep(for: .seconds(2))
@@ -202,6 +246,7 @@ final class AppEnvironment {
             if let autoAdvance = launch.autoAdvance { suite.set(autoAdvance, forKey: "ah.autoAdvance") }
             if let developerMode = launch.developerMode { suite.set(developerMode, forKey: "ah.developerMode") }
             store = AppStore(backend: backend, drafts: drafts, defaults: suite)
+            if let step = launch.trafficStep.flatMap(TrafficReminderStep.init(rawValue:)) { store.trafficReminderStep = step }
             if let hold = launch.advanceHold { store.advanceTiming.hold = .seconds(hold) }
             if let settle = launch.advanceSettle { store.advanceTiming.settle = .seconds(settle) }
             if let seconds = launch.endedCountdown { store.endedCountdownLength = .seconds(seconds) }

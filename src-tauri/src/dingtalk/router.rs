@@ -5,11 +5,9 @@
 //! 以免半路丢用户消息。会话经 mpsc 收事件、经共享路由表登记/注销，不再各自持连接。
 //!
 //! Card callbacks are routed to the owning session for a response body, then written by the Router.
-//! Terminal single-process callers can wait for the corresponding write completion signal before
-//! returning their answer.
+//! A session can wait for the corresponding write completion signal before it continues.
 //!
-//! 单进程与 Daemon 复用同一套：Daemon 持**共享且常热**的 Router（跨请求复用，根治多连接抢消息）；
-//! 单进程则每进程起一个只挂 1 个会话的同款 Router。
+//! Daemon 持**共享且常热**的 Router（跨请求复用，根治多连接抢消息）。
 
 use super::card;
 use super::stream::{StreamConn, StreamEvent, TOPIC_BOT_MESSAGE, TOPIC_CARD_CALLBACK};
@@ -36,8 +34,8 @@ pub enum DdInbound {
 
 /// Response handle for a card callback.
 ///
-/// Terminal single-process callers use `send_and_wait` so they cannot exit between handing the
-/// response to the Router and the Router attempting the Stream response write.
+/// `send` only hands the response body back to the Router. `send_and_wait` additionally waits
+/// (bounded by `SUBMIT_ACK_TIMEOUT`) until the Router has attempted the Stream response write.
 pub struct CardAck {
     response: oneshot::Sender<Value>,
     write_complete: oneshot::Receiver<()>,

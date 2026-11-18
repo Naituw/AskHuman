@@ -51,6 +51,11 @@ const PROJECT_TTL: Duration = Duration::from_secs(60);
 
 /// Resolved project of a working directory, remembered because the list is rebuilt every second
 /// and walking up to the git root touches the disk.
+///
+/// A miss reads a handful of small local files (the git root and its `.git/config`), once per
+/// working directory per [`PROJECT_TTL`]. That stays synchronous on purpose: `Host::agents` is a
+/// synchronous call, and a cached answer is what every other rebuild gets. The lock is never held
+/// across those reads.
 #[derive(Default)]
 pub(super) struct ProjectCache {
     by_cwd: Mutex<HashMap<String, (ProjectRef, Instant)>>,
@@ -65,17 +70,22 @@ impl ProjectCache {
                 repo: None,
             };
         }
-        let mut map = self.by_cwd.lock().unwrap();
-        if map.len() > 256 {
-            map.clear();
-        }
-        if let Some((project, at)) = map.get(cwd) {
-            if at.elapsed() < PROJECT_TTL {
-                return project.clone();
+        {
+            let mut map = self.by_cwd.lock().unwrap();
+            if map.len() > 256 {
+                map.clear();
+            }
+            if let Some((project, at)) = map.get(cwd) {
+                if at.elapsed() < PROJECT_TTL {
+                    return project.clone();
+                }
             }
         }
         let project = resolve_project(cwd, crate::todo_sync::service::is_enabled());
-        map.insert(cwd.to_string(), (project.clone(), Instant::now()));
+        self.by_cwd
+            .lock()
+            .unwrap()
+            .insert(cwd.to_string(), (project.clone(), Instant::now()));
         project
     }
 }
@@ -117,7 +127,7 @@ pub(super) fn can_interject(rec: &Value) -> CanInterject {
         ok: false,
         reason: Some(reason.to_string()),
     };
-    if matches!(text(rec, "kind"), "grok" | "antigravity") {
+    if text(rec, "kind") == "grok" {
         return refuse("unsupported");
     }
     if crate::codex_desktop::is_desktop_session(rec) {
@@ -578,6 +588,12 @@ mod tests {
         assert_eq!(
             refused(json!({"kind": "grok"})).as_deref(),
             Some("unsupported")
+        );
+        // An Antigravity hook carries the message into the next invocation of a working session.
+        assert!(can_interject(&record(json!({"kind": "antigravity", "state": "working"}))).ok);
+        assert_eq!(
+            refused(json!({"kind": "antigravity", "state": "ended"})).as_deref(),
+            Some("ended")
         );
         assert!(
             can_interject(&record(

@@ -160,7 +160,7 @@ impl Actor {
         if pairing.ticket_id != ticket_id || !matches!(pairing.stage, Stage::Waiting) {
             return;
         }
-        let Ok(env) = envelope::parse(payload) else {
+        let Ok(env) = envelope::parse_from_phone(payload) else {
             return;
         };
         if env.f == self.mac_id || env.k != KID_TICKET {

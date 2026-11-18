@@ -78,16 +78,31 @@ describe("InteractSlot composer", () => {
     expect(wrapper.emitted("send")).toEqual([["", ["/tmp/a.png"], []]]);
     wrapper.unmount();
   });
-  it.each(["working", "idle", "ended"] as const)(
-    "does not offer messaging for the unvalidated Antigravity adapter in state %s",
+  const antigravity = (patch: Partial<AgentRecord>) =>
+    mount(InteractSlot, {
+      props: { record: { ...record, kind: "antigravity", ...patch }, submitBareEnter: false,
+        pendingText: "", pendingCount: 0, pendingAttachmentCount: 0, newTaskSupported: false },
+      global: { plugins: [i18n] },
+    });
+  it("offers a working Antigravity session the composer: its hook carries the message", () => {
+    const wrapper = antigravity({ state: "working" });
+    expect(wrapper.find("textarea").exists()).toBe(true);
+    wrapper.unmount();
+  });
+  it.each(["idle", "ended"] as const)(
+    "offers no composer for an Antigravity session in state %s that the daemon cannot message",
     (state) => {
-      const wrapper = mount(InteractSlot, {
-        props: { record: { ...record, kind: "antigravity", state }, submitBareEnter: false,
-          pendingText: "", pendingCount: 0, pendingAttachmentCount: 0, newTaskSupported: false },
-        global: { plugins: [i18n] },
-      });
+      const wrapper = antigravity({ state });
       expect(wrapper.find("textarea").exists()).toBe(false);
-      expect(wrapper.text()).toContain(i18n.global.t("console.antigravityHint"));
+      expect(wrapper.text()).toContain(i18n.global.t(state === "idle" ? "console.idleHint" : "console.endedHint"));
+      wrapper.unmount();
+    },
+  );
+  it.each(["idle", "ended"] as const)(
+    "offers an Antigravity session in state %s the composer once the daemon says it can be messaged",
+    (state) => {
+      const wrapper = antigravity({ state, canMessage: true });
+      expect(wrapper.find("textarea").exists()).toBe(true);
       wrapper.unmount();
     },
   );

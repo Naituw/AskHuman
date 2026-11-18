@@ -19,7 +19,7 @@ use std::collections::HashMap;
 use std::time::Duration;
 use tokio::net::TcpStream;
 use tokio_tungstenite::tungstenite::Message;
-use tokio_tungstenite::{connect_async, MaybeTlsStream, WebSocketStream};
+use tokio_tungstenite::{MaybeTlsStream, WebSocketStream};
 
 const GEN_ENDPOINT_URI: &str = "/callback/ws/endpoint";
 const HEADER_TYPE: &str = "type";
@@ -118,9 +118,9 @@ impl FeishuWs {
     ) -> Result<Self, FeishuError> {
         let (url, ping_secs) = open_endpoint(&http, base_url, app_id, app_secret).await?;
         let service_id = parse_query_i32(&url, "service_id").unwrap_or(0);
-        let (ws, _resp) = connect_async(url)
+        let ws = crate::channels::health::connect_websocket(url)
             .await
-            .map_err(|e| FeishuError::Network(format!("WebSocket connection failed: {}", e)))?;
+            .map_err(FeishuError::Network)?;
         let (write, read) = ws.split();
         let dur = Duration::from_secs(ping_secs.max(10));
         let ping = tokio::time::interval_at(tokio::time::Instant::now() + dur, dur);
@@ -137,7 +137,9 @@ impl FeishuWs {
             awaiting_pong: false,
             frag: HashMap::new(),
         };
-        let _ = me.send_app_ping().await; // 首个 ping，校准心跳（与官方 SDK 一致）。
+        // 首个 ping，校准心跳（与官方 SDK 一致）。限时：连接此时已握手成功，写不出这一帧的 socket
+        // 之后会被半开探测判死重建；这里不能为它卡住 `connect`（调用方还持着 Router 槽的建连门）。
+        let _ = tokio::time::timeout(Duration::from_secs(5), me.send_app_ping()).await;
         Ok(me)
     }
 
@@ -355,9 +357,7 @@ impl FeishuWs {
                 .await
                 .map_err(|e| e.to_string())?;
         let service_id = parse_query_i32(&url, "service_id").unwrap_or(0);
-        let (ws, _) = connect_async(url)
-            .await
-            .map_err(|e| format!("WebSocket connection failed: {e}"))?;
+        let ws = crate::channels::health::connect_websocket(url).await?;
         let (write, read) = ws.split();
         self.write = write;
         self.read = read;

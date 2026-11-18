@@ -127,36 +127,42 @@ describe("IosChannelCard", () => {
     wrapper.unmount();
   });
 
-  it("shows this month's traffic and warns before the free quota is used up", async () => {
+  it("shows this month's traffic and says plainly when it is close to a GB or past it", async () => {
     const mib = 1024 * 1024;
+    async function noteFor(each: number) {
+      iosOp.mockResolvedValue({
+        kind: "state",
+        state: gateway({ traffic: { month: "2026-10", bytesIn: each * mib, bytesOut: each * mib, msgsIn: 4, msgsOut: 5 } }),
+      });
+      const wrapper = mountCard();
+      await flushPromises();
+      return wrapper;
+    }
+
     iosOp.mockResolvedValue({
       kind: "state",
       state: gateway({ traffic: { month: "2026-10", bytesIn: 2 * mib, bytesOut: 3 * mib, msgsIn: 4, msgsOut: 5 } }),
     });
-    const wrapper = mountCard();
+    const quiet = mountCard();
     await flushPromises();
-    expect(wrapper.get(".ios-traffic").text()).toContain("5.0 MB");
-    expect(wrapper.find(".ios-traffic-warning").exists()).toBe(false);
-    wrapper.unmount();
+    expect(quiet.get(".ios-traffic").text()).toContain("5.0 MB");
+    expect(quiet.find(".ios-traffic-note").exists()).toBe(false);
+    quiet.unmount();
 
-    iosOp.mockResolvedValue({
-      kind: "state",
-      state: gateway({ traffic: { month: "2026-10", bytesIn: 440 * mib, bytesOut: 440 * mib, msgsIn: 4, msgsOut: 5 } }),
-    });
-    const warned = mountCard();
-    await flushPromises();
-    expect(warned.get(".ios-traffic-warning").classes()).toContain("warn");
-    expect(warned.get(".ios-traffic-warning").text()).toContain("close to EMQX's free quota");
-    warned.unmount();
+    const near = await noteFor(440);
+    expect(near.get(".ios-traffic-note").text()).toBe("This month's data use is close to 1 GB.");
+    near.unmount();
 
-    iosOp.mockResolvedValue({
-      kind: "state",
-      state: gateway({ traffic: { month: "2026-10", bytesIn: 600 * mib, bytesOut: 600 * mib, msgsIn: 4, msgsOut: 5 } }),
-    });
-    const full = mountCard();
-    await flushPromises();
-    expect(full.get(".ios-traffic-warning").classes()).toContain("full");
-    full.unmount();
+    const past = await noteFor(600);
+    expect(past.get(".ios-traffic-note").text()).toBe("This month's data use is over 1 GB.");
+    past.unmount();
+
+    const next = await noteFor(975);
+    expect(next.get(".ios-traffic-note").text()).toBe("This month's data use is close to 2 GB.");
+    // It only counts: nothing about a free quota or what the service does when it runs out, in either colour.
+    expect(next.text()).not.toContain("pauses");
+    expect(next.find(".ios-traffic-note").classes()).not.toContain("warn");
+    next.unmount();
   });
 
   it("shows the known Mac total, source details and storage failures", async () => {

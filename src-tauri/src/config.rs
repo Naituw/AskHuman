@@ -145,15 +145,6 @@ impl CollaborationStyle {
             Self::Custom => "custom",
         }
     }
-
-    pub fn parse(s: &str) -> Option<Self> {
-        match s {
-            "aligned" => Some(Self::Aligned),
-            "autonomous" => Some(Self::Autonomous),
-            "custom" => Some(Self::Custom),
-            _ => None,
-        }
-    }
 }
 
 /// A missing style inherits the default. Draft text survives selecting another style.
@@ -702,6 +693,7 @@ impl Default for TodoSyncConfig {
 pub struct AppConfig {
     pub codex_desktop: crate::codex_desktop::Config,
     pub cursor_desktop: crate::cursor_desktop::Config,
+    pub antigravity_desktop: crate::antigravity_desktop::Config,
     pub general: GeneralConfig,
     pub channels: ChannelsConfig,
     pub agent_tasks: AgentTasksConfig,

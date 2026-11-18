@@ -51,6 +51,30 @@ final class AskHumanHistoryPicturesUITests: XCTestCase {
         app.descendants(matching: .any).matching(identifier: id).firstMatch
     }
 
+    /// The first element whose identifier begins with `prefix` (a picture's identifier ends with its asset id).
+    private func element(prefix: String) -> XCUIElement {
+        app.descendants(matching: .any).matching(NSPredicate(format: "identifier BEGINSWITH %@", prefix)).firstMatch
+    }
+
+    /// A slow drag inside `element`, from a height to another one (fractions of its height, 0 is its top).
+    private func drag(_ element: XCUIElement, from: CGFloat, to: CGFloat) {
+        let start = element.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: from))
+        let end = element.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: to))
+        start.press(forDuration: 0.05, thenDragTo: end, withVelocity: .slow, thenHoldForDuration: 0.3)
+    }
+
+    /// Drags until the picture does not move any more (it has come to the end of its travel in that direction).
+    private func dragUntilItStops(_ element: XCUIElement, _ picture: XCUIElement, from: CGFloat, to: CGFloat) {
+        var last = picture.frame.minY
+        for _ in 0..<8 {
+            drag(element, from: from, to: to)
+            Thread.sleep(forTimeInterval: 0.5)
+            let now = picture.frame.minY
+            if abs(now - last) < 0.5 { return }
+            last = now
+        }
+    }
+
     @discardableResult
     private func requireElement(_ id: String, timeout: TimeInterval = 20, file: StaticString = #filePath, line: UInt = #line) -> XCUIElement {
         let found = element(id)
@@ -192,6 +216,64 @@ final class AskHumanHistoryPicturesUITests: XCTestCase {
         XCTAssertGreaterThanOrEqual(frame.minX, window.minX - 0.5)
         XCTAssertLessThanOrEqual(frame.maxX, window.maxX + 0.5)
         shot("viewer-tall")
+        closeViewer()
+    }
+
+    /// Zoomed in, a picture is not cut off at the bar: the area it moves in is the whole sheet, so it can be dragged out
+    /// under the bar (as in the system's Photos app), where the system softens or blurs it. Its edges still stop where
+    /// they rested: dragged all the way down, its top comes back to the bar's lower edge; dragged all the way up, its
+    /// bottom is at the bottom of the sheet. (Before, the area began at the bar's lower edge, so the picture was cut
+    /// off there and the bar was an empty strip.)
+    func testAZoomedPictureCanBeDraggedUnderTheBarOfTheViewer() {
+        launch()
+        openThread()
+        card(4).buttons["session-picture-1"].tap()
+        requireElement("image-gallery")
+        XCTAssertEqual(element("gallery-name").label, "onboarding-2.png")
+        let picture = element(prefix: "viewer-picture-hpic-2-")
+        let area = element(prefix: "viewer-zoom-hpic-2-")
+        XCTAssertTrue(picture.waitForExistence(timeout: 20), "the picture did not arrive")
+        XCTAssertTrue(area.exists, "the area the picture moves in is not there")
+        waitFor("the picture is not in place") { picture.frame.height > 100 }
+        settle()
+        let close = element("gallery-close").frame
+        let bar = max(close.maxY, element("gallery-name").frame.maxY)
+        // The sheet is not the window: an iPad shows it as a form sheet in the middle of the screen.
+        let sheet = element("image-gallery").frame
+        let rest = picture.frame
+        // At rest the picture is below the bar, but the area it moves in runs up under it.
+        XCTAssertGreaterThanOrEqual(rest.minY, bar - 0.5, "the picture \(rest) rests above the bottom of the bar (\(bar))")
+        XCTAssertLessThanOrEqual(area.frame.minY, close.minY, "the area \(area.frame) begins below the top of the bar's buttons \(close)")
+        XCTAssertEqual(area.frame.maxY, sheet.maxY, accuracy: 1, "the area \(area.frame) does not run to the bottom of the sheet \(sheet)")
+        shot("viewer-zoom-1-at-rest")
+
+        area.doubleTap()
+        waitFor("the picture did not zoom in") { picture.frame.height > rest.height * 2 }
+        settle()
+        shot("viewer-zoom-2-zoomed-in")
+        // Pulled up by a good part of the sheet, the glyph in the middle of the picture passes under the bar.
+        drag(area, from: 0.5, to: 0.0)
+        settle()
+        XCTAssertLessThan(picture.frame.minY, rest.minY - 100, "the picture \(picture.frame) did not move up")
+        shot("viewer-zoom-3-under-the-bar")
+
+        // All the way down: the top of the picture rests at the bar's lower edge again, neither under it nor below it.
+        dragUntilItStops(area, picture, from: 0.15, to: 0.95)
+        XCTAssertEqual(picture.frame.minY, rest.minY, accuracy: 1, "the top of the picture \(picture.frame) is not at the bar's lower edge \(rest.minY)")
+        shot("viewer-zoom-4-top")
+        // All the way up: the bottom of the picture is at the bottom of the sheet.
+        dragUntilItStops(area, picture, from: 0.95, to: 0.15)
+        XCTAssertEqual(picture.frame.maxY, area.frame.maxY, accuracy: 1, "the bottom of the picture \(picture.frame) is not at the bottom of the area \(area.frame)")
+        shot("viewer-zoom-5-bottom")
+
+        // A second double tap brings the picture back to where it rested.
+        area.doubleTap()
+        waitFor("the picture did not come back") { abs(picture.frame.height - rest.height) < 1 }
+        settle()
+        let back = picture.frame
+        XCTAssertEqual(back.minY, rest.minY, accuracy: 1)
+        XCTAssertEqual(back.minX, rest.minX, accuracy: 1)
+        XCTAssertEqual(back.width, rest.width, accuracy: 1)
         closeViewer()
     }
 

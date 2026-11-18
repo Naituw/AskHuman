@@ -74,7 +74,7 @@ function setup(opts: { vertical: boolean; tops: Record<string, number> }) {
     viewSource: ref(false),
     attachments: ref([]),
     questions: ref([question("alpha q-0-msg alpha"), question("alpha q-1-msg alpha")]),
-    whatsNext: ref(false),
+    liveTodoOptions: ref(false),
     todoPrefix: ref(""),
     confirmChoiceTexts: ref([]),
     confirmTitle: ref(""),
@@ -91,6 +91,58 @@ function setup(opts: { vertical: boolean; tops: Record<string, number> }) {
 async function settle(): Promise<void> {
   for (let i = 0; i < 4; i++) await nextTick();
 }
+
+describe("usePopupFind reading order", () => {
+  /** A page whose segments are laid out in `order` (the DOM order is what the user reads). */
+  function pageOf(order: string[], questionAsMessage: boolean) {
+    const content = mountContent(Object.fromEntries(order.map((id, i) => [id, 100 + i * 40])));
+    const find = usePopupFind({
+      contentRef: ref(content),
+      isConfirm: ref(false),
+      confirmRequest: ref(null),
+      messageText: ref(""),
+      viewSource: ref(false),
+      attachments: ref([{ path: "/tmp/plan.md", name: "alpha att-0 alpha", size: 1, isImage: false }]),
+      questions: ref([question("alpha q-0-msg alpha")]),
+      questionAsMessage: ref(questionAsMessage),
+      liveTodoOptions: ref(false),
+      todoPrefix: ref(""),
+      confirmChoiceTexts: ref([]),
+      confirmTitle: ref(""),
+      confirmSummary: ref(""),
+      confirmToolName: ref(""),
+      confirmBodyText: ref(""),
+      currentQ: ref(0),
+      verticalMode: ref(false),
+      revealQuestion: vi.fn(async () => {}),
+    });
+    const currentSegment = () =>
+      content.querySelector(".popup-find-hit-current")?.closest("[data-find-seg]")?.getAttribute("data-find-seg");
+    return { find, currentSegment };
+  }
+
+  it("visits a question that stands in for the Message before the files, as it is on screen", async () => {
+    const { find, currentSegment } = pageOf(["q-0-msg", "att-0"], true);
+    find.openFind(false);
+    find.onFindQueryInput("alpha");
+    await settle();
+    expect(find.findTotal.value).toBe(4);
+    expect(currentSegment()).toBe("q-0-msg");
+    await find.goFind(2);
+    await settle();
+    expect(find.findCurrent.value).toBe(2);
+    expect(currentSegment()).toBe("att-0");
+  });
+
+  it("keeps the files before the question when the question is not the Message", async () => {
+    const { find, currentSegment } = pageOf(["att-0", "q-0-msg"], false);
+    find.openFind(false);
+    find.onFindQueryInput("alpha");
+    await settle();
+    expect(find.findTotal.value).toBe(4);
+    expect(currentSegment()).toBe("att-0");
+  });
+});
 
 describe("usePopupFind viewport ownership", () => {
   it("vertical mode: scroll-spy changing currentQ neither reveals nor scrolls", async () => {

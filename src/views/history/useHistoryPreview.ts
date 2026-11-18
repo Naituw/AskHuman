@@ -8,6 +8,7 @@ import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import { getCurrentWebviewWindow } from "@tauri-apps/api/webviewWindow";
 import { createLocalImageLoader } from "../../lib/localImageUrls";
 import type { FileAttachment, HistoryEntry, ImageAttachment } from "../../lib/types";
+import { shownReplies } from "../../lib/history";
 import type { FindScope } from "../popup/attachmentFind";
 import type { AttachmentPanelContext } from "../popup/attachmentPanelContext";
 import { HISTORY_LAYOUT_EVENT } from "../popup/useAttachmentPreview";
@@ -34,7 +35,7 @@ function fileName(path: string): string {
  */
 function replyImagesOf(entry: HistoryEntry | null, cache: Map<string, ImageAttachment>): ImageAttachment[][] {
   if (!entry) return [];
-  return entry.answers.map((answer, q) => answer.images.map((path, i) => {
+  return shownReplies(entry).map((answer, q) => answer.images.map((path, i) => {
     const key = `${q}\u0000${i}\u0000${path}`;
     let image = cache.get(key);
     if (!image) { image = { data: path, mediaType: "", filename: fileName(path) }; cache.set(key, image); }

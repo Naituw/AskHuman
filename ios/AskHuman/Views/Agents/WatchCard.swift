@@ -8,13 +8,12 @@ struct WatchCard: View {
     let watch: WatchState?
     /// The Mac is reachable and still lists the session, so frames can arrive.
     let live: Bool
-    @Binding var reading: Bool
 
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
             header
             if let frame = watch?.frame {
-                WatchText(frame: frame, pageReading: $reading).id(item.id)
+                WatchText(frame: frame).id(item.id)
                 if !frame.todos.isEmpty {
                     TodoList(todos: frame.todos)
                 }

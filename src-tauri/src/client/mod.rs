@@ -19,6 +19,35 @@ use transport::{OwnedReadHalf, OwnedWriteHalf};
 
 type Reader = BufReader<OwnedReadHalf>;
 
+/// How long one Hello, Status or Stop exchange (connect, write and read together) may take.
+///
+/// A healthy daemon answers in milliseconds. The bound exists for a daemon that accepts the
+/// connection and then says nothing, which is how a wedged one looks from outside; without it every
+/// client that probes the daemon, including `daemon restart`, waits on it for as long as it stays
+/// wedged.
+const HANDSHAKE_TIMEOUT: Duration = Duration::from_secs(5);
+
+/// Run `exchange`, or fail with [`ErrorKind::TimedOut`] once `limit` has passed.
+///
+/// `TimedOut` is how callers tell a daemon that is alive but silent from one that is absent
+/// (`Ok(None)` from [`request_status_result`]) and from one that answered wrongly.
+async fn within<T>(
+    limit: Duration,
+    what: &str,
+    exchange: impl std::future::Future<Output = std::io::Result<T>>,
+) -> std::io::Result<T> {
+    match tokio::time::timeout(limit, exchange).await {
+        Ok(result) => result,
+        Err(_) => Err(Error::new(
+            ErrorKind::TimedOut,
+            format!(
+                "{what}: the daemon accepted the connection but did not answer within {}s",
+                limit.as_secs()
+            ),
+        )),
+    }
+}
+
 /// 本进程的握手信息。
 fn hello() -> ClientHello {
     ClientHello {
@@ -71,15 +100,31 @@ fn validate_fixture_peer(status: &StatusInfo) -> std::io::Result<()> {
     Ok(())
 }
 
-/// 连一次并握手，返回握手状态（连不上返回 None）。
+/// 连一次并握手，返回握手状态（连不上、无应答或应答异常返回 None）。
+///
+/// Bounded by [`HANDSHAKE_TIMEOUT`]: a daemon that does not answer is the same as no daemon to the
+/// callers, which then walk their start / replace ladder.
 async fn hello_status() -> Option<HelloStatus> {
-    let (mut reader, mut writer) = connect_split().await.ok()?;
-    ipc::write_msg(&mut writer, &ClientMsg::Hello(hello()))
-        .await
-        .ok()?;
-    match ipc::read_msg::<_, ServerMsg>(&mut reader).await {
-        Ok(Some(ServerMsg::HelloAck(ack))) => Some(ack.status),
-        _ => None,
+    within(HANDSHAKE_TIMEOUT, "Hello", async {
+        let (mut reader, mut writer) = connect_split().await?;
+        hello_over(&mut reader, &mut writer).await
+    })
+    .await
+    .ok()
+}
+
+async fn hello_over<R, W>(reader: &mut R, writer: &mut W) -> std::io::Result<HelloStatus>
+where
+    R: tokio::io::AsyncBufRead + Unpin,
+    W: tokio::io::AsyncWrite + Unpin,
+{
+    ipc::write_msg(writer, &ClientMsg::Hello(hello())).await?;
+    match ipc::read_msg::<_, ServerMsg>(reader).await? {
+        Some(ServerMsg::HelloAck(ack)) => Ok(ack.status),
+        _ => Err(Error::new(
+            ErrorKind::InvalidData,
+            "unexpected daemon Hello response",
+        )),
     }
 }
 
@@ -104,7 +149,9 @@ fn development_peer_matches(
     expected: crate::daemon::lifecycle::Fingerprint,
 ) -> bool {
     status.development_verification_version == crate::development::CAPABILITY_VERSION
-        && status.fingerprint == Some(expected)
+        && status
+            .fingerprint
+            .is_some_and(|fingerprint| fingerprint.same_as(&expected))
 }
 
 async fn require_development_peer() -> std::io::Result<()> {
@@ -213,7 +260,14 @@ pub async fn request_status() -> Option<StatusInfo> {
 
 /// Query without starting the daemon. Only an absent/refused endpoint returns `Ok(None)`;
 /// connection permission errors, failed exchanges and invalid responses retain their cause.
+///
+/// A daemon that accepts the connection but does not answer within [`HANDSHAKE_TIMEOUT`] is
+/// `Err(ErrorKind::TimedOut)`: alive but silent, which is not the same as absent.
 pub async fn request_status_result() -> std::io::Result<Option<StatusInfo>> {
+    within(HANDSHAKE_TIMEOUT, "Status", status_exchange()).await
+}
+
+async fn status_exchange() -> std::io::Result<Option<StatusInfo>> {
     let (mut reader, mut writer) = match connect_split_unchecked().await {
         Ok(connection) => connection,
         Err(error) if diagnostics::is_not_running(&error) => return Ok(None),
@@ -422,21 +476,22 @@ pub async fn cancel_launch(id: String) {
 }
 
 /// 请求停止（force=false 为 graceful：有在途请求时 Daemon 排空后退出）；
-/// 收到 Stopping 回应返回 true，未运行返回 false。
+/// 收到 Stopping 回应返回 true，未运行（或 [`HANDSHAKE_TIMEOUT`] 内无应答）返回 false。
+///
+/// The daemon acknowledges before it drains, so the acknowledgement is as quick as a Status reply.
+/// Bounding it keeps `daemon restart` usable on a daemon that is wedged: it falls through to
+/// `ensure_running`, which replaces a daemon that does not answer.
 pub async fn request_stop(force: bool) -> bool {
-    let Ok((mut reader, mut writer)) = connect_split().await else {
-        return false;
-    };
-    if ipc::write_msg(&mut writer, &ClientMsg::Stop { force })
-        .await
-        .is_err()
-    {
-        return false;
-    }
-    matches!(
-        ipc::read_msg::<_, ServerMsg>(&mut reader).await,
-        Ok(Some(ServerMsg::Stopping))
-    )
+    within(HANDSHAKE_TIMEOUT, "Stop", async {
+        let (mut reader, mut writer) = connect_split().await?;
+        ipc::write_msg(&mut writer, &ClientMsg::Stop { force }).await?;
+        Ok(matches!(
+            ipc::read_msg::<_, ServerMsg>(&mut reader).await,
+            Ok(Some(ServerMsg::Stopping))
+        ))
+    })
+    .await
+    .unwrap_or(false)
 }
 
 /// Poll until the daemon instance that is running *now* is gone, or `max` elapses.
@@ -631,6 +686,7 @@ pub fn agent_control_request(
             control: Some(Box::new(signal)),
             ..Default::default()
         })),
+        stop_gate: false,
     };
     rt.block_on(async {
         let (mut reader, mut writer) = connect_split().await.ok()?;
@@ -766,6 +822,69 @@ pub fn report_agent_event_with_poll(msg: ClientMsg) -> InterjectPollOutcome {
         }
         interject_read_frames(&mut reader, INTERJECT_FIRST_FRAME_TIMEOUT).await
     })
+}
+
+/// What the daemon says about raising a Stop confirmation card (`AgentEvent.stop_gate`).
+#[derive(Debug, PartialEq, Eq)]
+pub enum StopGate {
+    /// Ask the human now. `held` when the daemon made the hook wait first.
+    Card { held: bool },
+    /// Do not ask.
+    Skip,
+    /// No answer: an older daemon, none reachable, or a frame nobody expected.
+    Unanswered,
+}
+
+/// The first answer to a gate query includes a look at the conversation's log, so it gets more
+/// time than an interjection poll. A daemon that never answers costs this once per Stop.
+const STOP_GATE_FIRST_FRAME_TIMEOUT: Duration = Duration::from_secs(2);
+
+/// Sends a Stop with `stop_gate` set and reads the daemon's answer. A `hold` is answered by a
+/// second frame whenever the sub-agents the daemon is waiting for have finished, however long that
+/// takes; the hook's own timeout is the limit.
+pub fn report_stop_gate(msg: ClientMsg) -> StopGate {
+    let Ok(rt) = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+    else {
+        return StopGate::Unanswered;
+    };
+    rt.block_on(async {
+        if !background_peer_ready().await {
+            return StopGate::Unanswered;
+        }
+        let Ok((mut reader, mut writer)) = connect_split().await else {
+            return StopGate::Unanswered;
+        };
+        if !accepts_observation(&mut reader, &mut writer, &msg).await {
+            return StopGate::Unanswered;
+        }
+        if ipc::write_msg(&mut writer, &msg).await.is_err() {
+            return StopGate::Unanswered;
+        }
+        stop_gate_frames(&mut reader, STOP_GATE_FIRST_FRAME_TIMEOUT).await
+    })
+}
+
+/// The frames of a gate answer, apart from the transport so an in-memory stream can test it.
+async fn stop_gate_frames<R>(reader: &mut R, first_timeout: Duration) -> StopGate
+where
+    R: tokio::io::AsyncBufRead + Unpin,
+{
+    use crate::ipc::InterjectAction;
+    let first = match tokio::time::timeout(first_timeout, read_interject_decision(reader)).await {
+        Ok(first) => first,
+        Err(_) => return StopGate::Unanswered,
+    };
+    match first {
+        Some((InterjectAction::None, _, _)) => StopGate::Card { held: false },
+        Some((InterjectAction::Skip, _, _)) => StopGate::Skip,
+        Some((InterjectAction::Hold, _, _)) => match read_interject_decision(reader).await {
+            Some((InterjectAction::Release, _, _)) => StopGate::Card { held: true },
+            _ => StopGate::Unanswered,
+        },
+        _ => StopGate::Unanswered,
+    }
 }
 
 /// 裁决帧读取逻辑（与传输解耦，内存流可单测）：首帧带超时（none/message/hold），
@@ -962,7 +1081,7 @@ pub fn run_confirm(mut task: crate::ipc::ConfirmTask) -> Option<crate::models::C
         .build()
         .ok()?;
     let result = runtime.block_on(async move {
-        if task.development.is_none() && recovery::available().await {
+        if task.development.is_none() && recovery::available_or_restore().await {
             return recovery::confirm(task).await;
         }
         if task.development.as_ref().is_some_and(|info| info.relay) {
@@ -1080,7 +1199,7 @@ async fn run_ask_observed(
 ) -> AskFinal {
     use crate::ipc::ServerMsg;
 
-    if recovery::ask_enabled(&task) && recovery::available().await {
+    if recovery::ask_enabled(&task) && recovery::available_or_restore().await {
         return recovery::ask(task, verbose, accepted).await;
     }
 
@@ -1210,6 +1329,20 @@ pub async fn cursor_desktop(
     .await
 }
 
+/// Ask the daemon to manage the sidecars AskHuman keeps for the Antigravity App.
+pub async fn antigravity_desktop(
+    operation: crate::antigravity_desktop::Operation,
+) -> Result<serde_json::Value, String> {
+    desktop_round_trip(
+        ClientMsg::AntigravityDesktop { operation },
+        |msg| match msg {
+            ServerMsg::AntigravityDesktop { result } => Some(result),
+            _ => None,
+        },
+    )
+    .await
+}
+
 /// Send a message typed in the Agents console straight to a chat that is not working. `Err` means
 /// the daemon's answer did not arrive, so the message may or may not have been sent.
 pub async fn agent_message(
@@ -1269,6 +1402,10 @@ mod tests {
             &status,
             crate::daemon::lifecycle::Fingerprint { size: 1, hash: 3 }
         ));
+        // Two unreadable binaries compare equal but identify nothing: not "this exact build".
+        let unknown = crate::daemon::lifecycle::Fingerprint::UNKNOWN;
+        status.fingerprint = Some(unknown);
+        assert!(!development_peer_matches(&status, unknown));
     }
 
     #[test]
@@ -1277,6 +1414,86 @@ mod tests {
         let result = daemon_start_error(false, &error);
         assert!(result.stdout.is_empty());
         assert_eq!(result.exit_code, 3);
+    }
+
+    /// The peer end stays open and never writes: a daemon that accepted the connection and froze.
+    #[tokio::test(start_paused = true)]
+    async fn a_daemon_that_accepts_and_stays_silent_times_out_instead_of_hanging() {
+        let (client, _silent_daemon) = tokio::io::duplex(4096);
+        let (read, mut write) = tokio::io::split(client);
+        let mut read = BufReader::new(read);
+        let started = tokio::time::Instant::now();
+
+        let error = within(
+            HANDSHAKE_TIMEOUT,
+            "Hello",
+            hello_over(&mut read, &mut write),
+        )
+        .await
+        .unwrap_err();
+
+        assert_eq!(error.kind(), ErrorKind::TimedOut);
+        assert_eq!(started.elapsed(), HANDSHAKE_TIMEOUT);
+        // Silent is not absent: `request_status_result` keeps `Ok(None)` for "nothing listens".
+        assert!(!diagnostics::is_not_running(&error));
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn a_prompt_answer_is_not_delayed_by_the_bound() {
+        let (client, mut daemon) = tokio::io::duplex(4096);
+        let (read, mut write) = tokio::io::split(client);
+        let mut read = BufReader::new(read);
+        ipc::write_msg(
+            &mut daemon,
+            &ServerMsg::HelloAck(ipc::HelloAck {
+                protocol_version: ipc::PROTOCOL_VERSION,
+                daemon_version: "test".into(),
+                status: HelloStatus::Restarting,
+                agent_lifecycle_version: 1,
+                reason: None,
+            }),
+        )
+        .await
+        .unwrap();
+        let started = tokio::time::Instant::now();
+
+        let status = within(
+            HANDSHAKE_TIMEOUT,
+            "Hello",
+            hello_over(&mut read, &mut write),
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(status, HelloStatus::Restarting);
+        assert!(started.elapsed() < HANDSHAKE_TIMEOUT);
+    }
+
+    #[tokio::test]
+    async fn an_unexpected_hello_reply_is_an_error_not_a_status() {
+        for frame in [
+            ServerMsg::Stopping,
+            ServerMsg::Error {
+                message: "no".into(),
+            },
+        ] {
+            let (client, mut daemon) = tokio::io::duplex(4096);
+            let (read, mut write) = tokio::io::split(client);
+            ipc::write_msg(&mut daemon, &frame).await.unwrap();
+
+            let error = hello_over(&mut BufReader::new(read), &mut write)
+                .await
+                .unwrap_err();
+
+            assert_eq!(error.kind(), ErrorKind::InvalidData, "{frame:?}");
+        }
+        // A daemon that goes away without replying is an error too, whichever half notices.
+        let (client, daemon) = tokio::io::duplex(4096);
+        drop(daemon);
+        let (read, mut write) = tokio::io::split(client);
+        assert!(hello_over(&mut BufReader::new(read), &mut write)
+            .await
+            .is_err());
     }
 
     #[tokio::test]
@@ -1370,6 +1587,82 @@ mod tests {
         let out = interject_read_frames(&mut reader, first_timeout).await;
         writer.abort();
         out
+    }
+
+    /// The same fake daemon for a Stop gate query.
+    async fn gate_frames(
+        actions: Vec<InterjectAction>,
+        close_after: bool,
+        first_timeout: Duration,
+    ) -> StopGate {
+        let (mut tx, rx) = tokio::io::duplex(4096);
+        let mut reader = BufReader::new(rx);
+        let writer = tokio::spawn(async move {
+            for action in actions {
+                let frame = ServerMsg::InterjectDecision {
+                    control: None,
+                    action,
+                    text: String::new(),
+                    attachments: Vec::new(),
+                };
+                ipc::write_msg(&mut tx, &frame).await.unwrap();
+            }
+            if !close_after {
+                tokio::time::sleep(Duration::from_secs(5)).await;
+            }
+        });
+        let out = stop_gate_frames(&mut reader, first_timeout).await;
+        writer.abort();
+        out
+    }
+
+    #[tokio::test]
+    async fn a_stop_gate_answer_is_ask_skip_or_wait_then_ask() {
+        let wait = Duration::from_millis(300);
+        assert_eq!(
+            gate_frames(vec![InterjectAction::None], true, wait).await,
+            StopGate::Card { held: false }
+        );
+        assert_eq!(
+            gate_frames(vec![InterjectAction::Skip], true, wait).await,
+            StopGate::Skip
+        );
+        // A sub-agent is still running: the hook waits for the second frame, then asks.
+        assert_eq!(
+            gate_frames(
+                vec![InterjectAction::Hold, InterjectAction::Release],
+                true,
+                wait
+            )
+            .await,
+            StopGate::Card { held: true }
+        );
+    }
+
+    #[tokio::test]
+    async fn a_stop_gate_without_a_usable_answer_is_unanswered() {
+        let wait = Duration::from_millis(50);
+        // An older daemon sends nothing at all.
+        assert_eq!(gate_frames(vec![], false, wait).await, StopGate::Unanswered);
+        // The daemon went away while the hook was waiting.
+        assert_eq!(
+            gate_frames(vec![InterjectAction::Hold], true, wait).await,
+            StopGate::Unanswered
+        );
+        // Frames meant for another question are not an answer.
+        assert_eq!(
+            gate_frames(vec![InterjectAction::Message], true, wait).await,
+            StopGate::Unanswered
+        );
+        assert_eq!(
+            gate_frames(
+                vec![InterjectAction::Hold, InterjectAction::Message],
+                true,
+                wait
+            )
+            .await,
+            StopGate::Unanswered
+        );
     }
 
     #[tokio::test]

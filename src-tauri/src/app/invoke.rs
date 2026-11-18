@@ -52,6 +52,7 @@ fn group_for(command: &str) -> Group {
     } else if command.starts_with("codex_desktop")
         || command == "codex_launch_status"
         || command == "cursor_launch_status"
+        || command == "antigravity_launch_status"
         || command.starts_with("new_task_")
         || command.starts_with("fork_task_")
         || matches!(
@@ -71,7 +72,6 @@ fn group_for(command: &str) -> Group {
         || matches!(
             command,
             "open_history"
-                | "open_interject"
                 | "focus_request"
                 | "get_history"
                 | "get_history_projects"
@@ -89,16 +89,14 @@ fn group_for(command: &str) -> Group {
     {
         Group::Channel
     } else if command.starts_with("agent_")
-        || command.starts_with("cursor_hook_")
         || command.starts_with("cursor_desktop_")
-        || command.starts_with("claude_hook_")
+        || command == "antigravity_desktop"
         || command.starts_with("mcp_")
         || matches!(
             command,
             "permission_rules_panel"
                 | "save_collaboration_style"
                 | "collaboration_style_defaults"
-                | "collaboration_style_apply_integrations"
                 | "focus_agent_terminal"
         )
     {
@@ -159,6 +157,8 @@ fn core(invoke: Invoke<Wry>) -> bool {
         crate::commands::popup_inbox_resize_preview,
         crate::commands::popup_inbox_commit,
         crate::commands::popup_inbox_finish,
+        crate::commands::popup_inbox_draft,
+        crate::commands::popup_draft_claim,
         crate::commands::popup_app_active,
         crate::commands::enrich_permission_diff,
         crate::commands::perf_mark,
@@ -189,7 +189,6 @@ fn core(invoke: Invoke<Wry>) -> bool {
         crate::commands::popup_preview_reveal,
         crate::commands::popup_preview_menu,
         crate::commands::preview_attachments,
-        crate::commands::close_preview,
         crate::commands::read_image_data_url,
         crate::commands::attachments_exist,
         crate::popup_drop::popup_drop_read_image,
@@ -208,7 +207,6 @@ fn core(invoke: Invoke<Wry>) -> bool {
         crate::commands::popup_sound_support,
         crate::commands::play_popup_sound,
         crate::commands::set_theme,
-        crate::commands::update_theme,
         crate::commands::open_settings,
         crate::commands::open_agent_console,
         crate::commands::apply_window_effect,
@@ -235,22 +233,8 @@ fn integration(invoke: Invoke<Wry>) -> bool {
         crate::commands::agent_task_test_terminal,
         crate::commands::save_collaboration_style,
         crate::commands::collaboration_style_defaults,
-        crate::commands::collaboration_style_apply_integrations,
-        crate::commands::cursor_hook_status,
-        crate::commands::cursor_hook_install,
-        crate::commands::cursor_hook_update,
-        crate::commands::cursor_hook_uninstall,
-        crate::commands::cursor_hook_reveal,
         crate::commands::cursor_desktop_status,
-        crate::commands::claude_hook_status,
-        crate::commands::claude_hook_install,
-        crate::commands::claude_hook_update,
-        crate::commands::claude_hook_uninstall,
-        crate::commands::claude_hook_reveal,
-        crate::commands::agent_rule_status,
-        crate::commands::agent_rule_install,
-        crate::commands::agent_rule_update,
-        crate::commands::agent_rule_uninstall,
+        crate::commands::antigravity_desktop,
         crate::commands::agent_rule_reveal,
         crate::commands::agent_rule_open,
         crate::commands::agent_mode_status,
@@ -266,7 +250,6 @@ fn integration(invoke: Invoke<Wry>) -> bool {
         crate::commands::mcp_command_path,
         crate::commands::agent_hook_reveal,
         crate::commands::agent_hook_open,
-        crate::commands::agent_lifecycle_status,
         crate::commands::agent_lifecycle_install,
         crate::commands::agent_lifecycle_uninstall,
         crate::commands::focus_agent_terminal,
@@ -302,7 +285,6 @@ fn channel(invoke: Invoke<Wry>) -> bool {
 #[inline(never)]
 fn history(invoke: Invoke<Wry>) -> bool {
     let handler: fn(Invoke<Wry>) -> bool = tauri::generate_handler![
-        crate::commands::open_interject,
         crate::commands::interject_init,
         crate::commands::interject_submit,
         crate::commands::interject_cancel,
@@ -345,7 +327,6 @@ fn todo(invoke: Invoke<Wry>) -> bool {
         crate::commands::todos_clear,
         crate::commands::todos_reorder,
         crate::commands::todos_set_auto,
-        crate::commands::todos_set_text,
         crate::commands::todos_history,
         crate::commands::todos_restore,
         crate::commands::todos_history_clear,
@@ -386,6 +367,7 @@ fn task(invoke: Invoke<Wry>) -> bool {
         crate::commands::codex_desktop,
         crate::commands::codex_launch_status,
         crate::commands::cursor_launch_status,
+        crate::commands::antigravity_launch_status,
         crate::commands::codex_desktop_attachments,
         crate::commands::fork_task_init,
         crate::commands::fork_task_launch,
@@ -422,6 +404,8 @@ mod tests {
         assert_eq!(group_for("new_task_projects_refreshed"), Group::Task);
         assert_eq!(group_for("agent_task_workspaces"), Group::Integration);
         assert_eq!(group_for("cursor_desktop_status"), Group::Integration);
+        assert_eq!(group_for("antigravity_desktop"), Group::Integration);
+        assert_eq!(group_for("antigravity_launch_status"), Group::Task);
     }
 
     #[test]
@@ -433,6 +417,7 @@ mod tests {
         assert_eq!(group_for("fork_task_launch"), Group::Task);
         assert_eq!(group_for("new_task_options"), Group::Task);
         assert_eq!(group_for("update_apply"), Group::Update);
+        assert_eq!(group_for("update_dismiss"), Group::Update);
     }
 
     #[test]
@@ -457,5 +442,95 @@ mod tests {
         // The Channel branch matches `*_test` / `*_detect_*`: wizard commands must not fall in it.
         assert_eq!(group_for("setup_channel_status"), Group::Setup);
         assert_eq!(group_for("open_settings"), Group::Core);
+    }
+
+    /// The handler of each group, in the order of this file's functions.
+    const HANDLERS: [(&str, Group); 9] = [
+        ("development", Group::Development),
+        ("setup", Group::Setup),
+        ("core", Group::Core),
+        ("integration", Group::Integration),
+        ("channel", Group::Channel),
+        ("history", Group::History),
+        ("todo", Group::Todo),
+        ("task", Group::Task),
+        ("update", Group::Update),
+    ];
+
+    /// This file without its test module, whose own text mentions the macro as well.
+    fn production_source() -> &'static str {
+        include_str!("invoke.rs")
+            .split("#[cfg(test)]")
+            .next()
+            .expect("the file has a production part")
+    }
+
+    /// Every handler function with the command names its `generate_handler!` list registers.
+    /// The list is a literal inside the macro, so the source is the only place to read it from;
+    /// an entry that is not a plain `crate::path::command` fails the test instead of being skipped.
+    fn registered_commands() -> Vec<(&'static str, Vec<&'static str>)> {
+        const OPEN: &str = "tauri::generate_handler![";
+        let mut handlers = Vec::new();
+        let mut rest = production_source();
+        while let Some(start) = rest.find(OPEN) {
+            let name = rest[..start]
+                .rsplit("fn ")
+                .next()
+                .and_then(|declaration| declaration.split('(').next())
+                .expect("a handler list sits inside a function");
+            let list = &rest[start + OPEN.len()..];
+            let end = list.find("];").expect("the registration list is closed");
+            let commands = list[..end]
+                .split(',')
+                .map(str::trim)
+                .filter(|entry| !entry.is_empty())
+                .map(|entry| {
+                    let path = entry
+                        .strip_prefix("crate::")
+                        .unwrap_or_else(|| panic!("`{entry}` is not a `crate::` path"));
+                    assert!(
+                        path.chars()
+                            .all(|c| c.is_ascii_alphanumeric() || c == '_' || c == ':'),
+                        "unexpected registration entry `{entry}`"
+                    );
+                    path.rsplit("::").next().expect("a path has a last segment")
+                })
+                .collect();
+            handlers.push((name, commands));
+            rest = &list[end..];
+        }
+        handlers
+    }
+
+    /// A command that is registered in one handler but routed to another one is rejected by the
+    /// handler that receives it, as if it did not exist.
+    #[test]
+    fn every_registered_command_is_routed_to_the_handler_that_registers_it() {
+        let handlers = registered_commands();
+        assert_eq!(
+            handlers.iter().map(|(name, _)| *name).collect::<Vec<_>>(),
+            HANDLERS.map(|(name, _)| name),
+            "one handler per group, in the order of the groups"
+        );
+        let mut seen = std::collections::HashSet::new();
+        for ((name, commands), (_, group)) in handlers.iter().zip(HANDLERS) {
+            assert!(!commands.is_empty(), "`{name}` registers no command");
+            for command in commands {
+                assert!(seen.insert(*command), "`{command}` is registered twice");
+                assert_eq!(
+                    group_for(command),
+                    group,
+                    "`{command}` is registered in `{name}` but routed elsewhere"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn each_group_is_dispatched_to_its_own_handler() {
+        for (name, group) in HANDLERS {
+            let arm = format!("Group::{group:?} => {name}(invoke),");
+            assert!(production_source().contains(&arm), "missing `{arm}`");
+        }
     }
 }

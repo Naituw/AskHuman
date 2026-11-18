@@ -65,7 +65,7 @@ extension MockBackend {
         )
         publish()
         guard item.view.state == "working" else { return }
-        let interval = max(2 * latency, 0.05)
+        let interval = watchTick ?? max(2 * latency, 0.05)
         watchTasks[id] = Task { [weak self] in
             for tick in 1...6 {
                 try? await Task.sleep(for: .seconds(interval))
@@ -83,7 +83,28 @@ extension MockBackend {
             frame.model = draft.modelLabel
             frame.reasoning = draft.effort
         }
+        let kind = tick >= 3 ? (watchTextNext ?? watchText) : watchText
+        if item.view.state == "working", let kind, let latest = MockData.watchLatest(kind) {
+            frame.latestText = latest
+            frame.supportsLatestText = true
+        }
         return frame
+    }
+
+    /// Gives the working Agent a latest text, as a Mac with the latest text sends (`-AHWatchText thinking|answer|short`).
+    public func setWatchText(_ kind: String?) {
+        watchText = kind
+    }
+
+    /// Makes the working Agent say another text from its third frame on (`-AHWatchTextNext thinking|answer|long|short`).
+    public func setWatchTextNext(_ kind: String?) {
+        watchTextNext = kind
+    }
+
+    /// Sends the frames of the live view every `seconds` (`-AHWatchTick`), so that the text it starts with is on the screen
+    /// before the third frame says another.
+    public func setWatchTick(_ seconds: Double?) {
+        watchTick = seconds
     }
 
     func advanceWatch(_ id: String, tick: Int) {

@@ -188,8 +188,6 @@ export default {
       agentConsole: "View in Agent Window",
       pin: "Keep on top",
       todos: "Project todos",
-      // The todo button opens the add-a-todo popover when the request has a project.
-      todosPopover: "Add a project todo ({shortcut})",
       settings: "Settings",
       history: "History",
       update: "Update available",
@@ -197,6 +195,9 @@ export default {
     update: {
       title: "New version {version} available",
       button: "Update",
+      dismiss: "Skip this version",
+      dismissHint:
+        "Stop prompting for this version. Settings still lists it and can update to it; checking for updates manually brings the prompt back.",
       updating: "Updating…",
       applyHint:
         "The background service updates automatically. Your questions and input are kept.",
@@ -248,22 +249,19 @@ export default {
       optionPrefix: "Run todo: ",
       picked: "{n} selected",
       chipHint: "Select to send with your reply (removed from the list once picked up)",
+      // Complete / delete on a todo row and the add row at the end of a list (docs/specs/todo-list-actions.md).
+      complete: "Mark done",
+      undo: "Undo",
       delete: "Delete",
       deleteConfirm: "Confirm delete",
+      add: "Add a todo",
+      addPlaceholder: "Add a todo…",
+      addHint: "to add",
+      addFailed: "Could not add the todo: {reason}",
+      addedHidden: "Added at position {n} (not shown here)",
       more: "…{n} more todo(s) not listed (view or reorder in the Todos window or /todo).",
       // Line merged into the answer for each selected todo (blank-line separated).
       mergeLine: "Also look into this todo task: {text}",
-    },
-    // The navbar todo button's popover (docs/specs/todo-quick-add.md).
-    todoPopover: {
-      title: "Add to {project}",
-      placeholder: "Add a todo…",
-      submitHint: "{key} to add",
-      add: "Add",
-      adding: "Adding…",
-      empty: "No todos in this project yet",
-      openWindow: "Open the Todos window",
-      addFailed: "Could not add the todo: {reason}",
     },
     // Notes on passages of the Agent's text: the button beside a selection, the editor, the footer chip and its list
     // (docs/specs/message-annotations.md D10–D16).
@@ -317,6 +315,12 @@ export default {
         away: "Send and go away",
         mute: "Send and turn off",
       },
+    },
+    // The line on a question that came up with what an abandoned ask was holding (docs/specs/popup-draft-on-cancel.md D7).
+    draftRestored: {
+      text: "Loaded what you had not submitted last time",
+      missingImages: "Loaded what you had not submitted last time; {n} picture could not be loaded because its file is gone | Loaded what you had not submitted last time; {n} pictures could not be loaded because their files are gone",
+      dismiss: "Dismiss",
     },
     // The banner on a question that was escalated while away mode is on (docs/specs/special-replies.md D21).
     escalated: {
@@ -504,8 +508,8 @@ export default {
         trafficConsole: "View in EMQX console",
         trafficStorageIssue: "Traffic could not be saved. The estimate may be incomplete after a restart.",
         traffic: "This month (counted on this Mac): sent {out}, received {in}, about {percent} of the EMQX free quota.",
-        trafficWarn: "Traffic is close to EMQX's free quota of 1 GB per month. The service pauses when it runs out (the spend cap is 0, so nothing is charged).",
-        trafficFull: "The known Mac usage suggests the free quota may be used up and the broker may refuse connections. Check the usage in the EMQX console.",
+        trafficNear: "This month's data use is close to {gb} GB.",
+        trafficOver: "This month's data use is over {gb} GB.",
         devicesTitle: "Paired phones",
         noDevices: "No paired phones yet.",
         online: "Online",
@@ -693,7 +697,12 @@ export default {
       manualTitle: "Manual integration",
       manualLifecycleHint:
         "Manual prompts and MCP examples do not install lifecycle tracking. Agent status, interject, and task launch require Automatic integration with tracking enabled below.",
-      antigravityScope: "Shared family rules; CLI is the AskHuman transport. Client capabilities require separate validation.",
+      antigravityScope:
+        "AskHuman installs as one Antigravity plugin (rules, MCP and lifecycle hooks) that the app and agy share, and that can be switched off as a whole inside Antigravity. The app's default sandbox keeps the CLI variant from reaching AskHuman, so MCP is recommended.",
+      antigravityPluginDisabled:
+        "The plugin is switched off in Antigravity, so its hooks and MCP server do not run. Switch it on in Antigravity.",
+      antigravityGrantHint:
+        "The Antigravity app asks once for permission on the first call. Choose \"Always allow\" (or add mcp(askhuman_mcp/*) in its permission settings).",
       retryStatus: "Retry reading status",
       /** The fold under an Agent card's header: the remaining rows (rules, hooks, permissions, lifecycle…) live here. */
       details: "Details",
@@ -758,6 +767,8 @@ export default {
       stopHint:
         "Ask before a natural completion, or show a card after a final turn failure. Sessions with a continuation channel can continue. Automatic retries, tool errors and manual cancellations stay quiet. Phone pushes use the existing notification timing.",
       stopGrokHint: "Final error reminders only. Natural completions are not intercepted and continuation from an error card is not yet supported; choose Got it to dismiss.",
+      stopAntigravityHint:
+        "Ask before a natural completion, once the agent and every sub-agent it started have finished (sub-agents never ask on their own), or show a card after a final turn failure. A failed turn can be continued when its conversation can be messaged. Manual cancellations stay quiet.",
       stopUnsupported:
         "This Agent has no reliable completion or error event source for this feature yet.",
       stopCoexist:
@@ -788,7 +799,8 @@ export default {
         "Codex can't extend a CLI tool's timeout, so long waits may be cancelled. Use MCP mode for reliable long waits.",
       capabilityUnsupported: "Currently unsupported",
       antigravityRecoveryUnsupported: "Antigravity context recovery hooks are not implemented; CLI integration does not install this hook.",
-      antigravityLifecycleUnsupported: "Antigravity lifecycle tracking is not implemented and cannot be enabled here.",
+      antigravityLifecycleHint:
+        "Tracks the status and title of app and agy sessions through the plugin's hooks and shows them in the console. It also powers interject, Watch, and pairing tasks launched from your phone or IM with their sessions. AskHuman questions still work when it is off.",
       contextRecoveryHookLabel: "Context recovery hook",
       protocolLabel: "Protocol (SessionStart hook)",
       codexProtocolHint:
@@ -838,9 +850,10 @@ export default {
       ready: "Ready",
       readyCodexApp: "Ready · Desktop App",
       readyCursorWindow: "Ready · Agents window",
+      readyAntigravityApp: "Ready · Antigravity App",
       notReady: "Not ready",
       cliNotNeeded: "Not needed: this route does not go through the CLI",
-      outsideHint: "An Agent marked “Desktop App” or “Agents window” starts without its CLI, so the CLI column does not apply (–) and there is nothing to fix.",
+      outsideHint: "An Agent marked “Desktop App”, “Agents window” or “Antigravity App” starts without its CLI, so the CLI column does not apply (–) and there is nothing to fix.",
       colBinary: "CLI",
       colLifecycle: "Lifecycle",
       colIntegration: "Integration",
@@ -1351,6 +1364,15 @@ export default {
     annotations: "Annotations",
     copyAnnotations: "Annotations:",
     copySession: "Session: {session}",
+    // What was typed but not submitted when the ask was cancelled (its caller went away or the daemon stopped;
+    // docs/specs/popup-draft-on-cancel.md D8).
+    draft: "Draft",
+    draftNote: "Not submitted when it was cancelled",
+    draftLoaded: "Loaded into a new question",
+    draftNotLoaded: "Not loaded into a new question",
+    copyDraft: "Copy draft",
+    copyDraftHeading: "Not submitted when it was cancelled:",
+    copySelectedOptions: "Selected options:",
     attach: {
       button: "Attachments",
       tooltip: "Filter by attachments",
@@ -1525,7 +1547,6 @@ export default {
     pendingCount: "{n} queued",
     pendingAttachments: "{n} attachment(s)",
     revoke: "Revoke",
-    antigravityHint: "Antigravity messaging and lifecycle tracking are not available yet",
     grokHint: "Grok does not support messaging",
     idleHint: "The message channel is unavailable. Open the original session in the Agent to continue.",
     endedHint: "The message channel is unavailable. Open the original session in the Agent to continue.",
@@ -1716,6 +1737,9 @@ export default {
     launching: "Starting…",
     launchNote: "Submitting starts the Agent in a new Terminal window.",
     cursorWindowNote: "Submitting creates a chat in Cursor's Agents window and sends the task.",
+    antigravityAppNote: "Submitting creates a conversation in the Antigravity App and sends the task.",
+    antigravityPermissionHint:
+      "In the Antigravity App, \"Agent default\" lets the task do only what the folder allows: AskHuman's own tools and the rules you added for the folder in Settings → Agents → Antigravity; anything else is declined automatically. YOLO makes a wide-grant sidecar for the folder (shown as \"YOLO\" in the App), and the task asks for nothing.",
     tooLong: "Task exceeds 3000 characters (currently {n})",
     launchFailed: "Failed to launch: {e}",
     todoMissing: "This todo has been removed; launching uses its saved snapshot.",
@@ -1781,7 +1805,7 @@ export default {
       hint: "Off by default. When Cursor escalates with a reason while you are away, save an unread report and immediately tell it to end the turn. Mark it Read in the current list when you return. Automatic todos run first. Both completion and blocker reports are retained.",
     },
     title: "Cursor session protection (experimental)",
-    hint: "Protects all local Cursor Desktop chats. Send a message to continue after a background completion. Await still works. In the Agents window, a running chat keeps its messages in memory to reduce the risk of mistaken archiving. In compatible windows, Cursor waits 5 minutes for inbound messages and allows consecutive stall retries within a 10-minute window. Requires AskHuman to remain running. Terminal CLI is not covered.",
+    hint: "Protects all local Cursor Desktop chats. Send a message to continue after a background completion. Await still works. In the Agents window, a running chat keeps its messages in memory to reduce the risk of mistaken archiving. Compatible windows wait 5 minutes for inbound messages, allow consecutive stall retries within a 10-minute window, and isolate concurrent Agent HTTP/2 streams on separate connections. Requires AskHuman to remain running. Terminal CLI is not covered.",
     experimental: "Requires a compatible Cursor version. Protection starts after checks pass and reconnects after startup or window reload.",
     disabled: "Off",
     waiting: "Waiting for a Cursor Desktop window",
@@ -1792,6 +1816,7 @@ export default {
       completion: "background-completion guard",
       retention: "running-chat protection",
       stall: "stall waiting and retries",
+      isolation: "parallel Agent connection isolation",
       separator: " and ",
     },
     detaching: "Restoring Cursor Desktop…",
@@ -1821,6 +1846,62 @@ export default {
         cliTrackingNotConfigured: "CLI lifecycle tracking is not configured",
         terminalUnavailable: "The system terminal is unavailable",
       },
+    },
+  },
+  antigravityDesktop: {
+    manage: {
+      title: "Allow AskHuman to manage Antigravity sidecars",
+      hint: "To start a task in a project folder, the Antigravity App runs a small helper (a sidecar) for that folder. With this on, AskHuman creates one the first time a task starts in a folder, lists it in Antigravity's config file under an askhuman-… name, and nothing else: your other Antigravity settings and permissions are never touched. Turning it off does not remove what exists; remove sidecars below.",
+      macOnly: "Starting tasks in the Antigravity App is available on macOS only.",
+    },
+    launch: {
+      preference: "Default runtime",
+      preferApp: "Prefer the App",
+      preferCli: "Prefer agy (terminal)",
+      hint: "This only sets which one is tried first; when it cannot be used, the other one is taken. In the App, the task is created in a project that AskHuman prepares for the folder (with the permissions you allow below) and sent automatically; the agy route opens a terminal that runs agy with the task. Once a task is being created it is not moved to the other route: a problem is reported instead of being worked around.",
+      willUseApp: "New tasks will use the Antigravity App",
+      willUseCli: "New tasks will use agy in a terminal",
+      unavailable: "Neither the Antigravity App nor agy is available",
+      reasons: {
+        unsupportedPlatform: "This runtime is unsupported on this platform",
+        devInstance: "A Dev Instance does not use the Antigravity App",
+        appNotInstalled: "The Antigravity App was not detected",
+        integrationDisabled: "Antigravity integration with AskHuman is disabled",
+        mcpModeRequired: "The App route needs MCP mode (the App's sandbox does not allow CLI mode)",
+        pluginDisabled: "The AskHuman plugin is turned off in Antigravity",
+        sidecarsNotAllowed: "AskHuman is not allowed to manage Antigravity sidecars yet (turn it on in Settings)",
+        cliNotDetected: "The agy command was not detected",
+        cliIntegrationNotConfigured: "CLI integration with AskHuman is not configured",
+        cliTrackingDisabled: "CLI lifecycle tracking is disabled",
+        cliTrackingNeedsUpdate: "CLI lifecycle tracking needs updating",
+        cliTrackingNotConfigured: "CLI lifecycle tracking is not configured",
+        terminalUnavailable: "The system terminal is unavailable",
+      },
+    },
+    sidecars: {
+      title: "Sidecars ({n} of {limit})",
+      hint: "Each sidecar belongs to one project folder and decides what a task started there may do. A task may use AskHuman's own tools and the rules you add for the folder; any other action is declined automatically. Removing one takes it out of Antigravity; AskHuman makes it again the next time a task starts in that folder.",
+      wideNote: "A sidecar marked “Wide grant” lets its tasks run commands, read and write files and reach the web without asking, also when you open it in Antigravity yourself. Remove it when you no longer need it.",
+      none: "No sidecars yet. One is created when a task starts in a folder.",
+      controlName: "Messages only",
+      kinds: { workspace: "Allowed actions only", yolo: "Wide grant", control: "Carries messages" },
+      online: "Connected",
+      offline: "Not connected",
+      lastUsed: "Last used {time}",
+      neverUsed: "Not used yet",
+      folderMissing: "Folder not found",
+      filesMissing: "Files are gone; they are made again at the next task",
+      filesForeign: "Not AskHuman's files; left untouched",
+      notEnabled: "Switched off in Antigravity",
+      rules: "Rules ({n})",
+      rulesNeedAllowance: "Turn on “Allow AskHuman to manage Antigravity sidecars” to change rules",
+      rulesLabel: "Rules for this folder",
+      rulesHint: "One rule per line, written action(target), for example read_file(~/notes/**). AskHuman's own tools are always allowed. A rule that allows everything, such as (*), is not accepted here.",
+      saveRules: "Save rules",
+      cancel: "Cancel",
+      remove: "Remove",
+      removeAll: "Remove all",
+      removeAllConfirm: "Remove all {n}",
     },
   },
   interject: {

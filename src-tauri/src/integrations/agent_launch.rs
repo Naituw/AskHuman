@@ -312,9 +312,18 @@ pub fn readiness(kind: AgentKind) -> AgentReadiness {
     readiness_with(kind, false)
 }
 
-/// Antigravity has no supported New Task or Fork path; every other family does.
-pub fn launch_supported(kind: AgentKind) -> bool {
-    !matches!(kind, AgentKind::Antigravity)
+/// Whether a new task can be started on this family by some route: the CLI in a terminal or,
+/// for Codex, Cursor and Antigravity, their app. Every family has one. Forking is judged
+/// separately by [`fork_readiness`]; Antigravity has no headless fork on either route.
+pub fn launch_supported(_kind: AgentKind) -> bool {
+    true
+}
+
+/// Whether a task on this family comes with the choice between the Agent's default permissions
+/// and YOLO. Pi has no such choice. Antigravity has it on both routes: `agy` takes
+/// `--dangerously-skip-permissions`, and the App's YOLO sidecar grants everything.
+pub fn permission_choice(kind: AgentKind) -> bool {
+    !matches!(kind, AgentKind::Pi)
 }
 
 pub fn readiness_fresh(kind: AgentKind) -> AgentReadiness {
@@ -417,6 +426,8 @@ pub fn codex_version() -> Option<(u64, u64, u64)> {
 }
 
 /// Cache the Grok feature probe without invoking Cursor or loading any agent session.
+/// Tests pin the version in `agent_lifecycle::events`, so only production builds probe it.
+#[cfg(not(test))]
 pub fn grok_version() -> Option<(u64, u64, u64)> {
     type VersionCache = Option<(String, Instant, Option<(u64, u64, u64)>)>;
     static CACHE: OnceLock<Mutex<VersionCache>> = OnceLock::new();
@@ -648,10 +659,6 @@ pub fn all_readiness() -> Vec<AgentReadiness> {
     collect_readiness(None, false)
 }
 
-pub fn all_readiness_fresh() -> Vec<AgentReadiness> {
-    collect_readiness(None, true)
-}
-
 pub fn collect_readiness(kind: Option<AgentKind>, force: bool) -> Vec<AgentReadiness> {
     let kinds: Vec<AgentKind> = kind
         .map(|kind| vec![kind])
@@ -714,7 +721,7 @@ fn fork_readiness_uncached(kind: AgentKind) -> ForkReadiness {
         return ForkReadiness {
             kind,
             ready: false,
-            diagnostics: vec!["Antigravity launch/fork is unsupported".into()],
+            diagnostics: vec!["Antigravity has no native session fork".into()],
         };
     }
     if kind == AgentKind::Cursor {
@@ -869,6 +876,7 @@ pub fn cleanup_expired_records() {
     }
 }
 
+#[cfg(test)]
 pub fn create_record(
     source: LaunchSource,
     cwd: &Path,
@@ -879,6 +887,7 @@ pub fn create_record(
     create_record_with_files(source, cwd, kind, permission, task, &[], &[])
 }
 
+#[cfg(test)]
 pub fn create_record_with_files(
     source: LaunchSource,
     cwd: &Path,
@@ -902,6 +911,7 @@ pub fn create_record_with_files(
 
 /// [`create_record_with_files`] for a task that also picks the model and/or reasoning effort. A
 /// default `choice` is the same as not passing one: the Agent is started with no such flag.
+#[cfg(test)]
 #[allow(clippy::too_many_arguments)]
 pub fn create_record_with_choice(
     source: LaunchSource,
@@ -1019,9 +1029,6 @@ fn create_record_internal(
             }
             source
         };
-    if kind == AgentKind::Antigravity {
-        return Err(anyhow!("Antigravity launch/fork is unsupported"));
-    }
     if kind == AgentKind::Pi && permission != LaunchPermission::AgentDefault {
         return Err(anyhow!(
             "Pi does not expose a built-in permission mode; use AgentDefault"
@@ -1702,7 +1709,8 @@ fn model_flags(kind: AgentKind, choice: &ModelChoice) -> Vec<String> {
             AgentKind::Pi => flags.extend(["--thinking".to_string(), effort.clone()]),
             // Folded into the model id; `check_for` rejects the combination before this point.
             AgentKind::Cursor => {}
-            // Antigravity launches are rejected by readiness before command assembly.
+            // `agy` has `--effort`, but the model catalog folds the level into the model id and
+            // `check_for` rejects an effort for Antigravity before this point.
             AgentKind::Antigravity => {}
         }
     }
@@ -1725,6 +1733,11 @@ fn agent_args(
             args.extend(model_flags(kind, choice));
             if kind == AgentKind::Codex {
                 args.push("--".into());
+            }
+            if kind == AgentKind::Antigravity {
+                // `-i` runs the prompt and keeps the session interactive; the prompt is the
+                // flag's own value, one argv element, whatever it starts with.
+                args.push("-i".into());
             }
             args.push(prompt.into());
         }
@@ -2358,7 +2371,8 @@ fn yolo_flag(kind: AgentKind) -> &'static str {
         AgentKind::Codex => "--dangerously-bypass-approvals-and-sandbox",
         AgentKind::Cursor => "--yolo",
         AgentKind::Grok => "--always-approve",
-        AgentKind::Pi | AgentKind::Antigravity => "",
+        AgentKind::Antigravity => "--dangerously-skip-permissions",
+        AgentKind::Pi => "",
     }
 }
 
@@ -2416,6 +2430,8 @@ fn is_executable(path: &Path) -> bool {
     path.is_file() && fs::metadata(path).is_ok_and(|m| m.permissions().mode() & 0o111 != 0)
 }
 
+// Only the Windows build calls this; it stays target-independent so its tests run everywhere.
+#[cfg_attr(target_os = "macos", allow(dead_code))]
 fn is_windows_launchable(path: &Path) -> bool {
     path.is_file()
         && path
@@ -2507,10 +2523,11 @@ mod tests {
         let argv =
             |kind, permission| agent_args(kind, permission, &LaunchMode::New, &default, prompt);
         for kind in AgentKind::ALL {
-            let plain = if kind == AgentKind::Codex {
-                vec!["--", prompt]
-            } else {
-                vec![prompt]
+            let plain = match kind {
+                AgentKind::Codex => vec!["--", prompt],
+                // The prompt is the value of the flag that runs it and keeps the session open.
+                AgentKind::Antigravity => vec!["-i", prompt],
+                _ => vec![prompt],
             };
             assert_eq!(
                 argv(kind, LaunchPermission::AgentDefault),
@@ -2633,18 +2650,21 @@ mod tests {
     }
 
     #[test]
-    fn launch_support_excludes_only_antigravity() {
+    fn every_family_can_start_a_task_but_antigravity_cannot_fork() {
         for kind in AgentKind::ALL {
-            assert_eq!(
-                launch_supported(kind),
-                kind != AgentKind::Antigravity,
-                "{kind:?}"
-            );
+            assert!(launch_supported(kind), "{kind:?}");
         }
-        // Phone and IM pickers probe, offer and explain only the families that can launch.
+        // Phone and IM pickers probe, offer and explain every family that can launch.
         let launchable = launchable_kinds();
-        assert!(!launchable.contains(&AgentKind::Antigravity));
-        assert_eq!(launchable.len(), AgentKind::ALL.len() - 1);
+        assert!(launchable.contains(&AgentKind::Antigravity));
+        assert_eq!(launchable.len(), AgentKind::ALL.len());
+        // Starting a task does not make a fork possible, on either route.
+        let fork = fork_readiness_uncached(AgentKind::Antigravity);
+        assert!(!fork.ready);
+        assert!(fork
+            .diagnostics
+            .iter()
+            .any(|line| line.contains("no native session fork")));
     }
 
     #[test]
@@ -2659,7 +2679,66 @@ mod tests {
         );
         assert_eq!(yolo_flag(AgentKind::Cursor), "--yolo");
         assert_eq!(yolo_flag(AgentKind::Grok), "--always-approve");
+        assert_eq!(
+            yolo_flag(AgentKind::Antigravity),
+            "--dangerously-skip-permissions"
+        );
         assert_eq!(yolo_flag(AgentKind::Pi), "");
+    }
+
+    #[test]
+    fn an_antigravity_task_is_the_value_of_dash_i_and_one_argv() {
+        let prompt = "-$(touch /tmp/never)\nsecond line";
+        let default = ModelChoice::default();
+        assert_eq!(
+            agent_args(
+                AgentKind::Antigravity,
+                LaunchPermission::AgentDefault,
+                &LaunchMode::New,
+                &default,
+                prompt
+            ),
+            vec!["-i", prompt]
+        );
+        // YOLO and a model come before `-i`, so the prompt stays last.
+        let model = ModelChoice {
+            model: Some("gemini-3.8-flash-low".into()),
+            ..ModelChoice::default()
+        };
+        assert_eq!(
+            agent_args(
+                AgentKind::Antigravity,
+                LaunchPermission::Yolo,
+                &LaunchMode::New,
+                &model,
+                prompt
+            ),
+            vec![
+                "--dangerously-skip-permissions",
+                "--model",
+                "gemini-3.8-flash-low",
+                "-i",
+                prompt
+            ]
+        );
+        // A fork is refused at creation; the helper stays closed too.
+        assert!(agent_args(
+            AgentKind::Antigravity,
+            LaunchPermission::AgentDefault,
+            &LaunchMode::Fork {
+                source_session_id: "s".into()
+            },
+            &default,
+            prompt
+        )
+        .is_empty());
+    }
+
+    #[test]
+    fn every_family_but_pi_offers_the_permission_choice() {
+        for kind in AgentKind::ALL {
+            assert_eq!(permission_choice(kind), kind != AgentKind::Pi, "{kind:?}");
+        }
     }
 
     #[test]
@@ -3411,6 +3490,36 @@ mod tests {
                 .collect::<Vec<_>>(),
             ["write a haiku"]
         );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn the_helper_starts_agy_with_the_task_as_the_value_of_dash_i() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut record = stub_record(
+            dir.path(),
+            AgentKind::Antigravity,
+            &choice(Some("gemini-3.8-flash-low"), None),
+        );
+        record.permission = LaunchPermission::Yolo;
+        validate_claim(&record, &record.id).unwrap();
+
+        let command = assemble_command(&record, None).unwrap();
+        assert_eq!(command.get_program(), record.executable.as_str());
+        assert_eq!(
+            command.get_args().collect::<Vec<_>>(),
+            [
+                "--dangerously-skip-permissions",
+                "--model",
+                "gemini-3.8-flash-low",
+                "-i",
+                "write a haiku"
+            ]
+        );
+        // The conversation's first hook carries this id back, which pairs it with the launch.
+        assert!(command.get_envs().any(|(key, value)| {
+            key == LAUNCH_ID_ENV && value == Some(std::ffi::OsStr::new(&record.id))
+        }));
     }
 
     #[cfg(unix)]

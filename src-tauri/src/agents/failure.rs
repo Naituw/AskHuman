@@ -124,18 +124,6 @@ pub fn task(
     task
 }
 
-pub fn unavailable(task: &mut TaskRequest, reason: Option<&str>, lang: Lang) {
-    let Some(detail) = control_reason(reason, lang) else {
-        return;
-    };
-    task.questions[0].predefined_options[0].text = match lang {
-        Lang::Zh => "知道了（暂时无法接续）",
-        Lang::En => "Got it (continuation is temporarily unavailable)",
-    }
-    .into();
-    task.message.text.push_str(&format!("\n\n{detail}"));
-}
-
 pub fn control_reason(reason: Option<&str>, lang: Lang) -> Option<&'static str> {
     Some(match (reason?, lang) {
         ("desktopDisconnected", Lang::Zh) => "原会话的桌面连接已断开，请恢复连接后在原会话继续。",
@@ -247,6 +235,7 @@ mod tests {
     #[test]
     fn a_failure_is_not_a_natural_stop_or_a_replayable_equal_question() {
         let result = TurnResult {
+            notify: None,
             id: "r1".into(),
             outcome: super::super::result::TurnOutcome::Failed,
             source: None,
@@ -268,20 +257,18 @@ mod tests {
             card.native_request_id,
             task(AgentKind::Codex, "s", "/project", &newer, false, Lang::Zh).native_request_id
         );
-        let mut disconnected = card.clone();
-        unavailable(&mut disconnected, Some("desktopDisconnected"), Lang::Zh);
-        assert!(disconnected.questions[0].predefined_options[0]
-            .text
-            .contains("暂时无法接续"));
-        assert!(disconnected.message.text.contains("桌面连接已断开"));
+        assert!(control_reason(Some("desktopDisconnected"), Lang::Zh)
+            .unwrap()
+            .contains("桌面连接已断开"));
         assert_eq!(
-            instruction(&answer(json!([0]), ""), !disconnected.select_only),
+            instruction(&answer(json!([0]), ""), !card.select_only),
             None
         );
     }
 
     fn result(outcome: TurnOutcome, reason: Option<&str>, summary: Option<&str>) -> TurnResult {
         TurnResult {
+            notify: None,
             id: "r1".into(),
             outcome,
             source: None,

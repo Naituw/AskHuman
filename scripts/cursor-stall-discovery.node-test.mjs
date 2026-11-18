@@ -106,3 +106,26 @@ test("Agent Host discovery leaves unloaded modules alone", async () => {
   const {cdp,activate} = host("Cold",["1","2"],false);
   await assert.rejects(cdp.api.host(activate),/has not loaded/);
 });
+
+test("HTTP/2 isolation discovery supports both webpack module exports and scope-hoisted entry closures", async () => {
+  const cdp = inspector();
+  const Manager = vm.runInNewContext(`(() => {
+    class Mt {
+      constructor(url, opts, h2) { this.http2SessionOptions = h2; }
+      async request(m, p, h, o) { return this.s.registerRequest({m, p, h, o}); }
+      notifyResponseByteRead(n) { return n; }
+    }
+    return Mt;
+  })()`);
+  function loader(id) { const entry = {exports:{}}; return factories[id].call(entry.exports); }
+  loader.m = { "100": function otherModule() { return 1; } };
+  const cache = { "100": { exports: {} } };
+  function activate() {}
+  const largeEntryClosure = { Mt: Manager };
+  for (let i = 0; i < 600; i++) largeEntryClosure[`fn_${i}`] = function helper() { return i; };
+  cdp.closures.set(activate, [largeEntryClosure, { webpackRequire: loader }]);
+  cdp.closures.set(loader, [{ moduleCache: cache }]);
+  const hoisted = await cdp.api.isolation(cdp.ref(activate).objectId);
+  assert.equal(hoisted.name, "Mt");
+  assert.equal(typeof hoisted.objectId, "string");
+});

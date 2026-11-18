@@ -192,6 +192,14 @@ public actor MockBackend: RemoteBackend {
     public var sessionHistoryDelay = 0.3
     /// A file a UI test makes to let the reads finish: until it exists a read waits (at most a minute).
     public var sessionHistoryGate: String?
+    /// What the working Agent's live view says as its latest text (`MockData.watchLatest`): `thinking` or `answer`, both
+    /// long, or `short`. Unset keeps the text of a Mac from before the latest text.
+    public var watchText: String?
+    /// What it says from the third frame on (`-AHWatchTextNext`): the next paragraph of the Agent, which the page shows
+    /// when its replacement interval allows. Unset keeps the first text.
+    public var watchTextNext: String?
+    /// Seconds between the frames of the working Agent's live view (`-AHWatchTick`); unset: twice the latency, at least 0.05.
+    public var watchTick: Double?
 
     public private(set) var submissions: [Submission] = []
     public private(set) var uploads: [UploadSource] = []
@@ -202,10 +210,12 @@ public actor MockBackend: RemoteBackend {
     public var failNextSubmission = false
 
     /// `syncDelay` (real seconds) ends the `syncing` scenario that long after the start; `cachedInbox`
-    /// lets that scenario begin with the requests the phone kept from the last run.
+    /// lets that scenario begin with the requests the phone kept from the last run. `summariesOnly` strips the full
+    /// request from every inbox item, as a Mac's snapshot has them before the phone asks for the text (the mock never
+    /// delivers it): the pages of those requests stay on the one that waits for it.
     public init(
         scenario: Scenario = .demo, latency: Double = 1, syncDelay: Double? = nil, cachedInbox: Bool = false,
-        now: @escaping @Sendable () -> Date = { Date() }
+        summariesOnly: Bool = false, now: @escaping @Sendable () -> Date = { Date() }
     ) {
         let (stateStream, stateContinuation) = AsyncStream<EngineState>.makeStream(bufferingPolicy: .bufferingNewest(1))
         let (eventStream, eventContinuation) = AsyncStream<EngineEvent>.makeStream()
@@ -234,6 +244,7 @@ public actor MockBackend: RemoteBackend {
             case .direct: inbox = MockData.directInbox(now: date)
             case .sessionHistory: inbox = MockData.sessionHistoryInbox(now: date)
             case .historyPictures: inbox = MockData.historyPicturesInbox(now: date)
+            case .todoPick: inbox = MockData.todoPickInbox(now: date)
             default: inbox = MockData.inbox(now: date)
             }
             let traffic = scenario == .quota
@@ -293,6 +304,9 @@ public actor MockBackend: RemoteBackend {
         }
         if scenario == .awayOn {
             MockData.applyAwayOn(to: &initial, now: date)
+        }
+        if summariesOnly {
+            for index in initial.inbox.indices { initial.inbox[index].view = nil }
         }
         for index in initial.macs.indices {
             initial.macs[index].pendingCount = initial.inbox.filter { $0.macId == initial.macs[index].id }.count

@@ -163,6 +163,7 @@ fn auto_reply_history_entry(
             files: Vec::new(),
         }],
         annotations: Vec::new(),
+        draft: None,
     }
 }
 

@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { IosTraffic } from "../../lib/types";
-import { FREE_QUOTA_BYTES, aggregateTraffic, hasCompleteTrafficHistory, brokerEstimate, formatBytes, quotaShare, trafficLevel } from "./iosTraffic";
+import { FREE_QUOTA_BYTES, GIGABYTE, aggregateTraffic, hasCompleteTrafficHistory, brokerEstimate, formatBytes, quotaShare, trafficReminder } from "./iosTraffic";
 
 function traffic(bytes: number): IosTraffic {
   return { month: "2026-10", bytesIn: bytes / 2, bytesOut: bytes / 2, msgsIn: 1, msgsOut: 1 };
@@ -12,11 +12,39 @@ describe("iosTraffic", () => {
     expect(quotaShare(traffic(FREE_QUOTA_BYTES / 4))).toBeCloseTo(0.25);
   });
 
-  it("warns from 80% and calls it full from 100% of the free quota", () => {
-    expect(trafficLevel(traffic(FREE_QUOTA_BYTES * 0.79))).toBe("ok");
-    expect(trafficLevel(traffic(FREE_QUOTA_BYTES * 0.8))).toBe("warn");
-    expect(trafficLevel(traffic(FREE_QUOTA_BYTES * 0.99))).toBe("warn");
-    expect(trafficLevel(traffic(FREE_QUOTA_BYTES * 1))).toBe("full");
+  // The same cases as the phone's TrafficReminderTests: one rule on both screens.
+  describe("trafficReminder", () => {
+    const lead = (gigabytes: number, step = 1) => gigabytes * GIGABYTE - Math.floor((step * GIGABYTE) / 5);
+
+    it("says nothing until the last fifth before the first GB", () => {
+      expect(trafficReminder(0)).toBeNull();
+      expect(trafficReminder(GIGABYTE / 2)).toBeNull();
+      expect(trafficReminder(lead(1) - 1)).toBeNull();
+    });
+
+    it("is close to a GB in the last fifth before it and has reached it from there on", () => {
+      expect(trafficReminder(lead(1))).toEqual({ gigabytes: 1, reached: false });
+      expect(trafficReminder(GIGABYTE - 1)).toEqual({ gigabytes: 1, reached: false });
+      expect(trafficReminder(GIGABYTE)).toEqual({ gigabytes: 1, reached: true });
+      expect(trafficReminder(1.5 * GIGABYTE)).toEqual({ gigabytes: 1, reached: true });
+      expect(trafficReminder(lead(2) - 1)).toEqual({ gigabytes: 1, reached: true });
+    });
+
+    it("has a reminder for every GB", () => {
+      expect(trafficReminder(lead(2))).toEqual({ gigabytes: 2, reached: false });
+      expect(trafficReminder(2 * GIGABYTE)).toEqual({ gigabytes: 2, reached: true });
+      expect(trafficReminder(lead(3))).toEqual({ gigabytes: 3, reached: false });
+      expect(trafficReminder(7.3 * GIGABYTE)).toEqual({ gigabytes: 7, reached: true });
+    });
+
+    it("keeps the lead of a fifth of the step for a larger step", () => {
+      expect(trafficReminder(lead(2, 2) - 1, 2)).toBeNull();
+      expect(trafficReminder(lead(2, 2), 2)).toEqual({ gigabytes: 2, reached: false });
+      expect(trafficReminder(3 * GIGABYTE, 2)).toEqual({ gigabytes: 2, reached: true });
+      expect(trafficReminder(lead(4, 2), 2)).toEqual({ gigabytes: 4, reached: false });
+      expect(trafficReminder(4 * GIGABYTE - 1, 5)).toBeNull();
+      expect(trafficReminder(4 * GIGABYTE, 5)).toEqual({ gigabytes: 5, reached: false });
+    });
   });
 
   it("formats sizes in the unit a person reads", () => {

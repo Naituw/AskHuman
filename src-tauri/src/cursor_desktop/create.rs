@@ -25,8 +25,6 @@ const MAX_TITLE_CHARS: usize = 200;
 /// after this) and, five seconds later, as the daemon stops waiting for an answer.
 const RENDERER_WINDOW: Duration = Duration::from_secs(40);
 const DAEMON_WINDOW: Duration = Duration::from_secs(45);
-/// The pause between two asks while the renderer still answers `pending`.
-const POLL_PAUSE: Duration = Duration::from_millis(250);
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(tag = "op", rename_all = "camelCase", rename_all_fields = "camelCase")]
@@ -75,6 +73,8 @@ pub struct DesktopPlan {
     /// `Some(false)`: Max is forced off and the chat is checked for it; `Some(true)`: the user
     /// allowed Max for a model that cannot run without it; `None`: Max is left to Cursor.
     pub max_mode: Option<bool>,
+    // Only tests read the full assessment behind the plan.
+    #[allow(dead_code)]
     pub assessment: Assessment,
 }
 

@@ -25,7 +25,6 @@ private struct AgentDetailContent: View {
     @State private var problem: String?
     @State private var notice: String?
     @State private var sentTick = 0
-    @State private var watchReading = false
 
     var body: some View {
         let online = store.isOnline(macId: item.macId)
@@ -60,7 +59,7 @@ private struct AgentDetailContent: View {
                         composer.text = composer.trimmedText.isEmpty ? recalled : recalled + "\n\n" + composer.text
                     } onProblem: { problem = $0 }
                 }
-                WatchCard(item: item, watch: watch, live: live, reading: $watchReading)
+                WatchCard(item: item, watch: watch, live: live)
             }
             .readableWidth()
             .padding()
@@ -68,9 +67,6 @@ private struct AgentDetailContent: View {
         }
         .background(Color(.systemGroupedBackground))
         .scrollDismissesKeyboard(.interactively)
-        .simultaneousGesture(DragGesture(minimumDistance: 8).onChanged { value in
-            if value.translation.height > 0 { watchReading = true }
-        })
         .navigationTitle(item.displayTitle)
         .navigationBarTitleDisplayMode(.inline)
         .actionBar {

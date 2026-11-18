@@ -160,7 +160,7 @@ struct AttachmentMenu: View {
     }
 
     private func addMedia(_ items: [PhotosPickerItem]) async {
-        for (index, item) in items.prefix(remaining).enumerated() {
+        for item in items.prefix(remaining) {
             do {
                 try Task.checkCancellation()
                 updateStatus(String(localized: "Loading attachment…"))
@@ -176,7 +176,8 @@ struct AttachmentMenu: View {
                         continue
                     }
                     try Task.checkCancellation()
-                    addImage(data, name: items.count > 1 ? "Photo-\(index + 1).jpg" : "Photo.jpg")
+                    // The form tells the photos apart (`Photo.jpg`, `Photo-2.jpg`, …), also across picks.
+                    addImage(data, name: "Photo.jpg")
                 }
             } catch {
                 if Task.isCancelled || error is CancellationError { break }
@@ -202,8 +203,10 @@ struct AttachmentMenu: View {
         return try await withTaskCancellationHandler {
             try Task.checkCancellation()
             return try await withCheckedThrowingContinuation { continuation in
+                // Photos calls back a second time, with the cancellation, when a load is cancelled.
+                let once = OneShotContinuation(continuation)
                 cancellation.register(item.loadTransferable(type: type) { result in
-                    continuation.resume(with: result)
+                    once.resume(with: result)
                 })
             }
         } onCancel: {

@@ -1,9 +1,30 @@
-//! Native AppKit helpers for presenting a popup without activating its helper process.
+//! Native AppKit helpers for popup Spaces behavior and window ordering.
 
 use objc2::msg_send;
 use objc2::runtime::AnyObject;
+use objc2_app_kit::{NSWindow, NSWindowCollectionBehavior};
 use objc2_foundation::{NSPoint, NSRect};
 use std::ffi::c_void;
+
+/// Keep a popup eligible for Dock activation across Spaces even at a floating window level.
+///
+/// # Safety
+/// Call on the main thread with the native NSWindow pointer of a live popup, or null.
+pub unsafe fn manage_in_spaces(ns_window: *mut c_void) {
+    let Some(window) = (unsafe { ns_window.cast::<NSWindow>().as_ref() }) else {
+        return;
+    };
+    window.setCollectionBehavior(managed_collection_behavior(window.collectionBehavior()));
+}
+
+fn managed_collection_behavior(
+    mut behavior: NSWindowCollectionBehavior,
+) -> NSWindowCollectionBehavior {
+    // Floating windows default to Transient. Explicit Managed behavior survives level changes.
+    behavior.remove(NSWindowCollectionBehavior::Transient | NSWindowCollectionBehavior::Stationary);
+    behavior.insert(NSWindowCollectionBehavior::Managed);
+    behavior
+}
 
 /// Return the process-global AppKit window number used for relative cross-process ordering.
 pub fn window_number(ns_window: *mut c_void) -> Option<i64> {
@@ -49,6 +70,31 @@ pub fn show_behind(ns_window: *mut c_void, behind_window_number: Option<i64>) {
             let _: () = msg_send![window, orderWindow: below, relativeTo: number];
         } else {
             let _: () = msg_send![window, orderBack: std::ptr::null_mut::<AnyObject>()];
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{managed_collection_behavior, NSWindowCollectionBehavior as Behavior};
+
+    #[test]
+    fn makes_default_spaces_behavior_explicit() {
+        assert_eq!(
+            managed_collection_behavior(Behavior::empty()),
+            Behavior::Managed
+        );
+    }
+
+    #[test]
+    fn replaces_conflicting_spaces_behavior_and_preserves_other_flags() {
+        let other_flags = Behavior::FullScreenAuxiliary | Behavior::IgnoresCycle;
+        let expected = Behavior::Managed | other_flags;
+        for behavior in [Behavior::Transient, Behavior::Stationary, Behavior::Managed] {
+            assert_eq!(
+                managed_collection_behavior(behavior | other_flags),
+                expected
+            );
         }
     }
 }

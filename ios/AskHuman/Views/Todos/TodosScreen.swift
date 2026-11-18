@@ -33,8 +33,9 @@ struct TodosScreen: View {
                     set: { if $0 == nil { store.todos.close() } }
                 )
             ) { target in
-                TodoProjectScreen(target: target)
+                TodoProjectScreen(target: target).prefersToolbarItemsOverTabBar()
             }
+            .prefersToolbarItemsOverTabBar()
         }
     }
 }

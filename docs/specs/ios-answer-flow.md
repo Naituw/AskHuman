@@ -168,6 +168,17 @@ iOS 26.2 英文／中文各通过三项原生连接检查（作答、确认、�
 自动前进与确认提交两项回归；iOS 18.5 两类表单的经典栏连接恢复检查通过。已运行 `./scripts/install.sh`；
 这些是 mock 与模拟器验证，尚未更新手机 App 或分发 TestFlight。
 
+**2026-11-17 补：完整正文未到的请求页也按上表显示连接状态。** 摘要在、完整正文还在路上的页面（`LoadingRequest`）此前只有转圈和
+「Loading the full request…」，链路断了也停在那里，用户分不清是在加载还是连不上。现在转圈那一行换成同一份 `RequestConnection` →
+`RequestConnectionNotice`：链路就绪时仍是转圈加「Loading the full request…」，其余状态用对应的提示取代那一行，所以「转圈 + Loading…」只在
+链路确实就绪、正文确实在路上时出现。「Mac 离线」与「Mac 更新中」两句按这一页的事实改写（作答页的「草稿已保留」「输入已保留，提交会自动继续」
+在这里不成立）：「The Mac is offline. The request loads when it is back.」「Your Mac is updating. The request loads when it is back.」
+（`notice(offlineText:updatingText:)`，`updatingText` 缺省仍是表单那句）；警告类状态（离线、被拒绝、连不上）带橙色 `wifi.exclamationmark`，
+连接中／重试中／更新中仍是转圈。通知先到、请求还不在收件箱里的占位页（`MissingRequestPage`）早已按 Mac 链路区分「在路上 / 连不上 / 已不存在」，不变。
+验证：`AskHumanRequestConnectionUITests` 新增三项（连接中→链路就绪后回到「Loading…」、连接中断重试、Mac 离线），iOS 26.2 英文与中文、iOS 18.5 英文全过，
+截图目测过三种状态与中文；Mock 为此加了启动参数 `-AHSummaries YES`（收件箱请求只剩摘要）与 `-AHLink online|connecting|macOffline|brokerDown`
+（两台 Mac 启动后切到该链路）。Swift 包全量 555 项通过。尚未出包。
+
 ### 3.7 已结束的请求页（2026-11-05）
 
 用户反馈：「现在 iOS 上那些已经被回答的问题，感觉不够明显。是不是可以让正文增加一些透明度？因为有的时候我没有注意到，还是会去阅读，然后读着读着才发现，其实我已经不用回答了。」
@@ -210,6 +221,8 @@ iOS 26.2 英文／中文各通过三项原生连接检查（作答、确认、�
 ### 3.9 详情页保留标签栏（2026-11-12）
 
 用户确认取消请求（含确认、已结束）、Agent 与项目待办详情的主动隐藏规则：所有窗口、字号与导航深度都保留系统标签栏，方便直接切换 Tab。系统仍管理键盘与模态呈现时的栏行为。
+
+标签栏与页面工具栏按钮同在 Duo 外屏的竖向栏里、高度不够时，标签栏先让路（收成当前标签的一个按钮），页面的按钮不再被并进溢出菜单：见 [ios-large-screen.md §8](ios-large-screen.md#8-duo-折叠过渡的共享栏承载)。
 
 底部发送／下一题、插话与添加待办操作栏继续使用 `.actionBar` 的系统安全区布局，避让标签栏和键盘；小屏与辅助功能字号下也不能遮住按钮或使最后一条内容无法滚到。切换 Tab 保留已有请求与插话草稿。离开模式常驻条仍只在各 Tab 的列表首页显示，升级请求继续使用页内的结束入口。
 

@@ -8,6 +8,8 @@ import { useI18n } from "vue-i18n";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import {
   agentTaskReadiness,
+  antigravityLaunchStatus,
+  type AntigravityLaunchStatus,
   codexLaunchStatus,
   type CodexLaunchStatus,
   cursorLaunchStatus,
@@ -30,6 +32,7 @@ import type {
 } from "../../lib/types";
 import { AGENT_INSTALL_DOCS } from "../settings/useAgentTasks";
 import { primaryModifierPressed, primaryShortcutLabel } from "../../lib/platform";
+import { antigravityLaunchDescription } from "../../lib/antigravityLaunch";
 import { codexLaunchDescription } from "../../lib/codexLaunch";
 import { cursorLaunchDescription } from "../../lib/cursorLaunch";
 import LaunchPermission from "./LaunchPermission.vue";
@@ -159,12 +162,19 @@ const selectedKind = ref<AgentKind | null>(null);
 const desktop = ref<CodexLaunchStatus | null>(null);
 /** Where a new Cursor task would run; `null` while unknown, which leaves Cursor judged by its own readiness. */
 const cursorLaunch = ref<CursorLaunchStatus | null>(null);
+/** Where a new Antigravity task would run; `null` while unknown, which leaves it judged by its own readiness. */
+const antigravityLaunch = ref<AntigravityLaunchStatus | null>(null);
 const operationId = ref<string>(crypto.randomUUID());
 function agentAvailable(item: AgentTaskReadiness): boolean {
   if (item.kind === "codex") return !!desktop.value?.target;
   if (item.kind === "cursor" && cursorLaunch.value) return !!cursorLaunch.value.target;
+  if (item.kind === "antigravity" && antigravityLaunch.value) return !!antigravityLaunch.value.target;
   return item.ready;
 }
+/** Said under Antigravity always: its App route is the usual one and the reasons it cannot run are not the CLI's. */
+const antigravityRouteNote = computed(() =>
+  antigravityLaunch.value ? antigravityLaunchDescription(antigravityLaunch.value, t) : null,
+);
 /** Said under Cursor only when its Agents window is involved; the terminal route reads as it always did. */
 const cursorRouteNote = computed(() => {
   const status = cursorLaunch.value;
@@ -174,6 +184,7 @@ const cursorRouteNote = computed(() => {
 const footerNote = computed(() => {
   if (selectedKind.value === "codex" && desktop.value?.target === "desktop") return "desktop.launchNote";
   if (selectedKind.value === "cursor" && cursorLaunch.value?.target === "desktop") return "newTask.cursorWindowNote";
+  if (selectedKind.value === "antigravity" && antigravityLaunch.value?.target === "desktop") return "newTask.antigravityAppNote";
   return "newTask.launchNote";
 });
 /** Readiness still lists launch-unsupported families for Settings/doctor, never for this picker. */
@@ -184,13 +195,15 @@ const targetReady = computed(() => !!launchableReadiness.value?.find(r => r.kind
 
 async function loadReadiness(): Promise<void> {
   try {
-    const [list, status, cursor] = await Promise.all([
+    const [list, status, cursor, antigravity] = await Promise.all([
       agentTaskReadiness(),
       codexLaunchStatus(true).catch(() => null),
       cursorLaunchStatus(true).catch(() => null),
+      antigravityLaunchStatus(true).catch(() => null),
     ]);
     desktop.value = status;
     cursorLaunch.value = cursor;
+    antigravityLaunch.value = antigravity;
     readiness.value = list;
     // 已选 Agent 不再就绪（重查后）→ 取消选择。
     if (
@@ -231,8 +244,11 @@ async function openIssue(
 // ===== 权限（G6）=====
 /** ask 模式下的用户选择（不预选，IM D19 同语义）；固定模式下忽略。 */
 const permissionChoice = ref<"agent-default" | "yolo" | null>(null);
+/** The Agents AskHuman has no permission choice for: Pi has no permission mode (the backend's `permission_choice`). */
+const NO_PERMISSION_CHOICE: readonly AgentKind[] = ["pi"];
+const noPermissionChoice = computed(() => !!selectedKind.value && NO_PERMISSION_CHOICE.includes(selectedKind.value));
 const effectivePermission = computed<"agent-default" | "yolo" | null>(() => {
-  if (selectedKind.value === "pi") return "agent-default";
+  if (noPermissionChoice.value) return "agent-default";
   if (permissionPrompt.value === "agent-default") return "agent-default";
   if (permissionPrompt.value === "yolo") return "yolo";
   return permissionChoice.value;
@@ -295,14 +311,17 @@ const tooLong = computed(() => taskChars.value > MAX_TASK_CHARS);
 const pendingVersion = ref(0);
 function readPendingCreate(): { storageKey: string; key: string; submittedSpeed: "standard" | "fast" | undefined; inheritedSpeed: boolean; id: string | null } | null {
   const kind = selectedKind.value;
-  if (kind !== "codex" && kind !== "cursor") return null;
+  if (kind !== "codex" && kind !== "cursor" && kind !== "antigravity") return null;
   const base = [selectedProject.value, finalTask.value, effectivePermission.value, selectedTodo.value?.project, selectedTodo.value?.id, selectedTodo.value?.attachments];
   const storageKey = `${kind}-desktop-pending-create`;
   let saved: { key: string; id: string } | null = null;
   try { saved = JSON.parse(localStorage.getItem(storageKey) || "null"); } catch { /* Ignore malformed local state. */ }
+  // Antigravity's create receipts only exist from this version, so it has no earlier key to honour.
   const oldKeys = kind === "codex"
     ? [JSON.stringify(base), JSON.stringify([selectedProject.value, finalTask.value, effectivePermission.value, selectedTodo.value?.id])]
-    : [JSON.stringify([...base, modelId.value ?? "", maxControl.value ? allowMax.value : false])];
+    : kind === "cursor"
+      ? [JSON.stringify([...base, modelId.value ?? "", maxControl.value ? allowMax.value : false])]
+      : [];
   const legacy = !!saved && typeof saved.id === "string" && !effortId.value && !fast.value
     && (kind === "cursor" || !modelId.value) && oldKeys.includes(saved.key);
   const submittedSpeed = legacy ? undefined : speed.value;
@@ -666,6 +685,9 @@ onBeforeUnmount(() => {
                 <span v-else-if="item.kind === 'cursor' && cursorRouteNote" class="nt-agent-sub">
                   {{ cursorRouteNote }}
                 </span>
+                <span v-else-if="item.kind === 'antigravity' && antigravityRouteNote" class="nt-agent-sub">
+                  {{ antigravityRouteNote }}
+                </span>
                 <span v-else-if="item.ready" class="nt-agent-sub" :title="item.executable ?? ''">
                   {{ item.integrationMode.toUpperCase() }} · {{ item.executable }}
                 </span>
@@ -761,11 +783,12 @@ onBeforeUnmount(() => {
         </section>
 
         <LaunchPermission
-          v-if="selectedKind !== 'pi'"
+          v-if="!noPermissionChoice"
           v-model="permissionChoice"
           :permission-prompt="permissionPrompt"
         />
         <p v-else class="nt-sublabel">{{ t("newTask.piPermissionHint") }}</p>
+        <p v-if="selectedKind === 'antigravity' && antigravityLaunch?.target === 'desktop'" class="nt-sublabel" data-testid="nt-antigravity-permission-hint">{{ t("newTask.antigravityPermissionHint") }}</p>
       </template>
     </div>
 

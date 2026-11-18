@@ -1,0 +1,64 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>AskHuman · 待办列表操作（弹窗）图板</title>
+<!-- A board of the popup prototype (popup-todo-actions.html): several windows side by side, each in an iframe of the
+     prototype page, with a caption above. Not product code; the images in docs/assets/todo-list-actions/ were rendered
+     from it.
+     ?board=ask    the todo section of an ordinary ask: hover actions, completing / confirm-delete, adding
+     ?board=next   What's next: the same rows
+     ?board=stop   the Stop card, as it is today and as it becomes
+     ?board=entry  a project without todos: the one way in
+     ?theme=dark   dark appearance
+     `cells=1,2` limits a board to some of its cells. -->
+<style>
+html, body { margin: 0; background: #dedfe3; font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", "PingFang SC", "Helvetica Neue", sans-serif; -webkit-font-smoothing: antialiased; }
+body.dark { background: #111113; }
+.board { display: flex; gap: 0; padding: 22px 16px 8px; width: max-content; }
+.cell { width: 560px; }
+.cap { height: 86px; padding: 0 26px; font-size: 14px; line-height: 1.5; color: #3a3a3c; }
+body.dark .cap { color: #d1d1d6; }
+.cap b { display: block; margin-bottom: 2px; font-size: 17px; color: #111; }
+body.dark .cap b { color: #fff; }
+iframe { display: block; width: 560px; border: 0; background: transparent; }
+</style>
+</head>
+<body>
+<div class="board" id="board"></div>
+<script>
+const q = new URLSearchParams(location.search);
+const board = q.get("board") || "ask";
+const theme = q.get("theme") === "dark" ? "dark" : "light";
+if (theme === "dark") document.body.classList.add("dark");
+const H = board === "ask" ? 940 : board === "stop" ? 800 : board === "entry" ? 740 : 770;
+const cells = {
+  ask: [
+    ["① 悬停一行：出现 ✓ 完成 与 ✕ 删除", "点行本身仍是「选中并入回答」，✓ ✕ 只在悬停（或键盘聚焦）时出现，不挤占文字。列表末尾是「＋ 添加待办」。", `scene=ask&hover=2`],
+    ["② 点 ✓ 或 ✕ 之后", "完成：整行划线、勾变绿，停留约 1 秒，期间可「撤销」，之后收起。删除：✕ 变红色「确认删除」，再点才删（与待办窗口一致）。", `scene=ask-states`],
+    ["③ 点「＋ 添加待办」（或按 ⌘T）", "原地变成输入行：⌘↵ 添加，Esc 收起；添加后新行短暂高亮，输入行保持打开，可连续添加。⌘T 直达：展开清单并把光标放进这一行。", `scene=ask-add`],
+  ],
+  next: [
+    ["④ What's next：待办行同款操作", "TODO 行与「建议」「结束本轮」同在一个列表里，✓ ✕ 放在快捷键标注左边；「＋ 添加待办」在最后一条待办之后、「结束本轮」之前。", `scene=next&hover=2`],
+    ["⑤ What's next · 完成中 / 确认删除", "状态与提问里的待办区完全一致；被勾选的待办一旦完成或删除，就从选择里去掉。", `scene=next-states`],
+    ["⑥ What's next 里添加", "同一个输入行，位置在最后一条待办之后、「结束本轮」之前；新待办排在队尾并短暂高亮，已选中的选项保持不变。", `scene=next-add`],
+  ],
+  stop: [
+    ["① 现在的 Stop 卡：待办出现了两次", "上面三条是生成卡片那一刻的快照（之后增删，它们不会变）；下面折叠的「待办」区才是实时的。同一批待办摆了两遍，行为还不一样。", `scene=stop-now`],
+    ["② 改成：和 What's next 同一种清单", "只留一份、实时的待办（TODO 标记 + ✓ ✕ + 添加行），下面的折叠区不再出现；「继续对话」「结束对话」位置不变。", `scene=stop&hover=1`],
+  ],
+  entry: [
+    ["⑦ 项目还没有待办：一个「＋ 添加待办」", "没有待办时不放空清单，只留这一个入口（位置与折叠标题相同）；点它或按 ⌘T 变成输入行。加了第一条之后，它就变回「待办 1」的折叠区。", `scene=ask-empty`],
+    ["⑧ What's next 里没有待办", "「＋ 添加待办」排在建议之后、「结束本轮」之前：想到下一件事，可以先记下，再把它选上。", `scene=next-empty`],
+  ],
+};
+const pick = (q.get("cells") || "").split(",").map(Number).filter((n) => n > 0);
+document.getElementById("board").innerHTML = cells[board]
+  .map((c, i) => [c, i + 1])
+  .filter(([, n]) => !pick.length || pick.includes(n))
+  .map(([[title, text, query]]) => `<div class="cell"><div class="cap"><b>${title}</b>${text}</div><iframe style="height:${H + 50}px" src="popup-todo-actions.html?${query}&w=520&h=${H}&theme=${theme}"></iframe></div>`)
+  .join("");
+</script>
+</body>
+</html>

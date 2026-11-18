@@ -2,6 +2,8 @@
   "use strict";
   const key = "__ASKHUMAN_CURSOR_STALL_V1__";
   const kernelKey = "__ASKHUMAN_CURSOR_STALL_RENDERER_KERNEL_V1__";
+  const snapshotsKey = "__ASKHUMAN_CURSOR_STALL_RENDERER_SNAPSHOTS_V1__";
+  const kernelContract = 2;
   const owner = __ASKHUMAN_OWNER__;
   const revision = __ASKHUMAN_REVISION__;
   const lease = __ASKHUMAN_LEASE__;
@@ -23,20 +25,42 @@
   for (let scope = this._instantiationService; scope; scope = scope._parent) {
     for (const [id, value] of scope._services?._entries ?? []) {
       const name = String(id);
-      if ((name === "extensionService" || name === "experimentService") && !services.has(name)) {
+      if ((name === "extensionService" || name === "experimentService" ||
+           name === "cursorAgentHostEnablementService") && !services.has(name)) {
         services.set(name, value);
       }
     }
   }
   const extensions = services.get("extensionService");
   const experiments = services.get("experimentService");
+  const hostEnablement = this._cursorAgentHostEnablementService ??
+    services.get("cursorAgentHostEnablementService") ??
+    extensions?._cursorAgentHostEnablementService;
   const environment = this._environmentService;
   const experimentKey = "nal_stall_detector_timeout_config";
 
-  function manager() {
+  function usesAgentHost() {
+    if (typeof hostEnablement?.isCursorAgentHostEnabled === "function") {
+      return hostEnablement.isCursorAgentHostEnabled() === true;
+    }
+    if (typeof extensions?._runningLocationTracker?.cursorAgentHostEnabled === "boolean") {
+      return extensions._runningLocationTracker.cursorAgentHostEnabled;
+    }
+    return true;
+  }
+
+  function hostManager(extensionId) {
     const hosts = extensions._getExtensionHostManagers(1).filter(host =>
-      host.containsExtension("anysphere.cursor-agent-host"));
+      host.containsExtension(extensionId));
     return hosts.length === 1 && Number.isSafeInteger(hosts[0].pid) && hosts[0].pid > 0 ? hosts[0] : undefined;
+  }
+
+  function manager() {
+    return hostManager("anysphere.cursor-agent-host");
+  }
+
+  function transportManager() {
+    return hostManager("anysphere.cursor-always-local");
   }
 
   function makeKernel() {
@@ -71,7 +95,9 @@
     if (!policy.take(copy, probeMarker) || policy.tagged(copy) || !policy.tagged(probe)) {
       throw new Error("Cursor local turn-options marker preflight failed");
     }
-    const snapshots = new WeakMap();
+    const priorSnapshots = globalThis[snapshotsKey];
+    delete globalThis[snapshotsKey];
+    const snapshots = priorSnapshots instanceof WeakMap ? priorSnapshots : new WeakMap();
     const wrappedRunner = policy.retryRunner(runner, snapshots, binding.nativeRetryWindow);
     let target, failed;
     const wrappedReader = function (...args) {
@@ -80,7 +106,12 @@
           !Number.isSafeInteger(native?.failTimeoutMs) || native.failTimeoutMs <= 0 ||
           native.failTimeoutMs >= policy.timeout) return native;
       try {
-        if (!intact() || manager() !== target.manager || target.manager.pid !== target.pid) return native;
+        if (!intact()) return native;
+        if (target.mode === "renderer") {
+          if (usesAgentHost()) return native;
+        } else if (!usesAgentHost() || manager() !== target.manager || target.manager.pid !== target.pid) {
+          return native;
+        }
         const result = { ...native, failTimeoutMs: policy.timeout };
         snapshots.set(result, { native, marker: target.marker });
         return result;
@@ -92,6 +123,7 @@
       const snapshot = snapshots.get(options?.stallDetectorConfig);
       if (!snapshot) return Reflect.apply(encoder, this, [options, ...rest]);
       const message = Reflect.apply(encoder, this, [{ ...options, stallDetectorConfig: snapshot.native }, ...rest]);
+      if (!snapshot.marker) return message;
       try { policy.write(message, snapshot.marker); }
       catch {
         target = undefined;
@@ -126,11 +158,22 @@
       throw error;
     }
     return {
-      owner, revision, intact, retryWindow: Math.max(policy.retryWindow, binding.nativeRetryWindow),
+      owner, revision, contract: kernelContract, intact, retryWindow: Math.max(policy.retryWindow, binding.nativeRetryWindow),
       failure: () => failed,
       disable() { target = undefined; },
-      ready(host) { return host && target?.manager === host && target.pid === host.pid; },
-      set(host, token) { target = { manager: host, pid: host.pid, marker: policy.marker(token) }; },
+      ready(host) { return !!(host && target?.mode === "host" && target.manager === host && target.pid === host.pid); },
+      set(host, token) { target = { mode: "host", manager: host, pid: host.pid, marker: policy.marker(token) }; },
+      setLocal() { if (target?.mode !== "renderer") target = { mode: "renderer" }; },
+      unwrap() {
+        target = undefined;
+        if (binding.runner() === wrappedRunner) binding.setRunner(runner);
+        if (binding.encoder() === wrappedEncoder) binding.setEncoder(encoder);
+        if (binding.reader[readerName] === wrappedReader) Object.defineProperty(binding.reader, readerName, reader);
+        if (binding.host[warmName] === wrappedWarm) Object.defineProperty(binding.host, warmName, warm);
+        globalThis[snapshotsKey] = snapshots;
+        if (globalThis[kernelKey] === this) delete globalThis[kernelKey];
+        return !intact();
+      },
     };
   }
 
@@ -140,14 +183,22 @@
       kernel = makeKernel();
       globalThis[kernelKey] = kernel;
     }
-    if (kernel.owner !== owner || kernel.revision !== revision || !kernel.intact()) {
+    // The previous kernel uses the same turn marker and retry policy. Adopt it when only the
+    // bridge changes so turns already queued in the native host can still read their snapshot.
+    if (kernel.owner !== owner || (kernel.contract ?? 1) !== kernelContract || !kernel.intact()) {
       throw new Error("Cursor window stall hooks changed after attachment");
     }
   } catch (error) {
     failure = String(error.message).slice(0, 160);
   }
   state.activate = () => {
-    const base = { prepared: true, surface };
+    const agentHost = usesAgentHost();
+    const host = typeof extensions?._getExtensionHostManagers === "function"
+      ? (agentHost ? manager() : transportManager()) : undefined;
+    const base = {
+      prepared: true, surface, hostPid: host?.pid,
+      hostExtension: agentHost ? "cursor-agent-host" : "cursor-always-local",
+    };
     if (failure || !kernel?.intact() || kernel.failure()) {
       return { ...base, state: "unavailable", error: failure || kernel?.failure() || "Cursor window stall hooks were replaced" };
     }
@@ -155,9 +206,13 @@
     const native = environment.smokeTestNalStreamTimeoutMs ?? raw?.failTimeoutMs;
     if (!Number.isSafeInteger(native)) return { ...base, state: "unavailable", error: "The native stall timeout is unavailable" };
     if (environment.smokeTestNalStreamTimeoutMs !== undefined || native <= 0 || native >= policy.timeout) {
+      kernel.disable();
       return { ...base, state: "notApplicable", timeoutMs: native };
     }
-    const host = manager();
+    if (!agentHost) {
+      kernel.setLocal();
+      return { ...base, state: "active", timeoutMs: policy.timeout, retryWindowMs: kernel.retryWindow };
+    }
     if (!kernel.ready(host)) {
       kernel.disable();
       return { ...base, state: "pending", hostPid: host?.pid };
@@ -176,7 +231,7 @@
     return state.activate();
   };
   state.restore = () => {
-    if (kernel?.owner === owner && kernel.revision === revision) kernel.disable();
+    if (kernel?.owner === owner && (kernel.contract ?? 1) === kernelContract) kernel.disable();
     if (globalThis[key] === state) delete globalThis[key];
     return true;
   };

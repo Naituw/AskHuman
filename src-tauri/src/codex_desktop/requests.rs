@@ -150,6 +150,7 @@ fn prepare(sid: &str, s: &Session, r: &Value) -> Option<ClientMsg> {
                 stop_confirmation: false,
                 agent_kind: Some("codex".into()),
                 agent_session_id: Some(sid.into()),
+                agent_session_candidate: None,
                 mcp_instance_id: None,
                 agent_pid: None,
                 caller_pid: 0,

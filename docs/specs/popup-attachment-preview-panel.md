@@ -384,7 +384,8 @@ macOS 的 PDF / Office / 媒体等系统预览采用与 Popup 相同的原生视
   布局事件与 macOS 原生预览也按窗口各自独立：Popup 与历史窗口可同时展开面板，互不顶替、互不接收对方的布局。
 - 回复图片不经上述文件命令：沿用历史详情已有的窗口所有、有界图片 URL 机制，预览与缩略图各用自己的
   scope，切换条目或卸载时释放；历史仍只保存原路径。
-- 旧入口 `preview_attachments` / `close_preview` 仍被待办窗口使用并保留，历史窗口不再调用。
+- 旧入口 `preview_attachments` 仍被待办窗口使用并保留，历史窗口不再调用。`close_preview`（Popup 曾在提交 / 取消时
+  用它关闭 Quick Look）自 Popup 改用同窗面板后没有任何窗口调用，命令已删除；待办的 Quick Look 由用户自行关闭。
 
 ### 10.6 平台边界
 

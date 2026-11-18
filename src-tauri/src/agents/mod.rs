@@ -1,6 +1,7 @@
 //! Agent lifecycle tracking.
 //!
-//! Claude Code / Codex / Cursor / Grok 通过用户级 lifecycle hook，Pi 通过受管 Extension，把
+//! Claude Code / Codex / Cursor / Grok 通过用户级 lifecycle hook，Pi 通过受管 Extension，
+//! Antigravity 通过受管插件里的 hooks（见 `antigravity_hook`），把
 //! `session-start` / `turn-start` / `turn-end` / `session-end` 事件经隐藏子命令
 //! `AskHuman __agent-hook <agent> <event>` 上报给常驻 daemon；daemon 维护一张
 //! agent 注册表（进程存活轮询 + TTL 兜底推导「工作中 / 空闲 / 已结束」），并把
@@ -10,7 +11,10 @@
 //! `demo/agent-lifecycle/FINDINGS.md`。
 
 pub mod activity;
+pub mod antigravity_hook;
+pub mod antigravity_workspaces;
 pub mod codex_cli;
+pub mod codex_heartbeat;
 pub mod context_recovery;
 pub mod control;
 pub mod cursor_log;

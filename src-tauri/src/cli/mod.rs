@@ -1,4 +1,5 @@
 pub mod agents_cmd;
+mod antigravity_sidecars;
 pub mod args;
 pub mod away_cmd;
 pub mod cfgio;
@@ -47,6 +48,9 @@ pub(crate) const MCP_AGENT_SESSION_ID_ENV: &str = "ASKHUMAN_MCP_AGENT_SESSION_ID
 pub(crate) struct CallerContext {
     pub agent_kind: Option<String>,
     pub agent_session_id: Option<String>,
+    /// Antigravity only: the conversation the process environment names. Unlike
+    /// `agent_session_id` it is not authority; the daemon checks it against its registry.
+    pub agent_session_candidate: Option<String>,
     pub mcp_instance_id: Option<String>,
     pub from_mcp: bool,
 }
@@ -557,6 +561,32 @@ pub fn dispatch() {
             print_line(&serde_json::to_string(&result).unwrap_or_default());
             exit(if result.is_ok() { 0 } else { 1 });
         }
+        // Hidden: one Antigravity sidecar operation as JSON on stdin; the daemon's answer on stdout.
+        "__antigravity-desktop" => {
+            use std::io::Read;
+            let mut input = String::new();
+            if std::io::stdin()
+                .take(1024 * 1024)
+                .read_to_string(&mut input)
+                .is_err()
+            {
+                exit(1);
+            }
+            let result = serde_json::from_str::<crate::antigravity_desktop::Operation>(&input)
+                .map_err(|e| e.to_string())
+                .and_then(|op| {
+                    tokio::runtime::Runtime::new()
+                        .map_err(|e| e.to_string())?
+                        .block_on(crate::client::antigravity_desktop(op))
+                });
+            print_line(&serde_json::to_string(&result).unwrap_or_default());
+            exit(if result.is_ok() { 0 } else { 1 });
+        }
+        // Hidden: the process the Antigravity App starts for each sidecar AskHuman made. It never
+        // starts the daemon.
+        "__antigravity-sidecar" => {
+            exit(crate::antigravity_desktop::sidecar_main(&argv[2..]));
+        }
         "__ask-question-hook" => {
             crate::ask_question::run(argv.get(2).map(String::as_str));
             exit(0);
@@ -716,6 +746,7 @@ pub fn dispatch() {
                     stop_confirmation: false,
                     agent_kind: context.agent_kind,
                     agent_session_id: context.agent_session_id,
+                    agent_session_candidate: context.agent_session_candidate,
                     mcp_instance_id: context.mcp_instance_id,
                     agent_pid: None,
                     // A rejected hint must not be reconstructed by daemon process-tree fallback.
@@ -802,6 +833,7 @@ fn try_whats_next_auto(project: &str, message: &crate::models::MessagePrompt, la
                     files: delivery.files.clone(),
                 }],
                 annotations: Vec::new(),
+                draft: None,
             },
             limit,
         );
@@ -956,13 +988,22 @@ fn caller_context_with_hint(
     let mut context = caller_context_from_env(env);
     match hint {
         Some(CallerHint::Antigravity) => {
+            // The hint names the family only. A session stays bound when the call came through
+            // the AskHuman MCP server, which takes it from the host's per-call `_meta`.
+            let bound = context.from_mcp && context.agent_kind.as_deref() == Some("antigravity");
             context.agent_kind = Some("antigravity".into());
-            context.agent_session_id = None;
+            if !bound {
+                context.agent_session_id = None;
+                context.agent_session_candidate = (!context.from_mcp)
+                    .then(|| crate::agents::detect::antigravity_session_candidate(env))
+                    .flatten();
+            }
             context.mcp_instance_id = None;
         }
         Some(CallerHint::Unidentified) => {
             context.agent_kind = None;
             context.agent_session_id = None;
+            context.agent_session_candidate = None;
             context.mcp_instance_id = None;
         }
         None => {}
@@ -980,15 +1021,18 @@ fn caller_context_from_env(env: &HashMap<String, String>) -> CallerContext {
     if from_mcp {
         let kind = nonempty(MCP_AGENT_KIND_ENV)
             .filter(|value| crate::agents::AgentKind::parse(value).is_some());
+        let session_id = nonempty(MCP_AGENT_SESSION_ID_ENV);
         if kind.as_deref() == Some("antigravity") {
+            // Antigravity has no per-process session environment to trust: the MCP server only
+            // sets a session when the host's `_meta` named one, and never a partition id.
             return CallerContext {
                 agent_kind: kind,
-                agent_session_id: None,
+                agent_session_id: session_id,
+                agent_session_candidate: None,
                 mcp_instance_id: None,
                 from_mcp: true,
             };
         }
-        let session_id = nonempty(MCP_AGENT_SESSION_ID_ENV);
         let (agent_kind, agent_session_id) = match (kind, session_id) {
             (Some(kind), Some(session_id)) => (Some(kind), Some(session_id)),
             _ => (None, None),
@@ -996,6 +1040,7 @@ fn caller_context_from_env(env: &HashMap<String, String>) -> CallerContext {
         return CallerContext {
             agent_kind,
             agent_session_id,
+            agent_session_candidate: None,
             mcp_instance_id: nonempty(MCP_INSTANCE_ID_ENV),
             from_mcp: true,
         };
@@ -1005,6 +1050,9 @@ fn caller_context_from_env(env: &HashMap<String, String>) -> CallerContext {
         agent_kind: kind.map(|kind| kind.as_str().to_string()),
         agent_session_id: kind
             .and_then(|kind| crate::agents::detect::session_id_from_env_map(kind, env)),
+        agent_session_candidate: (kind == Some(crate::agents::AgentKind::Antigravity))
+            .then(|| crate::agents::detect::antigravity_session_candidate(env))
+            .flatten(),
         mcp_instance_id: None,
         from_mcp: false,
     }
@@ -1153,6 +1201,7 @@ mod tests {
             CallerContext {
                 agent_kind: Some("cursor".into()),
                 agent_session_id: Some("conversation".into()),
+                agent_session_candidate: None,
                 mcp_instance_id: Some("instance".into()),
                 from_mcp: true,
             }
@@ -1189,6 +1238,7 @@ mod tests {
             CallerContext {
                 agent_kind: Some("cursor".into()),
                 agent_session_id: Some("conversation".into()),
+                agent_session_candidate: None,
                 mcp_instance_id: None,
                 from_mcp: false,
             }
@@ -1532,5 +1582,107 @@ mod antigravity_caller_tests {
         assert_eq!(context.agent_kind.as_deref(), Some("antigravity"));
         assert_eq!(context.agent_session_id, None);
         assert!(show_last_cli_scope(context.agent_kind, None, "project".into()).is_err());
+    }
+}
+
+#[cfg(test)]
+mod antigravity_identity_tests {
+    use super::*;
+
+    const CONVERSATION: &str = "3f1c2a9e-8d4b-4a7e-9c1d-5b6e7f8a9b0c";
+
+    fn antigravity_args(rest: &[&str]) -> Vec<String> {
+        ["AskHuman", "--caller-agent", "antigravity"]
+            .into_iter()
+            .chain(rest.iter().copied())
+            .map(String::from)
+            .collect()
+    }
+
+    #[test]
+    fn an_environment_conversation_is_a_candidate_and_never_a_session() {
+        let env = HashMap::from([("ANTIGRAVITY_CONVERSATION_ID".into(), CONVERSATION.into())]);
+        let context = caller_context_from_env(&env);
+        assert_eq!(context.agent_kind.as_deref(), Some("antigravity"));
+        assert_eq!(context.agent_session_id, None);
+        assert_eq!(
+            context.agent_session_candidate.as_deref(),
+            Some(CONVERSATION)
+        );
+        assert!(!context.from_mcp);
+
+        // Only a well-formed conversation id is worth asking the daemon about.
+        let junk = HashMap::from([("ANTIGRAVITY_CONVERSATION_ID".into(), "not-a-uuid".into())]);
+        assert_eq!(caller_context_from_env(&junk).agent_session_candidate, None);
+    }
+
+    #[test]
+    fn the_explicit_hint_keeps_the_candidate_unless_markers_conflict() {
+        let args = antigravity_args(&["--agent-help"]);
+        let env = HashMap::from([("ANTIGRAVITY_CONVERSATION_ID".into(), CONVERSATION.into())]);
+        let (_, hint) = parse_caller_hint(&args, &env).unwrap();
+        assert_eq!(hint, Some(CallerHint::Antigravity));
+        let context = caller_context_with_hint(&env, hint);
+        assert_eq!(context.agent_kind.as_deref(), Some("antigravity"));
+        assert_eq!(context.agent_session_id, None);
+        assert_eq!(
+            context.agent_session_candidate.as_deref(),
+            Some(CONVERSATION)
+        );
+
+        // A foreign session marker means the environment is inherited: nothing is claimed.
+        let mut conflicting = env.clone();
+        conflicting.insert("CODEX_THREAD_ID".into(), "foreign-thread".into());
+        let (_, hint) = parse_caller_hint(&args, &conflicting).unwrap();
+        assert_eq!(hint, Some(CallerHint::Unidentified));
+        assert_eq!(
+            caller_context_with_hint(&conflicting, hint),
+            CallerContext::default()
+        );
+
+        // Without the marker the hint still names the family and claims no conversation.
+        let (_, hint) = parse_caller_hint(&args, &HashMap::new()).unwrap();
+        let context = caller_context_with_hint(&HashMap::new(), hint);
+        assert_eq!(context.agent_kind.as_deref(), Some("antigravity"));
+        assert_eq!(context.agent_session_candidate, None);
+    }
+
+    #[test]
+    fn the_mcp_server_vouches_for_the_conversation_it_took_from_the_host() {
+        let env = HashMap::from([
+            (FROM_MCP_ENV.into(), "1".into()),
+            (MCP_INSTANCE_ID_ENV.into(), "instance".into()),
+            (MCP_AGENT_KIND_ENV.into(), "antigravity".into()),
+            (MCP_AGENT_SESSION_ID_ENV.into(), format!(" {CONVERSATION} ")),
+            // The long-lived server inherited another conversation's variable; it is not used.
+            (
+                "ANTIGRAVITY_CONVERSATION_ID".into(),
+                "9a8b7c6d-5e4f-4a3b-8c2d-1e0f9a8b7c6d".into(),
+            ),
+        ]);
+        let context = caller_context_from_env(&env);
+        assert_eq!(
+            context,
+            CallerContext {
+                agent_kind: Some("antigravity".into()),
+                agent_session_id: Some(CONVERSATION.into()),
+                agent_session_candidate: None,
+                mcp_instance_id: None,
+                from_mcp: true,
+            }
+        );
+        // The prefix hint declares the family; it must not discard what the host injected.
+        let context = caller_context_with_hint(&env, Some(CallerHint::Antigravity));
+        assert_eq!(context.agent_session_id.as_deref(), Some(CONVERSATION));
+
+        // A call whose host sent no conversation stays bound to the family alone.
+        let unbound = HashMap::from([
+            (FROM_MCP_ENV.into(), "1".into()),
+            (MCP_AGENT_KIND_ENV.into(), "antigravity".into()),
+        ]);
+        let context = caller_context_from_env(&unbound);
+        assert_eq!(context.agent_kind.as_deref(), Some("antigravity"));
+        assert_eq!(context.agent_session_id, None);
+        assert_eq!(context.agent_session_candidate, None);
     }
 }

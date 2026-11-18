@@ -7,7 +7,7 @@
 //! 与钉钉/飞书 Router 同构，但 Telegram 无「3 秒强制 ACK」：callback 由会话自行
 //! `answerCallbackQuery`（仅为消除客户端转圈）；匹配不到的孤儿 callback 由 Reader 兜底应答。
 //!
-//! 单进程与 Daemon 复用：Daemon 持共享且常热的 Router；单进程每进程起一个仅挂 1 个会话的同款 Router。
+//! Daemon 持共享且常热的 Router，跨请求复用。
 
 use super::TelegramClient;
 use crate::config::TelegramChannelConfig;
@@ -60,7 +60,7 @@ pub struct TgRouter {
     /// 活动序号源（跨会话单调递增，决定「最新活动卡片」）。
     next_seq: Arc<AtomicU64>,
     alive: Arc<AtomicBool>,
-    /// 长轮询任务句柄；`Arc` 被全部丢弃（如单进程会话结束）时 abort，停止轮询。
+    /// 长轮询任务句柄；`Arc` 被全部丢弃时 abort，停止轮询。
     task: Mutex<Option<tokio::task::JoinHandle<()>>>,
 }
 

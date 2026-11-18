@@ -150,6 +150,8 @@ pub fn is_banned_prefix(prefix: &[String]) -> bool {
 /// Lower a literal PowerShell command sequence into argv-like segments. This deliberately accepts
 /// a smaller language than PowerShell's AST: variables, substitutions, redirections, grouping,
 /// invocation operators, and unterminated quotes all return `None` so permission memory is disabled.
+// Only the Windows build calls this; it stays target-independent so its tests run everywhere.
+#[cfg_attr(target_os = "macos", allow(dead_code))]
 pub fn parse_powershell_plain_commands(script: &str) -> Option<Vec<Vec<String>>> {
     #[derive(Clone, Copy, PartialEq, Eq)]
     enum Quote {
@@ -256,6 +258,8 @@ pub fn parse_powershell_plain_commands(script: &str) -> Option<Vec<Vec<String>>>
     (!commands.is_empty()).then_some(commands)
 }
 
+// Only the Windows build calls this; it stays target-independent so its tests run everywhere.
+#[cfg_attr(target_os = "macos", allow(dead_code))]
 pub fn is_safe_powershell_words(words: &[String]) -> bool {
     let Some(first) = words.first() else {
         return false;
@@ -271,6 +275,8 @@ pub fn is_safe_powershell_words(words: &[String]) -> bool {
     }
 }
 
+// Only the Windows build calls this; it stays target-independent so its tests run everywhere.
+#[cfg_attr(target_os = "macos", allow(dead_code))]
 pub fn is_dangerous_powershell_words(words: &[String]) -> bool {
     let Some(first) = words.first() else {
         return true;

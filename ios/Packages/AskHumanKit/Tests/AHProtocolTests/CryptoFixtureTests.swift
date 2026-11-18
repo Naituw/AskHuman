@@ -116,11 +116,106 @@ final class CryptoFixtureTests: XCTestCase {
         XCTAssertThrowsError(try AHEnvelope.parse(Data(#"{"v":2,"f":"a","k":1,"n":"x","c":"y"}"#.utf8))) {
             XCTAssertEqual($0 as? EnvelopeError, .version)
         }
-        XCTAssertThrowsError(try AHEnvelope.parse(Data(#"{"v":1,"f":"a","k":1,"n":"x","c":"y","z":1}"#.utf8))) {
-            XCTAssertEqual($0 as? EnvelopeError, .malformed)
-        }
         XCTAssertThrowsError(try AHEnvelope.parse(Data(count: Wire.maxEnvelopeBytes + 1))) {
             XCTAssertEqual($0 as? EnvelopeError, .tooLarge)
         }
+    }
+
+    /// `z` marks a compressed plaintext (docs/specs/ios-traffic-reduction.md §3.3). Only the number 1 means something;
+    /// anything else is refused, so that a later algorithm can never be mistaken for this one.
+    func testOnlyTheNumberOneIsACompressionMarker() throws {
+        let plain = try AHEnvelope.parse(Data(#"{"v":1,"f":"a","k":1,"n":"x","c":"y"}"#.utf8))
+        XCTAssertNil(plain.z)
+        let marked = try AHEnvelope.parse(Data(#"{"v":1,"f":"a","k":1,"n":"x","c":"y","z":1}"#.utf8))
+        XCTAssertEqual(marked.z, 1)
+        for value in ["2", "0", "-1", "true", "false", "1.0", "1.5", "\"1\"", "null", "[1]", "{}"] {
+            let text = #"{"v":1,"f":"a","k":1,"n":"x","c":"y","z":"# + value + "}"
+            XCTAssertThrowsError(try AHEnvelope.parse(Data(text.utf8)), "z = \(value)") {
+                XCTAssertEqual($0 as? EnvelopeError, .malformed, "z = \(value)")
+            }
+        }
+    }
+
+    // MARK: compression
+
+    func testCompressedEnvelopesFromTheFixtureOpenToTheirPlaintext() throws {
+        let samples = try XCTUnwrap(fx["compressedEnvelopes"] as? [[String: Any]], "run UPDATE_WIRE_FIXTURES=1 cargo test ios::fixtures")
+        XCTAssertFalse(samples.isEmpty)
+        for item in samples {
+            let name = item["name"] as! String
+            let key = hex(item["key"])
+            let topic = item["topic"] as! String
+            let text = item["envelope"] as! String
+            let env = try AHEnvelope.parse(Data(text.utf8))
+            XCTAssertEqual(env.z, 1, name)
+
+            // What Rust compressed and encrypted, the phone decrypts and inflates to the same bytes, UTF-8 included.
+            let opened = try AHEnvelope.open(key: key, scope: .topic(topic), envelope: env)
+            let plaintext = try XCTUnwrap(item["plaintext"] as? String)
+            XCTAssertEqual(String(decoding: opened, as: UTF8.self), plaintext, name)
+            XCTAssertTrue(plaintext.contains("\u{91cd}\u{6784}\u{6a21}\u{5757}"), "the sample carries a title that is not ASCII")
+            XCTAssertLessThan(text.utf8.count * 2, plaintext.utf8.count, "it is worth compressing")
+            let message = try Plain.open(key: key, scope: .topic(topic), envelope: env)
+            XCTAssertEqual(message.t, "agents.snapshot", name)
+
+            // The marker is part of what is authenticated, and the scope still binds.
+            var unmarked = env
+            unmarked.z = nil
+            XCTAssertThrowsError(try AHEnvelope.open(key: key, scope: .topic(topic), envelope: unmarked), name)
+            XCTAssertThrowsError(try AHEnvelope.open(key: key, scope: .topic(topic + "x"), envelope: env), name)
+            // A push is never compressed: refused before anything is decrypted.
+            XCTAssertThrowsError(try AHEnvelope.open(key: key, scope: .push, envelope: env), name) {
+                XCTAssertEqual($0 as? EnvelopeError, .malformed)
+            }
+        }
+    }
+
+    func testTheAuthenticatedDataOfACompressedEnvelopeEndsInTheMarker() {
+        XCTAssertEqual(String(decoding: AHEnvelope.aad(.topic("ah/u/d/p"), sender: "mac", kid: 1), as: UTF8.self), "ah1|ah/u/d/p|mac|1")
+        XCTAssertEqual(
+            String(decoding: AHEnvelope.aad(.topic("ah/u/d/p"), sender: "mac", kid: 1, compressed: true), as: UTF8.self), "ah1|ah/u/d/p|mac|1|z1"
+        )
+        XCTAssertEqual(String(decoding: AHEnvelope.aad(.push, sender: "mac", kid: 1), as: UTF8.self), "ah1|push|mac|1")
+    }
+
+    func testCompressionRoundTripsAndStopsAtTheLimit() throws {
+        let text = Data(String(repeating: "a stable title of one agent, ", count: 100).utf8)
+        let packed = AHEnvelope.compress(text)
+        XCTAssertLessThan(packed.count, text.count / 4)
+        XCTAssertEqual(try AHEnvelope.inflate(packed, limit: text.count), text, "exactly as long as allowed")
+        XCTAssertThrowsError(try AHEnvelope.inflate(packed, limit: text.count - 1)) {
+            XCTAssertEqual($0 as? EnvelopeError, .tooLarge, "one byte over")
+        }
+
+        // Bytes that do not compress at all still come back (stored blocks).
+        let noise = Bytes.random(40_000)
+        XCTAssertEqual(try AHEnvelope.inflate(AHEnvelope.compress(noise), limit: noise.count), noise)
+    }
+
+    func testADecompressionBombIsRefusedBeforeItFillsTheMemory() throws {
+        let bomb = AHEnvelope.compress(Data(count: 16 * 1024 * 1024))
+        XCTAssertLessThan(bomb.count, 32 * 1024, "sixteen MiB of zeros in a few KiB")
+        XCTAssertThrowsError(try AHEnvelope.inflate(bomb, limit: Wire.maxPlainBytes)) {
+            XCTAssertEqual($0 as? EnvelopeError, .tooLarge)
+        }
+
+        // The same through a whole envelope: it authenticates, and still is not opened.
+        let key = Bytes.random(32)
+        let nonce = Bytes.random(AHCrypto.nonceLength)
+        let aad = Data("ah1|ah/u/d/p|mac|1|z1".utf8)
+        let ciphertext = try AHCrypto.seal(key: key, nonce: nonce, aad: aad, plaintext: bomb)
+        let envelope = Envelope(f: "mac", k: 1, n: Bytes.b64u(nonce), c: Bytes.b64u(ciphertext), z: 1)
+        XCTAssertThrowsError(try AHEnvelope.open(key: key, scope: .topic("ah/u/d/p"), envelope: envelope)) {
+            XCTAssertEqual($0 as? EnvelopeError, .tooLarge)
+        }
+    }
+
+    func testADamagedOrTruncatedStreamIsRefused() throws {
+        let text = Data(String(repeating: "a stable title of one agent, ", count: 200).utf8)
+        let packed = AHEnvelope.compress(text)
+        XCTAssertThrowsError(try AHEnvelope.inflate(packed.prefix(packed.count / 2), limit: 1 << 20), "cut in the middle")
+        XCTAssertThrowsError(try AHEnvelope.inflate(packed.prefix(packed.count - 1), limit: 1 << 20), "the last byte missing")
+        XCTAssertThrowsError(try AHEnvelope.inflate(Data(repeating: 0xFF, count: 64), limit: 1 << 20), "not a stream")
+        XCTAssertThrowsError(try AHEnvelope.inflate(Data(), limit: 1 << 20), "nothing")
     }
 }

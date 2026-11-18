@@ -94,7 +94,8 @@ describe("mounted inbox forms", () => {
   it("retains a title delivered while the initialization snapshot is pending", async () => {
     let release!: (value: PopupInit) => void;
     const pending = new Promise<PopupInit>(resolve => { release = resolve; });
-    mocks.invoke.mockImplementation(async (command: string) => command === "popup_init" ? pending : {});
+    mocks.invoke.mockImplementation(async (command: string) =>
+      command === "popup_init" ? pending : command === "popup_draft_claim" ? null : {});
     const started = form("a", ref(true));
     await flushPromises();
     for (const handler of mocks.handlers.get("popup-session-title")!) handler({ payload: { requestId: "a", title: "New name" } });

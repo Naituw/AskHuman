@@ -120,19 +120,9 @@ pub fn resolve_activity(kind: AgentKind, session_id: &str, turn_ended: bool) -> 
     Some(activity)
 }
 
-/// Read the last assistant text from a caller-validated transcript path without the `/status`
-/// 500-character display limit. Reads remain bounded by `MAX_TAIL_BYTES`.
-pub fn resolve_last_assistant_text_from_path(
-    kind: AgentKind,
-    path: &Path,
-    max_chars: usize,
-) -> Option<String> {
-    resolve_last_assistant_text_from_path_raw(kind, path)
-        .map(|text| truncate_preserving_layout(&text, max_chars))
-}
-
-/// Read the raw last assistant text from a caller-validated transcript path. The file read is
-/// bounded even though the returned event text is not display-truncated.
+/// Read the raw last assistant text from a caller-validated transcript path, without the
+/// `/status` 500-character display limit. The file read is bounded by `MAX_TAIL_BYTES` even though
+/// the returned event text is not display-truncated.
 pub fn resolve_last_assistant_text_from_path_raw(kind: AgentKind, path: &Path) -> Option<String> {
     let lines = read_tail(path, MAX_TAIL_BYTES);
     let mut last = None;
@@ -153,15 +143,6 @@ pub fn resolve_last_assistant_text_from_path_raw(kind: AgentKind, path: &Path) -
         }
     }
     last
-}
-
-fn truncate_preserving_layout(text: &str, max_chars: usize) -> String {
-    if text.chars().count() <= max_chars {
-        text.to_string()
-    } else {
-        let head: String = text.chars().take(max_chars).collect();
-        format!("{}\n\n… [truncated]", head.trim_end())
-    }
 }
 
 /// 取文件 mtime 的 Unix 秒（best-effort）。
@@ -220,15 +201,19 @@ pub(super) enum Ev {
 /// 从尾部行序列计算「当前活动」。抽出便于单测（不触盘）。
 fn analyze(kind: AgentKind, lines: &[String]) -> Option<Activity> {
     let mut evs: Vec<Ev> = Vec::new();
-    for line in lines {
-        let line = line.trim();
-        if line.is_empty() {
-            continue;
+    if kind == AgentKind::Antigravity {
+        evs = antigravity_events(lines);
+    } else {
+        for line in lines {
+            let line = line.trim();
+            if line.is_empty() {
+                continue;
+            }
+            let Ok(v) = serde_json::from_str::<Value>(line) else {
+                continue;
+            };
+            push_events(kind, &v, &mut evs);
         }
-        let Ok(v) = serde_json::from_str::<Value>(line) else {
-            continue;
-        };
-        push_events(kind, &v, &mut evs);
     }
     // Cursor jsonl 的调用**跑完后**才落盘且从不写 tool_result（见 aggregate 注释）→ 全部收敛；
     // vscdb 源自带真实状态，不走此收敛。
@@ -363,7 +348,187 @@ fn push_events(kind: AgentKind, v: &Value, out: &mut Vec<Ev>) {
         AgentKind::Codex => push_events_codex(v, out),
         AgentKind::Grok => push_events_grok(v, out),
         AgentKind::Pi => push_events_pi(v, out),
-        AgentKind::Antigravity => {}
+        AgentKind::Antigravity => push_events_antigravity(v, out),
+    }
+}
+
+/// The model's prose in one Antigravity step: the `content` of a finished `PLANNER_RESPONSE`.
+/// A step that is not `DONE` is still being written, so what it holds is not yet the model's
+/// answer; the step may carry tool calls as well, and its `content` stays a candidate for the
+/// latest text (docs/specs/antigravity-deep-integration.md §11).
+pub(super) fn antigravity_prose(step: &Value) -> Option<String> {
+    antigravity_step_text(step, "content")
+}
+
+/// The model's reasoning in one Antigravity step: the `thinking` string of a finished
+/// `PLANNER_RESPONSE`. Only some model tiers write it (§4.6). It comes before the step's
+/// `content` and its calls, and a step with calls alone can carry it, which is what keeps the
+/// latest text moving while the model works without writing prose.
+pub(super) fn antigravity_thinking(step: &Value) -> Option<String> {
+    antigravity_step_text(step, "thinking")
+}
+
+/// One text field of a finished `PLANNER_RESPONSE`; a step that is still being written holds
+/// neither a finished answer nor a finished thought.
+fn antigravity_step_text(step: &Value, field: &str) -> Option<String> {
+    if step.get("type").and_then(Value::as_str) != Some("PLANNER_RESPONSE") {
+        return None;
+    }
+    if step
+        .get("status")
+        .and_then(Value::as_str)
+        .is_some_and(|status| status != "DONE")
+    {
+        return None;
+    }
+    let text = step.get(field).and_then(Value::as_str)?.trim();
+    (!text.is_empty()).then(|| text.to_string())
+}
+
+/// What one Antigravity step says on its own: the model's prose. Calls and their results are
+/// paired across steps by [`antigravity_events`], so a single line cannot report them.
+fn push_events_antigravity(v: &Value, out: &mut Vec<Ev>) {
+    if let Some(text) = antigravity_prose(v) {
+        out.push(Ev::Text(text));
+    }
+}
+
+/// Antigravity's `transcript_full.jsonl` as events. The file holds one step per line: a
+/// `PLANNER_RESPONSE` carries the model's prose in `content` and its tool calls in `tool_calls`,
+/// and the result of a call is a `GENERIC` step that follows, in the order the calls were made
+/// (`status: ERROR` when it failed). The reasoning (`thinking`) is not an event here: like the
+/// other agents' activity, this view keeps the prose and the tools, and the reasoning reaches the
+/// latest text and the full transcript through `transcript_full`.
+///
+/// A call is reported when its result arrives, so that a failed call is marked failed even when
+/// several calls share one step. A call that never gets a result before the next answer, and the
+/// calls still waiting at the end of the window, are reported last (the final one is running).
+fn antigravity_events(lines: &[String]) -> Vec<Ev> {
+    fn flush(waiting: &mut std::collections::VecDeque<ToolDisplay>, out: &mut Vec<Ev>) {
+        out.extend(waiting.drain(..).map(Ev::Tool));
+    }
+    let mut out = Vec::new();
+    let mut waiting = std::collections::VecDeque::new();
+    for line in lines {
+        let Ok(step) = serde_json::from_str::<Value>(line.trim()) else {
+            continue;
+        };
+        match step.get("type").and_then(Value::as_str) {
+            Some("PLANNER_RESPONSE") => {
+                // A new answer means the earlier calls are over, whether or not they reported.
+                flush(&mut waiting, &mut out);
+                if let Some(text) = antigravity_prose(&step) {
+                    out.push(Ev::Text(text));
+                }
+                for call in antigravity_tool_calls(&step) {
+                    let name = call.get("name").and_then(Value::as_str).unwrap_or("");
+                    waiting.push_back(classify_antigravity_tool(name, call.get("args")));
+                }
+            }
+            Some("GENERIC") => {
+                // A result whose call lies before the window has nothing to be paired with.
+                if let Some(tool) = waiting.pop_front() {
+                    out.push(Ev::Tool(tool));
+                    out.push(Ev::ToolResult(antigravity_step_failed(&step)));
+                }
+            }
+            _ => {}
+        }
+    }
+    flush(&mut waiting, &mut out);
+    out
+}
+
+/// The tool calls of one `PLANNER_RESPONSE` step.
+pub(super) fn antigravity_tool_calls(step: &Value) -> impl Iterator<Item = &Value> {
+    step.get("tool_calls")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+}
+
+/// Whether a result step (`GENERIC`) reports a failed call.
+pub(super) fn antigravity_step_failed(step: &Value) -> bool {
+    step.get("status").and_then(Value::as_str) == Some("ERROR")
+}
+
+/// Antigravity's tool names and CamelCase argument keys, shown like every other Agent's tools:
+/// commands, file reads and file writes get their category word, an MCP call shows
+/// `<server>/<tool>`, and everything else keeps its own name.
+pub(crate) fn classify_antigravity_tool(name: &str, args: Option<&Value>) -> ToolDisplay {
+    let text = |keys: &[&str]| {
+        keys.iter()
+            .find_map(|key| args?.get(*key)?.as_str())
+            .map(str::trim)
+            .filter(|text| !text.is_empty())
+    };
+    let file = |keys: &[&str]| {
+        text(keys).map(|path| {
+            let path = path.trim_end_matches('/');
+            truncate(
+                path.rsplit('/')
+                    .next()
+                    .filter(|s| !s.is_empty())
+                    .unwrap_or(path),
+                MAX_TOOL_OBJECT_CHARS,
+            )
+        })
+    };
+    match name {
+        "run_command" => {
+            let command = text(&["CommandLine"]);
+            let summary = text(&["toolSummary"]);
+            let object = match (summary, command) {
+                (Some(summary), Some(command)) => Some(format!(
+                    "{} ({})",
+                    truncate(summary, MAX_TOOL_OBJECT_CHARS),
+                    truncate(command, 32)
+                )),
+                (Some(only), None) | (None, Some(only)) => {
+                    Some(truncate(only, MAX_TOOL_OBJECT_CHARS))
+                }
+                (None, None) => None,
+            };
+            ToolDisplay {
+                label: ToolLabel::Run,
+                object,
+            }
+        }
+        "read_file" | "view_file" | "view_file_outline" | "view_code_item" => ToolDisplay {
+            label: ToolLabel::Read,
+            object: file(&["Path", "AbsolutePath"]),
+        },
+        "write_to_file" | "replace_file_content" | "multi_replace_file_content" | "edit_file" => {
+            ToolDisplay {
+                label: ToolLabel::Write,
+                object: file(&["TargetFile", "Path", "AbsolutePath"]),
+            }
+        }
+        "call_mcp_tool" => {
+            let server = text(&["ServerName"]);
+            let tool = text(&["ToolName"]);
+            ToolDisplay {
+                label: match (server, tool) {
+                    (Some(server), Some(tool)) => ToolLabel::Other(format!("{server}/{tool}")),
+                    (_, Some(only)) | (Some(only), _) => ToolLabel::Other(only.to_string()),
+                    (None, None) => ToolLabel::Other(name.to_string()),
+                },
+                object: None,
+            }
+        }
+        _ => ToolDisplay {
+            label: ToolLabel::Other(name.to_string()),
+            object: text(&[
+                "Query",
+                "Pattern",
+                "SearchPath",
+                "Url",
+                "Prompt",
+                "toolSummary",
+                "Description",
+            ])
+            .map(|object| truncate(object, MAX_TOOL_OBJECT_CHARS)),
+        },
     }
 }
 
@@ -478,7 +643,9 @@ fn push_events_codex(v: &Value, out: &mut Vec<Ev>) {
                 if let Some(t) = value_text(payload.get("content")) {
                     let t = t.trim();
                     if !t.is_empty() {
-                        out.push(Ev::Text(t.to_string()));
+                        out.push(Ev::Text(
+                            super::codex_heartbeat::display_text(t).to_string(),
+                        ));
                     }
                 }
             }
@@ -525,7 +692,9 @@ fn push_events_codex(v: &Value, out: &mut Vec<Ev>) {
             if let Some(t) = payload.get("message").and_then(|m| m.as_str()) {
                 let t = t.trim();
                 if !t.is_empty() {
-                    out.push(Ev::Text(t.to_string()));
+                    out.push(Ev::Text(
+                        super::codex_heartbeat::display_text(t).to_string(),
+                    ));
                 }
             }
         }
@@ -555,7 +724,9 @@ fn push_codex_item_completed(item: Option<&Value>, out: &mut Vec<Ev>) {
             if let Some(text) = value_text(item.get("content")) {
                 let text = text.trim();
                 if !text.is_empty() {
-                    out.push(Ev::Text(text.to_string()));
+                    out.push(Ev::Text(
+                        super::codex_heartbeat::display_text(text).to_string(),
+                    ));
                 }
             }
         }
@@ -984,6 +1155,108 @@ mod tests {
         v.iter().map(|s| s.to_string()).collect()
     }
 
+    /// A conversation as the App writes it: a request, tool calls whose results are the `GENERIC`
+    /// steps that follow, an injected message, a half-written step and the final answer.
+    const ANTIGRAVITY_TRANSCRIPT: &str = include_str!("fixtures/antigravity-transcript.jsonl");
+
+    fn antigravity_lines(count: usize) -> Vec<String> {
+        ANTIGRAVITY_TRANSCRIPT
+            .lines()
+            .take(count)
+            .map(str::to_string)
+            .collect()
+    }
+
+    #[test]
+    fn antigravity_shows_the_last_finished_prose_and_no_tools_after_it() {
+        let activity = analyze(AgentKind::Antigravity, &antigravity_lines(usize::MAX)).unwrap();
+        assert_eq!(
+            activity.text.as_deref(),
+            Some("Done: the parser now keeps trailing whitespace and a regression test covers it.")
+        );
+        // The prose is the newest event, so no tool line is shown after it.
+        assert!(activity.steps.is_empty());
+        let latest = activity.latest_text.unwrap();
+        assert_eq!(latest.kind, "assistant");
+        assert!(latest.text.starts_with("Done: the parser"));
+    }
+
+    #[test]
+    fn antigravity_prose_that_is_still_being_written_is_not_the_latest_text() {
+        // Up to the half-written step: the answer is the one before it, with its tool call.
+        let activity = analyze(AgentKind::Antigravity, &antigravity_lines(10)).unwrap();
+        assert_eq!(
+            activity.text.as_deref(),
+            Some("The parser drops trailing whitespace; I need a decision before changing it.")
+        );
+        // Prose and a tool call in one step: the prose is the text, the call is its tool line,
+        // and with no result step yet it is still running.
+        let step = activity.steps.last().unwrap();
+        assert_eq!(
+            step.tool.label,
+            ToolLabel::Other("askhuman_mcp/ask".to_string())
+        );
+        assert_eq!(step.state, StepState::Running);
+        assert!(activity
+            .latest_text
+            .unwrap()
+            .text
+            .starts_with("The parser drops"));
+    }
+
+    #[test]
+    fn antigravity_tool_results_close_the_calls_in_order_and_mark_failures() {
+        // Steps 0..=5: two calls in one step, answered by a finished and a failed result.
+        let mut raw = antigravity_lines(6);
+        let activity = analyze(AgentKind::Antigravity, &raw).unwrap();
+        assert_eq!(
+            activity.text.as_deref(),
+            Some("I'll start by running the failing test.")
+        );
+        let states: Vec<_> = activity.steps.iter().map(|step| step.state).collect();
+        // `run_command` (answered, done), then `view_file` (answered, done), then the second
+        // `run_command` (failed): the three most recent steps after the prose.
+        assert_eq!(
+            states,
+            [StepState::Done, StepState::Done, StepState::Failed]
+        );
+        assert_eq!(activity.steps[0].tool.label, ToolLabel::Run);
+        assert_eq!(
+            activity.steps[0].tool.object.as_deref(),
+            Some("Run the failing test (cargo test parser)")
+        );
+        assert_eq!(activity.steps[1].tool.label, ToolLabel::Read);
+        assert_eq!(activity.steps[1].tool.object.as_deref(), Some("parser.rs"));
+        assert_eq!(
+            activity.steps[2].tool.object.as_deref(),
+            Some("git status --short")
+        );
+        // A line cut in half (the file is being appended to) is skipped, not fatal.
+        raw.push(r#"{"step_index": 6, "source": "MODEL", "type": "PLANNER_RESP"#.to_string());
+        assert!(analyze(AgentKind::Antigravity, &raw).is_some());
+    }
+
+    #[test]
+    fn an_mcp_call_is_shown_by_server_and_tool_and_other_tools_by_name() {
+        let call =
+            |name: &str, args: serde_json::Value| classify_antigravity_tool(name, Some(&args));
+        let mcp = call(
+            "call_mcp_tool",
+            serde_json::json!({"ServerName": "askhuman_mcp", "ToolName": "ask"}),
+        );
+        assert_eq!(mcp.label, ToolLabel::Other("askhuman_mcp/ask".to_string()));
+        let other = call("grep_search", serde_json::json!({"Query": "trailing"}));
+        assert_eq!(other.label, ToolLabel::Other("grep_search".to_string()));
+        assert_eq!(other.object.as_deref(), Some("trailing"));
+        let write = call(
+            "write_to_file",
+            serde_json::json!({"TargetFile": "/work/app/src/lib.rs"}),
+        );
+        assert_eq!(write.label, ToolLabel::Write);
+        assert_eq!(write.object.as_deref(), Some("lib.rs"));
+        assert_eq!(classify_antigravity_tool("run_command", None).object, None);
+    }
+
     #[test]
     fn cursor_text_plus_tool_run() {
         let ls = lines(&[
@@ -1392,19 +1665,20 @@ mod tests {
         });
         std::fs::write(&path, format!("{old}\nmalformed\n{latest}\n")).unwrap();
         assert_eq!(
-            resolve_last_assistant_text_from_path(AgentKind::Cursor, &path, 2_000).as_deref(),
+            resolve_last_assistant_text_from_path_raw(AgentKind::Cursor, &path).as_deref(),
             Some("最后一段\n第二行")
         );
 
+        // The raw text is returned whole: no display truncation is applied here.
         let long = "你".repeat(2_001);
         let record = serde_json::json!({
             "role": "assistant",
             "message": {"content": [{"type":"text", "text":long}]}
         });
         std::fs::write(&path, format!("{record}\n")).unwrap();
-        let text = resolve_last_assistant_text_from_path(AgentKind::Cursor, &path, 2_000).unwrap();
-        assert_eq!(text.matches('你').count(), 2_000);
-        assert!(text.ends_with("… [truncated]"));
+        let text = resolve_last_assistant_text_from_path_raw(AgentKind::Cursor, &path).unwrap();
+        assert_eq!(text.matches('你').count(), 2_001);
+        assert!(!text.contains("[truncated]"));
     }
 
     #[test]
@@ -1419,6 +1693,27 @@ mod tests {
         assert_eq!(step.tool.label, ToolLabel::Write);
         assert_eq!(step.tool.object.as_deref(), Some("probe.txt"));
         assert_eq!(step.state, StepState::Done);
+    }
+
+    #[test]
+    fn heartbeat_activity_and_completed_observation_share_readable_text() {
+        let raw = super::super::codex_heartbeat::QUIET;
+        for entry in [
+            serde_json::json!({"type":"response_item", "payload":{"type":"message", "role":"assistant", "content":[{"type":"output_text", "text":raw}]}}),
+            serde_json::json!({"type":"event_msg", "payload":{"type":"agent_message", "message":raw}}),
+            serde_json::json!({"type":"event_msg", "payload":{"type":"item_completed", "item":{"type":"AgentMessage", "content":[{"type":"Text", "text":raw}]}}}),
+        ] {
+            let lines = vec![entry.to_string()];
+            let activity = analyze(AgentKind::Codex, &lines).unwrap();
+            let expected = super::super::codex_heartbeat::display_text(raw);
+            assert_eq!(activity.text.as_deref(), Some(expected));
+            assert_eq!(
+                super::super::transcript_full::latest_text_from_lines(AgentKind::Codex, &lines)
+                    .unwrap()
+                    .text,
+                expected
+            );
+        }
     }
 
     #[test]

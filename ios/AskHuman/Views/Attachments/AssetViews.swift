@@ -157,6 +157,9 @@ struct AssetPage: View {
     /// Whether the page is on show or beside the one that is. Only such a page is fetched and drawn; a
     /// page further off is a placeholder (and lets go of its picture), as a gallery may hold many.
     var near = true
+    /// How far the page keeps clear of the top and the sides: the bar of a viewer lies over those edges. A picture rests
+    /// inside this area and, once zoomed, can be dragged out under the bar; the other states of the page stay inside it.
+    var clear = EdgeInsets()
     var onReady: (URL) -> Void = { _ in }
 
     @Environment(AppStore.self) private var store
@@ -179,9 +182,9 @@ struct AssetPage: View {
         Group {
             switch phase {
             case .loading(let fraction):
-                waiting(fraction)
+                waiting(fraction).padding(clear)
             case .ready(let url):
-                if near { AssetContent(macId: macId, url: url, asset: asset) } else { waiting(nil) }
+                if near { AssetContent(macId: macId, url: url, asset: asset, clear: clear) } else { waiting(nil).padding(clear) }
             case .failed(let message):
                 ContentUnavailableView {
                     Label("Could not open the file", systemImage: "exclamationmark.triangle")
@@ -190,6 +193,7 @@ struct AssetPage: View {
                 } actions: {
                     Button("Try again") { attempt += 1 }.buttonStyle(.borderedProminent)
                 }
+                .padding(clear)
             }
         }
         .task(id: Fetch(attempt: attempt, near: near)) {
@@ -253,13 +257,18 @@ private struct AssetContent: View {
     let macId: String
     let url: URL
     let asset: AssetRef
+    var clear = EdgeInsets()
     @Environment(AppStore.self) private var store
 
     @ViewBuilder
     var body: some View {
         if asset.kind == .image {
-            PictureContent(url: url) { AttachmentDrag.provider(store: store, macId: macId, asset: asset) }
-                .accessibilityIdentifier("viewer-picture-\(asset.assetId)")
+            // `viewer-picture-<id>` is the picture itself (its frame moves and grows with the zoom); `viewer-zoom-<id>` is the
+            // area it can be moved in, which runs under the bar of the viewer.
+            PictureContent(
+                url: url, name: asset.name, identifier: "viewer-picture-\(asset.assetId)", clear: clear
+            ) { AttachmentDrag.provider(store: store, macId: macId, asset: asset) }
+                .accessibilityIdentifier("viewer-zoom-\(asset.assetId)")
         } else {
             fileContent.contentShape(.rect).attachmentDrag(macId: macId, asset: asset)
                 .accessibilityIdentifier("asset-file-preview")
@@ -295,16 +304,27 @@ private struct AssetContent: View {
 /// while it scrolls does not hand the image view a new (and so newly decoded) image each time.
 private struct PictureContent: View {
     @State private var picture: UIImage?
+    let name: String
+    let identifier: String
+    let clear: EdgeInsets
     let dragProvider: () -> NSItemProvider
 
-    init(url: URL, dragProvider: @escaping () -> NSItemProvider) {
+    init(url: URL, name: String, identifier: String, clear: EdgeInsets, dragProvider: @escaping () -> NSItemProvider) {
         _picture = State(initialValue: UIImage(contentsOfFile: url.path))
+        self.name = name
+        self.identifier = identifier
+        self.clear = clear
         self.dragProvider = dragProvider
     }
 
     var body: some View {
         if let picture {
-            ZoomableImage(image: picture, dragProvider: dragProvider).ignoresSafeArea(edges: .bottom)
+            ZoomableImage(
+                image: picture,
+                clear: NSDirectionalEdgeInsets(top: clear.top, leading: clear.leading, bottom: clear.bottom, trailing: clear.trailing),
+                label: name, identifier: identifier, dragProvider: dragProvider
+            )
+            .ignoresSafeArea(edges: .bottom)
         } else {
             ContentUnavailableView("Not a readable image", systemImage: "photo.badge.exclamationmark")
         }

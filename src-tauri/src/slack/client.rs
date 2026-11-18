@@ -58,10 +58,6 @@ impl SlackClient {
         &self.http
     }
 
-    pub fn bot_token(&self) -> &str {
-        &self.bot_token
-    }
-
     pub fn app_token(&self) -> &str {
         &self.app_token
     }

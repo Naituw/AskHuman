@@ -1391,6 +1391,7 @@ mod tests {
 
     fn failure(id: &str, turn: Option<&str>) -> TurnResult {
         TurnResult {
+            notify: None,
             id: id.into(),
             outcome: TurnOutcome::Failed,
             source: Some("codexDesktop".into()),

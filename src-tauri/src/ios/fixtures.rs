@@ -122,6 +122,57 @@ fn generate_crypto_fixture() -> Value {
         ts: 1_792_900_001_000,
         b: json!({"k": "ask", "mac": "Home Mac", "text": "Which approach?"}),
     };
+    // A list stream as the Mac compresses it: several alike Agents, one title in a script that is not ASCII, so
+    // that a receiver proves it keeps every byte of UTF-8 across the inflate.
+    let agents: Vec<Value> = (0..6)
+        .map(|n| {
+            json!({
+                "key": format!("claude:session-{n}"),
+                "kind": "claude",
+                "kindLabel": "Claude Code",
+                "sessionId": format!("session-{n}"),
+                "title": if n == 3 { "\u{91cd}\u{6784}\u{6a21}\u{5757} 3".to_string() } else { format!("Refactor module {n}") },
+                "project": {"key": "/Users/me/project", "name": "project"},
+                "state": "working",
+                "startedAt": 1_792_899_000_000i64 + n,
+                "lastActivityAt": 1_792_900_000_000i64 + n,
+                "activeElapsedSecs": 120,
+                "turnSteps": 7,
+                "currentTool": "Shell: cargo test",
+                "canInterject": {"ok": true},
+                "followed": false,
+            })
+        })
+        .collect();
+    let snapshot = Plain {
+        i: crypto::b64u(&[7u8; 16]),
+        t: "agents.snapshot".into(),
+        ts: 1_792_900_002_000,
+        b: json!({"epoch": "fixtureepoch0001", "rev": 3, "agents": agents}),
+    };
+    let compressed_sample = |name: &str, nonce: &[u8; 12], plain: &Plain| {
+        let plaintext = serde_json::to_string(plain).unwrap();
+        let env = envelope::seal_compressed_with_nonce(
+            &keys.m2p,
+            Scope::Topic(&down),
+            mac_id,
+            KID_PAIR,
+            nonce,
+            plaintext.as_bytes(),
+        );
+        assert_eq!(env.z, Some(1));
+        json!({
+            "name": name,
+            "scope": "topic",
+            "topic": down,
+            "from": mac_id,
+            "kid": KID_PAIR,
+            "key": hex(&keys.m2p),
+            "nonce": hex(nonce),
+            "plaintext": plaintext,
+            "envelope": String::from_utf8(envelope::encode(&env)).unwrap(),
+        })
+    };
 
     json!({
         "version": 1,
@@ -167,7 +218,29 @@ fn generate_crypto_fixture() -> Value {
             sample(Scope::Topic(&pair_topic), "pairing channel message", &k_t, phone_id, KID_TICKET, &nonce12(3), &pair_req),
             sample(Scope::Push, "push payload", &keys.m2p, mac_id, KID_PAIR, &nonce12(4), &push),
         ],
+        // Not compared byte for byte (see `without_compressed`): what a DEFLATE encoder emits is not part of the
+        // protocol, and every receiver only has to open it.
+        "compressedEnvelopes": [
+            compressed_sample("compressed list stream (mac to phone)", &nonce12(5), &snapshot),
+        ],
     })
+}
+
+/// The fixture without the compressed samples. A compressed envelope is checked by opening it, not by regenerating
+/// it, so that a new version of the compression library cannot make the file look stale.
+fn without_compressed(mut fixture: Value) -> Value {
+    if let Some(object) = fixture.as_object_mut() {
+        object.remove("compressedEnvelopes");
+    }
+    fixture
+}
+
+fn read_crypto_fixture() -> Value {
+    serde_json::from_str(
+        &std::fs::read_to_string(fixture_path("crypto.json"))
+            .expect("crypto fixture exists (run with UPDATE_WIRE_FIXTURES=1)"),
+    )
+    .expect("crypto fixture is valid JSON")
 }
 
 #[test]
@@ -179,13 +252,10 @@ fn crypto_fixture_matches_the_implementation() {
         text.push('\n');
         std::fs::write(&path, text).expect("write crypto fixture");
     }
-    let on_disk: Value = serde_json::from_str(
-        &std::fs::read_to_string(&path)
-            .expect("crypto fixture exists (run with UPDATE_WIRE_FIXTURES=1)"),
-    )
-    .expect("crypto fixture is valid JSON");
+    let on_disk = read_crypto_fixture();
     assert_eq!(
-        on_disk, generated,
+        without_compressed(on_disk),
+        without_compressed(generated),
         "ios/Fixtures/wire-v1/crypto.json is stale; run UPDATE_WIRE_FIXTURES=1 cargo test ios::fixtures"
     );
 }
@@ -209,6 +279,46 @@ fn crypto_fixture_envelopes_decrypt_and_reject_a_wrong_scope() {
             Scope::Push => Scope::Topic("ah/askhuman01/d/other"),
         };
         assert!(envelope::open(&key, wrong, &env).is_err());
+    }
+}
+
+/// The compressed samples of the file (the ones the Swift package opens too) open to their plaintext, and nothing
+/// about them is taken on trust: the marker is authenticated, the scope still binds, and the plaintext is much
+/// shorter on the wire than it is.
+#[test]
+fn compressed_fixture_envelopes_open_to_their_plaintext_and_cannot_be_altered() {
+    let fixture = read_crypto_fixture();
+    let samples = fixture["compressedEnvelopes"]
+        .as_array()
+        .expect("compressedEnvelopes (run with UPDATE_WIRE_FIXTURES=1)");
+    assert!(!samples.is_empty());
+    for item in samples {
+        let key: [u8; 32] = decode_hex(item["key"].as_str().unwrap())
+            .try_into()
+            .unwrap();
+        let topic = item["topic"].as_str().unwrap();
+        let text = item["envelope"].as_str().unwrap();
+        let env = envelope::parse(text.as_bytes()).unwrap();
+        assert_eq!(env.z, Some(1));
+        let plaintext = item["plaintext"].as_str().unwrap();
+        assert_eq!(
+            envelope::open(&key, Scope::Topic(topic), &env).unwrap(),
+            plaintext.as_bytes()
+        );
+        assert!(
+            text.len() * 2 < plaintext.len(),
+            "{} bytes on the wire for {} of plaintext",
+            text.len(),
+            plaintext.len()
+        );
+
+        // The marker is part of what is authenticated: without it the same ciphertext does not open.
+        let mut unmarked = env.clone();
+        unmarked.z = None;
+        assert!(envelope::open(&key, Scope::Topic(topic), &unmarked).is_err());
+        // Neither does it open on another topic, nor as a push (which is never compressed).
+        assert!(envelope::open(&key, Scope::Topic("ah/askhuman01/d/other"), &env).is_err());
+        assert!(envelope::open(&key, Scope::Push, &env).is_err());
     }
 }
 

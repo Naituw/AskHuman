@@ -587,24 +587,22 @@ describe("the quick-reply menu", () => {
       expect(menu(wrapper).exists()).toBe(true);
     });
 
-    it("does not open on top of the todo popover, nor the other way round", async () => {
+    it("keeps ⌘/Ctrl+T from reaching the todo list while the menu is open", async () => {
       const { wrapper } = await mountRequest();
-      press(window, { key: "t", code: "KeyT", ...PRIMARY });
-      await flushPromises();
-      expect(wrapper.find(".todo-popover").exists()).toBe(true);
-      press(window, { key: "k", code: "KeyK", ...PRIMARY });
-      await flushPromises();
-      expect(menu(wrapper).exists()).toBe(false);
-      expect(wrapper.find(".todo-popover").exists()).toBe(true);
-
-      press(window, { key: "Escape" });
-      await flushPromises();
-      expect(wrapper.find(".todo-popover").exists()).toBe(false);
       await openWithKey(wrapper);
       press(window, { key: "t", code: "KeyT", ...PRIMARY });
       await flushPromises();
-      expect(wrapper.find(".todo-popover").exists()).toBe(false);
+      // ⌘/Ctrl+T would have put the caret in the list's add row (or opened the Todos window).
+      expect(wrapper.find(".todo-add-input").exists()).toBe(false);
+      expect(calls("open_todos")).toEqual([]);
       expect(menu(wrapper).exists()).toBe(true);
+
+      press(window, { key: "Escape" });
+      await flushPromises();
+      expect(menu(wrapper).exists()).toBe(false);
+      press(window, { key: "t", code: "KeyT", ...PRIMARY });
+      await flushPromises();
+      expect(wrapper.find(".todo-add-input").exists()).toBe(true);
     });
 
     it("keeps an image pasted into the menu or the note away from the answer", async () => {

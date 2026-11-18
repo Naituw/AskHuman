@@ -81,7 +81,7 @@ GUI Host 负责设置、历史、Agent、Interject 窗口与托盘，不进入�
 2. CLI 连 Daemon（不在则 detach 拉起 + 握手）；提交 `AskRequest`，Daemon 分配 `request_id`。
 3. Daemon 为该请求建一套 Coordinator：IM Channel 作为进程内任务（共享那条长连接，经 Router 按 `out_track_id`/`user_id` 分流）；Popup Channel 则 spawn 一个 GUI Helper 进程并经 IPC 下发题目。
 4. 任一渠道先到终态 → Coordinator 采纳它、cancel 其余（通知 GUI Helper 收尾、取消 IM 任务）。
-5. Daemon 跑 `emit_result`（图片落盘到临时目录）→ 把渲染好的结果文本与退出码流式回 CLI；CLI 原样打印 stdout 并退出；GUI Helper 答完即退。
+5. Daemon 跑 `render_result`（图片落盘到临时目录）→ 把渲染好的结果文本与退出码流式回 CLI；CLI 原样打印 stdout 并退出；GUI Helper 答完即退。
 6. CLI 被 Ctrl-C / 杀掉 → socket 断开 → Daemon 先从活动 registry 移除该请求并关闭 GUI，再在既有
    有界收尾窗口内等待所有 IM 渠道把卡片更新为 terminal 状态；完成或超时后释放请求。
 
@@ -97,7 +97,7 @@ GUI Host 负责设置、历史、Agent、Interject 窗口与托盘，不进入�
 | A6 | 任务契约复用（D-D） | CLI↔Daemon 与 Daemon↔GUI 复用同一套「任务契约」（`show` 是 `submit` 的子集），减少协议面。 |
 | A7 | GUI Helper 鉴权（D-E） | Daemon spawn GUI Helper 时下发**一次性 token**（argv/env），GUI 连回出示，防本机其它进程冒充。 |
 | A8 | stdout 洁净 / 警告路由（D-C） | Daemon 事件分型：`result/stdout` 类 → 该请求对应 CLI 的 **stdout** 原样打印；`warn/log` 类 → 该 CLI 的 **stderr** + `daemon.log`。daemon 自身永不污染任何 stdout。 |
-| A9 | 附件传递（D-A） | 同机同用户同文件系统 → 传**路径**而非字节。Daemon 跑 `emit_result` 集中落盘（图片 base64 由各渠道/GUI Helper 回传 Daemon 统一写盘）；CLI 只打印。 |
+| A9 | 附件传递（D-A） | 同机同用户同文件系统 → 传**路径**而非字节。Daemon 跑 `render_result` 集中落盘（图片 base64 由各渠道/GUI Helper 回传 Daemon 统一写盘）；CLI 只打印。 |
 | A10 | 临时文件清理 | Daemon 常驻，**启动时 + 定期**清理过期的 `temp/askhuman/<request_id>/` 目录（修历史「从不清理」的小泄漏）。 |
 | A11 | 请求上下文（D-B） | `-f` 解析留在 CLI（输出绝对路径 → **不传 cwd**，并保留「文件不存在即退 1」）；**硬性上送 source name**（来自调用方环境变量 `ASKHUMAN_ENV_SOURCE_NAME`）；上送 CLI 解析好的 `lang`（使 `auto` 跟随调用方而非 Daemon）；`request_id` 由 **Daemon 分配**（权威，用于临时目录）。 |
 | A12 | 配置实时生效（D-F） | Daemon **监听 `~/.askhuman/config.json`**（`notify`，去抖、处理原子写/rename）：变更即重载 + 比对差异重连/增删 IM 连接 + 刷新缓存；并经 Daemon↔GUI IPC 向活动 GUI Helper 下发 `configChanged` → 弹窗实时切主题/语言。独立设置窗口仍在自身进程内更新自己。 |
@@ -123,7 +123,7 @@ GUI Host 负责设置、历史、Agent、Interject 窗口与托盘，不进入�
 - IPC Server：接受 CLI 连接（提交任务）与 GUI Helper 连接（出示 token）。
 - 请求管理：每个活动 `request_id` 一套 `Coordinator` + `Preemption` + 一组 Channel 任务（复用现有 `run_conversation` / `MessagingChannel` / `Channel` 抽象）。
 - 长连接持有 + Router：每种 IM 一条长连接，按 `out_track_id`（卡片回调）/`user_id`（聊天图片/文件）路由到对应请求；钉钉卡片回调的 3 秒 ACK 由 Daemon 处理（空响应即时 ACK，卡片灰显走 OpenAPI updateCard）。
-- `emit_result`：集中落盘 + 渲染结果文本，回传发起该请求的 CLI。
+- `render_result`：集中落盘 + 渲染结果文本，回传发起该请求的 CLI。
 - Config watch：见 A12。
 - 生命周期：见 P1–P4；日志写 `~/.askhuman/daemon.log`。
 

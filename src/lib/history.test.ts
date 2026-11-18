@@ -5,11 +5,13 @@ import {
   DEFAULT_SOURCE_NAME,
   agentKindOf,
   customSourceOf,
+  draftOf,
   groupHistorySessions,
   historySessionOf,
   historySessionToken,
   matchesHistorySession,
   shortSessionId,
+  shownReplies,
   workspaceNameOf,
 } from "./history";
 
@@ -165,4 +167,23 @@ describe("history session grouping", () => {
 it("shortens long ids but preserves short ids", () => {
   expect(shortSessionId("short")).toBe("short");
   expect(shortSessionId("1234567890")).toBe("12345678…");
+});
+
+describe("the unsent content of a cancelled ask (docs/specs/popup-draft-on-cancel.md D8)", () => {
+  const typed = { answers: [{ selectedOptions: ["No"], userInput: "text", images: [], files: [] }] };
+
+  it("belongs to a cancelled entry only", () => {
+    expect(draftOf(entry({ action: "cancel", draft: typed }))).toBe(typed);
+    expect(draftOf(entry({ action: "cancel" }))).toBeNull();
+    expect(draftOf(entry({ action: "cancel", draft: null }))).toBeNull();
+    // Whatever rides on a sent entry is not a draft.
+    expect(draftOf(entry({ action: "send", draft: typed }))).toBeNull();
+  });
+
+  it("is what the window shows as the reply of a cancelled entry, and never takes a sent answer's place", () => {
+    const sent = [{ selectedOptions: [], userInput: "answer", images: [], files: [] }];
+    expect(shownReplies(entry({ action: "cancel", draft: typed }))).toBe(typed.answers);
+    expect(shownReplies(entry({ action: "cancel" }))).toEqual([]);
+    expect(shownReplies(entry({ action: "send", answers: sent, draft: typed }))).toBe(sent);
+  });
 });

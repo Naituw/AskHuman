@@ -97,6 +97,7 @@ enum UIKitReport {
             ("moving-to-parent", controller.isMovingToParent), ("moving-from-parent", controller.isMovingFromParent),
         ] where on { head += " \(flag)" }
         if controller.transitionCoordinator != nil { head += " IN-TRANSITION" }
+        if #available(iOS 27.1, *), controller.preferredVerticalBarBehavior == .disabled { head += " vertical-bar-disabled" }
         lines.append(head)
 
         if let navigation = controller as? UINavigationController { describe(navigation: navigation, pad: pad, into: &lines) }
@@ -118,6 +119,7 @@ enum UIKitReport {
         let stack = navigation.viewControllers
         var line = "\(pad)  stack \(stack.count): \(stack.map { short($0, limit: 40) }.joined(separator: " > "))"
         line += "; bar hidden \(yesNo(navigation.isNavigationBarHidden))"
+        if #available(iOS 27.1, *) { line += "; vertical bar edge \(edge(navigation.traitCollection))" }
         if navigation.isViewLoaded {
             let bar = navigation.navigationBar
             line += ", frame \(rect(bar.frame)), alpha \(num(bar.alpha)), view hidden \(yesNo(bar.isHidden))"
@@ -146,7 +148,30 @@ enum UIKitReport {
         ]
         if item.leftItemsSupplementBackButton { parts.append("left supplements back") }
         if item.searchController != nil { parts.append("search") }
+        if #available(iOS 27.1, *) { parts.append("bar compression \(compression(item.verticalBarCompressionBehavior))") }
         return parts.joined(separator: ", ")
+    }
+
+    /// The edge the system puts its vertical bar on, as the trait collection of a window or controller says it. "none"
+    /// is a layout with horizontal bars only. A navigation controller and the tab controller above it that name
+    /// different edges are laying their bars out differently, which is what a lost button group looked like.
+    @available(iOS 27.1, *)
+    private static func edge(_ traits: UITraitCollection) -> String {
+        switch traits.verticalBarEdge {
+        case .leading: "leading"
+        case .trailing: "trailing"
+        default: "none"
+        }
+    }
+
+    /// What a page asks for when the vertical bar holds the tab bar and its buttons and cannot hold both.
+    @available(iOS 27.1, *)
+    private static func compression(_ behavior: UIVerticalBarCompressionBehavior) -> String {
+        switch behavior {
+        case .prefersBarItems: "prefers items"
+        case .prefersTabBar: "prefers tab bar"
+        default: "automatic"
+        }
     }
 
     private static func describe(tabs: UITabBarController, pad: String, into lines: inout [String]) {
@@ -154,6 +179,7 @@ enum UIKitReport {
         if #available(iOS 18.0, *) {
             line += ", mode \(tabs.mode.rawValue), tab bar hidden \(yesNo(tabs.isTabBarHidden)), sidebar hidden \(yesNo(tabs.sidebar.isHidden))"
         }
+        if #available(iOS 27.1, *) { line += ", vertical bar edge \(edge(tabs.traitCollection))" }
         if tabs.isViewLoaded {
             line += ", bar \(rect(tabs.tabBar.frame)) \(tabs.tabBar.isHidden ? "hidden" : "shown") alpha \(num(tabs.tabBar.alpha))"
         }
@@ -342,8 +368,10 @@ enum UIKitReport {
         guard navigation.isViewLoaded else { return text + ", view not loaded" }
         let bar = navigation.navigationBar
         text += ", bar \(navigation.isNavigationBarHidden ? "hidden" : "shown") \(rect(bar.frame)) alpha \(num(bar.alpha))"
+        if #available(iOS 27.1, *) { text += ", edge \(edge(navigation.traitCollection))" }
         if let item = navigation.topViewController?.navigationItem {
             text += ", item: back \(item.hidesBackButton ? "hidden" : "allowed") left \(item.leftBarButtonItems?.count ?? 0) right \(item.rightBarButtonItems?.count ?? 0) title \(item.title == nil ? "none" : "set")"
+            if #available(iOS 27.1, *) { text += " compression \(compression(item.verticalBarCompressionBehavior))" }
         }
         return text
     }
@@ -447,7 +475,9 @@ enum UIKitReport {
     }
 
     private static func traits(_ traits: UITraitCollection) -> String {
-        "h=\(sizeClass(traits.horizontalSizeClass)) v=\(sizeClass(traits.verticalSizeClass)) idiom=\(idiom(traits.userInterfaceIdiom)) \(traits.userInterfaceStyle == .dark ? "dark" : "light")"
+        var text = "h=\(sizeClass(traits.horizontalSizeClass)) v=\(sizeClass(traits.verticalSizeClass)) idiom=\(idiom(traits.userInterfaceIdiom)) \(traits.userInterfaceStyle == .dark ? "dark" : "light")"
+        if #available(iOS 27.1, *) { text += " bar-edge=\(edge(traits))" }
+        return text
     }
 
     static func num(_ value: CGFloat) -> String {

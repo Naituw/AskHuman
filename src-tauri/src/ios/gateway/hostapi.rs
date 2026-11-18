@@ -47,6 +47,8 @@ impl InterjectResult {
 #[derive(Debug, Clone)]
 pub struct StagedFile {
     pub name: String,
+    // `is_image` is derived from the media type before staging; nothing reads it afterwards.
+    #[allow(dead_code)]
     pub mime: String,
     pub path: PathBuf,
     pub size: u64,

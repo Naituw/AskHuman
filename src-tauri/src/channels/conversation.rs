@@ -150,9 +150,8 @@ pub struct QuestionCtx<'a> {
     pub select_only: bool,
     /// 单选：每题恰好一个选择（默认多选）。
     pub single: bool,
-    /// 0 基序号与总题数（供渠道按需展示进度）。
+    /// 0-based question index; the header already carries the total question count.
     pub index: usize,
-    pub total: usize,
     /// 当前界面语言（渠道据此本地化发给用户的提示/按钮）。
     pub lang: Lang,
 }
@@ -427,7 +426,6 @@ pub async fn run_conversation(
             select_only: request.select_only,
             single: request.single,
             index,
-            total: n,
             lang,
         };
         match channel.ask_question(&ctx, &preempt).await {

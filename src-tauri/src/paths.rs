@@ -421,12 +421,8 @@ pub fn pi_sessions_dir() -> PathBuf {
     pi_agent_dir().join("sessions")
 }
 
-/// Shared rules for local Antigravity clients; agy availability is a separate host diagnostic.
-pub fn antigravity_rule_file() -> PathBuf {
-    antigravity_rule_file_in(&integration_home())
-}
-
-/// The shared Antigravity rule below an explicit home directory.
+/// The standalone Antigravity rule file of the earlier design, below an explicit home directory.
+/// The plugin replaced it; only the migration cleanup still looks at it.
 pub fn antigravity_rule_file_in(home_dir: &Path) -> PathBuf {
     home_dir.join(".gemini/config/rules/askhuman-antigravity.md")
 }
@@ -434,6 +430,50 @@ pub fn antigravity_rule_file_in(home_dir: &Path) -> PathBuf {
 /// Global MCP configuration for Google Antigravity.
 pub fn antigravity_mcp_config_json() -> PathBuf {
     integration_home().join(".gemini/config/mcp_config.json")
+}
+
+/// Antigravity's per-user configuration directory below an explicit home directory. The App and
+/// `agy` read the same one.
+pub fn antigravity_config_dir_in(home_dir: &Path) -> PathBuf {
+    home_dir.join(".gemini/config")
+}
+
+/// The directories in which the App (`antigravity`) and `agy` (`antigravity-cli`) keep their
+/// conversations, one subdirectory per conversation id.
+pub fn antigravity_brain_dirs_in(home_dir: &Path) -> [PathBuf; 2] {
+    ["antigravity", "antigravity-cli"]
+        .map(|surface| home_dir.join(".gemini").join(surface).join("brain"))
+}
+
+/// The files in which the App (`antigravity`) and `agy` (`antigravity-cli`) summarize their
+/// conversations, one row each. A private format: only read, and only to seed a list.
+pub fn antigravity_summary_dbs_in(home_dir: &Path) -> [PathBuf; 2] {
+    ["antigravity", "antigravity-cli"].map(|surface| {
+        home_dir
+            .join(".gemini")
+            .join(surface)
+            .join("conversation_summaries.db")
+    })
+}
+
+/// The directory of the AskHuman plugin below an explicit home directory.
+pub fn antigravity_plugin_dir_in(home_dir: &Path) -> PathBuf {
+    antigravity_config_dir_in(home_dir).join("plugins/askhuman")
+}
+
+/// The interaction rules the AskHuman plugin carries.
+pub fn antigravity_plugin_rules_file() -> PathBuf {
+    antigravity_plugin_dir_in(&integration_home()).join("rules/AGENTS.md")
+}
+
+/// The MCP server declaration the AskHuman plugin carries (MCP mode only).
+pub fn antigravity_plugin_mcp_config_json() -> PathBuf {
+    antigravity_plugin_dir_in(&integration_home()).join("mcp_config.json")
+}
+
+/// This instance's ownership record of the AskHuman plugin, below its configuration directory.
+pub fn antigravity_plugin_ledger_in(config_dir: &Path) -> PathBuf {
+    config_dir.join("antigravity-plugin.json")
 }
 
 #[cfg(test)]

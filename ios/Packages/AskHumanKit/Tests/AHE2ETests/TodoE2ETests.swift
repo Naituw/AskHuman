@@ -165,20 +165,30 @@ final class TodoE2ETests: E2ECase {
         XCTAssertEqual(gone.list?.pendingTotal, 2, "a refusal still brings the phone up to date")
     }
 
-    // MARK: adding from a request
+    // MARK: changing the list of a request
 
-    /// What "Add" does on the request page's "Add todo…" sheet: the same composer, over the real gateway.
+    /// The list of todos on the request page (docs/specs/todo-list-actions.md): the same picker, over the real gateway,
+    /// with its queue read.
+    @MainActor
+    private static func requestList(engine: PhoneEngine, item: InboxItem, mac: MacState?) async throws -> RequestTodoPicker {
+        let form = AnswerComposer(key: item.id, ask: try XCTUnwrap(item.view?.ask), drafts: MemoryDraftStore())
+        let picker = RequestTodoPicker(
+            backend: engine, composer: form, macId: item.macId, projectKey: item.summary.project.key, mac: mac
+        )
+        await picker.load()
+        return picker
+    }
+
+    /// What the page's add row does with a text, until the Mac has answered the write: the todo is the Mac's by then.
     @MainActor
     private static func addFromTheRequestPage(
-        engine: PhoneEngine, item: InboxItem, text: String, mac: MacState?
-    ) async -> (sent: Bool, failure: QuickTodoFailure?) {
-        let composer = RequestTodoComposer(
-            backend: engine, macId: item.macId, macName: item.macName, projectKey: item.summary.project.key,
-            projectName: item.summary.project.name, mac: mac
-        )
-        composer.text = text
-        let sent = await composer.send()
-        return (sent, composer.failure)
+        picker: RequestTodoPicker, text: String
+    ) async -> RequestTodoPicker.AddResult {
+        let result = picker.add(text)
+        for _ in 0..<200 where picker.todos.contains(where: { picker.isSending($0.id) }) {
+            try? await Task.sleep(nanoseconds: 50_000_000)
+        }
+        return result
     }
 
     /// A request that is still waiting names its project, and the Mac takes a todo for it even though that
@@ -198,10 +208,17 @@ final class TodoE2ETests: E2ECase {
         let macState = await phone.state().macs.first
 
         let engine = phone.engine
-        let first = await Self.addFromTheRequestPage(engine: engine, item: item, text: "Cover the rollback path", mac: macState)
-        XCTAssertTrue(first.sent, "\(String(describing: first.failure))")
-        let second = await Self.addFromTheRequestPage(engine: engine, item: item, text: "Ask about the retention", mac: macState)
-        XCTAssertTrue(second.sent, "\(String(describing: second.failure))")
+        let picker = try await Self.requestList(engine: engine, item: item, mac: macState)
+        let loaded = await picker.phase
+        XCTAssertEqual(loaded, .loaded, "the Mac answers for the project of a request that is still waiting")
+        let first = await Self.addFromTheRequestPage(picker: picker, text: "Cover the rollback path")
+        XCTAssertEqual(first, .added)
+        let second = await Self.addFromTheRequestPage(picker: picker, text: "Ask about the retention")
+        XCTAssertEqual(second, .added)
+        let shown = await picker.todos.map(\.text)
+        XCTAssertEqual(shown, ["Cover the rollback path", "Ask about the retention"], "the list is what the Mac answered")
+        let notice = await picker.notice
+        XCTAssertNil(notice, "the Mac took both writes")
 
         // The Mac's own list agrees, in order, and the project is in its project list now under the same id.
         let onMac = try await todo(["list"], in: project)

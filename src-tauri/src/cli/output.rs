@@ -381,6 +381,12 @@ pub fn render_json(
         user_input: Option<String>,
         #[serde(skip_serializing_if = "Vec::is_empty")]
         files: Vec<String>,
+        /// The todos the answer picked from the live queue, whose text is in `user_input`. Only a
+        /// Stop confirmation of a project (`todo_queue`) says so, and only the Stop hook reads it:
+        /// it must deliver that text in full with the todos' attachments, like a snapshot chip,
+        /// instead of treating it as a typed instruction. Other questions' JSON is unchanged.
+        #[serde(skip_serializing_if = "Vec::is_empty")]
+        todo_ids: Vec<String>,
     }
 
     let action = match result.action {
@@ -417,12 +423,18 @@ pub fn render_json(
                 .filter_map(|sel| opts.iter().position(|o| &o.text == sel))
                 .collect();
 
+            let todo_ids = if request.todo_queue {
+                ans.todo_ids.clone()
+            } else {
+                Vec::new()
+            };
             answers.push(JsonAnswer {
                 question_index: i,
                 selected_options: ans.selected_options.clone(),
                 selected_indices,
                 user_input,
                 files,
+                todo_ids,
             });
         }
     }
@@ -705,6 +717,40 @@ mod tests {
         .unwrap();
         assert_eq!(v["answers"].as_array().unwrap().len(), 1);
         assert_eq!(v["answers"][0]["question_index"], 1);
+    }
+
+    #[test]
+    fn json_names_the_picked_todos_only_for_a_live_todo_queue() {
+        // A Stop confirmation of a project (`todo_queue`) lists the live queue; the Stop hook needs
+        // to know which todos the answer carries (docs/specs/todo-list-actions.md D10).
+        let mut live = req(vec![q(&["Continue", "End"])]);
+        live.todo_queue = true;
+        let mut picked = answered(&[], Some("Fix the flaky test"), &["/tmp/log.txt"]);
+        picked.todo_ids = vec!["t1".into()];
+        let result = ChannelResult {
+            action: ChannelAction::Send,
+            answers: vec![picked.clone()],
+            source_channel_id: "popup".into(),
+            annotations: Vec::new(),
+        };
+        let v: serde_json::Value =
+            serde_json::from_str(&render_json(&live, &result, &[vec![]], Lang::En)).unwrap();
+        assert_eq!(v["answers"][0]["todo_ids"][0], "t1");
+
+        // An ordinary question's JSON is the public contract and is left alone.
+        let plain = req(vec![q(&["Continue", "End"])]);
+        let v: serde_json::Value =
+            serde_json::from_str(&render_json(&plain, &result, &[vec![]], Lang::En)).unwrap();
+        assert!(v["answers"][0].get("todo_ids").is_none());
+
+        // And a live queue with nothing picked from it has no field either.
+        let none = ChannelResult {
+            answers: vec![answered(&["Continue"], None, &[])],
+            ..result
+        };
+        let v: serde_json::Value =
+            serde_json::from_str(&render_json(&live, &none, &[vec![]], Lang::En)).unwrap();
+        assert!(v["answers"][0].get("todo_ids").is_none());
     }
 
     #[test]

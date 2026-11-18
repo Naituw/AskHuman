@@ -18,10 +18,6 @@ struct RequestScreen: View {
     @State private var switching = false
     @State private var confirmCancel = false
     @State private var confirmDismiss = false
-    /// The "Add todo…" sheet is open (docs/specs/todo-quick-add.md §4.2).
-    @State private var addingTodo = false
-    /// The todo that was just added, while its note floats over the top of the page.
-    @State private var addedNote: TodoAddedNote?
     /// Keeps the history of the earlier exchanges of this request's session, when it has one (docs/specs/ios-session-history.md).
     @State private var historyHolder = RequestHistoryHolder()
 
@@ -35,7 +31,7 @@ struct RequestScreen: View {
 
     private var hasMore: Bool {
         guard let item = store.displayItem(id: id) else { return false }
-        return item.hasProject || item.view?.ask != nil || item.view?.confirm?.dismissIndex != nil || history != nil
+        return item.view?.ask != nil || item.view?.confirm?.dismissIndex != nil || history != nil
     }
 
     var body: some View {
@@ -82,29 +78,12 @@ struct RequestScreen: View {
         } message: {
             Text(store.requestErrors[id] ?? "")
         }
-        .sheet(isPresented: $addingTodo) { todoSheet }
         .overlay(alignment: .top) { if let history { SessionLoadingPill(history: history) } }
         .overlay(alignment: .bottomLeading) { if let history { SessionPullStateProbe(history: history) } }
-        .overlay(alignment: .top) {
-            if let note = addedNote {
-                TodoAddedPill(project: note.project)
-                    .padding(.top, 8)
-                    .transition(.move(edge: .top).combined(with: .opacity))
-                    .allowsHitTesting(false)
-            }
-        }
-        // The note goes by itself; a second todo added meanwhile has a note, and a timer, of its own.
-        .task(id: addedNote?.id) {
-            guard addedNote != nil else { return }
-            try? await Task.sleep(for: store.todoNoteHold)
-            if !Task.isCancelled { withAnimation(.easeOut(duration: 0.2)) { addedNote = nil } }
-        }
         .onChange(of: id) { _, _ in
             switching = false
             confirmCancel = false
             confirmDismiss = false
-            addingTodo = false
-            addedNote = nil
         }
         .task(id: id) {
             if let item = store.item(id: id) { await store.opened(item) }
@@ -132,11 +111,6 @@ struct RequestScreen: View {
                         .accessibilityIdentifier("request-menu-session-history")
                 }
                 if let item = store.displayItem(id: id) {
-                    // Always offered for a request with a project: when the Mac cannot be reached, the sheet says so.
-                    if item.hasProject {
-                        Button("Add todo…", systemImage: "text.badge.plus") { addingTodo = true }
-                            .accessibilityIdentifier("request-menu-add-todo")
-                    }
                     if item.view?.ask != nil {
                         Button("Cancel request", systemImage: "xmark.circle", role: .destructive) { confirmCancel = true }
                             .disabled(store.finished[id] != nil || !store.isOnline(macId: item.macId))
@@ -147,21 +121,6 @@ struct RequestScreen: View {
                 }
             } label: { Label("More", systemImage: "ellipsis") }
             .accessibilityIdentifier("request-menu")
-        }
-    }
-
-    /// The sheet that adds a todo to the request's project.
-    @ViewBuilder
-    private var todoSheet: some View {
-        if let item = store.displayItem(id: id), let composer = store.todoComposer(for: item) {
-            RequestTodoSheet(
-                composer: composer,
-                added: { project in
-                    addingTodo = false
-                    withAnimation(.spring(duration: 0.3)) { addedNote = TodoAddedNote(project: project) }
-                },
-                cancel: { addingTodo = false }
-            )
         }
     }
 
@@ -177,13 +136,6 @@ struct RequestScreen: View {
             switching = false
         }
     }
-}
-
-/// A todo that was just added from the page: the name of its project, and an identity of its own so that the
-/// next one added gets a timer of its own.
-private struct TodoAddedNote: Equatable {
-    let id = UUID()
-    let project: String
 }
 
 /// A request page that takes over from the page that was just sent: the receipt of that page stays
@@ -420,23 +372,46 @@ private struct HintCard: View {
     }
 }
 
+/// A request the phone knows by its summary, whose full text has not come yet. It is only on its way while the link to
+/// its Mac is up: the line under the summary says what is wrong with the link otherwise, as the forms' bars do
+/// (`RequestConnectionNotice`), and is the spinner and "Loading…" when nothing is.
 private struct LoadingRequest: View {
     let item: InboxItem
+    @Environment(AppStore.self) private var store
 
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 16) {
                 RequestHeader(item: item)
                 Text(MarkdownParser.plainText(item.summary.preview)).font(.body)
-                HStack(spacing: 8) {
-                    ProgressView()
-                    Text("Loading the full request…").foregroundStyle(.secondary)
-                }
+                status
             }
             .readableWidth()
             .padding()
         }
         .background(Color(.systemGroupedBackground))
+    }
+
+    @ViewBuilder
+    private var status: some View {
+        let notice = store.state.requestConnection(macId: item.macId).notice(
+            offlineText: "The Mac is offline. The request loads when it is back.",
+            updatingText: "Your Mac is updating. The request loads when it is back."
+        )
+        HStack(spacing: 8) {
+            if let notice {
+                if notice.progressing {
+                    ProgressView()
+                } else {
+                    Image(systemName: "wifi.exclamationmark").foregroundStyle(notice.color).accessibilityHidden(true)
+                }
+                Text(notice.text).foregroundStyle(notice.color).accessibilityIdentifier("request-connection")
+            } else {
+                ProgressView()
+                Text("Loading the full request…").foregroundStyle(.secondary).accessibilityIdentifier("request-loading")
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
     }
 }
 

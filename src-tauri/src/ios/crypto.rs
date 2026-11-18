@@ -199,6 +199,8 @@ pub fn aead_open(
 }
 
 /// Constant-time equality for secrets and tokens.
+// Nothing in the Mac code compares secrets or tokens today (AEAD verifies the envelopes).
+#[allow(dead_code)]
 pub fn ct_eq(a: &[u8], b: &[u8]) -> bool {
     use subtle::ConstantTimeEq;
     a.len() == b.len() && bool::from(a.ct_eq(b))

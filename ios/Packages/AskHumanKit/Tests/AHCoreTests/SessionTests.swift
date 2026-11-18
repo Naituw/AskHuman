@@ -568,17 +568,52 @@ final class SessionTests: XCTestCase {
 
     // MARK: clocks and tampering
 
-    func testMessagesWithAStaleClockAreDroppedAndFlagged() async throws {
+    func testLateMessagesAreDroppedWithoutAClockWarning() async throws {
         let h = Harness()
         await h.pair()
+        let phoneId = h.mac.pairedPhones[0]
         let stale = Plain(
             t: RequestNew.type, ts: h.clock.nowMs() - Wire.clockSkewMs - 60_000,
-            b: try AHJSON.tree(RequestNew(rev: 99, request: sampleAsk(), full: true))
+            b: try AHJSON.tree(RequestNew(rev: 1, request: sampleAsk(), full: true))
         )
-        await h.mac.sendRaw(plain: stale, to: h.mac.pairedPhones[0])
-        await eventually("clock skew flag") { await h.state().clockSkew }
-        let items = await h.state().inbox.count
-        XCTAssertEqual(items, 0)
+        await h.mac.sendRaw(plain: stale, to: phoneId)
+        let fresh = sampleAsk()
+        await h.mac.deliver(fresh)
+        await eventually("the fresh request arrives") { await h.state().inbox.contains { $0.requestId == fresh.id } }
+        let state = await h.state()
+        XCTAssertEqual(state.inbox.map(\.requestId), [fresh.id])
+        XCTAssertFalse(state.clockSkew)
+    }
+
+    func testClockWarningTracksTheCurrentHelloAndClearsOnSuccess() async throws {
+        let h = Harness()
+        await pairWithASilentMac(h)
+        let phoneId = h.mac.pairedPhones[0]
+        let hello = try unwrap(h.mac.received(Wire.T.hello).first)
+        let nonce = try hello.body(as: Hello.self).nonce
+        XCTAssertEqual(hello.i, nonce)
+
+        let error = ErrorBody(ref: nonce, code: "clock_skew")
+        let rejection = Plain(
+            t: ErrorBody.type, ts: h.clock.nowMs() - Wire.clockSkewMs - 60_000, b: try AHJSON.tree(error)
+        )
+        await h.mac.sendRaw(plain: rejection, to: phoneId)
+        await eventually("the out-of-window handshake reply flags skew") { await h.state().clockSkew }
+        let link = await h.state().macs.first?.link
+        XCTAssertEqual(link, .connecting)
+
+        await h.mac.sendHelloSync(to: phoneId, nonce: nonce)
+        await eventually("the successful handshake clears the warning") {
+            let state = await h.state()
+            return state.macs.first?.link == .online && !state.clockSkew
+        }
+
+        await h.mac.sendDown(error, to: phoneId)
+        let fresh = sampleAsk()
+        await h.mac.deliver(fresh)
+        await eventually("the next request arrives") { await h.state().inbox.contains { $0.requestId == fresh.id } }
+        let state = await h.state()
+        XCTAssertFalse(state.clockSkew)
     }
 
     func testMessagesWithTheWrongKeyAreDroppedSilently() async throws {

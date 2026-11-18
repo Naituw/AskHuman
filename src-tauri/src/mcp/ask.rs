@@ -629,7 +629,7 @@ earlier answer — follow its instructions). Answers to multiple questions come 
     /// End-of-task handoff for requesting a separate next task.
     #[tool(
         name = "whats_next",
-        description = "End-of-task handoff: ask the human for a separate next task. You MUST call \
+        description = "End-of-task handoff: ask the human for a separate next task, with your suggestions as `options`. Explicit background-check exceptions in the applicable interaction protocol do not require this handoff. Otherwise, you MUST call \
 this only after the current task is fully complete and before ending; use `ask` for any question, \
 decision, or next step within the current task. Optionally pass `message` with a completion report \
 and `files` with report documents. The human replies with the next task (start it immediately), or \
@@ -1019,6 +1019,7 @@ required.",
             crate::agents::AgentKind::Cursor,
             crate::agents::AgentKind::Grok,
             crate::agents::AgentKind::Pi,
+            crate::agents::AgentKind::Antigravity,
         ] {
             command.env_remove(crate::agents::detect::session_id_env_var(kind));
         }
@@ -1137,6 +1138,30 @@ fn show_last_scope(
     }
 }
 
+/// Antigravity writes the conversation of every MCP call under these namespaced `_meta` keys; the
+/// model cannot influence them.
+const ANTIGRAVITY_META_CONVERSATION: &str = "antigravity.google/conversation_id";
+const ANTIGRAVITY_META_ROOT_CONVERSATION: &str = "antigravity.google/root_conversation_id";
+
+/// The Antigravity session of a tool call. The session is the root conversation: a sub-agent's
+/// conversation reports its root, so everything the sub-agents ask belongs to the one session
+/// the human started. A call without the keys (an older host) binds nothing.
+fn antigravity_binding(meta: &RequestMetaObject) -> Option<crate::context_binding::AgentBinding> {
+    let uuid_at = |key: &str| {
+        meta.0
+            .get(key)
+            .and_then(Value::as_str)
+            .map(str::trim)
+            .and_then(|value| uuid::Uuid::parse_str(value).ok())
+    };
+    let session_id = uuid_at(ANTIGRAVITY_META_ROOT_CONVERSATION)
+        .or_else(|| uuid_at(ANTIGRAVITY_META_CONVERSATION))?;
+    Some(crate::context_binding::AgentBinding {
+        agent_kind: "antigravity".into(),
+        session_id: session_id.hyphenated().to_string(),
+    })
+}
+
 fn resolve_direct_binding(
     meta: &RequestMetaObject,
     token: Option<&str>,
@@ -1154,6 +1179,9 @@ fn resolve_direct_binding(
             agent_kind: "codex".into(),
             session_id: session_id.to_string(),
         });
+    }
+    if let Some(binding) = antigravity_binding(meta) {
+        return Some(binding);
     }
     token.and_then(|token| crate::context_binding::consume_token(token, tool_name))
 }
@@ -2309,6 +2337,58 @@ mod tests {
         );
     }
 
+    #[test]
+    fn antigravity_binding_is_the_root_conversation_the_host_injects() {
+        const ROOT: &str = "3f1c2a9e-8d4b-4a7e-9c1d-5b6e7f8a9b0c";
+        const CHILD: &str = "9a8b7c6d-5e4f-4a3b-8c2d-1e0f9a8b7c6d";
+        let bound = |session: &str| {
+            Some(crate::context_binding::AgentBinding {
+                agent_kind: "antigravity".into(),
+                session_id: session.into(),
+            })
+        };
+
+        // A root conversation reports itself as its own root.
+        let root = meta(json!({
+            "antigravity.google/conversation_id": ROOT,
+            "antigravity.google/root_conversation_id": ROOT,
+        }));
+        assert_eq!(resolve_direct_binding(&root, None, "ask"), bound(ROOT));
+
+        // A sub-agent's call belongs to the session the human started.
+        let child = meta(json!({
+            "antigravity.google/conversation_id": CHILD,
+            "antigravity.google/root_conversation_id": ROOT,
+            "antigravity.google/parent_conversation_id": ROOT,
+        }));
+        assert_eq!(resolve_direct_binding(&child, None, "ask"), bound(ROOT));
+
+        // A host that only names the conversation still identifies it.
+        let only_conversation = meta(json!({ "antigravity.google/conversation_id": ROOT }));
+        assert_eq!(
+            resolve_direct_binding(&only_conversation, None, "ask"),
+            bound(ROOT)
+        );
+
+        // Surrounding whitespace is tolerated; anything that is not a conversation id is not.
+        let padded = meta(json!({ "antigravity.google/conversation_id": format!(" {ROOT} ") }));
+        assert_eq!(resolve_direct_binding(&padded, None, "ask"), bound(ROOT));
+        for junk in [json!("not-a-uuid"), json!(7), json!(null), json!("")] {
+            let meta = meta(json!({ "antigravity.google/conversation_id": junk }));
+            assert!(resolve_direct_binding(&meta, None, "ask").is_none());
+        }
+        // An unusable root does not hide a usable conversation, and a usable root wins over it.
+        let bad_root = meta(json!({
+            "antigravity.google/conversation_id": ROOT,
+            "antigravity.google/root_conversation_id": "garbage",
+        }));
+        assert_eq!(resolve_direct_binding(&bad_root, None, "ask"), bound(ROOT));
+        assert!(resolve_direct_binding(&meta(json!({})), None, "ask").is_none());
+
+        // Only the host's namespaced keys are read; a bare key is not the host speaking.
+        assert!(antigravity_binding(&meta(json!({ "conversation_id": ROOT }))).is_none());
+    }
+
     #[cfg(unix)]
     #[tokio::test]
     async fn child_environment_removes_stale_native_sessions_and_sets_only_binding() {
@@ -2324,6 +2404,7 @@ mod tests {
                 crate::agents::AgentKind::Cursor,
                 crate::agents::AgentKind::Grok,
                 crate::agents::AgentKind::Pi,
+                crate::agents::AgentKind::Antigravity,
             ] {
                 command.env(crate::agents::detect::session_id_env_var(kind), "stale");
             }
@@ -2357,6 +2438,7 @@ mod tests {
             crate::agents::AgentKind::Cursor,
             crate::agents::AgentKind::Grok,
             crate::agents::AgentKind::Pi,
+            crate::agents::AgentKind::Antigravity,
         ] {
             assert!(!bound.contains(&format!(
                 "{}=stale",
@@ -2429,6 +2511,7 @@ mod tests {
         let tool = server.tool_router.get("whats_next").unwrap();
         let description = tool.description.as_deref().unwrap();
         assert!(description.contains("End-of-task handoff"));
+        assert!(description.contains("a separate next task, with your suggestions as `options`."));
         assert!(description.contains("use `ask` for any question"));
         let schema = Value::Object((*tool.input_schema).clone());
         let options_description = schema

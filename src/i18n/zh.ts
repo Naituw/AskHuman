@@ -184,8 +184,6 @@ export default {
       agentConsole: "在 Agent 窗口中查看",
       pin: "窗口置顶",
       todos: "项目待办",
-      // 请求有项目时，待办按钮展开「添加待办」浮层。
-      todosPopover: "添加项目待办（{shortcut}）",
       settings: "设置",
       history: "历史记录",
       update: "有可用更新",
@@ -193,6 +191,8 @@ export default {
     update: {
       title: "发现新版本 {version}",
       button: "更新",
+      dismiss: "忽略此版本",
+      dismissHint: "不再主动提示此版本；设置中仍可查看并更新，手动检查更新会恢复提示。",
       updating: "更新中…",
       applyHint: "后台将自动更新，当前问题和输入会保留。",
       startedHint: "更新已开始，问题和输入会保留，连接将自动恢复。",
@@ -239,22 +239,19 @@ export default {
       optionPrefix: "执行待办：",
       picked: "已选 {n} 条",
       chipHint: "选中后随本次回复送达（agent 开始执行即从列表移除）",
+      // 待办行上的完成 / 删除与清单末尾的添加行（docs/specs/todo-list-actions.md）。
+      complete: "标记完成",
+      undo: "撤销",
       delete: "删除",
       deleteConfirm: "确认删除",
+      add: "添加待办",
+      addPlaceholder: "添加一条待办…",
+      addHint: "添加",
+      addFailed: "没能添加待办：{reason}",
+      addedHidden: "已添加，排在第 {n} 位（未显示）",
       more: "……还有 {n} 条待办未列出（可在待办窗口或 /todo 查看调序）。",
       // 每条选中的待办并入回答时的整行文案（与手输文本空行分隔）。
       mergeLine: "另外看一下这个待办任务：{text}",
-    },
-    // 顶栏待办按钮的浮层（docs/specs/todo-quick-add.md）。
-    todoPopover: {
-      title: "添加到 {project}",
-      placeholder: "添加一条待办…",
-      submitHint: "{key} 添加",
-      add: "添加",
-      adding: "正在添加…",
-      empty: "这个项目还没有待办",
-      openWindow: "打开待办窗口",
-      addFailed: "没能添加待办：{reason}",
     },
     // 对 Agent 正文的附注：选区旁的按钮、输入浮层、页脚「附注」按钮及其清单（docs/specs/message-annotations.md D10–D16）。
     annotations: {
@@ -307,6 +304,12 @@ export default {
         away: "发送并开启离开模式",
         mute: "发送并停用 AskHuman",
       },
+    },
+    // 带出了被取消提问里未提交内容的卡片顶部的提示条（docs/specs/popup-draft-on-cancel.md D7）。
+    draftRestored: {
+      text: "已载入上次未提交的内容",
+      missingImages: "已载入上次未提交的内容；有 {n} 张图片的文件已被清理，没能带出",
+      dismiss: "关闭提示",
     },
     // 离开模式期间被升级过来的提问顶部的提示条（docs/specs/special-replies.md D21）。
     escalated: {
@@ -493,8 +496,8 @@ export default {
         trafficConsole: "前往 EMQX 控制台",
         trafficStorageIssue: "流量统计保存失败，重启后的估算可能不完整。",
         traffic: "本月流量（本机统计）：发送 {out}，接收 {in}，约占 EMQX 免费额度的 {percent}。",
-        trafficWarn: "流量已接近 EMQX 每月 1 GB 的免费额度。用完后服务会暂停（消费上限为 0，不会自动扣费）。",
-        trafficFull: "按已知 Mac 的统计，免费额度可能已用完，Broker 可能会拒绝连接。请到 EMQX 控制台确认用量。",
+        trafficNear: "本月流量快到 {gb} GB 了。",
+        trafficOver: "本月流量已超过 {gb} GB。",
         devicesTitle: "已配对的手机",
         noDevices: "还没有配对的手机。",
         online: "在线",
@@ -681,7 +684,12 @@ export default {
       manualTitle: "手动集成",
       manualLifecycleHint:
         "手动提示词和 MCP 示例不会安装生命周期追踪；Agent 状态、插话与任务启动需要使用下方自动集成并开启追踪。",
-      antigravityScope: "家族共享规则；CLI 指 AskHuman 调用方式。各客户端能力需分别验收。",
+      antigravityScope:
+        "AskHuman 以一个 Antigravity 插件的形式安装（规则、MCP 与生命周期 hooks），App 与 agy 共用，可在 Antigravity 里整体停用。App 的默认沙箱里 CLI 变体连不上 AskHuman，推荐 MCP。",
+      antigravityPluginDisabled:
+        "插件在 Antigravity 中已停用，它的 hooks 与 MCP 不会运行。请在 Antigravity 里重新启用。",
+      antigravityGrantHint:
+        "Antigravity App 第一次调用会询问一次权限，请选「始终允许」（或在其权限设置里添加 mcp(askhuman_mcp/*)）。",
       retryStatus: "重新读取状态",
       /** Agent 卡标题行下的折叠入口：其余各行（规则、Hook、权限、生命周期等）收在这里。 */
       details: "详情",
@@ -745,6 +753,8 @@ export default {
       stopHint:
         "自然完成时询问继续还是结束；整轮最终出错时显示处理卡，支持接续的会话可要求继续。自动重试中、工具错误和用户取消不提醒，手机推送沿用现有提醒时机。",
       stopGrokHint: "目前仅支持整轮出错提醒，不拦截正常结束，也暂不支持从错误卡接续；可以选择「知道了」。",
+      stopAntigravityHint:
+        "自然完成时询问继续还是结束：要等 Agent 和它启动的所有子 Agent 都结束后才询问（子 Agent 自己不会弹卡）；整轮最终出错时显示处理卡，对话可以发消息时可要求继续。用户取消不提醒。",
       stopUnsupported:
         "该 Agent 尚无可靠的结束／出错事件来源，暂不支持此确认功能。",
       stopCoexist:
@@ -774,7 +784,8 @@ export default {
         "Codex 无法延长 CLI 工具的超时，长时间等待可能被取消；如需可靠的长等待请改用 MCP 模式。",
       capabilityUnsupported: "当前不支持",
       antigravityRecoveryUnsupported: "Antigravity 当前未接入上下文恢复 Hook；CLI 集成不会安装此 Hook。",
-      antigravityLifecycleUnsupported: "Antigravity 当前未接入生命周期追踪，无法在此启用。",
+      antigravityLifecycleHint:
+        "通过插件 hooks 追踪 App 与 agy 的会话状态与标题，显示在控制台；同时支撑插话、Watch，以及把手机／IM 启动的任务对应到会话。关闭后 AskHuman 提问仍可使用。",
       contextRecoveryHookLabel: "上下文恢复 Hook",
       protocolLabel: "协议（SessionStart Hook）",
       codexProtocolHint:
@@ -824,9 +835,10 @@ export default {
       ready: "已就绪",
       readyCodexApp: "就绪 · Desktop App",
       readyCursorWindow: "就绪 · Agents 窗口",
+      readyAntigravityApp: "就绪 · Antigravity App",
       notReady: "未就绪",
       cliNotNeeded: "不需要：这条路径不经过 CLI",
-      outsideHint: "标「Desktop App」或「Agents 窗口」的 Agent 不用 CLI 启动，CLI 那一栏用不上（–），无需处理。",
+      outsideHint: "标「Desktop App」「Agents 窗口」或「Antigravity App」的 Agent 不用 CLI 启动，CLI 那一栏用不上（–），无需处理。",
       colBinary: "CLI",
       colLifecycle: "生命周期",
       colIntegration: "集成",
@@ -1329,6 +1341,14 @@ export default {
     annotations: "附注",
     copyAnnotations: "附注：",
     copySession: "会话：{session}",
+    // 被取消时没来得及提交的内容（调用方断开或 daemon 停止；docs/specs/popup-draft-on-cancel.md D8）。
+    draft: "草稿",
+    draftNote: "取消时未提交的内容",
+    draftLoaded: "已载入新提问",
+    draftNotLoaded: "未载入新提问",
+    copyDraft: "复制草稿",
+    copyDraftHeading: "取消时未提交的内容：",
+    copySelectedOptions: "已选选项：",
     attach: {
       button: "附件",
       tooltip: "按附件筛选",
@@ -1502,7 +1522,6 @@ export default {
     pendingCount: "待送达 {n} 条",
     pendingAttachments: "{n} 个附件",
     revoke: "撤回",
-    antigravityHint: "Antigravity 插话和生命周期跟踪尚未开放",
     grokHint: "Grok 不支持发送消息",
     idleHint: "消息通道当前不可用，请在 Agent 中打开原会话继续。",
     endedHint: "消息通道当前不可用，请在 Agent 中打开原会话继续。",
@@ -1685,6 +1704,9 @@ export default {
     launching: "正在启动…",
     launchNote: "提交后将在新 Terminal 窗口中启动 Agent 并执行任务。",
     cursorWindowNote: "提交后将在 Cursor 的 Agents 窗口里创建会话并自动发送任务。",
+    antigravityAppNote: "提交后将在 Antigravity App 里创建会话并自动发送任务。",
+    antigravityPermissionHint:
+      "在 Antigravity App 里，「Agent 默认」只让任务做该文件夹已允许的操作：AskHuman 自己的工具，以及你在「设置 → Agents → Antigravity」里为该文件夹添加的规则，其余会被自动拒绝。YOLO 会为该文件夹建一个宽授权的 sidecar（App 里显示「YOLO」），任务不再询问。",
     tooLong: "任务超过 3000 字符（当前 {n}）",
     launchFailed: "启动失败：{e}",
     todoMissing: "该待办已被删除；启动将使用其原文快照。",
@@ -1749,7 +1771,7 @@ export default {
       hint: "默认关闭。离开期间，Cursor 带理由升级时，将内容保留为待阅汇报，并立即通知它结束本轮。回来后在当前列表点「已阅」。⚡ 自动待办优先执行，完成或阻塞汇报都会保留。",
     },
     title: "Cursor 会话防护（实验）",
-    hint: "保护本地 Cursor Desktop 会话。后台任务完成后，主动发消息才会继续（Await 照常）。Agents 窗口里运行中的会话不再被释放内存中的消息，降低误归档风险。兼容的窗口会把无入站消息的等待延长到 5 分钟，连续停滞重试窗口延长到 10 分钟。需要 AskHuman 持续运行，不覆盖终端 CLI。",
+    hint: "保护本地 Cursor Desktop 会话。后台任务完成后，主动发消息才会继续（Await 照常）。Agents 窗口会保留运行中会话的消息，降低误归档风险。兼容的窗口会把无入站消息的等待延长到 5 分钟，连续停滞重试窗口延长到 10 分钟，并让并行 Agent 的 HTTP/2 长流使用独立连接。需要 AskHuman 持续运行，不覆盖终端 CLI。",
     experimental: "需要兼容的 Cursor 版本，检查通过后才生效。启动或窗口重载后需重新接入。",
     disabled: "未开启",
     waiting: "等待 Cursor Desktop 窗口",
@@ -1760,6 +1782,7 @@ export default {
       completion: "后台完成续跑拦截",
       retention: "运行中会话保护",
       stall: "停滞等待与重试",
+      isolation: "并行 Agent 连接隔离",
       separator: "、",
     },
     detaching: "正在恢复 Cursor Desktop 原生行为…",
@@ -1789,6 +1812,62 @@ export default {
         cliTrackingNotConfigured: "CLI 的生命周期追踪未配置",
         terminalUnavailable: "系统终端不可用",
       },
+    },
+  },
+  antigravityDesktop: {
+    manage: {
+      title: "允许 AskHuman 管理 Antigravity sidecar",
+      hint: "要在某个项目文件夹里创建任务，Antigravity App 需要为该文件夹运行一个小帮手（sidecar）。开启后，AskHuman 会在某个文件夹第一次创建任务时为它建一个，并以 askhuman-… 的名字登记在 Antigravity 的配置文件里，除此之外不做别的：你在 Antigravity 里的其它设置和授权都不会被改动。关闭它不会删除已有的 sidecar，可在下方移除。",
+      macOnly: "在 Antigravity App 里创建任务目前仅支持 macOS。",
+    },
+    launch: {
+      preference: "默认运行方式",
+      preferApp: "优先 App",
+      preferCli: "优先 agy（终端）",
+      hint: "这里只决定先用哪一种；用不了时会自动改用另一种。App 路径会为该文件夹准备一个项目（权限按你下方的允许项）并自动发送任务；agy 路径会打开系统终端，运行 agy 并带上任务。任务开始创建后不再切换：遇到问题会直接提示，不会绕过去。",
+      willUseApp: "新任务将使用 Antigravity App",
+      willUseCli: "新任务将使用 agy（终端）",
+      unavailable: "未检测到可用的 Antigravity App 或 agy",
+      reasons: {
+        unsupportedPlatform: "当前平台不支持此运行方式",
+        devInstance: "Dev Instance 不使用 Antigravity App",
+        appNotInstalled: "未检测到 Antigravity App",
+        integrationDisabled: "Antigravity 的 AskHuman 集成未启用",
+        mcpModeRequired: "App 路径需要 MCP 模式（App 的沙箱不允许命令行模式）",
+        pluginDisabled: "AskHuman 插件已在 Antigravity 中停用",
+        sidecarsNotAllowed: "尚未允许 AskHuman 管理 Antigravity sidecar（请在设置中开启）",
+        cliNotDetected: "未检测到 agy 命令行",
+        cliIntegrationNotConfigured: "CLI 的 AskHuman 集成未配置",
+        cliTrackingDisabled: "CLI 的生命周期追踪未启用",
+        cliTrackingNeedsUpdate: "CLI 的生命周期追踪需要更新",
+        cliTrackingNotConfigured: "CLI 的生命周期追踪未配置",
+        terminalUnavailable: "系统终端不可用",
+      },
+    },
+    sidecars: {
+      title: "Sidecar（{n} / {limit}）",
+      hint: "每个 sidecar 属于一个项目文件夹，决定在那里创建的任务能做什么：可以用 AskHuman 自己的工具和你为该文件夹添加的规则，其它操作会被自动拒绝。移除后它会从 Antigravity 里消失，下次在该文件夹创建任务时 AskHuman 会重新建一个。",
+      wideNote: "标「宽授权」的 sidecar 会让其任务不经询问就能执行命令、读写文件和访问网络，你自己在 Antigravity 里打开它时也一样。不再需要时请移除。",
+      none: "还没有 sidecar；在某个文件夹创建任务时会自动建一个。",
+      controlName: "仅传递消息",
+      kinds: { workspace: "仅允许的操作", yolo: "宽授权", control: "传递消息" },
+      online: "已连接",
+      offline: "未连接",
+      lastUsed: "最近使用 {time}",
+      neverUsed: "尚未使用",
+      folderMissing: "找不到该文件夹",
+      filesMissing: "文件已不在，下次创建任务时会重新生成",
+      filesForeign: "不是 AskHuman 的文件，已原样保留",
+      notEnabled: "已在 Antigravity 中关闭",
+      rules: "规则（{n}）",
+      rulesNeedAllowance: "请先开启「允许 AskHuman 管理 Antigravity sidecar」再修改规则",
+      rulesLabel: "该文件夹的规则",
+      rulesHint: "每行一条，写成 action(target)，例如 read_file(~/notes/**)。AskHuman 自己的工具始终允许。这里不接受放开一切的规则，例如 (*)。",
+      saveRules: "保存规则",
+      cancel: "取消",
+      remove: "移除",
+      removeAll: "全部移除",
+      removeAllConfirm: "确认移除全部 {n} 个",
     },
   },
   interject: {

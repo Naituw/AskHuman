@@ -213,6 +213,7 @@ pub fn build_task(target: ProbeTarget, nonce: &str, lang: Lang) -> TaskRequest {
         stop_confirmation: false,
         agent_kind: None,
         agent_session_id: None,
+        agent_session_candidate: None,
         mcp_instance_id: None,
         agent_pid: None,
         // 0 = no Agent to look for in the process tree.

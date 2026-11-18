@@ -34,7 +34,7 @@
 本轮只检查了本机 CLI `--help`、已有 hook 实测日志、本地会话文件字段、仓库代码与官方文档，
 **没有启动任何 Agent 会话，也没有发送 prompt**。
 
-### 2.1 五家 CLI 均支持交互 TUI + 初始 prompt
+### 2.1 五家 CLI 均支持交互 TUI + 初始 prompt（2026-11-16 起 Antigravity 的 `agy` 是第六家）
 
 | Agent | 交互启动 | cwd | YOLO 覆盖 | 禁止使用的后台形态 |
 |---|---|---|---|---|
@@ -43,6 +43,7 @@
 | Cursor | `cursor-agent <prompt>` | 进程 cwd，也支持 `--workspace` | `--yolo` | `-p` |
 | Grok | `grok <prompt>` | 进程 cwd，也支持 `--cwd` | `--always-approve` | `-p` / `--single` |
 | Pi | `pi <prompt>` | 进程 cwd | 无内置覆盖参数 | 非交互 print/RPC 形态 |
+| Antigravity（`agy`） | `agy -i <prompt>`（任务文本是 `-i` 的值，仍是单个 argv） | 进程 cwd；`agy` 只有信任过的目录才上报 cwd 与 workspace（不信任时 hook 载荷里是空串） | `--dangerously-skip-permissions` | 不带 `-i` 的非交互形态 |
 
 实现统一先 `chdir(workspace)`，再以 argv 直接启动，不依赖四家不同的 cwd flag。Agent 默认权限模式
 不加任何 override；YOLO 只添加上表固定 flag，不接受 IM 传任意 flags。
@@ -263,6 +264,7 @@ PermissionRequest capability，则审批仍可按既有链路投放 IM。本功�
 | Codex | `--dangerously-bypass-approvals-and-sandbox` | 同时关闭审批与 sandbox |
 | Cursor | `--yolo` | 自动允许命令（仍受 Cursor 明确 deny / 自身 sandbox 配置影响） |
 | Grok | `--always-approve` | 自动批准工具执行（仍受 Grok sandbox 配置影响） |
+| Antigravity（`agy` 终端路线） | `--dangerously-skip-permissions` | 自动批准命令、文件与联网；App 路线的 YOLO 是另一种机制（宽授权 sidecar，`antigravity-deep-integration.md` §12.4），不是 argv |
 
 任务输入卡必须再次以普通元数据行显示最终策略；不重复显示 YOLO 警告。任何 IM 文本都不能覆盖映射或增加其它
 flags，不自动修改 Agent 的持久配置。
@@ -476,3 +478,10 @@ workspace 动态状态放 `agent-workspaces.json`，launch record 放短时私�
   桌面版的电脑上两边互相矛盾（向导先邀请开启、再说没有可开启的 Agent）。Cursor 的「运行位置」偏好只决定谁优先，首选用不了、另一条可用就改用另一条
   （`cursor-desktop-task-creation.md` §3）。上一条里「就绪判定（`ready = …`）不变」只指当时那次版式改动；矩阵标签现在读统一判定，
   见 `settings-agents-channels-cards.md` §8.5，开关的新入口见 `onboarding.md` D25。
+- **2026-11-16**：Antigravity 可以启动了（`launchSupported` 对它为 true）：手机、IM `/new` 与 Mac 新任务窗口共用同一个
+  入口，App 路线经 AskHuman 管理的全局 sidecar 新建会话，终端路线用 `agy -i <prompt>`；与 Codex、Cursor 一样，
+  偏好只决定谁优先，静态检查选出可用的一条，创建时才暴露的失败（sidecar 建不起来、没上线）直接拒绝并说明
+  原因，不静默换到另一条。权限只有「按 sidecar 白名单」与可选的 YOLO（App 用宽授权 sidecar，`agy` 用
+  `--dangerously-skip-permissions`）两档；YOLO 不再二次确认。设计、验证与未验项见
+  `antigravity-deep-integration.md` §12，上面 2026-11-08 条里「`launchSupported = false` 的 Agent（Antigravity）」
+  是当时的状态。

@@ -13,6 +13,7 @@ import {
   resolveHistorySessionTitles,
 } from "../lib/ipc";
 import type {
+  HistoryAnswer,
   HistoryEntry,
   HistoryOpenRequest,
   HistorySessionGroup,
@@ -23,6 +24,7 @@ import type {
 import {
   ALL_HISTORY_SESSIONS,
   agentKindOf,
+  draftOf,
   groupHistorySessions,
   historySessionOf,
   historySessionToken,
@@ -116,11 +118,20 @@ function haystackOf(e: HistoryEntry): string {
   if (e.message.text) parts.push(e.message.text);
   for (const f of e.message.files) parts.push(f.name);
   for (const q of e.questions) if (q.message) parts.push(q.message);
-  for (const a of e.answers) {
+  const takeAnswer = (a: HistoryAnswer) => {
     for (const s of a.selectedOptions) parts.push(s);
     if (a.userInput) parts.push(a.userInput);
     for (const img of a.images) parts.push(fileName(img));
     for (const f of a.files) parts.push(fileName(f));
+  };
+  for (const a of e.answers) takeAnswer(a);
+  // What was typed in an abandoned ask is found by its words too: with no new question to take it, this is how it
+  // comes back (docs/specs/popup-draft-on-cancel.md D8). The word "draft" lists the entries that kept one.
+  const draft = draftOf(e);
+  if (draft) {
+    parts.push(t("history.draft"));
+    for (const a of draft.answers) takeAnswer(a);
+    for (const note of draft.annotations ?? []) parts.push(note.note);
   }
   if (e.project) parts.push(e.project, workspaceNameOf(e));
   const kind = agentKindOf(e);
@@ -996,6 +1007,12 @@ onBeforeUnmount(() => {
               <span class="badge" :class="e.action">{{ channelName(e.channel) }}</span>
               <span v-if="agentLabelOf(e)" class="agent-badge">{{ agentLabelOf(e) }}</span>
               <span
+                v-if="draftOf(e)"
+                class="draft-badge"
+                :class="{ loaded: !!draftOf(e)!.claimedBy }"
+                :title="`${t('history.draftNote')} · ${draftOf(e)!.claimedBy ? t('history.draftLoaded') : t('history.draftNotLoaded')}`"
+              >{{ t("history.draft") }}</span>
+              <span
                 v-if="attachmentTotal(e)"
                 class="entry-attach"
                 :title="attachmentBadgeTitle(e)"
@@ -1524,6 +1541,23 @@ onBeforeUnmount(() => {
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+  background: color-mix(in srgb, var(--text-primary) 9%, transparent);
+  color: var(--text-secondary);
+}
+/* An abandoned ask that kept what the user had typed (docs/specs/popup-draft-on-cancel.md D8); dimmer once a new
+   question has taken it. */
+.draft-badge {
+  display: inline-flex;
+  align-items: center;
+  padding: 1px 7px;
+  border-radius: 999px;
+  font-size: 10px;
+  font-weight: 600;
+  white-space: nowrap;
+  background: color-mix(in srgb, var(--accent) 16%, transparent);
+  color: var(--accent);
+}
+.draft-badge.loaded {
   background: color-mix(in srgb, var(--text-primary) 9%, transparent);
   color: var(--text-secondary);
 }

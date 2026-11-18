@@ -16,7 +16,7 @@ import {
   splitDuration,
   type SplitDuration,
 } from "./iosAlertTiming";
-import { aggregateTraffic, brokerEstimate, hasCompleteTrafficHistory, formatBytes, quotaShare, trafficLevel } from "./iosTraffic";
+import { aggregateTraffic, brokerEstimate, hasCompleteTrafficHistory, formatBytes, quotaShare, trafficReminder } from "./iosTraffic";
 
 const { t } = useI18n();
 const { persist, secretsPresent, SECRET_PLACEHOLDER, clearSecret } = useSettingsContext();
@@ -74,7 +74,6 @@ const completeTrafficHistory = computed(() => {
   const records = state.value?.usageRecords ?? [];
   return records.length > 0 && !!traffic.value && hasCompleteTrafficHistory(records, traffic.value.month);
 });
-const trafficLevelNow = computed(() => (traffic.value ? trafficLevel(traffic.value) : "ok"));
 const trafficText = computed(() => {
   const tr = traffic.value;
   if (!tr) return "";
@@ -87,10 +86,11 @@ const trafficText = computed(() => {
     percent: share < 0.01 ? "<1%" : `${Math.round(share * 100)}%`,
   });
 });
-const trafficWarning = computed(() => {
-  if (trafficLevelNow.value === "full") return t("settings.experimental.ios.trafficFull");
-  if (trafficLevelNow.value === "warn") return t("settings.experimental.ios.trafficWarn");
-  return "";
+// Only counts, and says nothing of the broker's plan: close to each GB, or past it (same rule as the phone's Inbox).
+const trafficNote = computed(() => {
+  const reminder = traffic.value ? trafficReminder(brokerEstimate(traffic.value)) : null;
+  if (!reminder) return "";
+  return t(reminder.reached ? "settings.experimental.ios.trafficOver" : "settings.experimental.ios.trafficNear", { gb: reminder.gigabytes });
 });
 
 // Push timing (docs/specs/ios-alert-timing.md): the wait before an unseen question is pushed.
@@ -161,7 +161,7 @@ function pushWarning(phone: IosPhone): string {
         <span class="dot" :class="statusKind === 'ok' ? 'on' : 'off'"></span>
         {{ statusText }}
       </p>
-      <p v-if="trafficText" class="card-desc ios-traffic" :class="trafficLevelNow">{{ trafficText }}</p>
+      <p v-if="trafficText" class="card-desc ios-traffic">{{ trafficText }}</p>
       <details v-if="state?.usageRecords?.length" class="card-desc ios-traffic-details">
         <summary>{{ t("settings.experimental.ios.trafficDetails") }}</summary>
         <p v-for="record in state.usageRecords" :key="`${record.deviceKind ?? 'mac'}|${record.macId}`">
@@ -176,7 +176,7 @@ function pushWarning(phone: IosPhone): string {
         <a href="https://cloud.emqx.com/console/" @click.prevent="openPath('https://cloud.emqx.com/console/')">{{ t("settings.experimental.ios.trafficConsole") }}</a>
       </details>
       <p v-if="state?.trafficStorageIssue" class="card-desc warn">{{ t("settings.experimental.ios.trafficStorageIssue") }}</p>
-      <p v-if="trafficWarning" class="ios-traffic-warning" :class="trafficLevelNow">{{ trafficWarning }}</p>
+      <p v-if="trafficNote" class="card-desc ios-traffic-note">{{ trafficNote }}</p>
       <!-- The app's "New task" needs the Agent-task switch on this Mac: it is right here, where the phone is set up. -->
       <hr class="divider" />
       <AgentTasksSwitchRow />

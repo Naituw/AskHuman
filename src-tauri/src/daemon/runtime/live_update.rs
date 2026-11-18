@@ -235,7 +235,7 @@ impl Runtime {
             || state.closing.load(Ordering::SeqCst)
             || state.draining.load(Ordering::SeqCst)
             || state.registry.active_count() != 0
-            || lifecycle::launch_fingerprint() != state.startup_fp
+            || !lifecycle::launch_fingerprint().same_as(&state.startup_fp)
         {
             return false;
         }
@@ -264,8 +264,7 @@ impl Runtime {
                     saved.lease.generation, saved.pid
                 ));
                 if alive {
-                    *state.popup_inbox.lock().unwrap() =
-                        crate::daemon::popup_inbox::Host::restore(saved);
+                    *state.popup_inbox.lock().unwrap() = inbox::adopt_host(state, saved);
                 }
             }
             if let Some(mut focus) = self.store.metadata::<PopupFocusArbiter>("popup/focus")? {
@@ -333,19 +332,13 @@ impl Runtime {
         }
         let generation = state.popup_inbox.lock().unwrap().generation();
         if let Some(generation) = generation {
-            let state = state.clone();
-            tokio::spawn(async move {
-                tokio::time::sleep(Duration::from_secs(5)).await;
-                let waiting = {
-                    let host = state.popup_inbox.lock().unwrap();
-                    host.generation() == Some(generation) && host.sender().is_none()
-                };
-                if waiting && !state.closing.load(Ordering::SeqCst) {
-                    inbox::recover_inbox(&state, generation);
-                }
-            });
+            // The host kept across the update has to find its way back; a daemon that inherited
+            // it as a child ends it if it gives the lease up (`inbox::adopt_host`).
+            tokio::spawn(inbox::expire_unauthenticated(state.clone(), generation));
         }
         self.restoring.store(false, Ordering::SeqCst);
+        // A host that is gone before it reconnects is not waited for any longer than that.
+        inbox::recover_adopted_host_when_gone(state);
         Ok(())
     }
 
@@ -861,6 +854,11 @@ impl Runtime {
         }
         let target = crate::executable::launch_path()?;
         let fingerprint = lifecycle::fingerprint_at(&target);
+        // The commit step proves the target did not change since this measurement; a target that
+        // cannot even be measured now has nothing to compare against.
+        if fingerprint.is_unknown() {
+            return Ok(false);
+        }
         let mut command = tokio::process::Command::new(&target);
         crate::development::clear_client_context(command.as_std_mut());
         command.arg("--recovery-capabilities");
@@ -907,16 +905,27 @@ impl Runtime {
         };
         let popup_connections = announce_popup_update(state, updating);
         broadcast_tray_state(state);
-        if let Some(router) = state.dd_router.lock().await.as_ref() {
+        // `suspending` is already raised, so a router that finishes connecting from here on is not
+        // installed: whoever connected it pauses it before letting go of its slot (see
+        // `conn_slot`). `settled` waits for connects that were already under way (bounded by their
+        // own timeouts), so once it returns every router there will be is installed and ours to
+        // pause. Connects that have not started yet see the flag and never begin.
+        let (dingtalk, feishu, telegram, slack) = tokio::join!(
+            state.dd_router.settled(),
+            state.fs_router.settled(),
+            state.tg_router.settled(),
+            state.sl_router.settled(),
+        );
+        if let Some(router) = dingtalk {
             router.pause().await;
         }
-        if let Some(router) = state.fs_router.lock().await.as_ref() {
+        if let Some(router) = feishu {
             router.pause().await;
         }
-        if let Some(router) = state.tg_router.lock().await.as_ref() {
+        if let Some(router) = telegram {
             router.pause().await;
         }
-        if let Some(router) = state.sl_router.lock().await.as_ref() {
+        if let Some(router) = slack {
             router.pause().await;
         }
         for entry in state.registry.in_flight_entries() {
@@ -965,12 +974,14 @@ impl Runtime {
                 .set_metadata("popup/host", &state.popup_inbox.lock().unwrap().saved())?;
             self.store
                 .set_metadata("popup/focus", &*state.popup_focus.lock().unwrap())?;
-            if let Some(gateway) = ios_gateway(state) {
-                gateway.suspend().await.map_err(anyhow::Error::msg)?;
-                state.ios.lock().unwrap().take();
+            // Waits for a gateway that is still being built (it finds the handoff under way and
+            // shuts itself down), then suspends the installed one.
+            if let Some(slot) = state.ios.settled().await {
+                slot.gateway.suspend().await.map_err(anyhow::Error::msg)?;
+                state.ios.invalidate();
             }
             anyhow::ensure!(
-                lifecycle::fingerprint_at(&target) == fingerprint,
+                lifecycle::fingerprint_at(&target).same_as(&fingerprint),
                 "update target changed during handoff"
             );
             anyhow::ensure!(
@@ -1030,14 +1041,22 @@ impl Runtime {
                 None,
             )
             .await;
-            if popup && !entry.coordinator.has_channel("popup") {
+            // While hosts keep failing to start no popup can be backed, so leave the surface for a
+            // later pass instead of registering one that would wait for a host that is not coming.
+            if popup
+                && !entry.coordinator.has_channel("popup")
+                && !inbox::popup_launch_blocked(state)
+            {
                 entry
                     .coordinator
                     .register(Arc::new(GuiHelperPopupChannel::new(
                         entry.request_id.clone(),
                         entry.gui.clone(),
                     )));
-                let _ = dispatch_popup(&entry, state, "", false);
+                if !dispatch_popup(&entry, state, "", false) && merged_popup(state) {
+                    // Hosts started failing between the check and the dispatch.
+                    inbox::fail_surface(&InteractionEntry::Ask(entry.clone()));
+                }
             }
         }
         for entry in state.registry.in_flight_confirm_entries() {
@@ -1060,8 +1079,14 @@ impl Runtime {
                 .filter(|channel| entry.retry_delivery(channel))
                 .collect();
             attach_confirm_im_channels(&entry, state, &config, &retry).await;
-            if popup && entry.retry_delivery("popup") {
-                dispatch_interaction_popup(InteractionEntry::Confirm(entry), state, "", false);
+            if popup && !inbox::popup_launch_blocked(state) && entry.retry_delivery("popup") {
+                let entry = InteractionEntry::Confirm(entry);
+                if !dispatch_interaction_popup(entry.clone(), state, "", false)
+                    && merged_popup(state)
+                {
+                    // Hosts started failing between the check and the dispatch.
+                    inbox::fail_surface(&entry);
+                }
             }
         }
     }
@@ -1076,10 +1101,10 @@ impl Runtime {
         if *state.exit_intent.lock().unwrap() != super::super::handoff::Intent::Stop {
             state.draining.store(false, Ordering::SeqCst);
         }
-        *state.dd_router.lock().await = None;
-        *state.fs_router.lock().await = None;
-        *state.tg_router.lock().await = None;
-        *state.sl_router.lock().await = None;
+        state.dd_router.invalidate();
+        state.fs_router.invalidate();
+        state.tg_router.invalidate();
+        state.sl_router.invalidate();
         ensure_ios_gateway(state).await;
         let config = state.config_snapshot();
         for entry in state.registry.in_flight_confirm_entries() {

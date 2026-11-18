@@ -52,6 +52,17 @@ extension AppStore {
         state.watches[id]
     }
 
+    /// Whether the row of an Agent shows what it does right now: its tool, its step count and when it last did something.
+    /// A Mac that was asked for a lean list (`Caps.leanAgents`) leaves those out of the list for a working Agent nobody
+    /// watches, so the phone holds old values for it, and an old value misleads more than none does. The Agent the user
+    /// has open is the one that is watched, and the Mac keeps its row current (docs/specs/ios-traffic-reduction.md §3.2).
+    public func showsLiveActivity(of item: AgentItem) -> Bool {
+        guard item.view.state == "working",
+              state.macs.first(where: { $0.id == item.macId })?.caps.leanAgents == true
+        else { return true }
+        return agentPath.contains(item.id)
+    }
+
     public var waitingAgentCount: Int { state.agents.filter { $0.view.state == "waiting" }.count }
 
     /// Macs a task can be started on (online and told the phone may).
@@ -236,6 +247,7 @@ extension AppStore {
 
     /// Closes the new task sheet. A task that was sent keeps going.
     public func dismissNewTask() {
+        taskComposer?.discard()
         taskComposer = nil
         viewingTask = nil
     }

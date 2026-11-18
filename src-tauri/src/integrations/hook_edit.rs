@@ -364,10 +364,6 @@ pub fn remove_flat_marker(text: &str, event: &str, marker: &str) -> Result<Strin
     Ok(root.to_string())
 }
 
-pub fn group_has_marker(group: &Value, marker: &str) -> bool {
-    command_has_marker(group, marker)
-}
-
 pub fn atomic_write(path: &std::path::Path, bytes: &[u8]) -> Result<()> {
     if let Some(parent) = path.parent() {
         std::fs::create_dir_all(parent)?;
@@ -469,7 +465,7 @@ mod tests {
         assert!(output.contains("// user hook"));
         let groups = nested_groups(&output, "PermissionRequest").unwrap();
         assert_eq!(groups.len(), 2);
-        assert!(group_has_marker(&groups[1], "__permission-hook"));
+        assert!(command_has_marker(&groups[1], "__permission-hook"));
     }
 
     #[test]

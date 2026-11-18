@@ -210,6 +210,33 @@ final class AgentStoreTests: XCTestCase {
         await eventually("the watch is closed") { self.store.watchState(id: id) == nil }
     }
 
+    // MARK: lean list
+
+    func testAWorkingRowShowsItsLiveActivityOnlyWhenThePhoneIsKeptCurrentOnIt() async throws {
+        await make()
+        let workingItem = working
+        let idle = try XCTUnwrap(store.state.agents.first { $0.view.state == "idle" })
+        let waiting = try XCTUnwrap(store.state.agents.first { $0.view.state == "waiting" })
+        XCTAssertFalse(store.state.macs.contains { $0.caps.leanAgents }, "the demo Macs predate the lean list")
+        XCTAssertTrue(store.showsLiveActivity(of: workingItem), "a Mac that sends every step")
+
+        // A Mac that leaves the activity of a working Agent nobody watches out of the list.
+        await backend.offerLeanAgents()
+        await eventually("the Macs' capability") { self.store.state.macs.allSatisfy(\.caps.leanAgents) }
+        XCTAssertFalse(store.showsLiveActivity(of: working), "what the phone holds of it is old")
+        XCTAssertTrue(store.showsLiveActivity(of: idle), "every change of an Agent that is not working is sent")
+        XCTAssertTrue(store.showsLiveActivity(of: waiting))
+
+        // The Agent whose page is open is watched, and the Mac keeps its row current.
+        store.openAgent(macId: MockData.homeMacId, agentKey: MockData.workingAgentKey)
+        XCTAssertTrue(store.showsLiveActivity(of: working))
+        let other = try XCTUnwrap(store.state.agents.first { $0.view.state == "working" && $0.id != workingItem.id })
+        XCTAssertFalse(store.showsLiveActivity(of: other), "another working Agent is not")
+
+        store.agentPath = []
+        XCTAssertFalse(store.showsLiveActivity(of: working))
+    }
+
     func testAnEndedAgentStaysOnItsPageAfterItLeavesTheList() async {
         await make()
         let id = working.id
@@ -319,6 +346,26 @@ final class AgentStoreTests: XCTestCase {
         await make()
         store.presentNewTask()
         XCTAssertEqual(store.taskComposer?.macId, MockData.homeMacId)
+    }
+
+    func testClosingTheNewTaskSheetStopsTheFilesStillBeingPrepared() async throws {
+        await make()
+        store.presentNewTask()
+        let composer = try XCTUnwrap(store.taskComposer)
+        let operation = Task<Void, Never> { try? await Task.sleep(for: .seconds(60)) }
+        composer.attachmentPreparation.operation = operation
+        store.dismissNewTask()
+        XCTAssertTrue(operation.isCancelled)
+        XCTAssertNil(store.taskComposer)
+    }
+
+    func testPhotosForAnAgentAreToldApartByName() async throws {
+        await make()
+        let composer = store.interjectComposer(for: working)
+        let first = try composer.addAttachment(name: "Photo.jpg", mime: "image/jpeg", data: Data([1]), isImage: true)
+        let second = try composer.addAttachment(name: "Photo.jpg", mime: "image/jpeg", data: Data([2]), isImage: true)
+        XCTAssertEqual([first, second].map(\.name), ["Photo.jpg", "Photo-2.jpg"])
+        XCTAssertEqual(try composer.sources().map(\.data), [Data([1]), Data([2])])
     }
 
     func testTheSelectedTaskMacSurvivesCancellationAndReopeningTheApp() async {

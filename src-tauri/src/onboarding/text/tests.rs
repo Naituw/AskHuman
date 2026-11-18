@@ -131,6 +131,17 @@ fn rows(detected: &[&str], integrated: &[(&str, &str)]) -> Vec<AgentScanRow> {
         .collect()
 }
 
+/// "Antigravity" followed by `separator` where the wizard offers that Agent, nothing where it does
+/// not: its integration is unix-only (`agents::available`), so on Windows the Agent lists the task
+/// question prints have no such entry.
+fn antigravity_entry(separator: &str) -> String {
+    if cfg!(unix) {
+        format!("Antigravity{separator}")
+    } else {
+        String::new()
+    }
+}
+
 fn channel_rows() -> Vec<ChannelStatus> {
     channels::ORDER
         .iter()
@@ -1127,18 +1138,13 @@ fn the_question_lists_the_channels_and_agents_it_covers_with_the_set_up_ones_fir
         said.contains("Channels: iOS app, Slack; usable once set up: Telegram, DingTalk, Feishu"),
         "{said}"
     );
-    // Step 1 just connected Cursor and Claude Code.
-    assert!(
-        said.contains("Agents: Cursor, Claude Code; usable once connected: Codex, Grok, Pi"),
-        "{said}"
+    // Step 1 just connected Cursor and Claude Code. Every family the platform offers can start a
+    // task now, Antigravity included (through its App), so none is left out of the picture.
+    let agents = format!(
+        "Agents: Cursor, Claude Code; usable once connected: Codex, Grok, {}Pi",
+        antigravity_entry(", ")
     );
-    // Antigravity has no way to start a task, so it is not part of the picture.
-    let agents_line = io
-        .said
-        .iter()
-        .find(|line| line.contains("usable once connected"))
-        .expect("the Agents line");
-    assert!(!agents_line.contains("Antigravity"), "{agents_line}");
+    assert!(said.contains(&agents), "{said}");
 }
 
 #[test]
@@ -1157,12 +1163,11 @@ fn allowing_agent_tasks_does_not_wait_for_an_agent_or_a_channel() {
         ),
         "{said}"
     );
-    assert!(
-        said.contains(
-            "Agents: none yet; usable once connected: Cursor, Claude Code, Codex, Grok, Pi"
-        ),
-        "{said}"
+    let agents = format!(
+        "Agents: none yet; usable once connected: Cursor, Claude Code, Codex, Grok, {}Pi",
+        antigravity_entry(", ")
     );
+    assert!(said.contains(&agents), "{said}");
     assert!(deps.config.agent_tasks.enabled);
     assert!(said.contains("No remote channel is set up yet"), "{said}");
 }
@@ -1408,10 +1413,11 @@ fn the_agent_task_question_speaks_chinese_when_asked_to() {
         said.contains("渠道： Slack；配置后可用：iOS App、Telegram、钉钉、飞书"),
         "{said}"
     );
-    assert!(
-        said.contains("Agent： Cursor、Claude Code；接入后可用：Codex、Grok、Pi"),
-        "{said}"
+    let agents = format!(
+        "Agent： Cursor、Claude Code；接入后可用：Codex、Grok、{}Pi",
+        antigravity_entry("、")
     );
+    assert!(said.contains(&agents), "{said}");
     assert!(
         said.contains("保持后台常驻：已开启（Agent 任务需要它）。"),
         "{said}"

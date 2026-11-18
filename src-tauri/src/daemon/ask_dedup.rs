@@ -273,6 +273,7 @@ mod tests {
             stop_confirmation: false,
             agent_kind: Some("cursor".into()),
             agent_session_id: Some("session-1".into()),
+            agent_session_candidate: None,
             mcp_instance_id: None,
             agent_pid: None,
             caller_pid: 0,

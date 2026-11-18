@@ -7,10 +7,11 @@ vi.mock("@tauri-apps/api/event", () => ({listen: vi.fn(async () => vi.fn())}));
 vi.mock("../../lib/ipc", () => ({
   agentTaskReadiness: vi.fn(async () => [
     {kind:"codex",label:"Codex",ready:false,binaryReady:false,integrationReady:true,lifecycleReady:false,integrationMode:"mcp",launchSupported:true},
-    {kind:"antigravity",label:"Antigravity",ready:false,binaryReady:false,integrationReady:true,lifecycleReady:false,integrationMode:"cli",launchSupported:false},
+    {kind:"grok",label:"Grok",ready:false,binaryReady:false,integrationReady:true,lifecycleReady:false,integrationMode:"cli",launchSupported:false},
   ]),
   codexLaunchStatus: api.status,
   cursorLaunchStatus: vi.fn(async () => null),
+  antigravityLaunchStatus: vi.fn(async () => null),
   newTaskInit: vi.fn(async () => ({popupSubmitKey:"cmdEnter",permissionPrompt:"agent-default"})),
   newTaskOptions: vi.fn(async () => ({ listed: false, models: [], default: { efforts: [] }, speedControl: false, maxControl: false })),
   newTaskLaunch: api.launch,
@@ -34,7 +35,7 @@ it("hides launch-unsupported families without hiding supported ones", async () =
   const agents = wrapper.findAll(".nt-agent");
   expect(agents).toHaveLength(1);
   expect(agents[0].text()).toContain("Codex");
-  expect(wrapper.text()).not.toContain("Antigravity");
+  expect(wrapper.text()).not.toContain("Grok");
 });
 it("allows an App-only installation without a runtime selection step", async () => {
   await form();

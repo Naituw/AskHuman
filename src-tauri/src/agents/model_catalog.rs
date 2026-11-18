@@ -137,9 +137,13 @@ impl ModelChoice {
             if !valid_effort(effort) {
                 return Err("invalid reasoning effort".into());
             }
-            // Cursor folds the effort into the model id; there is no separate switch to set.
+            // Cursor and Antigravity fold the effort into the model id; there is no separate
+            // switch to set.
             if kind == AgentKind::Cursor {
                 return Err("Cursor has no separate reasoning effort".into());
+            }
+            if kind == AgentKind::Antigravity {
+                return Err("Antigravity has no separate reasoning effort".into());
             }
         }
         Ok(())
@@ -490,6 +494,19 @@ mod tests {
             .is_err());
         assert!(choice(Some("m"), Some("high"))
             .check_for(AgentKind::Cursor)
+            .is_err());
+        // Antigravity folds the effort into the model id too, so a separate one is refused.
+        assert!(choice(Some("gemini-3.8-flash-low"), None)
+            .check_for(AgentKind::Antigravity)
+            .is_ok());
+        assert!(choice(Some("flash"), Some("high"))
+            .check_for(AgentKind::Antigravity)
+            .is_err());
+        assert!(choice(None, Some("high"))
+            .check_for(AgentKind::Antigravity)
+            .is_err());
+        assert!(choice(Some("--yolo"), None)
+            .check_for(AgentKind::Antigravity)
             .is_err());
         for kind in [
             AgentKind::Claude,

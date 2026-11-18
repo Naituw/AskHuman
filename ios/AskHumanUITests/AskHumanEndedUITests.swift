@@ -300,17 +300,18 @@ final class AskHumanEndedUITests: XCTestCase {
         XCTAssertTrue(aLiveRequestIsUp())
     }
 
-    func testASheetOverThePageStopsTheCountdown() {
+    func testADialogOverThePageStopsTheCountdown() {
         launch("req-select", after: 6, autoAdvance: true, countdown: 4)
         requireElement("option-0-0")
         requireElement("request-menu").tap()
-        requireElement("request-menu-add-todo").tap()
-        requireElement("request-todo-field")
-        // The request ends behind the sheet, and the countdown would have run out well before this.
+        app.buttons[localized("Cancel request", "取消请求")].firstMatch.tap()
+        let keep = app.buttons[localized("Keep it", "保留")].firstMatch
+        XCTAssertTrue(keep.waitForExistence(timeout: 5), "the question is asked before the request is cancelled")
+        // The request ends behind the dialog, and the countdown would have run out well before this.
         Thread.sleep(forTimeInterval: 16)
-        requireElement("request-todo-cancel").tap()
+        keep.tap()
         requireElement("finished-notice", timeout: 10)
-        XCTAssertFalse(aLiveRequestIsUp(), "the page was not moved on from under the sheet")
+        XCTAssertFalse(aLiveRequestIsUp(), "the page was not moved on from under the dialog")
         XCTAssertTrue(element("finished-action").exists, "the button is still there")
         XCTAssertFalse(element("finished-stay").exists, "and the countdown is over for good")
         settle()

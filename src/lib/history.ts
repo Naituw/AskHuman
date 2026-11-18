@@ -1,6 +1,8 @@
 // Shared helpers for the history window (list + read-only detail).
 
 import type {
+  HistoryAnswer,
+  HistoryDraft,
   HistoryEntry,
   HistorySessionGroup,
   HistorySessionRef,
@@ -47,6 +49,19 @@ export function customSourceOf(e: HistoryEntry, agentLabel: string): string {
   if (!s || s === DEFAULT_SOURCE_NAME) return "";
   if (agentLabel && s.toLowerCase() === agentLabel.trim().toLowerCase()) return "";
   return s;
+}
+
+/** The unsent content a cancelled ask kept (docs/specs/popup-draft-on-cancel.md D8), or null. */
+export function draftOf(e: HistoryEntry): HistoryDraft | null {
+  return e.action === "cancel" ? (e.draft ?? null) : null;
+}
+
+/**
+ * What the window shows as the reply to each question: the answers that were sent or, for a cancelled ask that kept what
+ * was typed, that draft. A cancel entry has no answers of its own, so the two never compete for a question.
+ */
+export function shownReplies(e: HistoryEntry): HistoryAnswer[] {
+  return draftOf(e)?.answers ?? e.answers;
 }
 
 function nonempty(value: string | null | undefined): string {

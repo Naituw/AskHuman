@@ -13,9 +13,10 @@ const useSettingsContext = vi.hoisted(() => vi.fn());
 
 vi.mock("./context", () => ({ useSettingsContext }));
 vi.mock("./CursorDesktopSettings.vue", () => ({ default: { template: '<div class="cursor-desktop-settings-stub" />' } }));
+vi.mock("./AntigravityDesktopSettings.vue", () => ({ default: { template: '<div class="antigravity-desktop-settings-stub" />' } }));
 
 function agentDefinition(id: AgentId, hasTimeoutHook: boolean) {
-  const recommended: AgentMode = id === "cursor" || id === "claude" || id === "pi" || id === "antigravity" ? "cli" : "mcp";
+  const recommended: AgentMode = id === "cursor" || id === "claude" || id === "pi" ? "cli" : "mcp";
   return {
     id,
     title: id,
@@ -612,16 +613,66 @@ describe("IntegrationTab", () => {
       }),
     );
   });
-  it("explains unsupported Antigravity capabilities without a lifecycle switch", () => {
+  it("offers the plugin's lifecycle switch for Antigravity and still says context recovery is unsupported", () => {
     const { wrapper } = mountAgent(agentDefinition("antigravity", false), modeStatus({
-      mode: "cli", mcpSupported: false, timeoutHookSupported: false,
-      lifecycle: { supported: false, enabled: false, installed: false, needsUpdate: false, preferenceConfigured: false, outdated: false, cleanupRequired: false },
+      mode: "cli", mcpSupported: true, timeoutHookSupported: false,
     }));
     const card = wrapper.get("#integration-antigravity");
     expect(card.text()).toContain(i18n.global.t("settings.integration.antigravityRecoveryUnsupported"));
-    expect(card.text()).toContain(i18n.global.t("settings.integration.antigravityLifecycleUnsupported"));
+    expect(card.text()).toContain(i18n.global.t("settings.integration.antigravityLifecycleHint"));
     expect(card.text()).not.toContain(i18n.global.t("settings.integration.codexProtocolHint"));
-    expect(card.find("#lifecycle-antigravity input").exists()).toBe(false);
+    expect(card.find("#lifecycle-antigravity input").exists()).toBe(true);
+  });
+
+  it("explains Antigravity's Stop confirmation by its sub-agents rather than the generic hint", () => {
+    const { wrapper } = mountAgent(agentDefinition("antigravity", false), modeStatus({
+      mode: "cli", mcpSupported: true, timeoutHookSupported: false,
+    }));
+    const card = wrapper.get("#integration-antigravity");
+    expect(card.text()).toContain(i18n.global.t("settings.integration.stopAntigravityHint"));
+    expect(card.text()).not.toContain(i18n.global.t("settings.integration.stopHint"));
+  });
+
+  describe("Antigravity plugin notices", () => {
+    const notice = (wrapper: VueWrapper, key: "plugin-disabled" | "grant-hint") =>
+      wrapper.find(`[data-testid="antigravity-${key}"]`);
+    const mountMode = (overrides: Partial<AgentModeStatus>) =>
+      mountAgent(agentDefinition("antigravity", false), modeStatus({ mode: "mcp", ...overrides })).wrapper;
+
+    it("says so when the user switched the plugin off inside Antigravity, and then skips the grant hint", () => {
+      const wrapper = mountMode({ hostPluginDisabled: true, mcpGrant: false });
+      expect(notice(wrapper, "plugin-disabled").text()).toBe(
+        i18n.global.t("settings.integration.antigravityPluginDisabled"),
+      );
+      expect(notice(wrapper, "grant-hint").exists()).toBe(false);
+    });
+
+    it("explains the one-time Always allow step until the grant is seen", () => {
+      expect(notice(mountMode({ mcpGrant: false }), "grant-hint").text()).toBe(
+        i18n.global.t("settings.integration.antigravityGrantHint"),
+      );
+      expect(notice(mountMode({ mcpGrant: true }), "grant-hint").exists()).toBe(false);
+      // Not in MCP mode, the question does not apply and the backend sends null.
+      expect(notice(mountMode({ mode: "cli", mcpGrant: null }), "grant-hint").exists()).toBe(false);
+    });
+
+    it("shows neither notice when the state could not be read", () => {
+      const context = settingsContext(
+        agentDefinition("antigravity", false),
+        modeStatus({ mode: "mcp", hostPluginDisabled: true, mcpGrant: false }),
+      );
+      Object.assign(context, { modeReadError: ref({ antigravity: true }), refreshMode: vi.fn() });
+      useSettingsContext.mockReturnValue(context);
+      const wrapper = mount(IntegrationTab, { global: { plugins: [i18n] } });
+      expect(notice(wrapper, "plugin-disabled").exists()).toBe(false);
+      expect(notice(wrapper, "grant-hint").exists()).toBe(false);
+    });
+
+    it("shows no Antigravity notice on other agents", () => {
+      const { wrapper } = mountAgent(agentDefinition("claude", true), modeStatus({ hostPluginDisabled: true, mcpGrant: false }));
+      expect(notice(wrapper, "plugin-disabled").exists()).toBe(false);
+      expect(notice(wrapper, "grant-hint").exists()).toBe(false);
+    });
   });
 
   it("offers family CLI and MCP without requiring an agy binary", () => {

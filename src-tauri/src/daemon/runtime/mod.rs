@@ -37,13 +37,17 @@ use tokio::io::BufReader;
 use transport::Stream;
 
 mod agent_control;
+mod antigravity_link;
+mod antigravity_tree;
 mod away_ops;
+mod conn_slot;
 mod cursor_reports;
 mod detect;
 mod failure_confirmation;
 mod fork;
 mod inbound;
 mod inbox;
+mod inherited;
 mod ios;
 mod ios_agents;
 mod ios_history;
@@ -59,6 +63,7 @@ mod todo;
 mod watch;
 
 use away_ops::*;
+use conn_slot::Installed;
 use detect::*;
 use fork::*;
 use inbound::*;
@@ -195,6 +200,11 @@ fn run_cmd(background: bool, wait_for_gui_handoff: bool) -> i32 {
     BACKGROUND_LOG_TO_FILE.store(background, Ordering::Relaxed);
     #[cfg(not(windows))]
     let _ = background;
+    // Before this image has started a child of its own: what exists now is what the previous image
+    // left behind across an in-place update, and has nobody to wait for it. The same table is
+    // handed to every `serve` below, because a failed exec resumes this image with children it
+    // started itself, which must not be mistaken for inherited ones.
+    let inherited = inherited::Inherited::collect();
     let wait_for_handoff = wait_for_gui_handoff
         || cfg!(windows) && std::env::args().any(|arg| arg == "--wait-for-handoff");
     let deadline = Instant::now() + Duration::from_secs(30);
@@ -211,7 +221,8 @@ fn run_cmd(background: bool, wait_for_gui_handoff: bool) -> i32 {
                 })
                 .is_some_and(|s| {
                     !s.draining
-                        && s.fingerprint == Some(lifecycle::current_fingerprint())
+                        && s.fingerprint
+                            .is_some_and(|fp| fp.same_as(&lifecycle::current_fingerprint()))
                         && s.protocol_version == ipc::PROTOCOL_VERSION
                 }) {
                     super::handoff::healthy(lifecycle::current_fingerprint());
@@ -251,7 +262,12 @@ fn run_cmd(background: bool, wait_for_gui_handoff: bool) -> i32 {
     loop {
         super::recovery::set_handoff(false);
         let intent = Arc::new(Mutex::new(super::handoff::Intent::default()));
-        let code = tauri::async_runtime::block_on(serve(&lock, intent.clone(), startup_fp));
+        let code = tauri::async_runtime::block_on(serve(
+            &lock,
+            intent.clone(),
+            startup_fp,
+            inherited.clone(),
+        ));
         let intent = *intent.lock().unwrap();
         #[cfg(target_os = "macos")]
         if intent == super::handoff::Intent::MoveToGui {
@@ -312,14 +328,19 @@ struct ServerState {
     /// Cross-process popup focus owner and background cascade order.
     popup_focus: Mutex<PopupFocusArbiter>,
     popup_inbox: Mutex<super::popup_inbox::Host<InteractionEntry>>,
+    /// Child processes the previous image left behind across a live update, which this image now
+    /// waits for and can end (`inherited.rs`).
+    inherited: Arc<inherited::Inherited>,
     /// 钉钉长连接 Router（惰性建连、常热复用；连接死亡后按需重连）。
-    dd_router: tokio::sync::Mutex<Option<Arc<DdRouter>>>,
+    /// The router slots and the iOS gateway slot never make a reader wait for a connect (see
+    /// `conn_slot`).
+    dd_router: conn_slot::ConnSlot<DdRouter>,
     /// 飞书长连接 Router（惰性建连、常热复用；连接死亡后按需重连）。
-    fs_router: tokio::sync::Mutex<Option<Arc<FsRouter>>>,
+    fs_router: conn_slot::ConnSlot<FsRouter>,
     /// Telegram 长轮询 Router（惰性建连、常热复用；单一 offset）。
-    tg_router: tokio::sync::Mutex<Option<Arc<TgRouter>>>,
+    tg_router: conn_slot::ConnSlot<TgRouter>,
     /// Slack Socket Mode Router（惰性建连、常热复用；连接死亡后按需重连）。
-    sl_router: tokio::sync::Mutex<Option<Arc<SlRouter>>>,
+    sl_router: conn_slot::ConnSlot<SlRouter>,
     /// 最近一次已知配置快照（config watch 据此比对差异，决定哪些 Router 需失效，A12）。
     config: Mutex<AppConfig>,
     /// 版本自更新快照（后台检查 / 指纹监听维护，握手与广播据此告知弹窗）。
@@ -327,6 +348,9 @@ struct ServerState {
     /// Agent lifecycle registry (lifecycle tracking spec D3).
     agents: Arc<AgentRegistry>,
     agent_controls: crate::agents::control::ControlStore,
+    /// Antigravity sub-agent conversations folded into the conversation that started them (spec
+    /// D17). In memory only; found again from the transcripts after a restart.
+    antigravity_trees: antigravity_tree::Trees,
     failure_confirmations: failure_confirmation::Cards,
     /// Agent 插话队列（spec agent-interject）：内存常驻，变更时落盘 `interject.json`。
     interject: crate::agents::interject::InterjectStore,
@@ -367,7 +391,7 @@ struct ServerState {
     replay: Mutex<crate::daemon::ask_dedup::ReplayCache>,
     /// iOS channel gateway (`docs/plans/ios-channel.md` §4.3), present while the channel is enabled
     /// and configured. See `ios.rs`.
-    ios: Mutex<Option<IosSlot>>,
+    ios: conn_slot::ConnSlot<IosSlot>,
 }
 
 /// 一条控制台焦点订阅（`tx` 即该 agents 订阅者的发送端；同一订阅者重设焦点就地更新）。
@@ -414,6 +438,7 @@ fn test_state(directory: &std::path::Path) -> Arc<ServerState> {
         popup_announcement: Default::default(),
         popup_focus: Mutex::new(PopupFocusArbiter::new()),
         popup_inbox: Mutex::new(Default::default()),
+        inherited: inherited::Inherited::adopting([]),
         dd_router: Default::default(),
         fs_router: Default::default(),
         tg_router: Default::default(),
@@ -422,6 +447,7 @@ fn test_state(directory: &std::path::Path) -> Arc<ServerState> {
         update: Mutex::new(Default::default()),
         agents: Arc::new(AgentRegistry::new()),
         agent_controls: crate::agents::control::ControlStore::new(directory.join("controls")),
+        antigravity_trees: Default::default(),
         interject: crate::agents::interject::InterjectStore::new(),
         away: crate::daemon::away::AwayEngine::in_memory(),
         grok_bindings: Default::default(),
@@ -437,7 +463,7 @@ fn test_state(directory: &std::path::Path) -> Arc<ServerState> {
         gui_focus: Default::default(),
         last_waiting: Default::default(),
         replay: Mutex::new(crate::daemon::ask_dedup::ReplayCache::new()),
-        ios: Mutex::new(None),
+        ios: Default::default(),
     })
 }
 
@@ -501,6 +527,24 @@ struct PendingLaunchWatch {
     created_at: u64,
 }
 
+/// The folder of the task a launch id names, while the task is still waiting for its agent.
+fn pending_launch_cwd(
+    pending: &Mutex<Vec<PendingLaunchWatch>>,
+    kind: AgentKind,
+    launch_id: &str,
+) -> Option<String> {
+    pending
+        .lock()
+        .unwrap()
+        .iter()
+        .find(|item| item.kind == kind && item.id == launch_id)
+        .map(|item| item.cwd.clone())
+}
+
+/// Whether an agent event is the start of the task `item` asked for. The launch id the helper puts
+/// in the agent's environment is unique, so it pairs on its own wherever the agent reports no
+/// directory (an `agy` outside a trusted workspace sends an empty one); a directory it does report
+/// must still be the task's. The prompt hash is only a guess, so it needs the directory too.
 fn pending_launch_matches(
     item: &PendingLaunchWatch,
     kind: AgentKind,
@@ -509,9 +553,12 @@ fn pending_launch_matches(
     prompt_sha256: Option<&str>,
 ) -> bool {
     item.kind == kind
-        && cwd.is_some_and(|value| value == item.cwd)
-        && (launch_id.is_some_and(|value| value == item.id)
-            || prompt_sha256.is_some_and(|value| value == item.task_sha256))
+        && if launch_id.is_some_and(|value| value == item.id) {
+            cwd.is_none_or(|value| value == item.cwd)
+        } else {
+            cwd.is_some_and(|value| value == item.cwd)
+                && prompt_sha256.is_some_and(|value| value == item.task_sha256)
+        }
 }
 
 /// 「跟底」重发节流：同一订阅两次跟底之间的最短间隔（用户定案 30s）。
@@ -676,7 +723,6 @@ impl Default for SelectState {
 enum PickerKind {
     TaskWorkspace,
     TaskAgent,
-    TaskTarget,
     TaskPermission,
     TaskInputSource,
     ForkSource,
@@ -712,7 +758,6 @@ enum PickerKind {
 struct ConfirmEntry {
     channel: String,
     message_id: String,
-    session_id: String,
     git_root: std::path::PathBuf,
     paths_fp: String,
     /// 通用展示模型；wire slot 必须经它映射回 `/stage` 的稳定业务 action id。
@@ -955,8 +1000,9 @@ fn check_pending_update(state: &Arc<ServerState>) {
     if state.closing.load(Ordering::SeqCst) {
         return;
     }
+    // An unreadable binary is not a changed one: only two real measurements can differ.
     let now_fp = lifecycle::launch_fingerprint();
-    if now_fp == state.startup_fp {
+    if !now_fp.differs_from(&state.startup_fp) {
         return;
     }
     if !crate::development::routing::replacement_compatible() {
@@ -1009,6 +1055,7 @@ async fn serve(
     _lock: &LockGuard,
     exit: Arc<Mutex<super::handoff::Intent>>,
     startup_fp: lifecycle::Fingerprint,
+    inherited: Arc<inherited::Inherited>,
 ) -> i32 {
     super::recovery::enter_daemon();
     let listener = match transport::bind() {
@@ -1043,6 +1090,11 @@ async fn serve(
         exe_path,
         startup_fp.short(),
     ));
+    if startup_fp.is_unknown() {
+        // Every comparison against an unmeasured binary says "no evidence", so this process cannot
+        // tell that the installed binary changed until it is restarted.
+        log("could not measure the daemon binary at startup; update detection is off for this process");
+    }
     #[cfg(target_os = "macos")]
     if super::spawn::is_macos_headless() {
         log("running headless outside the Aqua launchd job");
@@ -1117,16 +1169,18 @@ async fn serve(
         popup_announcement: Default::default(),
         popup_focus: Mutex::new(PopupFocusArbiter::new()),
         popup_inbox: Mutex::new(super::popup_inbox::Host::default()),
-        dd_router: tokio::sync::Mutex::new(None),
-        fs_router: tokio::sync::Mutex::new(None),
-        tg_router: tokio::sync::Mutex::new(None),
-        sl_router: tokio::sync::Mutex::new(None),
+        inherited,
+        dd_router: Default::default(),
+        fs_router: Default::default(),
+        tg_router: Default::default(),
+        sl_router: Default::default(),
         config: Mutex::new(crate::development::channel_safety::runtime_config(
             AppConfig::load(),
         )),
         update: Mutex::new(init_update_snapshot()),
         agents,
         agent_controls: crate::agents::control::ControlStore::load(),
+        antigravity_trees: Default::default(),
         failure_confirmations,
         interject: crate::agents::interject::InterjectStore::load(),
         away: crate::daemon::away::AwayEngine::load(),
@@ -1143,8 +1197,11 @@ async fn serve(
         gui_focus: Mutex::new(Vec::new()),
         last_waiting: Mutex::new(Vec::new()),
         replay: Mutex::new(crate::daemon::ask_dedup::ReplayCache::new()),
-        ios: Mutex::new(None),
+        ios: Default::default(),
     });
+    // Waiting for the inherited children starts before anything else can need the answer (the
+    // restore below asks whether a kept popup host is still there).
+    state.inherited.start();
 
     let mut background_tasks = Vec::new();
     #[cfg(target_os = "macos")]
@@ -1384,6 +1441,7 @@ async fn serve(
                     state.interject.persist();
                 }
                 sweep(&state);
+                antigravity_tree::sweep(&state);
                 if changed || ij_changed || has_agent_subs(&state) {
                     broadcast_agents_state(&state);
                 }
@@ -1539,10 +1597,10 @@ async fn serve(
 
     // 收尾：主动丢弃常热 Router（其 Drop 中止 reader 任务、关闭 IM 长连接），再清理 socket/meta。
     // 进行中的请求各自持有 Router Arc 克隆，故仅在无人持有时才真正断连。
-    *state.dd_router.lock().await = None;
-    *state.fs_router.lock().await = None;
-    *state.tg_router.lock().await = None;
-    *state.sl_router.lock().await = None;
+    state.dd_router.invalidate();
+    state.fs_router.invalidate();
+    state.tg_router.invalidate();
+    state.sl_router.invalidate();
     for connection in &connections {
         connection.abort();
     }
@@ -1668,6 +1726,9 @@ enum Control {
     AgentsSub,
     /// 菜单栏宿主订阅：接管连接，持续推送 `TrayState`（非保活）。
     TraySub,
+    /// A sidecar process of the Antigravity App checked in: the connection stays and carries
+    /// its commands and results (not a keepalive).
+    AntigravitySidecar(crate::antigravity_desktop::CheckIn),
     /// 插话 composer 窗口连接：接管连接，登记「composer 打开」；断开＝关闭（非保活）。
     InterjectComposer {
         session_id: String,
@@ -1679,6 +1740,77 @@ enum Control {
     },
     PassiveClosed,
     Closed,
+}
+
+/// Answers one interjection poll with its first frame: nothing, a message the human queued, or a
+/// hold while a composer is open. `Some` hands the connection on (the hold, or a closed one when a
+/// message could not be delivered and went back to the queue).
+async fn answer_interject_poll(
+    state: &Arc<ServerState>,
+    w: &mut Writer,
+    session_id: &str,
+) -> Option<Control> {
+    use crate::agents::interject::PollOutcome;
+    use crate::ipc::InterjectAction;
+    match state.interject.poll(session_id) {
+        PollOutcome::None => {
+            let _ = ipc::write_msg(
+                w,
+                &ServerMsg::InterjectDecision {
+                    control: None,
+                    action: InterjectAction::None,
+                    text: String::new(),
+                    attachments: Vec::new(),
+                },
+            )
+            .await;
+            None
+        }
+        PollOutcome::Message {
+            delivery,
+            receipt_channels,
+        } => {
+            let delivered = ipc::write_msg(
+                w,
+                &ServerMsg::InterjectDecision {
+                    control: None,
+                    action: InterjectAction::Message,
+                    text: delivery.text.clone(),
+                    attachments: delivery.attachments.clone(),
+                },
+            )
+            .await
+            .is_ok();
+            if !delivered {
+                state
+                    .interject
+                    .requeue_front(session_id, delivery, receipt_channels);
+                state.interject.persist();
+                broadcast_agents_state(state);
+                return Some(Control::Closed);
+            }
+            state.interject.persist();
+            broadcast_agents_state(state);
+            spawn_read_receipts(state, session_id, receipt_channels);
+            None
+        }
+        PollOutcome::Hold(rx) => {
+            let _ = ipc::write_msg(
+                w,
+                &ServerMsg::InterjectDecision {
+                    control: None,
+                    action: InterjectAction::Hold,
+                    text: String::new(),
+                    attachments: Vec::new(),
+                },
+            )
+            .await;
+            Some(Control::InterjectHold {
+                session_id: session_id.to_string(),
+                rx,
+            })
+        }
+    }
 }
 
 async fn handle_conn(stream: Stream, state: Arc<ServerState>) {
@@ -1700,6 +1832,9 @@ async fn handle_conn(stream: Stream, state: Arc<ServerState>) {
         Control::GuiWarm => handle_gui_warm(reader, w, &state).await,
         Control::AgentsSub => handle_agents_sub(reader, w, &state).await,
         Control::TraySub => handle_tray_sub(reader, w, &state).await,
+        Control::AntigravitySidecar(check_in) => {
+            antigravity_link::handle_sidecar(reader, w, &state, check_in).await
+        }
         Control::InterjectComposer { session_id } => {
             handle_interject_composer(reader, w, &state, session_id).await
         }
@@ -1746,6 +1881,29 @@ async fn control_loop(reader: &mut Reader, w: &mut Writer, state: &Arc<ServerSta
                 let result = crate::cursor_desktop::execute(operation).await;
                 let _ = ipc::write_msg(w, &ServerMsg::CursorDesktop { result }).await;
             }
+            ClientMsg::AntigravityDesktop { operation } => {
+                // A task the New Task window creates is registered under its own conversation id
+                // like one the phone or IM creates, so it can be watched before its first hook.
+                let created_in = match &operation {
+                    crate::antigravity_desktop::Operation::Create(request) if !request.dry_run => {
+                        Some(request.cwd.clone())
+                    }
+                    _ => None,
+                };
+                let result = crate::antigravity_desktop::execute(operation).await;
+                if let (Some(cwd), Ok(answer)) = (created_in, &result) {
+                    if let Some(session_id) = answer["sessionId"].as_str() {
+                        task_launch::register_app_session(state, session_id, &cwd);
+                    }
+                }
+                let _ = ipc::write_msg(w, &ServerMsg::AntigravityDesktop { result }).await;
+            }
+            // A sidecar says who it is first. It sends no Hello: a sidecar can be an older build
+            // than the daemon, and that must never make the daemon give way.
+            ClientMsg::AntigravitySidecar {
+                frame: crate::antigravity_desktop::Up::CheckIn(check_in),
+            } => return Control::AntigravitySidecar(check_in),
+            ClientMsg::AntigravitySidecar { .. } => {}
             ClientMsg::AgentMessage { message } => {
                 let result = agent_control::send_from_console(state, message).await;
                 let _ = ipc::write_msg(w, &ServerMsg::AgentMessage { result }).await;
@@ -1766,10 +1924,13 @@ async fn control_loop(reader: &mut Reader, w: &mut Writer, state: &Arc<ServerSta
                 let now_fp = lifecycle::launch_fingerprint();
                 // 指纹按「内容哈希」比对（与路径/mtime 无关）：
                 // 自身盘上二进制内容被换 / 客户端二进制内容不一致 / 协议不一致 → 过时，让位换新。
-                let own_changed = now_fp != state.startup_fp;
+                // A side that could not be measured (unreadable file, fd exhaustion) is no evidence
+                // of a change, so it never makes the daemon give way.
+                let own_changed = now_fp.differs_from(&state.startup_fp);
                 let protocol_differs = hello.protocol_version != ipc::PROTOCOL_VERSION;
-                let mut stale =
-                    own_changed || hello.fingerprint != state.startup_fp || protocol_differs;
+                let mut stale = own_changed
+                    || hello.fingerprint.differs_from(&state.startup_fp)
+                    || protocol_differs;
                 let auto_restart = std::env::var("ASKHUMAN_DAEMON_AUTORESTART")
                     .map(|v| v != "0")
                     .unwrap_or(true)
@@ -1924,7 +2085,7 @@ async fn control_loop(reader: &mut Reader, w: &mut Writer, state: &Arc<ServerSta
                     uptime_secs: now_secs().saturating_sub(state.started_at),
                     socket: transport::socket_path().display().to_string(),
                     active_requests: state.registry.active_count(),
-                    im_connections: active_im_connections(state).await,
+                    im_connections: active_im_connections(state),
                     draining: state.draining.load(Ordering::SeqCst),
                     channel_issues: channel_issue_infos(),
                     exe_path: state.exe_path.clone(),
@@ -1985,6 +2146,7 @@ async fn control_loop(reader: &mut Reader, w: &mut Writer, state: &Arc<ServerSta
                 interject_poll,
                 failed,
                 observation,
+                stop_gate,
             } => {
                 if let Some(signal) = observation
                     .as_ref()
@@ -2012,216 +2174,242 @@ async fn control_loop(reader: &mut Reader, w: &mut Writer, state: &Arc<ServerSta
                     .await;
                     return Control::PassiveClosed;
                 }
-                if let (Some(kind), Some(ev)) = (
-                    AgentKind::parse(&agent).filter(|kind| *kind != AgentKind::Antigravity),
-                    LifecycleEvent::parse(&event),
-                ) {
+                if let (Some(kind), Some(ev)) =
+                    (AgentKind::parse(&agent), LifecycleEvent::parse(&event))
+                {
                     if !crate::development::session::native_binding_allowed(kind, &session_id) {
                         return Control::Closed;
                     }
-                    // PreToolUse：先回 interject 再做后续（hook 在等，优先解除阻塞）。
-                    if interject_poll {
-                        use crate::agents::interject::PollOutcome;
+                    // An Antigravity `Stop` asking whether it may raise its confirmation card. It
+                    // applies nothing (the hook reports the end itself once the human decided), so
+                    // it is answered, or held until the sub-agents are done, before anything else.
+                    if stop_gate {
                         use crate::ipc::InterjectAction;
-                        match state.interject.poll(&session_id) {
-                            PollOutcome::None => {
-                                let _ = ipc::write_msg(
-                                    w,
-                                    &ServerMsg::InterjectDecision {
-                                        control: None,
-                                        action: InterjectAction::None,
-                                        text: String::new(),
-                                        attachments: Vec::new(),
-                                    },
-                                )
-                                .await;
-                            }
-                            PollOutcome::Message {
-                                delivery,
-                                receipt_channels,
-                            } => {
-                                let delivered = ipc::write_msg(
-                                    w,
-                                    &ServerMsg::InterjectDecision {
-                                        control: None,
-                                        action: InterjectAction::Message,
-                                        text: delivery.text.clone(),
-                                        attachments: delivery.attachments.clone(),
-                                    },
-                                )
+                        let answer = if kind == AgentKind::Antigravity {
+                            antigravity_tree::gate(state, &session_id, ev, observation.as_deref())
                                 .await
-                                .is_ok();
-                                if !delivered {
-                                    state.interject.requeue_front(
-                                        &session_id,
-                                        delivery,
-                                        receipt_channels,
-                                    );
-                                    state.interject.persist();
-                                    broadcast_agents_state(state);
-                                    return Control::Closed;
-                                }
-                                state.interject.persist();
-                                broadcast_agents_state(state);
-                                spawn_read_receipts(state, &session_id, receipt_channels);
-                            }
-                            PollOutcome::Hold(rx) => {
-                                let _ = ipc::write_msg(
-                                    w,
-                                    &ServerMsg::InterjectDecision {
-                                        control: None,
-                                        action: InterjectAction::Hold,
-                                        text: String::new(),
-                                        attachments: Vec::new(),
-                                    },
-                                )
-                                .await;
-                                return Control::InterjectHold { session_id, rx };
-                            }
-                        }
-                    }
-
-                    // PID 解析：优先用显式 pid，否则从 hint_pid 走缓存/walk。
-                    let resolved_pid =
-                        pid.or_else(|| state.agents.resolve_pid(&session_id, kind, hint_pid));
-
-                    let event_cwd = cwd.clone();
-                    let cwd = crate::agents::session_info::workspace(kind, &session_id).or(cwd);
-                    let observation = observation.or_else(|| {
-                        use crate::agents::result::{Observation, TurnOutcome, TurnResult};
-                        let mut legacy = Observation {
-                            tool_started: matches!(
-                                tool.as_ref().map(|tool| &tool.phase),
-                                Some(crate::ipc::ToolPhase::Pre)
-                            ),
-                            tool_finished: matches!(
-                                tool.as_ref().map(|tool| &tool.phase),
-                                Some(crate::ipc::ToolPhase::Post)
-                            ),
-                            ..Observation::default()
+                        } else {
+                            antigravity_tree::Gate::Card
                         };
-                        if ev == LifecycleEvent::TurnEnd {
-                            legacy.result = Some(TurnResult {
-                                source: Some("legacyHook".into()),
-                                id: String::new(),
-                                outcome: if failed {
-                                    TurnOutcome::Failed
-                                } else {
-                                    TurnOutcome::Unknown
-                                },
-                                turn_id: None,
-                                reason: None,
-                                summary: None,
-                                at: 0,
-                            });
-                        }
-                        Some(Box::new(legacy))
-                    });
-                    let applied = state.agents.apply_observed(
-                        kind,
-                        ev,
-                        &session_id,
-                        resolved_pid,
-                        cwd,
-                        ts,
-                        observation.as_deref(),
-                    );
-                    if !applied.accepted {
-                        if applied.changed {
-                            state.agents.persist();
-                        }
-                        continue;
-                    }
-                    let mut changed = applied.changed;
-                    if ev == LifecycleEvent::TurnStart {
-                        state.agent_controls.cancel_unsubmitted(kind, &session_id);
-                    }
-                    let started_control = (ev == LifecycleEvent::TurnStart)
-                        .then(|| {
-                            observation
-                                .as_ref()
-                                .and_then(|observation| {
-                                    state.agent_controls.started(
-                                        kind,
-                                        &session_id,
-                                        observation.control_operation_id.as_deref(),
-                                        observation.turn_id.as_deref(),
-                                    )
-                                })
-                                .and_then(|operation| operation.started_control())
-                        })
-                        .flatten();
-                    if kind == AgentKind::Pi {
-                        if let Some(path) = transcript_path.as_deref().and_then(|path| {
-                            crate::agents::session_paths::register_pi(
-                                &session_id,
-                                path,
-                                event_cwd.as_deref(),
-                            )
-                        }) {
-                            changed |= state.agents.set_transcript_path(kind, &session_id, path);
-                        }
-                    }
-                    if let Some(launch_id) = launch_id.as_deref() {
-                        changed |= state.agents.set_launch_id(&session_id, launch_id);
-                    }
-                    if changed {
-                        state.agents.persist();
-                        broadcast_agents_state(state);
-                    }
-                    if matches!(ev, LifecycleEvent::SessionStart | LifecycleEvent::TurnStart) {
-                        if let Some(ref path) = event_cwd {
-                            let _ =
-                                crate::agents::workspaces::add(std::path::Path::new(path), false);
-                        }
-                    }
-                    if matches!(ev, LifecycleEvent::SessionEnd) {
-                        state.agents.clear_pid_cache(&session_id);
-                        if state.interject.remove_session(&session_id) {
-                            state.interject.persist();
-                        }
-                        session_ended(state, &session_id);
-                    }
-                    match tool {
-                        Some(crate::ipc::ToolReport {
-                            phase: crate::ipc::ToolPhase::Pre,
-                            name,
-                            object,
-                        }) => state.agents.set_current_tool(
-                            kind,
-                            &session_id,
-                            resolved_pid,
-                            name,
-                            object,
-                        ),
-                        Some(crate::ipc::ToolReport {
-                            phase: crate::ipc::ToolPhase::Post,
-                            ..
-                        }) => state.agents.clear_current_tool(kind, &session_id),
-                        None => {}
-                    }
-                    ensure_inbound_listeners(state).await;
-                    state.watch.notify.notify_one();
-                    failure_confirmation::observe(state, kind, &session_id, ev);
-                    if let Some(gateway) = ios_gateway(state) {
-                        gateway.agent_event(crate::ios::gateway::AgentEventInfo {
-                            agent_key: ios_agents::agent_key(kind, &session_id),
-                            event: ios_agents::event_kind(ev),
-                            failed,
-                            result: state.agents.last_turn_result(kind, &session_id),
-                            started_control,
-                        });
-                    }
-                    if matches!(ev, LifecycleEvent::TurnStart) {
-                        match_pending_launch_watch(
-                            state,
-                            kind,
-                            &session_id,
-                            event_cwd.as_deref(),
-                            launch_id.as_deref(),
-                            prompt_sha256.as_deref(),
+                        let (action, hold) = match answer {
+                            antigravity_tree::Gate::Card => (InterjectAction::None, None),
+                            antigravity_tree::Gate::Skip => (InterjectAction::Skip, None),
+                            antigravity_tree::Gate::Hold(rx) => (InterjectAction::Hold, Some(rx)),
+                        };
+                        let _ = ipc::write_msg(
+                            w,
+                            &ServerMsg::InterjectDecision {
+                                control: None,
+                                action,
+                                text: String::new(),
+                                attachments: Vec::new(),
+                            },
                         )
                         .await;
+                        match hold {
+                            Some(rx) => return Control::InterjectHold { session_id, rx },
+                            None => continue,
+                        }
+                    }
+                    // PreToolUse：先回 interject 再做后续（hook 在等，优先解除阻塞）。
+                    // Antigravity's `PreInvocation` can start a turn, and a hook held for an open
+                    // composer must not lose that: it is answered after the event is applied.
+                    let answer_after = interject_poll && kind == AgentKind::Antigravity;
+                    if interject_poll && !answer_after {
+                        if let Some(control) = answer_interject_poll(state, w, &session_id).await {
+                            return control;
+                        }
+                    }
+
+                    // The sub-agents of an Antigravity conversation are folded into it (spec D17).
+                    let folded = if kind == AgentKind::Antigravity {
+                        antigravity_tree::record(state, &session_id, ev, observation.as_deref())
+                    } else {
+                        None
+                    };
+                    // What follows applies the event to the registry; an event the registry does
+                    // not take leaves the block early (it used to leave the whole message).
+                    'apply: {
+                        // PID 解析：优先用显式 pid，否则从 hint_pid 走缓存/walk。
+                        let resolved_pid =
+                            pid.or_else(|| state.agents.resolve_pid(&session_id, kind, hint_pid));
+
+                        let event_cwd = cwd.clone();
+                        // An agent that reports no folder (an `agy` outside a trusted workspace
+                        // sends an empty one) is still in the one its task was started in.
+                        let cwd = crate::agents::session_info::workspace(kind, &session_id)
+                            .or(cwd)
+                            .or_else(|| {
+                                launch_id.as_deref().and_then(|id| {
+                                    pending_launch_cwd(&state.pending_launches, kind, id)
+                                })
+                            });
+                        let mut observation = observation.or_else(|| {
+                            use crate::agents::result::{Observation, TurnOutcome, TurnResult};
+                            let mut legacy = Observation {
+                                tool_started: matches!(
+                                    tool.as_ref().map(|tool| &tool.phase),
+                                    Some(crate::ipc::ToolPhase::Pre)
+                                ),
+                                tool_finished: matches!(
+                                    tool.as_ref().map(|tool| &tool.phase),
+                                    Some(crate::ipc::ToolPhase::Post)
+                                ),
+                                ..Observation::default()
+                            };
+                            if ev == LifecycleEvent::TurnEnd {
+                                legacy.result = Some(TurnResult {
+                                    notify: None,
+                                    source: Some("legacyHook".into()),
+                                    id: String::new(),
+                                    outcome: if failed {
+                                        TurnOutcome::Failed
+                                    } else {
+                                        TurnOutcome::Unknown
+                                    },
+                                    turn_id: None,
+                                    reason: None,
+                                    summary: None,
+                                    at: 0,
+                                });
+                            }
+                            Some(Box::new(legacy))
+                        });
+                        if folded.as_ref().is_some_and(|folded| folded.child) {
+                            // A sub-agent is not a session of its own: the registry ignores the event.
+                            if let Some(observation) = observation.as_mut() {
+                                observation.subagent = true;
+                            }
+                        }
+                        // A conversation that a message woke up announces its turn like any
+                        // other; the message waiting for it is matched here, before the registry
+                        // names the turn.
+                        if let Some(observation) = observation.as_mut() {
+                            agent_control::claim_turn_start(
+                                state,
+                                kind,
+                                &session_id,
+                                ev,
+                                observation,
+                            );
+                        }
+                        let applied = state.agents.apply_observed(
+                            kind,
+                            ev,
+                            &session_id,
+                            resolved_pid,
+                            cwd,
+                            ts,
+                            observation.as_deref(),
+                        );
+                        if !applied.accepted {
+                            if applied.changed {
+                                state.agents.persist();
+                            }
+                            break 'apply;
+                        }
+                        let mut changed = applied.changed;
+                        if ev == LifecycleEvent::TurnStart {
+                            state.agent_controls.cancel_unsubmitted(kind, &session_id);
+                        }
+                        let started_control = (ev == LifecycleEvent::TurnStart)
+                            .then(|| {
+                                observation
+                                    .as_ref()
+                                    .and_then(|observation| {
+                                        state.agent_controls.started(
+                                            kind,
+                                            &session_id,
+                                            observation.control_operation_id.as_deref(),
+                                            observation.turn_id.as_deref(),
+                                        )
+                                    })
+                                    .and_then(|operation| operation.started_control())
+                            })
+                            .flatten();
+                        if kind == AgentKind::Pi {
+                            if let Some(path) = transcript_path.as_deref().and_then(|path| {
+                                crate::agents::session_paths::register_pi(
+                                    &session_id,
+                                    path,
+                                    event_cwd.as_deref(),
+                                )
+                            }) {
+                                changed |=
+                                    state.agents.set_transcript_path(kind, &session_id, path);
+                            }
+                        }
+                        if let Some(launch_id) = launch_id.as_deref() {
+                            changed |= state.agents.set_launch_id(&session_id, launch_id);
+                        }
+                        if changed {
+                            state.agents.persist();
+                            broadcast_agents_state(state);
+                        }
+                        if matches!(ev, LifecycleEvent::SessionStart | LifecycleEvent::TurnStart) {
+                            if let Some(ref path) = event_cwd {
+                                let _ = crate::agents::workspaces::add(
+                                    std::path::Path::new(path),
+                                    false,
+                                );
+                            }
+                        }
+                        if matches!(ev, LifecycleEvent::SessionEnd) {
+                            state.agents.clear_pid_cache(&session_id);
+                            if state.interject.remove_session(&session_id) {
+                                state.interject.persist();
+                            }
+                            session_ended(state, &session_id);
+                        }
+                        match tool {
+                            Some(crate::ipc::ToolReport {
+                                phase: crate::ipc::ToolPhase::Pre,
+                                name,
+                                object,
+                            }) => state.agents.set_current_tool(
+                                kind,
+                                &session_id,
+                                resolved_pid,
+                                name,
+                                object,
+                            ),
+                            Some(crate::ipc::ToolReport {
+                                phase: crate::ipc::ToolPhase::Post,
+                                ..
+                            }) => state.agents.clear_current_tool(kind, &session_id),
+                            None => {}
+                        }
+                        ensure_inbound_listeners(state).await;
+                        state.watch.notify.notify_one();
+                        failure_confirmation::observe(state, kind, &session_id, ev);
+                        if let Some(gateway) = ios_gateway(state) {
+                            gateway.agent_event(crate::ios::gateway::AgentEventInfo {
+                                agent_key: ios_agents::agent_key(kind, &session_id),
+                                event: ios_agents::event_kind(ev),
+                                failed,
+                                result: state.agents.last_turn_result(kind, &session_id),
+                                started_control,
+                            });
+                        }
+                        if matches!(ev, LifecycleEvent::TurnStart) {
+                            match_pending_launch_watch(
+                                state,
+                                kind,
+                                &session_id,
+                                event_cwd.as_deref(),
+                                launch_id.as_deref(),
+                                prompt_sha256.as_deref(),
+                            )
+                            .await;
+                        }
+                    }
+                    if answer_after {
+                        if let Some(control) = answer_interject_poll(state, w, &session_id).await {
+                            return control;
+                        }
+                    }
+                    if let Some(folded) = folded {
+                        antigravity_tree::follow_up(state, &session_id, folded).await;
                     }
                 } else if interject_poll {
                     let _ = ipc::write_msg(
@@ -2835,6 +3023,34 @@ fn marks_session_working(auto: bool, from_mcp: bool, native_request_id: Option<&
         && !cursor_reports::is_report(native_request_id)
 }
 
+/// An Antigravity process's environment only names a conversation. The name becomes the caller's
+/// session when a lifecycle hook has registered that conversation and it has not ended; any other
+/// value is dropped and the call keeps its family alone, as it did before the hooks existed.
+fn adopt_antigravity_session_candidate(task: &mut TaskRequest, agents: &AgentRegistry) {
+    let candidate = task.agent_session_candidate.take();
+    if let Some(session) = antigravity_session_from_candidate(
+        task.agent_kind.as_deref(),
+        task.agent_session_id.as_deref(),
+        candidate.as_deref(),
+        agents,
+    ) {
+        task.agent_session_id = Some(session);
+    }
+}
+
+fn antigravity_session_from_candidate(
+    agent_kind: Option<&str>,
+    session_id: Option<&str>,
+    candidate: Option<&str>,
+    agents: &AgentRegistry,
+) -> Option<String> {
+    let candidate = candidate?;
+    (session_id.is_none()
+        && agent_kind == Some(AgentKind::Antigravity.as_str())
+        && agents.has_active_session(AgentKind::Antigravity, candidate))
+    .then(|| candidate.to_string())
+}
+
 /// CLI 提交一次任务：建请求、spawn GUI Helper、流式回结果；CLI 断开则取消。
 async fn handle_submit(
     task: TaskRequest,
@@ -2873,6 +3089,7 @@ async fn handle_submit_recoverable(
         .await;
         return;
     }
+    adopt_antigravity_session_candidate(&mut task, &state.agents);
     // 性能埋点关联 id（CLI 透传；空=关闭）。daemon 自身启动时无 ASKHUMAN_PERF env，
     // 故各阶段标记一律以本字段非空为开关（见 perf 模块说明）。
     let project = crate::project::for_session(
@@ -3592,6 +3809,7 @@ async fn serve_gui(
         let _ = gui_tx.send(ServerMsg::Cancel {
             request_id: entry.request_id.clone(),
             winner: "system".to_string(),
+            keep_draft: false,
         });
         inbox::detach_entry(&InteractionEntry::Ask(entry.clone()), &gui_tx);
         drop(gui_tx);
@@ -4061,36 +4279,59 @@ fn spawn_confirm_popup_watchdog(entry: Arc<request::ConfirmEntry>) {
     });
 }
 
+/// Whether a live-update handoff has begun. No router may be started or kept from then on: the
+/// successor daemon owns the channels (Telegram's single poll offset above all).
+fn handoff_suspending(state: &ServerState) -> bool {
+    state
+        .recovery
+        .as_ref()
+        .is_some_and(|runtime| runtime.suspending.load(Ordering::SeqCst))
+}
+
+// The four `ensure_*_router` functions share one shape (see `conn_slot` for why):
+//   1. A live router is returned without waiting, even while another request is still connecting.
+//   2. Otherwise queue for the right to connect, re-check what the previous holder left, connect.
+//   3. Install the new router unless a handoff began or the slot was invalidated since this call
+//      arrived; a router that connected during a handoff is paused (before the gate is released)
+//      and the request gets no router.
+
 /// 取得（必要时惰性建连）钉钉 Router；连接已死则重连。失败返回 None。
 async fn ensure_dd_router(
     state: &Arc<ServerState>,
     client_id: &str,
     client_secret: &str,
 ) -> Option<Arc<DdRouter>> {
-    let mut guard = state.dd_router.lock().await;
-    if state
-        .recovery
-        .as_ref()
-        .is_some_and(|runtime| runtime.suspending.load(Ordering::SeqCst))
-    {
+    if handoff_suspending(state) {
         return None;
     }
-    if let Some(r) = guard.as_ref() {
-        if r.is_alive() {
-            return Some(r.clone());
-        }
+    if let Some(r) = state.dd_router.current().filter(|r| r.is_alive()) {
+        return Some(r);
+    }
+    let attempt = state.dd_router.begin_connect().await;
+    if let Some(r) = attempt.current().filter(|r| r.is_alive()) {
+        return Some(r);
+    }
+    if handoff_suspending(state) {
+        return None;
     }
     match DdRouter::connect(client_id, client_secret).await {
         Ok(r) => {
             log("dingtalk router connected");
             crate::channels::health::clear("dingding");
-            *guard = Some(r.clone());
-            Some(r)
+            match attempt.install(&r, || handoff_suspending(state)) {
+                Installed::Shared { .. } | Installed::Private => Some(r),
+                Installed::Suspended => {
+                    // The attempt still holds the gate here, so live-update preparation (which
+                    // reads the slot through `settled`) waits for this pause to finish.
+                    r.pause().await;
+                    None
+                }
+            }
         }
         Err(e) => {
             log(&format!("dingtalk router connect failed: {}", e));
             crate::channels::health::report("dingding", e);
-            *guard = None;
+            attempt.failed();
             None
         }
     }
@@ -4101,30 +4342,37 @@ async fn ensure_fs_router(
     state: &Arc<ServerState>,
     cfg: &crate::config::FeishuChannelConfig,
 ) -> Option<Arc<FsRouter>> {
-    let mut guard = state.fs_router.lock().await;
-    if state
-        .recovery
-        .as_ref()
-        .is_some_and(|runtime| runtime.suspending.load(Ordering::SeqCst))
-    {
+    if handoff_suspending(state) {
         return None;
     }
-    if let Some(r) = guard.as_ref() {
-        if r.is_alive() {
-            return Some(r.clone());
-        }
+    if let Some(r) = state.fs_router.current().filter(|r| r.is_alive()) {
+        return Some(r);
+    }
+    let attempt = state.fs_router.begin_connect().await;
+    if let Some(r) = attempt.current().filter(|r| r.is_alive()) {
+        return Some(r);
+    }
+    if handoff_suspending(state) {
+        return None;
     }
     match FsRouter::connect(cfg).await {
         Ok(r) => {
             log("feishu router connected");
             crate::channels::health::clear("feishu");
-            *guard = Some(r.clone());
-            Some(r)
+            match attempt.install(&r, || handoff_suspending(state)) {
+                Installed::Shared { .. } | Installed::Private => Some(r),
+                Installed::Suspended => {
+                    // The attempt still holds the gate here, so live-update preparation (which
+                    // reads the slot through `settled`) waits for this pause to finish.
+                    r.pause().await;
+                    None
+                }
+            }
         }
         Err(e) => {
             log(&format!("feishu router connect failed: {}", e));
             crate::channels::health::report("feishu", e);
-            *guard = None;
+            attempt.failed();
             None
         }
     }
@@ -4135,18 +4383,18 @@ async fn ensure_tg_router(
     state: &Arc<ServerState>,
     cfg: &crate::config::TelegramChannelConfig,
 ) -> Option<Arc<TgRouter>> {
-    let mut guard = state.tg_router.lock().await;
-    if state
-        .recovery
-        .as_ref()
-        .is_some_and(|runtime| runtime.suspending.load(Ordering::SeqCst))
-    {
+    if handoff_suspending(state) {
         return None;
     }
-    if let Some(r) = guard.as_ref() {
-        if r.is_alive() {
-            return Some(r.clone());
-        }
+    if let Some(r) = state.tg_router.current().filter(|r| r.is_alive()) {
+        return Some(r);
+    }
+    let attempt = state.tg_router.begin_connect().await;
+    if let Some(r) = attempt.current().filter(|r| r.is_alive()) {
+        return Some(r);
+    }
+    if handoff_suspending(state) {
+        return None;
     }
     let connected = match &state.recovery {
         Some(runtime) => {
@@ -4166,13 +4414,20 @@ async fn ensure_tg_router(
     match connected {
         Ok(r) => {
             log("telegram router connected");
-            *guard = Some(r.clone());
-            Some(r)
+            match attempt.install(&r, || handoff_suspending(state)) {
+                Installed::Shared { .. } | Installed::Private => Some(r),
+                Installed::Suspended => {
+                    // The attempt still holds the gate here, so live-update preparation (which
+                    // reads the slot through `settled`) waits for this pause to finish.
+                    r.pause().await;
+                    None
+                }
+            }
         }
         Err(e) => {
             log(&format!("telegram router connect failed: {}", e));
             crate::channels::health::report("telegram", e);
-            *guard = None;
+            attempt.failed();
             None
         }
     }
@@ -4183,30 +4438,37 @@ async fn ensure_sl_router(
     state: &Arc<ServerState>,
     cfg: &crate::config::SlackChannelConfig,
 ) -> Option<Arc<SlRouter>> {
-    let mut guard = state.sl_router.lock().await;
-    if state
-        .recovery
-        .as_ref()
-        .is_some_and(|runtime| runtime.suspending.load(Ordering::SeqCst))
-    {
+    if handoff_suspending(state) {
         return None;
     }
-    if let Some(r) = guard.as_ref() {
-        if r.is_alive() {
-            return Some(r.clone());
-        }
+    if let Some(r) = state.sl_router.current().filter(|r| r.is_alive()) {
+        return Some(r);
+    }
+    let attempt = state.sl_router.begin_connect().await;
+    if let Some(r) = attempt.current().filter(|r| r.is_alive()) {
+        return Some(r);
+    }
+    if handoff_suspending(state) {
+        return None;
     }
     match SlRouter::connect(cfg).await {
         Ok(r) => {
             log("slack router connected");
             crate::channels::health::clear("slack");
-            *guard = Some(r.clone());
-            Some(r)
+            match attempt.install(&r, || handoff_suspending(state)) {
+                Installed::Shared { .. } | Installed::Private => Some(r),
+                Installed::Suspended => {
+                    // The attempt still holds the gate here, so live-update preparation (which
+                    // reads the slot through `settled`) waits for this pause to finish.
+                    r.pause().await;
+                    None
+                }
+            }
         }
         Err(e) => {
             log(&format!("slack router connect failed: {}", e));
             crate::channels::health::report("slack", e);
-            *guard = None;
+            attempt.failed();
             None
         }
     }
@@ -5024,46 +5286,21 @@ enum WatchBtn {
 }
 
 /// 当前已建连且存活的 IM 长连接名（供 `daemon status` 展示）。
-async fn active_im_connections(state: &Arc<ServerState>) -> Vec<String> {
+///
+/// Synchronous on purpose: this answers `Status`, which must come back even while a router is
+/// still connecting, so it only reads what the slots already hold.
+fn active_im_connections(state: &ServerState) -> Vec<String> {
     let mut v = Vec::new();
-    if state
-        .dd_router
-        .lock()
-        .await
-        .as_ref()
-        .map(|r| r.is_alive())
-        .unwrap_or(false)
-    {
+    if state.dd_router.current().is_some_and(|r| r.is_alive()) {
         v.push("dingtalk".to_string());
     }
-    if state
-        .fs_router
-        .lock()
-        .await
-        .as_ref()
-        .map(|r| r.is_alive())
-        .unwrap_or(false)
-    {
+    if state.fs_router.current().is_some_and(|r| r.is_alive()) {
         v.push("feishu".to_string());
     }
-    if state
-        .tg_router
-        .lock()
-        .await
-        .as_ref()
-        .map(|r| r.is_alive())
-        .unwrap_or(false)
-    {
+    if state.tg_router.current().is_some_and(|r| r.is_alive()) {
         v.push("telegram".to_string());
     }
-    if state
-        .sl_router
-        .lock()
-        .await
-        .as_ref()
-        .map(|r| r.is_alive())
-        .unwrap_or(false)
-    {
+    if state.sl_router.current().is_some_and(|r| r.is_alive()) {
         v.push("slack".to_string());
     }
     v
@@ -5326,8 +5563,10 @@ fn cleanup_temp_dirs() {
 async fn on_config_changed(state: &Arc<ServerState>) {
     let new = crate::development::channel_safety::runtime_config(AppConfig::load());
     let old = { state.config.lock().unwrap().clone() };
-    invalidate_changed_routers(state, &old, &new).await;
+    // Publish before invalidating: a request that reads the configuration after the routers were
+    // invalidated must see the new credentials, never connect with the old ones.
     *state.config.lock().unwrap() = new.clone();
+    invalidate_changed_routers(state, &old, &new);
     // 缓存的 watch 传输客户端按旧凭据构建，凭据/开关可能已变 → 整体失效，用到时按新配置重建。
     state.watch.clients.lock().unwrap().clear();
     // 凭据/收件人变更已停掉旧入站监听（见 invalidate_changed_routers）；这里立即按新配置重建，
@@ -5375,12 +5614,12 @@ fn sync_daemon_login_item() {
 /// 入站监听单独处理：除凭据变更（连带 Router）外，**收件人 id 变更**（feishu open_id /
 /// dingding·slack user_id / telegram chat_id，即监听的 expected_sender）也需停旧监听——否则监听
 /// 仍用旧过滤条件绑在旧连接上，`on_config_changed` 随后会按新配置重建（`stop_listener` 释放认领）。
-async fn invalidate_changed_routers(state: &Arc<ServerState>, old: &AppConfig, new: &AppConfig) {
+fn invalidate_changed_routers(state: &Arc<ServerState>, old: &AppConfig, new: &AppConfig) {
     let dd_router_changed = !crate::app::is_dingding_active(new)
         || old.channels.dingding.client_id != new.channels.dingding.client_id
         || old.channels.dingding.client_secret != new.channels.dingding.client_secret;
     if dd_router_changed {
-        *state.dd_router.lock().await = None;
+        state.dd_router.invalidate();
     }
     if dd_router_changed || old.channels.dingding.user_id != new.channels.dingding.user_id {
         stop_listener(state, "dingding");
@@ -5396,7 +5635,7 @@ async fn invalidate_changed_routers(state: &Arc<ServerState>, old: &AppConfig, n
             &old.channels.feishu.app_id,
             &old.channels.feishu.app_secret,
         );
-        *state.fs_router.lock().await = None;
+        state.fs_router.invalidate();
     }
     if fs_router_changed || old.channels.feishu.open_id != new.channels.feishu.open_id {
         stop_listener(state, "feishu");
@@ -5406,7 +5645,7 @@ async fn invalidate_changed_routers(state: &Arc<ServerState>, old: &AppConfig, n
         || old.channels.telegram.bot_token != new.channels.telegram.bot_token
         || old.channels.telegram.api_base_url != new.channels.telegram.api_base_url;
     if tg_router_changed {
-        *state.tg_router.lock().await = None;
+        state.tg_router.invalidate();
     }
     if tg_router_changed || old.channels.telegram.chat_id != new.channels.telegram.chat_id {
         stop_listener(state, "telegram");
@@ -5416,7 +5655,7 @@ async fn invalidate_changed_routers(state: &Arc<ServerState>, old: &AppConfig, n
         || old.channels.slack.bot_token != new.channels.slack.bot_token
         || old.channels.slack.app_token != new.channels.slack.app_token;
     if sl_router_changed {
-        *state.sl_router.lock().await = None;
+        state.sl_router.invalidate();
     }
     if sl_router_changed || old.channels.slack.user_id != new.channels.slack.user_id {
         stop_listener(state, "slack");
@@ -5455,6 +5694,23 @@ fn stop_cmd(force: bool) -> i32 {
     restart_guard::clear();
     block_on(async {
         if !client::request_stop(force).await {
+            // `false` is also what a daemon that accepts the connection and never answers gives,
+            // and that one is running: only a status probe that finds nothing listening says
+            // "not running".
+            if client::request_status_result()
+                .await
+                .is_err_and(|error| error.kind() == std::io::ErrorKind::TimedOut)
+            {
+                eprintln!(
+                    "askhuman daemon: running but not answering, so it cannot be asked to stop{}",
+                    if cfg!(target_os = "macos") {
+                        "; `AskHuman daemon restart` replaces it"
+                    } else {
+                        ""
+                    }
+                );
+                return 1;
+            }
             println!("askhuman daemon: not running");
             return 0;
         }
@@ -5598,15 +5854,101 @@ fn print_status(info: &StatusInfo) {
 #[cfg(test)]
 mod tests {
     use super::{
-        agent_kind_for_im, development_popup_enabled, marks_session_working,
+        agent_kind_for_im, development_popup_enabled, marks_session_working, pending_launch_cwd,
         pending_launch_matches, popup_prewarm_requested, popup_should_dispatch, scoped_candidates,
-        select_im_delivery_candidates, task_workspace_options, with_ios, InboundRegistry,
-        PendingLaunchWatch,
+        select_im_delivery_candidates, task_workspace_options, update_snapshot_from_state,
+        with_ios, InboundRegistry, PendingLaunchWatch,
     };
     use crate::agents::AgentKind;
     use crate::config::AppConfig;
     use crate::i18n::Lang;
     use std::sync::Arc;
+    use std::sync::Mutex;
+
+    #[test]
+    fn the_update_prompt_skips_a_dismissed_version_but_not_a_newer_one() {
+        use crate::update::state::UpdateState;
+        // Far above any real release, so "newer than this build" holds whatever the crate version is.
+        let mut state = UpdateState {
+            latest_version: "99.0.0".into(),
+            ..Default::default()
+        };
+        assert!(update_snapshot_from_state(&state).available);
+
+        state.dismissed_versions = vec!["99.0.0".into()];
+        let dismissed = update_snapshot_from_state(&state);
+        assert!(
+            !dismissed.available,
+            "a dismissed version is not prompted for"
+        );
+        assert_eq!(dismissed.latest_version, "99.0.0", "Settings still sees it");
+
+        state.latest_version = "99.0.1".into();
+        assert!(
+            update_snapshot_from_state(&state).available,
+            "the next release prompts again"
+        );
+        // A release that is not newer than this build never prompts, dismissed or not.
+        state.latest_version = "0.0.1".into();
+        assert!(!update_snapshot_from_state(&state).available);
+    }
+
+    /// `Status` lists the live IM connections. It used to queue behind the lock a router connect
+    /// held, so one hung Slack handshake after a live update made the whole daemon look dead. The
+    /// iOS gateway is built the same way and gets the same guarantee.
+    #[tokio::test]
+    async fn status_is_answered_while_a_channel_is_still_connecting() {
+        use crate::ipc::{ClientMsg, ServerMsg};
+        let dir = tempfile::tempdir().unwrap();
+        let state = super::test_state(dir.path());
+        // Connects that never finish: every attempt is held for the whole test.
+        let connecting = (
+            state.dd_router.begin_connect().await,
+            state.fs_router.begin_connect().await,
+            state.tg_router.begin_connect().await,
+            state.sl_router.begin_connect().await,
+            state.ios.begin_connect().await,
+        );
+        // Everything else that must never wait for a connect is a plain synchronous read, or an
+        // invalidation, so none of it can queue either.
+        assert!(super::ios_gateway(&state).is_none());
+        assert!(super::active_im_connections(&state).is_empty());
+        tokio::time::timeout(
+            std::time::Duration::from_secs(5),
+            super::stop_ios_gateway(&state),
+        )
+        .await
+        .expect("shutdown does not wait for a gateway that is still being built");
+
+        let (client, server) = tokio::io::duplex(64 * 1024);
+        let (server_read, server_write) = tokio::io::split(server);
+        let mut reader: super::Reader = Box::new(tokio::io::BufReader::new(server_read));
+        let mut writer: super::Writer = Box::new(server_write);
+        let (client_read, mut client_write) = tokio::io::split(client);
+        let mut client_read = tokio::io::BufReader::new(client_read);
+
+        let serving = super::control_loop(&mut reader, &mut writer, &state);
+        let asking = async {
+            crate::ipc::write_msg(&mut client_write, &ClientMsg::Status)
+                .await
+                .unwrap();
+            tokio::time::timeout(
+                std::time::Duration::from_secs(5),
+                crate::ipc::read_msg::<_, ServerMsg>(&mut client_read),
+            )
+            .await
+        };
+        let reply = tokio::select! {
+            _ = serving => panic!("the control loop ended without answering"),
+            reply = asking => reply,
+        };
+
+        match reply {
+            Ok(Ok(Some(ServerMsg::Status(info)))) => assert!(info.im_connections.is_empty()),
+            other => panic!("Status was not answered while a channel connected: {other:?}"),
+        }
+        drop(connecting);
+    }
 
     #[test]
     fn explicit_channel_testing_never_succeeds_through_a_local_popup() {
@@ -5657,6 +5999,39 @@ mod tests {
         assert!(!marks_session_working(true, false, Some(&card)));
         let feedback = crate::agents::failure::feedback_id("result");
         assert!(!marks_session_working(true, false, Some(&feedback)));
+    }
+
+    #[test]
+    fn an_environment_conversation_is_adopted_only_when_a_hook_registered_it() {
+        use super::antigravity_session_from_candidate as adopt;
+        use crate::agents::registry::AgentRegistry;
+        const LIVE: &str = "3f1c2a9e-8d4b-4a7e-9c1d-5b6e7f8a9b0c";
+        const INHERITED: &str = "9a8b7c6d-5e4f-4a3b-8c2d-1e0f9a8b7c6d";
+        let agents = AgentRegistry::new();
+        agents.upsert_working(
+            AgentKind::Antigravity,
+            LIVE,
+            None,
+            Some("/work/project".into()),
+        );
+        let kind = Some("antigravity");
+
+        assert_eq!(
+            adopt(kind, None, Some(LIVE), &agents).as_deref(),
+            Some(LIVE)
+        );
+        // A conversation the hooks never saw (an inherited variable, a hook-less install) is not
+        // a session: the call keeps its family alone.
+        assert_eq!(adopt(kind, None, Some(INHERITED), &agents), None);
+        assert_eq!(adopt(kind, None, None, &agents), None);
+        // The same id registered for another family says nothing about this one.
+        let other = AgentRegistry::new();
+        other.upsert_working(AgentKind::Codex, LIVE, None, None);
+        assert_eq!(adopt(kind, None, Some(LIVE), &other), None);
+        assert_eq!(adopt(Some("codex"), None, Some(LIVE), &agents), None);
+        assert_eq!(adopt(None, None, Some(LIVE), &agents), None);
+        // A session the caller already has authority for is never replaced by a candidate.
+        assert_eq!(adopt(kind, Some(INHERITED), Some(LIVE), &agents), None);
     }
 
     #[test]
@@ -5886,6 +6261,76 @@ mod tests {
             &item,
             AgentKind::Codex,
             Some("/tmp/other"),
+            Some("launch-1"),
+            None
+        ));
+    }
+
+    #[test]
+    fn a_waiting_task_names_the_folder_of_its_launch_id() {
+        let pending = Mutex::new(vec![PendingLaunchWatch {
+            id: "launch-1".into(),
+            channel: None,
+            ios: None,
+            kind: AgentKind::Antigravity,
+            cwd: "/tmp/project".into(),
+            task_sha256: "hash-1".into(),
+            source_session_id: None,
+            created_at: 1,
+        }]);
+        assert_eq!(
+            pending_launch_cwd(&pending, AgentKind::Antigravity, "launch-1").as_deref(),
+            Some("/tmp/project")
+        );
+        assert_eq!(
+            pending_launch_cwd(&pending, AgentKind::Antigravity, "launch-2"),
+            None
+        );
+        assert_eq!(
+            pending_launch_cwd(&pending, AgentKind::Codex, "launch-1"),
+            None
+        );
+    }
+
+    /// An `agy` outside a trusted workspace reports no directory at all; the launch id alone is
+    /// still unique, the prompt hash alone is not.
+    #[test]
+    fn pending_launch_pairs_by_id_when_the_agent_reports_no_directory() {
+        let item = PendingLaunchWatch {
+            id: "launch-1".into(),
+            channel: None,
+            ios: None,
+            kind: AgentKind::Antigravity,
+            cwd: "/tmp/project".into(),
+            task_sha256: "hash-1".into(),
+            source_session_id: None,
+            created_at: 1,
+        };
+        assert!(pending_launch_matches(
+            &item,
+            AgentKind::Antigravity,
+            None,
+            Some("launch-1"),
+            None
+        ));
+        assert!(!pending_launch_matches(
+            &item,
+            AgentKind::Antigravity,
+            None,
+            Some("launch-2"),
+            Some("hash-1")
+        ));
+        assert!(!pending_launch_matches(
+            &item,
+            AgentKind::Antigravity,
+            None,
+            None,
+            Some("hash-1")
+        ));
+        assert!(!pending_launch_matches(
+            &item,
+            AgentKind::Codex,
+            None,
             Some("launch-1"),
             None
         ));

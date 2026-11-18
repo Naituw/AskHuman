@@ -784,7 +784,9 @@ pub fn render_help_plain(view: &HelpView, lang: Lang) -> String {
     out
 }
 
-/// Backward-compatible plain help wrapper used by fallback-only callers and focused tests.
+/// Plain help text for one set of gates: `help_view` rendered with `render_help_plain` (the
+/// focused tests assert on the text through this shortcut).
+#[cfg(test)]
 pub fn help_text(
     auto: bool,
     has_active_question: bool,

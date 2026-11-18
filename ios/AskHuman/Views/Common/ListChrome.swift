@@ -147,20 +147,41 @@ struct FilterNote: View {
 // MARK: notices
 
 /// A problem the user can act on, as a list row: a neutral card whose icon carries the colour.
+///
+/// With `onClose` the row ends in a ✕ that closes it, for a notice that is only worth showing again once what it says
+/// has changed.
 struct NoticeRow: View {
     let id: String
     let text: LocalizedStringKey
     let symbol: String
     let tint: Color
+    var onClose: (() -> Void)?
 
     var body: some View {
-        Label {
-            Text(text).font(.footnote)
-        } icon: {
-            Image(systemName: symbol).foregroundStyle(tint)
+        HStack(spacing: 0) {
+            Label {
+                Text(text).font(.footnote)
+            } icon: {
+                Image(systemName: symbol).foregroundStyle(tint)
+            }
+            .accessibilityElement(children: .combine)
+            .accessibilityIdentifier("notice-" + id)
+            if let onClose {
+                Spacer(minLength: 4)
+                // 44 pt to hit, drawn quietly; it reaches into the row's trailing inset so that the text keeps its width.
+                Button(action: onClose) {
+                    Image(systemName: "xmark")
+                        .font(.footnote.weight(.semibold))
+                        .foregroundStyle(.secondary)
+                        .frame(width: 44, height: 44)
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .padding(.trailing, -10)
+                .accessibilityLabel(Text("Close"))
+                .accessibilityIdentifier("notice-" + id + "-close")
+            }
         }
-        .accessibilityElement(children: .combine)
-        .accessibilityIdentifier("notice-" + id)
     }
 }
 

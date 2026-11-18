@@ -159,6 +159,37 @@ UIHostingController，按 [.intrinsicContentSize](https://developer.apple.com/do
 横幅 overlay 就在首次折叠丢失整组导航按钮，背景挂载、配对 sheet 与触觉反馈对照均通过。
 这是一项容器承载约束，不是延迟刷新或重建导航的补丁。
 
+**竖向栏里按钮与标签栏抢高度（2026-11-13 用户指出）**：Duo 外屏（466×678 pt）把标签栏和页面的工具栏按钮放进右侧同一条竖向栏，
+高度不够时系统默认（`automatic`，「偏向标签栏」）先收按钮：请求页的「下一条」与「更多」被并进一个系统溢出按钮「…」
+（辅助功能标识 `BottomOverflowBarButtonItem`），五个标签原样占着下半条。改为按钮优先：每个标签的 `NavigationStack`
+根内容挂 `prefersToolbarItemsOverTabBar()`（`AppTabs.swift`，iOS 27.1 起的 SwiftUI `toolbarVerticalCompressionBehavior(.prefersToolbarItems)`，
+对应 UIKit `UINavigationItem.verticalBarCompressionBehavior`；更早系统没有竖向栏，不做任何事）。高度不够时标签栏收成「当前标签」
+一个按钮，点一下展开成带文字的完整标签栏、选定后收回；页面的按钮一个不少。高度够时（Agent、待办、历史、Mac 详情只有一两个按钮）
+标签栏仍是完整的五个。
+
+- **位置有讲究**：栈的根内容和每个 `navigationDestination` 产出的页面**两处都要挂**。根上的只管之后手动压栈的页面；
+  折叠时分栏换成一个新建的栈，打开的那一页一出生就在路径上（不是压进去的），拿不到根上的，系统就回到默认的「标签栏优先」。
+  2026-11-14 在 Duo 模拟器上实测：内屏分栏里选中请求再折叠，外屏竖条是「‹ ‹ …」加完整五个标签，连折三次都一样；
+  直接在外屏启动或自己压栈打开则正常，所以只用 `-AHOpen` 的回归抓不到。挂在 `NavigationStack` 外面或 `TabPage` 上无效
+  （外屏逐处实测）。新增带栈的标签、新增被压栈的页面要照做。
+- **分栏（`ListDetailColumns`，Duo 内屏、iPad）没改**：内屏横屏（669 pt 高）最多的请求页也只有「上一条 / 下一条」「更多」三个按钮，
+  连五个标签放得下，键盘弹起时键盘浮在栏上，两种设置的截图一样，没有可复现的溢出；有了再加。
+- **回归**：`AskHumanPersistentTabsUITests.testRequestKeepsEveryToolbarButtonBesideTheTabs`（外屏直接打开）与
+  `AskHumanFoldNavigationUITests.testFoldingAnOpenRequestKeepsEveryButtonBesideTheTabs`（内屏分栏里打开、折叠展开三轮，
+  不带草稿和键盘）。两条在没有这条偏好时都红（缺 `next-request`），有时绿；前一条窄窗口之外自动跳过，后一条由
+  `ios/Tools/test-fold-navigation.py` 驱动真实开合。
+- **上一条不是整组按钮消失的修复，整组消失还没解决**：2026-11-14 用户在 build 24 真机（iOS 27.3 Beta）上遇到「内屏横屏打开一条提问、折叠到外屏，
+  竖条上一个按钮都没有（返回键也没了），只剩五个标签」。同日在 Duo 模拟器（27.2）上复现：内屏先转成竖屏、停约 1.2 秒再折叠，约一半的折叠如此
+  （横屏直接折叠、转竖后立刻折叠都不出；只发生在压栈的页面上）。按钮已声明、竖条也在，是系统没有把折叠时新建的导航控制器的按钮登记进竖条。
+  **根因未定，没有修复。**
+- **不要用补救手法顶替根因（2026-11-14 用户明确要求，本项目不打补丁）**：build 25 带过一个 `VerticalBarRepair`（折叠后轮询竖条，没有页面按钮就把
+  `hidesBackButton` 取反再设回，逼系统重新登记）。它在模拟器上有效，但那是对系统缺陷的轮询式补丁，已撤回，build 25 之后的包不带它。
+  同类手法一律不加：轮询或延迟重试、翻转导航项、临时关闭竖向栏、靠私有类名探测坏状态。**不要**换掉 SwiftUI 交给导航项的 `UIBarButtonItemGroup`
+  （能让按钮重新出现，但 SwiftUI 的下一次工具栏更新会越界崩溃）。手法对照表只作为证据保留在[排查记录](../investigations/ios-duo-fold-navigation.md)，
+  不是实现依据。
+- **回归**：`AskHumanFoldNavigationUITests.testFoldingFromTheUprightInnerScreenKeepsEveryButtonBesideTheTabs`（四轮「转竖屏、停 1.2 秒、折叠」）
+  在根因修好之前是红的，保留它作为判据。
+
 独立程序在保留原 split → stack 模型时完成十次有效开合；产品验证状态见
 [排查记录](../investigations/ios-duo-fold-navigation.md)，不把独立程序通过当成产品回归通过。
 More 菜单提供含标题和符号的 `Label("More", systemImage: "ellipsis")`，让系统竖向栏与

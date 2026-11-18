@@ -279,6 +279,29 @@ export function useAnnotations(deps: AnnotationDeps) {
     return notes.value.map(n => ({ quote: n.quote, note: n.note }));
   }
 
+  /**
+   * Take notes back from an abandoned ask of the same question (docs/specs/popup-draft-on-cancel.md D7). Only a card
+   * that has no note of its own and offers notes takes any: a note the user cannot see would still be sent. Each
+   * passage is looked for by its quote in the text on screen; one that is not found waits at the end of the list, as
+   * in the iOS app. Returns how many notes were taken.
+   */
+  function restoreNotes(list: ReadonlyArray<UserAnnotation>): number {
+    if (!enabled.value || notes.value.length > 0 || editor.value) return 0;
+    notes.value = list
+      .filter(n => n.quote !== "" && n.note.trim() !== "")
+      .slice(0, engine.MAX_ANNOTATIONS)
+      .map(n => ({
+        id: nextId++,
+        start: 0,
+        end: 0,
+        quote: n.quote,
+        note: engine.cutChars(n.note, engine.MAX_NOTE_CHARS),
+        anchored: false,
+      }));
+    reapply();
+    return notes.value.length;
+  }
+
   /** Forget everything about the previous request (the core is initialised once per request). */
   function reset(): void {
     const el = root();
@@ -404,6 +427,7 @@ export function useAnnotations(deps: AnnotationDeps) {
     reapplyAnnotations: reapply,
     onAnnotationHighlightClick: onHighlightClick,
     annotationPayload: payload,
+    restoreAnnotations: restoreNotes,
     commitAnnotationDraft: commitOpenDraft,
     resetAnnotations: reset,
     handleAnnotationKeydown,

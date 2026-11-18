@@ -56,11 +56,6 @@ pub fn content() -> String {
     )
 }
 
-/// 当前平台是否支持（skill 为纯文件读写，跨平台）。
-pub fn supported() -> bool {
-    true
-}
-
 /// skill 文件展示路径（home 前缀折叠为 `~`）。
 pub fn display_path() -> String {
     collapse_home(&paths::grok_skill_md())
@@ -85,12 +80,6 @@ pub fn needs_update() -> bool {
 pub fn install() -> Result<String> {
     write_skill()?;
     Ok(crate::i18n::tr(crate::i18n::Lang::current(), "cmd.skillInstalled").to_string())
-}
-
-/// 更新：与安装同样写入，仅反馈文案不同。
-pub fn update() -> Result<String> {
-    write_skill()?;
-    Ok(crate::i18n::tr(crate::i18n::Lang::current(), "cmd.skillUpdated").to_string())
 }
 
 fn write_skill() -> Result<()> {

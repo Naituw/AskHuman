@@ -34,6 +34,7 @@ const STALL_RENDERER: &str = include_str!("stall_renderer.js");
 const STALL_HOST: &str = include_str!("stall_host.js");
 const STALL_ATTACH: &str = include_str!("stall_attach.js");
 const STALL_DISCOVERY: &str = include_str!("stall_discovery.js");
+const ISOLATION_HOST: &str = include_str!("isolation_host.js");
 const STALL_KEY: &str = "__ASKHUMAN_CURSOR_STALL_V1__";
 const PORT: u16 = 9229;
 
@@ -52,6 +53,7 @@ pub(super) fn adapter_revision() -> String {
             hash.update(STALL_HOST);
             hash.update(STALL_ATTACH);
             hash.update(STALL_DISCOVERY);
+            hash.update(ISOLATION_HOST);
             format!("{:x}", hash.finalize())[..16].into()
         })
         .clone()
@@ -530,6 +532,7 @@ fn bootstrap_source(manifest: &Manifest, package: &Path, close_inspector: bool) 
         // bridge and report their status alongside it.
         config["stallDiscovery"] = json!(STALL_DISCOVERY);
         config["stallAttach"] = json!(STALL_ATTACH);
+        config["isolationHost"] = json!(ISOLATION_HOST);
         config["stallHost"] =
             json!(STALL_HOST.replacen("__ASKHUMAN_STALL_POLICY__", STALL_POLICY, 1));
         config["guards"] = json!([{
@@ -1117,6 +1120,7 @@ mod tests {
             STALL_HOST,
             STALL_ATTACH,
             STALL_DISCOVERY,
+            ISOLATION_HOST,
         ] {
             every.update(part);
         }
@@ -1160,6 +1164,170 @@ mod tests {
                 String::from_utf8_lossy(&checked.stderr)
             );
         }
+    }
+
+    #[test]
+    fn stall_renderer_supports_both_agent_host_and_legacy_topologies_when_node_is_available() {
+        if std::process::Command::new("node")
+            .arg("--version")
+            .output()
+            .is_err()
+        {
+            return;
+        }
+        let directory = tempfile::tempdir().unwrap();
+        let script = directory.path().join("stall_renderer_test.js");
+        let rendered = STALL_RENDERER
+            .replace("__ASKHUMAN_OWNER__", "\"owner-1\"")
+            .replace("__ASKHUMAN_REVISION__", "\"rev-1\"")
+            .replace("__ASKHUMAN_LEASE__", "\"lease-1\"")
+            .replace("__ASKHUMAN_STALL_POLICY__", STALL_POLICY)
+            .replace("__ASKHUMAN_STALL_BINDING__", "globalThis.__testBinding");
+        let harness = format!(
+            r#""use strict";
+const assert = require("assert");
+const policy = {STALL_POLICY};
+const origRunner = function(options) {{
+  return {{ stallRetryElapsedMs: 0, classify: options?.hooks?.classify }};
+}};
+const origEncoder = function(options) {{
+  return {{
+    stallFailTimeoutMs: options?.stallDetectorConfig?.failTimeoutMs,
+    stallAdvisoryTimeoutMs: options?.stallDetectorConfig?.advisoryTimeoutMs,
+    getType() {{
+      return {{
+        typeName: "agent.v1.AgentHostTurnOptions",
+        fields: {{ list: () => [] }},
+        runtime: {{
+          bin: {{
+            listUnknownFields(m) {{ return m._u ?? []; }},
+            discardUnknownFields(m) {{ m._u = []; }},
+            onUnknownField(m, no, wt, data) {{ (m._u ??= []).push({{ no, wireType: wt, data }}); }},
+          }},
+        }},
+      }};
+    }},
+    clone() {{
+      const copy = origEncoder(options);
+      copy._u = [...(this._u ?? [])];
+      return copy;
+    }},
+  }};
+}};
+const origClassifier = function(_err, opts, ctx) {{
+  if (!ctx.retriesEnabled || ctx.transportErrorRetries >= opts.transportCap || ctx.stallRetryElapsedMs >= 180000) {{
+    return {{ action: "throw" }};
+  }}
+  return {{ action: "retry", stall: true }};
+}};
+class ReaderProto {{
+  getStallDetectorTimeoutConfig() {{
+    return this.experimentService.getDynamicConfig("nal_stall_detector_timeout_config");
+  }}
+}}
+class HostProto {{
+  _noteTurnPrewarmTemplate(_s, req) {{ return req.turnOptions.clone(); }}
+}}
+let currentRunner = origRunner;
+let currentEncoder = origEncoder;
+globalThis.__testBinding = {{
+  reader: ReaderProto.prototype,
+  host: HostProto.prototype,
+  classifier: origClassifier,
+  nativeRetryWindow: 180000,
+  runner: () => currentRunner,
+  setRunner: v => {{ currentRunner = v; }},
+  encoder: () => currentEncoder,
+  setEncoder: v => {{ currentEncoder = v; }},
+}};
+let agentHostEnabled = false;
+let hosts = [{{
+  pid: 41343,
+  containsExtension: id => id === "anysphere.cursor-always-local",
+}}];
+const experiments = {{
+  getDynamicConfig: () => ({{ failTimeoutMs: 90000, advisoryTimeoutMs: 30000 }}),
+}};
+const chat = {{
+  _environmentService: {{ isGlass: true }},
+  _cursorAgentHostEnablementService: {{ isCursorAgentHostEnabled: () => agentHostEnabled }},
+  _instantiationService: {{
+    _services: {{
+      _entries: [
+        ["extensionService", {{ _getExtensionHostManagers: () => hosts }}],
+        ["experimentService", experiments],
+      ],
+    }},
+  }},
+}};
+const runGuard = () => Function("return " + {rendered:?}).call(chat);
+
+// 1. Legacy topology (isCursorAgentHostEnabled() === false):
+// Activates immediately in the renderer and reports the cursor-always-local transport PID.
+const legacy = runGuard();
+assert.strictEqual(legacy.state, "active");
+assert.strictEqual(legacy.hostPid, 41343);
+assert.strictEqual(legacy.hostExtension, "cursor-always-local");
+assert.strictEqual(legacy.timeoutMs, 300000);
+assert.strictEqual(legacy.retryWindowMs, 600000);
+const legacyCfg = ReaderProto.prototype.getStallDetectorTimeoutConfig.call({{
+  environmentService: {{}},
+  experimentService: experiments,
+}});
+assert.strictEqual(legacyCfg.failTimeoutMs, 300000);
+const legacyRun = currentRunner({{
+  runOptions: {{ stallDetectorConfig: legacyCfg }},
+  hooks: {{ classify: (err, ctx) => origClassifier(err, {{ serverCap: 3, transportCap: 10 }}, ctx) }},
+}});
+assert.strictEqual(
+  legacyRun.classify(new Error("stall"), {{
+    retriesEnabled: true, abortOrigin: "stall_detector",
+    serverErrorRetries: 0, transportErrorRetries: 0, stallRetryElapsedMs: 400000,
+  }}).action,
+  "retry"
+);
+const legacyEncoded = currentEncoder({{ stallDetectorConfig: legacyCfg }});
+assert.strictEqual(legacyEncoded.stallFailTimeoutMs, 90000);
+assert.strictEqual(policy.tagged(legacyEncoded), false);
+
+// 2. Agent Host topology (isCursorAgentHostEnabled() === true):
+// Starts pending until setHost pairs with the cursor-agent-host process.
+globalThis.__ASKHUMAN_CURSOR_STALL_V1__.restore();
+agentHostEnabled = true;
+hosts = [{{
+  pid: 52000,
+  containsExtension: id => id === "anysphere.cursor-agent-host",
+}}];
+const pending = runGuard();
+assert.strictEqual(pending.state, "pending");
+assert.strictEqual(pending.hostPid, 52000);
+assert.strictEqual(pending.hostExtension, "cursor-agent-host");
+const token = "a".repeat(32);
+const paired = globalThis.__ASKHUMAN_CURSOR_STALL_V1__.setHost(52000, token, 600000);
+assert.strictEqual(paired.state, "active");
+const hostCfg = ReaderProto.prototype.getStallDetectorTimeoutConfig.call({{
+  environmentService: {{}},
+  experimentService: experiments,
+}});
+assert.strictEqual(hostCfg.failTimeoutMs, 300000);
+const hostEncoded = currentEncoder({{ stallDetectorConfig: hostCfg }});
+assert.strictEqual(hostEncoded.stallFailTimeoutMs, 90000);
+assert.strictEqual(policy.tagged(hostEncoded), true);
+assert.strictEqual(globalThis.__ASKHUMAN_CURSOR_STALL_RENDERER_KERNEL_V1__.unwrap(), true);
+assert.strictEqual(currentRunner, origRunner);
+assert.strictEqual(currentEncoder, origEncoder);
+"#
+        );
+        std::fs::write(&script, harness).unwrap();
+        let output = std::process::Command::new("node")
+            .arg(&script)
+            .output()
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "stall renderer topology test failed: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
     }
 
     #[tokio::test]

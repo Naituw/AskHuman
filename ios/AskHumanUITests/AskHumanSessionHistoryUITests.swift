@@ -337,7 +337,7 @@ final class AskHumanSessionHistoryUITests: XCTestCase {
         launch("req-migration", scenario: "demo")
         requireElement("request-menu").tap()
         XCTAssertFalse(element("request-menu-session-history").waitForExistence(timeout: 2))
-        XCTAssertTrue(element("request-menu-add-todo").exists, "the rest of the menu is as it was")
+        XCTAssertTrue(app.buttons[localized("Cancel request", "取消请求")].firstMatch.exists, "the rest of the menu is as it was")
     }
 
     // MARK: the cards

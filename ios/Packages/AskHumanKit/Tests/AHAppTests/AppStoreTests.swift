@@ -417,13 +417,83 @@ final class AppStoreTests: XCTestCase {
         XCTAssertNil(store.hint(for: id))
     }
 
-    // MARK: data allowance
+    // MARK: data use reminder
 
-    func testTheDemoIsFarFromTheFreeAllowanceAndTheQuotaScenarioIsNearIt() async {
+    func testTheDemoIsFarFromTheFirstGigabyteAndTheQuotaScenarioIsNearIt() async {
         await make()
-        XCTAssertEqual(store.state.traffic?.level, .ok)
+        XCTAssertNil(store.trafficReminder)
         await make(.quota)
-        XCTAssertEqual(store.state.traffic?.level, .warning)
+        XCTAssertEqual(store.trafficReminder, TrafficReminder(gigabytes: 1, reached: false))
+    }
+
+    func testAClosedReminderComesBackAtTheNextGigabyteAndInTheNextMonth() async {
+        let gb = TrafficReminder.gigabyte
+        func traffic(_ month: String, _ bytes: UInt64) -> TrafficStats {
+            TrafficStats(month: month, sentBytes: bytes / 2, receivedBytes: bytes - bytes / 2)
+        }
+        await make(.quota)
+        store.closeTrafficReminder()
+        XCTAssertNil(store.trafficReminder)
+        XCTAssertEqual(store.closedTrafficReminder, ClosedTrafficReminder(month: "2026-10", gigabytes: 1))
+
+        // Past the first GB it is still the one that was closed.
+        await backend.replaceTrafficForTest(traffic("2026-10", gb + gb / 4))
+        await eventually { self.store.state.traffic?.brokerEstimateBytes == gb + gb / 4 }
+        XCTAssertNil(store.trafficReminder)
+
+        // Close to the second GB it is a new reminder, which closing hides in turn.
+        await backend.replaceTrafficForTest(traffic("2026-10", gb + gb * 9 / 10))
+        await eventually { self.store.state.traffic?.brokerEstimateBytes == gb + gb * 9 / 10 }
+        XCTAssertEqual(store.trafficReminder, TrafficReminder(gigabytes: 2, reached: false))
+        store.closeTrafficReminder()
+        XCTAssertNil(store.trafficReminder)
+
+        // The counters start over with the month, and so do the reminders.
+        await backend.replaceTrafficForTest(traffic("2026-11", gb * 9 / 10))
+        await eventually { self.store.state.traffic?.month == "2026-11" }
+        XCTAssertEqual(store.trafficReminder, TrafficReminder(gigabytes: 1, reached: false))
+    }
+
+    func testClosingWhenNothingIsShownChangesNothing() async {
+        await make()
+        store.closeTrafficReminder()
+        XCTAssertNil(store.closedTrafficReminder)
+    }
+
+    func testTheStepDecidesWhichGigabytesRemind() async {
+        let gb = TrafficReminder.gigabyte
+        await make(.quota)
+        XCTAssertEqual(store.trafficReminderStep, .gb1, "every GB unless the reader chose otherwise")
+        store.trafficReminderStep = .gb2
+        XCTAssertNil(store.trafficReminder, "0.875 GB is not near 2 GB")
+        await backend.replaceTrafficForTest(TrafficStats(month: "2026-10", sentBytes: gb, receivedBytes: gb * 7 / 10))
+        await eventually { self.store.state.traffic?.sentBytes == gb }
+        XCTAssertEqual(store.trafficReminder, TrafficReminder(gigabytes: 2, reached: false), "1.7 GB is close to 2 GB")
+        store.trafficReminderStep = .off
+        XCTAssertNil(store.trafficReminder)
+        store.trafficReminderStep = .gb1
+        XCTAssertEqual(store.trafficReminder, TrafficReminder(gigabytes: 1, reached: true), "for a 1 GB step, 1.7 GB is past the first GB")
+    }
+
+    func testTheStepAndTheClosedReminderAreRemembered() async {
+        await make(.quota)
+        store.trafficReminderStep = .gb5
+        store.trafficReminderStep = .gb1
+        store.closeTrafficReminder()
+        let again = AppStore(backend: backend, drafts: MemoryDraftStore(), defaults: defaults)
+        XCTAssertEqual(again.trafficReminderStep, .gb1)
+        XCTAssertEqual(again.closedTrafficReminder, ClosedTrafficReminder(month: "2026-10", gigabytes: 1))
+        again.trafficReminderStep = .gb10
+        XCTAssertEqual(AppStore(backend: backend, drafts: MemoryDraftStore(), defaults: defaults).trafficReminderStep, .gb10)
+    }
+
+    func testStoredValuesThatMeanNothingAreIgnored() async {
+        await make()
+        defaults.set(7, forKey: "ah.trafficReminderStep")
+        defaults.set("garbage", forKey: "ah.closedTrafficReminder")
+        let again = AppStore(backend: backend, drafts: MemoryDraftStore(), defaults: defaults)
+        XCTAssertEqual(again.trafficReminderStep, .standard)
+        XCTAssertNil(again.closedTrafficReminder)
     }
 
     // MARK: lifecycle of open requests
@@ -785,6 +855,11 @@ final class AppStoreTests: XCTestCase {
 private extension MockBackend {
     func replaceInboxForTimeTest(_ items: [InboxItem]) {
         state.inbox = items
+        publish()
+    }
+
+    func replaceTrafficForTest(_ traffic: TrafficStats) {
+        state.traffic = traffic
         publish()
     }
 }

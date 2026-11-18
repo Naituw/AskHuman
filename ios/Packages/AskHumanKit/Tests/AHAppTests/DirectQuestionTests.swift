@@ -2,8 +2,8 @@ import XCTest
 import AHProtocol
 @testable import AHCore
 
-/// Which requests the phone shows as one question in the message area (docs/specs/message-annotations.md N1): four things
-/// decide it, and nothing else does.
+/// Which requests the phone shows as one question in the message area (docs/specs/message-annotations.md N1): three things
+/// decide it, and nothing else does. Files attached to the message are not one of them (D2, 2026-11-16).
 final class DirectQuestionTests: XCTestCase {
     private func ask(
         message: String = "", files: [AssetRef] = [], questions: [QuestionView] = [question("Ship it?", "Yes", "No")],
@@ -29,8 +29,17 @@ final class DirectQuestionTests: XCTestCase {
         XCTAssertTrue(ask(message: "  \n\t ").isDirectAsk, "what is trimmed away is not a message")
     }
 
-    func testAFileMakesItAnOrdinaryAsk() {
-        XCTAssertFalse(ask(files: [file]).isDirectAsk, "the files are the message's, and the message area has them")
+    func testFilesAreNotAMessage() {
+        XCTAssertTrue(ask(files: [file]).isDirectAsk, "files are not words: the question is what there is to read")
+    }
+
+    func testAMessageBesideFilesIsStillAMessage() {
+        XCTAssertFalse(ask(message: "Staging is healthy.", files: [file]).isDirectAsk)
+    }
+
+    func testFilesDoNotMakeSeveralQuestionsOrWhatsNextADirectAsk() {
+        XCTAssertFalse(ask(files: [file], questions: [question("First?", "a"), question("Second?", "b")]).isDirectAsk)
+        XCTAssertFalse(ask(files: [file], whatsNext: true).isDirectAsk)
     }
 
     func testTwoQuestionsAreNotOne() {
@@ -82,7 +91,15 @@ final class DirectQuestionTests: XCTestCase {
         XCTAssertEqual(ask(questions: [question("First?", "a"), question("Second?", "b")]).messageAreaText, "")
     }
 
-    func testOnlyFilesLeaveTheMessageAreaWithoutText() {
-        XCTAssertEqual(ask(files: [file]).messageAreaText, "", "there are files to show, and no words")
+    func testFilesBesideALoneQuestionLeaveItsTextInTheMessageArea() {
+        XCTAssertEqual(ask(files: [file]).messageAreaText, "Ship it?", "the area lists the files under this text")
+    }
+
+    func testFilesAloneLeaveTheMessageAreaWithoutText() {
+        XCTAssertEqual(ask(files: [file], whatsNext: true).messageAreaText, "", "there are files to show, and no words")
+        XCTAssertEqual(
+            ask(files: [file], questions: [question("First?", "a"), question("Second?", "b")]).messageAreaText, "",
+            "two questions keep their cards"
+        )
     }
 }

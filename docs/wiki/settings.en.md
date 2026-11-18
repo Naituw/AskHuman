@@ -30,11 +30,12 @@ Choose **Independent** to use one window per request. Changes apply to new reque
 
 ## Reply history
 
-Every reply (a "send" completed in the popup or any channel, plus a cancel you trigger yourself) is recorded locally so you can refer back to it while answering new questions. System-triggered cancellations (timeout, disconnect, daemon stop) are not recorded.
+Every reply (a "send" completed in the popup or any channel, plus a cancel you trigger yourself) is recorded locally so you can refer back to it while answering new questions. A cancellation caused by the caller going away (for example the Agent's side failed and closed AskHuman's MCP server) or by the daemon stopping is recorded too, under the channel "Caller" or "System", with no answer.
 
 - **Open** it with `AskHuman --history` for the current project or add `--all` for every project. You can also click "History" in the popup. When the current Agent session already has history, the popup entry shows that session across projects; otherwise it falls back to the current project.
 - **Project identification** — walk up from the command's working directory to the first `.git` repository root; if there's no `.git`, the working directory is used.
 - **Filter** — use one two-level scope menu to pick a project, then "Everything in this project" / "All sessions" or one session from its submenu; space-separated keywords can be layered on top. Native Agent sessions show a best-effort title and short ID; MCP fallbacks are explicitly labeled as approximate sessions.
+- **Draft from a caller that went away** — when the caller goes away the popup still closes at once, but what you had typed and not submitted (options, text, pictures, files, annotations) is kept on that cancelled record: the list marks it "Draft", the detail shows it and can copy it, and search finds it. When the same Agent session asks the same question again, the new popup brings that content back on its own, with a line at the top you can dismiss ("Loaded what you had not submitted last time"). It is only a head start: you still send it yourself, what you have already typed in the new popup is not overwritten, and each draft is brought back once. Pictures of a draft sit in the system temporary directory and are cleared after about 24 hours; the line then says how many could not be brought back. Only a caller that went away or a daemon stop keeps a draft: a cancel you make yourself, or an answer given first on the phone or in an IM, does not, and neither does a history limit of `0`.
 - **Clean up** — the context action reads "Delete current search results", "Clear selected session history", or "Clear selected project history" and deletes only the entries frozen when confirmation opens. New matching entries that arrive afterward are retained. "Clear all history" remains separate and is the only item shown for the unfiltered global scope.
 
 ## Quick replies
@@ -63,7 +64,7 @@ Stop confirmations, permission approvals, error cards and Codex native questions
 
 On macOS, **Agents → Cursor → Cursor session protection (experimental)** is off by default and
 available while CLI/MCP integration is active. It applies to every local Cursor Desktop chat,
-including chats that have not called AskHuman, and covers two things under one switch:
+including chats that have not called AskHuman. One switch controls these protections.
 
 - **Background completions no longer continue on their own.** Background commands and subagents keep
   running and retain their results; completion notifications no longer start a model turn
@@ -74,13 +75,17 @@ including chats that have not called AskHuman, and covers two things under one s
   and can wrongly archive the chat. While a chat is generating, the protection keeps its loaded
   messages, lowering that risk. It costs more memory for running chats, does not fix Cursor's own
   error handling, and cannot protect a turn that already had gaps before the protection was active.
+- **Longer stall waiting and retry window.** Compatible windows wait 5 minutes for inbound messages
+  and allow consecutive stall retries within a 10-minute window.
+- **Separate HTTP/2 connections for parallel Agent streams.** If one connection drops, streams on
+  other connections can continue.
 
 Terminal Cursor CLI is not covered.
 
 While enabled, AskHuman keeps its daemon running and automatically attaches to existing and newly
-opened Cursor windows. Settings distinguish waiting, connecting, active, partly active (the part that
-is not active is named, and the other keeps working) and failed states. A compatible Cursor version
-must pass checks before each part becomes active; failed checks leave native behavior in place.
+opened Cursor windows. Settings distinguish waiting, connecting, active, partly active (and name
+the unavailable protections), and failed states. Each protection checks the running Cursor interfaces
+before activating. Cursor uses its native behavior when a check fails.
 Startup and reload require a short attachment period. No special Cursor launch command is needed, and
 compatibility with future upgrades is not guaranteed.
 Disabling the switch or integration restores native behavior without replaying already settled

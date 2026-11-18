@@ -69,7 +69,6 @@ public actor PhoneEngine: RemoteBackend {
     var exportPresencePublished = false
     /// A new file promise waits until an already-started goodbye has released the old connection.
     var departing = false
-    var clockSkew = false
     /// The token of the link probe in flight until it comes back (`PhoneEngine+Repair.swift`).
     var probeToken: Data?
     /// When a notification last made the engine look into each Mac's session: a burst of
@@ -112,6 +111,8 @@ public actor PhoneEngine: RemoteBackend {
     /// they are asked for again after every handshake.
     var wantedWatches: Set<String> = []
     var watches: [String: WatchState] = [:]
+    /// How each wanted watch is doing, for the watchdog that asks again for one that has gone quiet.
+    var watchHealth: [String: WatchHealth] = [:]
     /// The Agent of the last `follow.set` per Mac, to name the one a `limit` refusal is about.
     var followRequests: [String: String] = [:]
     var interjectBoxes: [String: ReplyMailbox<InterjectAck>] = [:]
@@ -287,6 +288,8 @@ public actor PhoneEngine: RemoteBackend {
         failInterjects(for: nil, with: .macOffline)
         failTodos(for: nil, with: .macOffline)
         watches = [:]
+        watchHealth = [:]
+        cancelTimer("watchdog")
         interruptTasks()
     }
 
@@ -578,7 +581,12 @@ public actor PhoneEngine: RemoteBackend {
         guard let env = try? AHEnvelope.parse(payload), var mac = macs[env.f], env.k == mac.record.kid else { return nil }
         guard let plain = try? Plain.open(key: mac.record.m2p, scope: .topic(topic), envelope: env) else { return nil }
         guard abs(plain.ts - clock.nowMs()) <= Wire.clockSkewMs else {
-            clockSkew = true
+            // Only a reply to the current handshake can distinguish skew from a late message.
+            if let ack = try? plain.body(as: HelloAck.self) {
+                markClockSkew(env.f, hello: ack.nonce)
+            } else if let error = try? plain.body(as: ErrorBody.self), error.code == "clock_skew" {
+                markClockSkew(env.f, hello: error.ref)
+            }
             return nil
         }
         guard mac.dedup.insert(plain.i, now: clock.now()) else { return nil }
@@ -599,7 +607,7 @@ public actor PhoneEngine: RemoteBackend {
         do {
             switch plain.t {
             case Wire.T.helloAck: try await onHelloAck(macId, plain.body(as: HelloAck.self))
-            case Wire.T.error: onError(macId, try plain.body(as: ErrorBody.self))
+            case Wire.T.error: await onError(macId, try plain.body(as: ErrorBody.self))
             case Wire.T.pong: break
             case Wire.T.macInfo: onMacInfo(macId, try plain.body(as: MacInfo.self))
             case Wire.T.unpaired: await onUnpaired(macId)
@@ -715,7 +723,8 @@ public actor PhoneEngine: RemoteBackend {
             )
         }.sorted { $0.summary.createdAt > $1.summary.createdAt }
         return EngineState(
-            phase: phase, foreground: foreground, macs: list, inbox: inbox, pairing: pairingState(), clockSkew: clockSkew,
+            phase: phase, foreground: foreground, macs: list, inbox: inbox, pairing: pairingState(),
+            clockSkew: macs.values.contains(where: \.clockSkew),
             push: pushStatus, historyRevision: historyRevision, traffic: traffic, brokerTraffic: brokerTraffic(), trafficStorageIssue: trafficStorageIssue, brokerHost: activeSettings?.host,
             agents: agentItems(), watches: watches, taskOptions: taskOptions, taskTodos: taskTodos, tasks: tasks
         )
@@ -747,6 +756,7 @@ struct MacRuntime {
     var presence: Presence?
     var recoveringUpdate = false
     var sync: SyncPhase = .none
+    var clockSkew = false
     /// The latest hellos that went unanswered so far, oldest first: an ack for any of them counts.
     var helloNonces: [String] = []
     /// Rounds of hellos that went unanswered since the last ack, to pace the slow retries.
@@ -759,6 +769,13 @@ struct MacRuntime {
     var away: AwayState?
     var awayRev: UInt64?
     var inboxRev: UInt64?
+    /// Requests whose `request.get` is in the air. A question belongs to the session it was asked in: the
+    /// answer to one that was still on its way when the session ended is not coming, so `resetSession()`
+    /// voids these with the rest, and the snapshot of the next session asks again.
+    var fetching: Set<String> = []
+    /// Requests the Mac was told, in this session, that the user has seen. Void with the session too: the
+    /// Mac may not have heard what was told before, so the next session tells it again.
+    var seenSent: Set<String> = []
     var agents: [String: AgentView] = [:]
     var agentsRev: UInt64?
     /// Agent keys the Mac says are followed.
@@ -789,6 +806,7 @@ struct MacRuntime {
     mutating func resetSession() {
         presence = nil
         sync = .none
+        clockSkew = false
         helloNonces = []
         helloRounds = 0
         epoch = nil
@@ -797,6 +815,8 @@ struct MacRuntime {
         away = nil
         awayRev = nil
         inboxRev = nil
+        fetching = []
+        seenSent = []
         agents = [:]
         agentsRev = nil
         followRev = nil
@@ -812,7 +832,4 @@ enum RequestInternalState: Equatable {
 struct RequestRuntime {
     var cached: CachedRequest
     var state: RequestInternalState
-    /// `request.get` is in flight.
-    var fetching = false
-    var seenSent = false
 }

@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
-"""Drive the real Duo fold transitions requested by AskHumanFoldNavigationUITests.
+"""Drive the real Duo fold transitions requested by AskHumanFoldNavigationUITests: folding, unfolding and
+turning the inner screen upright or sideways.
 
 First build-for-testing, then pass its .xctestrun and the Duo UDID. The temporary
 run file stays beside the original so __TESTROOT__ retains its meaning.
@@ -27,9 +28,16 @@ def main():
     data["AskHumanUITests"]["UITargetAppPerformanceAntipatternCheckerEnabled"] = False
 
     def fold(command, nonce=None):
-        result = subprocess.run(["duoctl", "-d", args.device, command, "--duration", "0.5"],
-                                text=True, capture_output=True, timeout=60)
-        expected = "inner" if command == "open" else "cover"
+        if command.startswith("rotate-"):
+            # Turn the inner screen ("rotate-portrait" / "rotate-landscape"); it stays the active screen.
+            orientation = command.removeprefix("rotate-")
+            result = subprocess.run(["duoctl", "-d", args.device, "rotate", orientation],
+                                    text=True, capture_output=True, timeout=60)
+            expected = {"activeScreen": "inner", "orientation": orientation}
+        else:
+            result = subprocess.run(["duoctl", "-d", args.device, command, "--duration", "0.5"],
+                                    text=True, capture_output=True, timeout=60)
+            expected = {"activeScreen": "inner" if command == "open" else "cover"}
         deadline = time.monotonic() + 20
         # The animation can finish after duoctl's short display-switch deadline.
         # Trust the observed screen, never a timeout alone or an assumed success.
@@ -38,7 +46,7 @@ def main():
                                       text=True, capture_output=True, timeout=20)
             if observed.returncode == 0:
                 state = json.loads(observed.stdout)
-                if state["activeScreen"] == expected:
+                if all(state.get(key) == value for key, value in expected.items()):
                     break
             if time.monotonic() >= deadline:
                 raise RuntimeError(f"Duo did not reach {expected}: {result.stderr or result.stdout}; {observed.stderr or observed.stdout}")
@@ -85,7 +93,7 @@ def main():
                 marker = "AH_DUO_FOLD_COMMAND "
                 if marker in line:
                     command, nonce = line.split(marker, 1)[1].split()
-                    if command in ("open", "close"):
+                    if command in ("open", "close", "rotate-portrait", "rotate-landscape"):
                         fold(command, nonce)
             return process.wait()
         finally:

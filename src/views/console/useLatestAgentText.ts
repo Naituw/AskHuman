@@ -1,16 +1,31 @@
 import { computed, onBeforeUnmount, ref, shallowRef } from "vue";
 import type { LatestAgentText } from "../../lib/types";
 
+/** New text replaces the shown text at most this often. */
 export const TEXT_UPDATE_INTERVAL_MS = 10_000;
+/** How long the text holds still after the pointer that was on it has left. */
+export const TEXT_READING_LEASE_MS = 3_000;
 
-/** A fixed throttle window keeps dense updates from starving the next visible paragraph. */
+/**
+ * A fixed throttle window keeps dense updates from starving the next visible paragraph. Reading holds the text as a
+ * lease (docs/specs/agent-observation-latest-text.md §4): a pointer on the text holds it, and so does the lease
+ * after the pointer left, which a pointer that comes back renews. Opening the text only makes it taller (it holds
+ * nothing of its own, apart from the lease after the click), so what the Agent says next replaces an opened text by
+ * itself too.
+ */
 export function useLatestAgentText() {
   const displayed = shallowRef<LatestAgentText | null>(null);
   const pending = shallowRef<LatestAgentText | null>(null);
   const expanded = ref(false);
-  const reading = ref(false);
+  /** A pointer is down on the text. */
+  const touching = ref(false);
+  /** The pointer has left the text, but only moments ago. */
+  const leased = ref(false);
+  /** The text is held for somebody who is reading it. Being open is not being held. */
+  const reading = computed(() => touching.value || leased.value);
   let lastShown = 0;
   let timer: ReturnType<typeof setTimeout> | undefined;
+  let leaseTimer: ReturnType<typeof setTimeout> | undefined;
 
   const same = (a: LatestAgentText | null, b: LatestAgentText | null) =>
     a?.kind === b?.kind && a?.revision === b?.revision;
@@ -21,6 +36,23 @@ export function useLatestAgentText() {
     timer = undefined;
   }
 
+  function endLease() {
+    clearTimeout(leaseTimer);
+    leaseTimer = undefined;
+    leased.value = false;
+  }
+
+  function startLease() {
+    clearTimeout(leaseTimer);
+    leased.value = true;
+    cancelTimer();
+    leaseTimer = setTimeout(() => {
+      leaseTimer = undefined;
+      leased.value = false;
+      schedule();
+    }, TEXT_READING_LEASE_MS);
+  }
+
   function showLatest() {
     cancelTimer();
     if (!pending.value) return;
@@ -29,8 +61,9 @@ export function useLatestAgentText() {
     lastShown = Date.now();
   }
 
+  /** The pending text waits for the replacement interval, counted from the last replacement, and for the lease. */
   function schedule() {
-    if (reading.value || expanded.value || timer || !hasNewContent.value) return;
+    if (reading.value || timer || !hasNewContent.value) return;
     const delay = Math.max(0, TEXT_UPDATE_INTERVAL_MS - (Date.now() - lastShown));
     if (delay === 0) showLatest();
     else timer = setTimeout(() => {
@@ -51,27 +84,50 @@ export function useLatestAgentText() {
     else schedule();
   }
 
-  function lockReading() {
-    reading.value = true;
+  /** A pointer came down on the text. */
+  function holdBegin() {
+    touching.value = true;
+    endLease();
     cancelTimer();
   }
 
-  function toggleExpanded() {
-    expanded.value = !expanded.value;
-    if (expanded.value) lockReading();
-    else resume();
+  /** The pointer that was down on the text is up, or has left the window. */
+  function holdEnd() {
+    if (!touching.value) return;
+    touching.value = false;
+    startLease();
   }
 
-  function resume() {
-    reading.value = false;
-    showLatest();
+  /** Something that happens on the text and is over at once (a turn of the wheel, a change of the selection). */
+  function holdBriefly() {
+    if (!touching.value) startLease();
+  }
+
+  /**
+   * Opens or closes the text. Opening holds the words for the lease after the click, as after a pointer: the paragraph
+   * that was just chosen for reading in full is not replaced a moment later because its replacement happened to be due.
+   * After that the text is replaced by itself like a closed one. Closing goes back to the overview, which shows the newest.
+   */
+  function toggleExpanded() {
+    expanded.value = !expanded.value;
+    endLease();
+    if (expanded.value) {
+      if (!touching.value) startLease();
+    } else {
+      showLatest();
+    }
   }
 
   function updateNow() {
     showLatest();
-    if (!expanded.value) reading.value = false;
+    endLease();
   }
 
-  onBeforeUnmount(cancelTimer);
-  return { displayed, expanded, reading, hasNewContent, receive, lockReading, toggleExpanded, resume, updateNow };
+  onBeforeUnmount(() => {
+    cancelTimer();
+    clearTimeout(leaseTimer);
+  });
+  return {
+    displayed, expanded, reading, hasNewContent, receive, holdBegin, holdEnd, holdBriefly, toggleExpanded, updateNow,
+  };
 }

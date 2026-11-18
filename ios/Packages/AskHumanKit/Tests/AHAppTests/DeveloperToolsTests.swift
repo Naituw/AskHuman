@@ -124,6 +124,8 @@ final class DeveloperToolsTests: XCTestCase {
         let summary = app.diagnosticSummary()
         XCTAssertTrue(summary.contains("tab inbox; inbox stack 0, agents stack 0"), summary)
         XCTAssertTrue(summary.contains("macs 2"), summary)
+        // A request page that stays on "Loading the full request…" shows up here as a request without one.
+        XCTAssertTrue(summary.contains("without full request 0"), summary)
         XCTAssertTrue(summary.contains("developer mode false"), summary)
         for name in app.state.macs.map(\.name) + app.state.macs.map(\.macName) + app.state.inbox.map(\.id) {
             XCTAssertFalse(summary.contains(name), "the summary must not carry \(name)")

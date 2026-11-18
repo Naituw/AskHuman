@@ -1,10 +1,20 @@
 //! Request-scoped state and IPC bridge for the instance's single popup window.
+use crate::history::DraftKey;
 use crate::ipc::{ClientMsg, ServerMsg, ShowPayload};
 use serde::Serialize;
 use std::collections::{HashMap, HashSet};
 use std::sync::Mutex;
+use std::time::Duration;
 use tauri::{AppHandle, Emitter, Manager};
-use tokio::sync::{mpsc::UnboundedSender, oneshot};
+use tokio::sync::{mpsc::UnboundedSender, oneshot, Notify};
+use tokio::time::Instant;
+
+/// How long the host holds still for the draft of a card whose caller went away (spec
+/// `popup-draft-on-cancel` D5/D6): from the moment the card closed. The page reads the card the
+/// instant it hears of the close and the history takes the draft within milliseconds, so this is a
+/// bound on a page that never answers, not an expected wait. Past it the draft counts as given up,
+/// so one lost reply cannot stall the host, or a later card, twice.
+const DRAFT_SETTLE: Duration = Duration::from_secs(3);
 
 type SubmissionReply = oneshot::Sender<Result<(), String>>;
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
@@ -17,6 +27,12 @@ struct PendingSubmission {
     reply: Option<SubmissionReply>,
     completion: Option<CompletionFeedback>,
 }
+/// A card that closed because its caller went away: the page is reading what it held and the host
+/// is keeping it in the history (spec `popup-draft-on-cancel` D5).
+struct PendingDraft {
+    key: DraftKey,
+    since: Instant,
+}
 #[derive(Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 struct Terminal {
@@ -24,6 +40,10 @@ struct Terminal {
     winner: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     completion: Option<CompletionFeedback>,
+    /// The page should read what this card held and hand it back (`popup_inbox_draft`) before the
+    /// card goes. Absent for every other way a request ends.
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    keep_draft: bool,
 }
 #[derive(Default)]
 struct Inner {
@@ -37,6 +57,7 @@ struct Inner {
     focus: Option<String>,
     cycle: u64,
     arrival: u64,
+    drafts: HashMap<String, PendingDraft>,
 }
 impl Inner {
     fn insert(&mut self, show: ShowPayload) -> bool {
@@ -56,10 +77,25 @@ impl Inner {
         show.agent_session_title = Some(title.to_string());
         true
     }
+    /// The tests' shorthand for a card that ends with no draft to keep.
+    #[cfg(test)]
     fn finish(&mut self, id: &str, winner: &str) -> Option<Terminal> {
+        self.finish_with(id, winner, false)
+    }
+    /// `keep_draft`: the caller went away, so what the card held is to be kept. Only a card that
+    /// names its question (`draft_key`: an Ask, not a permission card) can have a draft; it is
+    /// remembered as pending until `settle_draft` or until `DRAFT_SETTLE` has passed.
+    fn finish_with(&mut self, id: &str, winner: &str, keep_draft: bool) -> Option<Terminal> {
         if !self.terminal.insert(id.to_owned()) {
             return None;
         }
+        let key = keep_draft
+            .then(|| {
+                self.requests
+                    .get(id)
+                    .and_then(|show| show.draft_key.clone())
+            })
+            .flatten();
         self.requests.remove(id);
         self.launch_ids.remove(id);
         if self.active.as_deref() == Some(id) {
@@ -76,11 +112,33 @@ impl Inner {
         if let Some(reply) = submission.and_then(|submission| submission.reply) {
             let _ = reply.send(Ok(()));
         }
+        let keep_draft = key.is_some();
+        if let Some(key) = key {
+            self.drafts.insert(
+                id.to_owned(),
+                PendingDraft {
+                    key,
+                    since: Instant::now(),
+                },
+            );
+        }
         Some(Terminal {
             request_id: id.to_owned(),
             winner: winner.to_owned(),
             completion,
+            keep_draft,
         })
+    }
+    /// When the last draft still being kept (only those under `key`, or all of them for `None`)
+    /// stops holding anything up; `None` when nothing is being kept. A draft whose time is up
+    /// counts as given up.
+    fn drafts_due(&self, key: Option<&DraftKey>, now: Instant) -> Option<Instant> {
+        self.drafts
+            .values()
+            .filter(|draft| key.is_none_or(|key| &draft.key == key))
+            .map(|draft| draft.since + DRAFT_SETTLE)
+            .filter(|due| *due > now)
+            .max()
     }
     fn reject(&mut self, id: &str, error: String) {
         if let Some(reply) = self
@@ -104,6 +162,8 @@ pub struct Inbox {
     tx: UnboundedSender<ClientMsg>,
     generation: u64,
     recovered: bool,
+    /// Woken when a draft stops being kept, for whoever waits on `drafts_kept`.
+    draft_change: Notify,
 }
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -122,6 +182,7 @@ impl Inbox {
             tx,
             generation,
             recovered,
+            draft_change: Notify::new(),
         }
     }
     fn with_recovery(mut self, recoverable: bool) -> Self {
@@ -275,13 +336,75 @@ impl Inbox {
             }
         }
     }
-    fn finish(&self, app: &AppHandle, id: String, winner: String) {
+    fn finish(&self, app: &AppHandle, id: String, winner: String, keep_draft: bool) {
         let mut state = self.inner.lock().unwrap();
-        let Some(terminal) = state.finish(&id, &winner) else {
+        let Some(terminal) = state.finish_with(&id, &winner, keep_draft) else {
             return;
         };
         drop(state);
         let _ = app.emit("popup-inbox-terminal", terminal);
+    }
+    /// The question a closed card's draft is being kept under, while it is being kept. The page's
+    /// report (`popup_inbox_draft`) is only taken for a request the host is waiting on.
+    pub fn pending_draft(&self, id: &str) -> Option<DraftKey> {
+        self.inner
+            .lock()
+            .unwrap()
+            .drafts
+            .get(id)
+            .map(|draft| draft.key.clone())
+    }
+    /// The draft of `id` is kept, or there was nothing to keep: nothing waits on it any more.
+    pub fn settle_draft(&self, id: &str) {
+        if self.inner.lock().unwrap().drafts.remove(id).is_some() {
+            self.draft_change.notify_waiters();
+        }
+    }
+    /// Hold still while drafts are being kept (only those under `key`, or all for `None`): until
+    /// each is settled, or `DRAFT_SETTLE` after its card closed. Returns whether they all were
+    /// kept in time. Event-driven: woken by `settle_draft`, never polling.
+    pub async fn drafts_kept(&self, key: Option<&DraftKey>) -> bool {
+        loop {
+            let changed = self.draft_change.notified();
+            tokio::pin!(changed);
+            changed.as_mut().enable();
+            let due = {
+                let state = self.inner.lock().unwrap();
+                state.drafts_due(key, Instant::now())
+            };
+            let Some(due) = due else {
+                return true;
+            };
+            tokio::select! {
+                _ = &mut changed => {}
+                _ = tokio::time::sleep_until(due) => return false,
+            }
+        }
+    }
+    /// End the host process. A draft still being kept holds it for at most `DRAFT_SETTLE`;
+    /// with none, it ends at once, as it always did (spec `popup-draft-on-cancel` D5).
+    fn exit(&self, app: &AppHandle) {
+        let busy = self
+            .inner
+            .lock()
+            .unwrap()
+            .drafts_due(None, Instant::now())
+            .is_some();
+        if !busy {
+            app.exit(0);
+            return;
+        }
+        let app = app.clone();
+        tauri::async_runtime::spawn(async move {
+            if !app.state::<Inbox>().drafts_kept(None).await {
+                crate::daemon::lifecycle::log_runtime_event(
+                    "popup_host",
+                    "draft_wait_expired",
+                    None,
+                );
+            }
+            app.exit(0);
+        });
     }
     pub fn receive(&self, app: &AppHandle, message: ServerMsg) {
         match message {
@@ -327,10 +450,19 @@ impl Inbox {
                 if let Some(error) = error {
                     self.inner.lock().unwrap().reject(&request_id, error);
                 } else {
-                    self.finish(app, request_id, winner.unwrap_or_else(|| "system".into()));
+                    self.finish(
+                        app,
+                        request_id,
+                        winner.unwrap_or_else(|| "system".into()),
+                        false,
+                    );
                 }
             }
-            ServerMsg::Cancel { request_id, winner } => self.finish(app, request_id, winner),
+            ServerMsg::Cancel {
+                request_id,
+                winner,
+                keep_draft,
+            } => self.finish(app, request_id, winner, keep_draft),
             ServerMsg::PresentPopup { request_id, .. } => {
                 let mut state = self.inner.lock().unwrap();
                 if state.presented || state.active.as_deref() != Some(&request_id) {
@@ -394,8 +526,8 @@ impl Inbox {
             ServerMsg::PopupHostIdleAck {
                 generation,
                 keep_warm: false,
-            } if generation == self.generation => app.exit(0),
-            ServerMsg::PopupHostShutdown => app.exit(0),
+            } if generation == self.generation => self.exit(app),
+            ServerMsg::PopupHostShutdown => self.exit(app),
             ServerMsg::UpdateState {
                 available,
                 latest_version,
@@ -461,7 +593,9 @@ pub(super) fn setup(app: &mut tauri::App, ipc: super::PopupIpc) -> tauri::Result
             match crate::ipc::read_msg::<_, ServerMsg>(&mut reader).await {
                 Ok(Some(message)) => app.state::<Inbox>().receive(&app, message),
                 Ok(None) | Err(_) => {
-                    app.exit(0);
+                    // The daemon is gone (a stop closes the connection after cancelling): a draft
+                    // it just handed over is still worth the few moments it takes to keep.
+                    app.state::<Inbox>().exit(&app);
                     break;
                 }
             }
@@ -492,6 +626,18 @@ mod tests {
             directive: None,
             annotations: Vec::new(),
         }
+    }
+    fn key(session: &str) -> DraftKey {
+        DraftKey {
+            session_key: Some(session.into()),
+            fingerprint: "f".into(),
+        }
+    }
+    /// An Ask card, which names its question (a permission card does not).
+    fn keyed(id: &str, session: &str) -> ShowPayload {
+        let mut show = show(id);
+        show.draft_key = Some(key(session));
+        show
     }
     #[test]
     fn a_reopened_notice_requires_a_pending_request() {
@@ -649,5 +795,176 @@ mod tests {
         assert!(inbox.inner.lock().unwrap().finish("a", "popup").is_some());
         assert_eq!(a.await.unwrap(), Ok(()));
         assert!(inbox.submit("missing", message("missing")).await.is_err());
+    }
+
+    /// Spec popup-draft-on-cancel D1/D5: only an ask card that is closed because its caller went
+    /// away is asked for its draft; every other ending is exactly what it was.
+    #[test]
+    fn only_an_abandoned_ask_card_is_asked_for_its_draft() {
+        let mut state = Inner::default();
+        for id in ["abandoned", "answered", "permission"] {
+            if id == "permission" {
+                state.insert(show(id));
+            } else {
+                state.insert(keyed(id, "sid:a"));
+            }
+        }
+        let abandoned = state.finish_with("abandoned", "caller", true).unwrap();
+        assert!(abandoned.keep_draft);
+        assert_eq!(
+            state.drafts.get("abandoned").map(|draft| draft.key.clone()),
+            Some(key("sid:a"))
+        );
+        let wire = serde_json::to_value(&abandoned).unwrap();
+        assert_eq!(wire["keepDraft"], true);
+        assert_eq!(wire["winner"], "caller");
+
+        // Answered elsewhere: the flag is not set, so the user already said what they meant.
+        let answered = state.finish_with("answered", "telegram", false).unwrap();
+        assert!(!answered.keep_draft);
+        assert!(serde_json::to_value(&answered)
+            .unwrap()
+            .get("keepDraft")
+            .is_none());
+        // A card with no key (a permission card) has no draft to keep, whatever was asked.
+        let permission = state.finish_with("permission", "caller", true).unwrap();
+        assert!(!permission.keep_draft);
+        // A request the host never held has none either.
+        let unknown = state.finish_with("unknown", "system", true).unwrap();
+        assert!(!unknown.keep_draft);
+        assert_eq!(state.drafts.len(), 1);
+        // The ordinary finish never keeps a draft.
+        state.insert(keyed("plain", "sid:a"));
+        assert!(!state.finish("plain", "popup").unwrap().keep_draft);
+        assert_eq!(state.drafts.len(), 1);
+        // Ending twice reports once, and the pending draft stays as it was.
+        assert!(state.finish_with("abandoned", "caller", true).is_none());
+        assert_eq!(state.drafts.len(), 1);
+    }
+
+    /// What holds the host: drafts of the asked question only, and only until their time is up.
+    #[test]
+    fn a_draft_holds_things_up_only_for_its_own_question_and_only_for_a_while() {
+        let mut state = Inner::default();
+        let start = Instant::now();
+        assert_eq!(state.drafts_due(None, start), None);
+        state.insert(keyed("a", "sid:a"));
+        state.insert(keyed("b", "sid:b"));
+        state.finish_with("a", "caller", true).unwrap();
+        state.drafts.get_mut("a").unwrap().since = start;
+        state.finish_with("b", "caller", true).unwrap();
+        state.drafts.get_mut("b").unwrap().since = start + Duration::from_secs(1);
+
+        assert_eq!(
+            state.drafts_due(Some(&key("sid:a")), start),
+            Some(start + DRAFT_SETTLE)
+        );
+        assert_eq!(
+            state.drafts_due(None, start),
+            Some(start + Duration::from_secs(1) + DRAFT_SETTLE),
+            "the last one to run out"
+        );
+        assert_eq!(state.drafts_due(Some(&key("sid:c")), start), None);
+        let other_question = DraftKey {
+            session_key: Some("sid:a".into()),
+            fingerprint: "g".into(),
+        };
+        assert_eq!(state.drafts_due(Some(&other_question), start), None);
+        // Time is up for a: it no longer holds anything, b still does.
+        let after_a = start + DRAFT_SETTLE;
+        assert_eq!(state.drafts_due(Some(&key("sid:a")), after_a), None);
+        assert!(state.drafts_due(None, after_a).is_some());
+        assert_eq!(
+            state.drafts_due(None, start + Duration::from_secs(1) + DRAFT_SETTLE),
+            None
+        );
+    }
+
+    fn inbox_with_drafts(sessions: &[&str]) -> Arc<Inbox> {
+        let (tx, _) = tokio::sync::mpsc::unbounded_channel();
+        let inbox = Arc::new(Inbox::new(tx, 1, false));
+        let mut state = inbox.inner.lock().unwrap();
+        for session in sessions {
+            state.insert(keyed(session, session));
+            state.finish_with(session, "caller", true).unwrap();
+        }
+        drop(state);
+        inbox
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn nothing_waits_when_nothing_is_being_kept() {
+        let inbox = inbox_with_drafts(&[]);
+        let start = Instant::now();
+        assert!(inbox.drafts_kept(None).await);
+        assert_eq!(start.elapsed(), Duration::ZERO);
+        // A late or repeated report for a request that is not being kept changes nothing.
+        assert!(inbox.pending_draft("zzz").is_none());
+        inbox.settle_draft("zzz");
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn the_host_waits_for_the_draft_to_be_kept_and_not_a_moment_longer() {
+        let inbox = inbox_with_drafts(&["sid:a"]);
+        assert_eq!(inbox.pending_draft("sid:a"), Some(key("sid:a")));
+        let start = Instant::now();
+        let waiter = {
+            let inbox = inbox.clone();
+            tokio::spawn(async move { inbox.drafts_kept(None).await })
+        };
+        tokio::time::sleep(Duration::from_millis(500)).await;
+        assert!(!waiter.is_finished(), "still being kept");
+        inbox.settle_draft("sid:a");
+        assert!(waiter.await.unwrap(), "kept in time");
+        assert_eq!(start.elapsed(), Duration::from_millis(500));
+        assert!(inbox.pending_draft("sid:a").is_none());
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn a_page_that_never_answers_holds_the_host_for_a_bounded_time() {
+        let inbox = inbox_with_drafts(&["sid:a"]);
+        let start = Instant::now();
+        assert!(!inbox.drafts_kept(None).await, "gave up, not kept");
+        assert_eq!(start.elapsed(), DRAFT_SETTLE);
+        // It is given up for good: the next wait does not start the clock again.
+        let again = Instant::now();
+        assert!(inbox.drafts_kept(None).await);
+        assert_eq!(again.elapsed(), Duration::ZERO);
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn a_new_card_waits_only_for_the_draft_of_its_own_question() {
+        let inbox = inbox_with_drafts(&["sid:a", "sid:b"]);
+        let start = Instant::now();
+        let waiter = {
+            let inbox = inbox.clone();
+            tokio::spawn(async move { inbox.drafts_kept(Some(&key("sid:a"))).await })
+        };
+        tokio::time::sleep(Duration::from_millis(100)).await;
+        assert!(!waiter.is_finished());
+        inbox.settle_draft("sid:b");
+        tokio::time::sleep(Duration::from_millis(100)).await;
+        assert!(!waiter.is_finished(), "another question's draft is not its");
+        inbox.settle_draft("sid:a");
+        assert!(waiter.await.unwrap());
+        assert_eq!(start.elapsed(), Duration::from_millis(200));
+        // A question with no draft pending at all does not wait either.
+        assert!(inbox.drafts_kept(Some(&key("sid:c"))).await);
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn every_waiter_hears_that_a_draft_was_kept() {
+        let inbox = inbox_with_drafts(&["sid:a"]);
+        let waiters: Vec<_> = (0..3)
+            .map(|_| {
+                let inbox = inbox.clone();
+                tokio::spawn(async move { inbox.drafts_kept(Some(&key("sid:a"))).await })
+            })
+            .collect();
+        tokio::time::sleep(Duration::from_millis(50)).await;
+        inbox.settle_draft("sid:a");
+        for waiter in waiters {
+            assert!(waiter.await.unwrap());
+        }
     }
 }

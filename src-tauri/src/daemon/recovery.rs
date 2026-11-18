@@ -200,6 +200,8 @@ pub struct Resumed {
     pub outcome: Option<Outcome>,
     pub decided: bool,
     pub cancelled: bool,
+    // Production re-derives delivery in SQL; only tests read this flag.
+    #[allow(dead_code)]
     pub delivered: bool,
 }
 
@@ -650,6 +652,7 @@ impl Store {
     }
 
     /// Record the first terminal submission before telling any answering surface it succeeded.
+    #[cfg(test)]
     pub fn decide(&self, request_id: &str, decision: &Value) -> Result<bool> {
         self.decide_with_receipt(request_id, decision, None)
     }
@@ -816,6 +819,7 @@ impl Store {
         .transpose()
     }
 
+    #[cfg(test)]
     pub fn checkpoint(&self, request_id: &str, channel: &str, payload: &Value) -> Result<()> {
         let encoded = serde_json::to_string(payload)?;
         self.connection.lock().unwrap().execute(

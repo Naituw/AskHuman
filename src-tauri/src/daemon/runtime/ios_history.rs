@@ -256,6 +256,7 @@ mod tests {
             questions: vec![Question::new("ok?".into(), Vec::new())],
             answers: Vec::new(),
             annotations: Vec::new(),
+            draft: None,
         }
     }
 

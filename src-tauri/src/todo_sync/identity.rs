@@ -6,7 +6,6 @@
 //! `gitdir:` / `commondir` indirection.
 
 use super::model::Link;
-use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
 /// Normalize one remote URL to `host/path`: lowercase, no scheme / user / port / `.git` / trailing `/`.
@@ -207,44 +206,6 @@ impl IdentityResolver for FsResolver {
     }
 }
 
-/// Short display names for a set of identities: the last path segment, with enough leading segments
-/// added (`owner/repo`) to tell colliding names apart.
-pub fn display_names<'a>(
-    identities: impl IntoIterator<Item = &'a str>,
-) -> BTreeMap<String, String> {
-    let ids: Vec<&str> = identities.into_iter().collect();
-    let segments: Vec<Vec<&str>> = ids.iter().map(|id| id.split('/').collect()).collect();
-    let mut depth = vec![1usize; ids.len()];
-    let name_at = |i: usize, d: usize| -> String {
-        let seg = &segments[i];
-        // The host is the first segment; it is only included when everything else collides.
-        let d = d.min(seg.len());
-        seg[seg.len() - d..].join("/")
-    };
-    loop {
-        let mut groups: BTreeMap<String, Vec<usize>> = BTreeMap::new();
-        for (i, d) in depth.iter().enumerate() {
-            groups.entry(name_at(i, *d)).or_default().push(i);
-        }
-        let mut grew = false;
-        for members in groups.values().filter(|m| m.len() > 1) {
-            for &i in members {
-                if depth[i] < segments[i].len() {
-                    depth[i] += 1;
-                    grew = true;
-                }
-            }
-        }
-        if !grew {
-            break;
-        }
-    }
-    ids.iter()
-        .enumerate()
-        .map(|(i, id)| (id.to_string(), name_at(i, depth[i])))
-        .collect()
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -369,17 +330,6 @@ mod tests {
                 ),
             ]
         );
-    }
-
-    #[test]
-    fn display_names_disambiguate_collisions() {
-        let names = display_names(["github.com/a/api", "gitlab.corp/b/api", "github.com/a/web"]);
-        assert_eq!(names["github.com/a/web"], "web");
-        assert_eq!(names["github.com/a/api"], "a/api");
-        assert_eq!(names["gitlab.corp/b/api"], "b/api");
-        let same_owner = display_names(["github.com/a/api", "gitlab.corp/a/api"]);
-        assert_eq!(same_owner["github.com/a/api"], "github.com/a/api");
-        assert_eq!(same_owner["gitlab.corp/a/api"], "gitlab.corp/a/api");
     }
 
     #[test]

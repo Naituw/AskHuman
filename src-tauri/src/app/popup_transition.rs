@@ -15,6 +15,8 @@ pub struct FrontProbe {
     appear_behavior_applied: Option<isize>,
 }
 
+// Produced by `popup_pulse.rs`, which only the `popup_pulse_regression` example includes (by path).
+#[allow(dead_code)]
 #[derive(serde::Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct PulseProbe {

@@ -1,21 +1,28 @@
 # 行为规格：Antigravity 集成
 
-> 状态：Unix 上已实现 None / CLI / MCP 三种互斥模式；CLI 为推荐模式，MCP 可选择。
-> 范围：用户级 Antigravity 规则、MCP 配置、模式切换与当前明确支持/不支持的运行时能力。
-> 本文只描述当前产品行为，不记录验收过程或历史调查。
+> 状态：Unix 上已实现 None / CLI / MCP 三种互斥模式；三种集成模式都安装同一个 AskHuman 托管插件，推荐 MCP。
+> 范围：用户级 Antigravity 插件（规则、MCP 配置、生命周期 hooks）、模式切换、迁移，以及当前明确支持/不支持的运行时能力。
+> 本文只描述当前产品行为，不记录验收过程或历史调查。会话身份之后的能力（Stop 确认、插话、Watch、新建任务、模型、YOLO）的设计、验证与未验项见
+> [Antigravity 深度集成](./antigravity-deep-integration.md)，计划见 [plans/antigravity-deep-integration.md](../plans/antigravity-deep-integration.md)；
+> 该规格的 §6 是插件的权威描述，本文是其中已落地部分的行为摘要。
 
 ## 1. 模式与产物
 
 | 模式 | 托管产物 |
 | --- | --- |
-| None | 删除当前实例可证明所有权的共享规则；移除 `mcpServers.askhuman` |
-| CLI | 安装 CLI 版共享规则；不安装 MCP 配置或超时 Hook |
-| MCP | 安装 MCP 版共享规则；写入 `mcpServers.askhuman` |
+| None | 删除当前实例可证明所有权的插件目录；清理更早版本留下的共享规则与 `mcpServers.askhuman` |
+| CLI | 插件：`plugin.json`、`rules/AGENTS.md`（CLI 版）、`hooks.json`（生命周期开启时）、`.askhuman-managed`；不含 MCP 配置 |
+| MCP | 同上，规则为 MCP 版，另含 `mcp_config.json` |
 
-- 三种模式互斥。重复设置当前模式会幂等协调其产物。
-- CLI 与 MCP 共用规则文件 `~/.gemini/config/rules/askhuman-antigravity.md`。
-- MCP 配置位于 `~/.gemini/config/mcp_config.json`。
-- Antigravity 的规则与配置写入适配器仅支持 Unix。Windows 上的 Antigravity 变更返回明确的不支持错误，不写入部分产物。
+- 三种模式互斥。重复设置当前模式会幂等协调其产物：只重写内容变了的文件。
+- 插件目录是 `~/.gemini/config/plugins/askhuman/`，Antigravity App 与 `agy` 共用，放进去即被热加载，无需注册。
+  用户可以在 Antigravity 里整体停用它（宿主在 `~/.gemini/config/config.json` 写 `plugins.askhuman.enabled=false`）；
+  AskHuman **只读**检测这一点并在设置页、`agents`、`doctor` 里提示，从不写这个文件。
+- `hooks.json` 随生命周期开关生成：开启时有 `SessionStart`、`PreInvocation`、`Stop` 三个事件（后两个 `timeout` 为 86400 秒，
+  因为插话要等 composer 提交、Stop 确认要等人回答）；关闭时不写这个文件。`Stop` 走共享的 `AskHuman __stop-hook antigravity track`；
+  「结束时确认」开关打开（`AskHuman agents stop antigravity on`，默认关）时再加一步 `confirm`，由它出确认卡。改这个开关会重写整个插件，规则文件随之重新生成。
+- 推荐 MCP，因为 App 的默认沙箱里 CLI 变体连不上 AskHuman 的 Daemon socket；MCP 在 App 与 `agy` 里都能用。
+- Antigravity 的插件写入器仅支持 Unix。Windows 上的 Antigravity 变更与状态查询返回明确的不支持错误，不写入部分产物。
 
 ## 2. CLI 模式
 
@@ -25,9 +32,9 @@
 AskHuman --caller-agent antigravity <command>
 ```
 
-`--caller-agent antigravity` 只声明调用家族：
+`--caller-agent antigravity` 只声明调用家族，不授予权限：
 
-- 它不提供可信原生会话 ID，也不授予权限。
+- 会话来自宿主环境里的 `ANTIGRAVITY_CONVERSATION_ID`，它只是**候选**，是否采信见 §4。
 - 如果继承的其它 Agent 家族标记与本提示冲突，CLI 放弃本次调用的身份绑定并继续执行；历史恢复仍安全拒绝，详见 §4。
 - CLI 模式不安装超时 Hook，也不承诺宿主具备可配置的超时。
 - 异步让出、转后台或返回任务句柄都不构成人类回答。Agent 必须继续取得原始请求的实际结果。
@@ -35,12 +42,12 @@ AskHuman --caller-agent antigravity <command>
 
 ## 3. MCP 模式
 
-托管条目固定为：
+插件里的 `mcp_config.json` 固定为：
 
 ```json
 {
   "mcpServers": {
-    "askhuman": {
+    "mcp": {
       "command": "/absolute/path/to/AskHuman",
       "args": ["mcp"],
       "timeoutSeconds": 86400
@@ -49,65 +56,68 @@ AskHuman --caller-agent antigravity <command>
 }
 ```
 
+- 宿主把插件里的 MCP server 命名为 `<插件名>_<server>`，即 `askhuman_mcp`；授权写作 `mcp(askhuman_mcp/*)`。
 - `command` 使用当前 AskHuman 可执行文件的绝对路径。
 - `timeoutSeconds: 86400` 是 24 小时配置预算，也影响连接与工具列表操作；它不是已经验证的真实等待时长。
-- 配置编辑保留无关 JSONC 条目和注释。空文件按空对象处理；根值或 `mcpServers` 不是对象、JSONC 无法解析或外部写入造成预备内容失配时，操作中止并保留原文件。
-- 安装时先验证已有 `env`，托管字段已匹配则保留整个文件的原始字节；卸载时没有 `askhuman` 条目也不改写文件，包括空的 `mcpServers` 对象。属性顺序、空白和注释不同不会触发无必要的发布，因此满足配置的链接文件可幂等成功。
-- Unix 发布配置前使用私有临时文件；新配置权限为 `0600`，替换时核验原文件属于当前用户且无符号链接或硬链接，保留所有者、组及更严格的所有者权限，并去除组与其他用户访问权限。身份或内容发生变化时拒绝发布；这些路径检查不提供跨进程原子 compare-and-swap 保证。
+- 重写插件文件不会重启运行中的 MCP server，也不会打断在途的 `ask`；但 `mcp_config.json` 的改动只作用于**之后**启动的 server，已运行的要等 Antigravity 重启。
+- App 里 MCP 工具默认「询问」：第一次调用会弹原生提示，用户点「始终允许」后持久（或在其权限设置里加 `mcp(askhuman_mcp/*)`）。
+  AskHuman 只读地看 `config.json` 的 `userSettings.globalPermissionGrants.allow` 是否已含 `mcp(*)` 或 `mcp(askhuman_mcp/…)`，仅用于设置页与 `agents` 的提示，不依赖、不写入。
 - MCP server 仍通过 `AskHuman mcp` 暴露通用工具集，并复用 CLI 的提问、渠道、历史和 Daemon 生命周期。
 
-### 3.1 链接配置与声明式配置管理
+### 3.1 链接与声明式配置管理
 
-自动发布 MCP 配置不支持符号链接、硬链接或非当前用户文件。错误分别说明拒绝原因与处理方式，并保留链接和目标内容。状态查询可读取有效链接；目标内容已满足所需配置、无需写入的操作也可幂等成功。
-
-- stow / chezmoi：在配置管理器的源文件中维护上述 `mcpServers.askhuman` 条目，再按该工具流程发布。确认源文件的隐私设置，避免把其它 server 的凭据同步到公开仓库。
-- Home Manager / Nix store：在声明式配置中添加上述条目，通过 rebuild 发布；不要直接修改 Nix store 目标。`command` 应指向实际可用的 AskHuman 绝对路径。
-- 硬链接：手工维护该条目，或提供单链接、当前用户所有的独立普通配置文件。自动 rename 会改变链接关系，因此不自动发布。
-- 非当前用户文件：由文件所有者管理配置，或提供当前用户所有的普通文件；不要用 sudo 运行 AskHuman 来绕过限制。
-
-手工配置只解决 MCP 文件的写入限制。共享规则 writer 仍拒绝信任根（`HOME`、AskHuman 配置目录，见 §5）以下带符号链接的目录；例如整个 `~/.gemini/config` 指向其它目录时，模式切换仍可能因规则路径检查而拒绝。不能据此宣称 stow / Home Manager 的所有目录布局均受支持。
+插件目录是 AskHuman 托管内容，不支持符号链接、硬链接或非当前用户的文件：遇到时状态为冲突，保持原样，不覆盖、不删除，错误写明原因与显式重试命令。
+stow / chezmoi / Home Manager 等工具若要管理这个目录，应自行维护一个独立插件（换一个插件名），并对 AskHuman 选择 None；不要让两者指向同一目录。
 
 ## 4. 会话与历史边界
 
-Antigravity 当前没有可信原生会话身份。
+会话身份是**根会话 ID**（UUID）。可信来源与用途：
 
-- CLI：当检测到 Antigravity 家族但没有可信 session ID 时，`--show-last` 必须拒绝项目级历史回退，并让 Agent 重新向人类确认。
-- MCP：没有可信绑定时，`show_last` 以 MCP server 实例 + 项目为作用域。一个实例跨多个会话使用时可能产生歧义；server 重启后旧实例历史不再属于新实例。不能确认时应重新询问人类。
+- hook 载荷的 `conversationId`：生命周期登记（会话出现在 Agent 控制台，状态与标题）。
+- MCP 调用的 `_meta`（`antigravity.google/root_conversation_id`，缺失时取 `conversation_id`，须是 UUID）：提问、`show_last` 与历史按这个会话作用域；子会话取根。
+- CLI：环境里的 `ANTIGRAVITY_CONVERSATION_ID` 只作为候选随提问带给 Daemon，Daemon 仅在该会话已由生命周期 hook 登记为活会话时才采信；
+  不一致、已结束或没有登记都按「只认家族」处理，因此被无关进程继承的环境变量不能冒充会话。
+- 都没有时回到只认家族：CLI `--show-last` 必须拒绝项目级历史回退并让 Agent 重新向人类确认；MCP `show_last` 以 MCP server 实例 + 项目为作用域，
+  一个实例跨多个会话使用时可能产生歧义，server 重启后旧实例历史不再属于新实例。不能确认时应重新询问人类。
 - 会话限制不影响普通 `ask` 和 `whats_next` 的执行，但依赖精确会话归属的历史恢复必须保守处理。
 - 继承 `ANTIGRAVITY_CONVERSATION_ID` 本身不得阻止其它 Agent 的 hooks、MCP 或 CLI 入口；无显式 hint 时保留原有家族探测和可信 MCP 绑定。显式 `--caller-agent antigravity` 与其它家族标记冲突时，命令继续运行并在 stderr 提示，当前 CLI 调用不携带家族、会话或 MCP 实例绑定；`--show-last` 拒绝恢复，不得回退项目历史。非法、缺值或重复的 caller flag 仍属于参数错误。
 - 显式 hint 的冲突检查仅使用非空会话标记（`CODEX_THREAD_ID`、`CLAUDECODE` / `CLAUDE_CODE_SESSION_ID`、`CURSOR_CONVERSATION_ID`、`GROK_SESSION_ID`、`PI_SESSION_ID` / `PI_SESSION_FILE`）及 MCP 家族绑定。`CODEX_HOME` 等配置/工作区变量不触发冲突；这不授予可信 session，也不改变无 hint 时既有家族探测顺序。
+- 带子 Agent 的会话归并成一棵树（深度集成规格 D17）：hooks 对根会话和子会话各自上报，daemon 从父会话 transcript 里 `invoke_subagent` 的结果认出子会话并折进根——
+  控制台、Stop 确认和插话都只有根这一行；子会话自己的 `Stop` 不出卡，它的活动让根保持「工作中」。根在整棵树都空闲、且没有未读的跨会话消息之后才算结束。树只在 daemon 内存里，不持久化。
+- `agy` 在没有信任过的目录里，hook 载荷的 `cwd` 与 `workspacePaths` 是空的：会话照常登记和追踪，只是不知道所在文件夹；信任该目录后才有。
 
-## 5. 规则所有权
+控制台里的会话标题取该会话第一条用户请求：读 `~/.gemini/<surface>/brain/<会话 ID>/.system_generated/logs/transcript_full.jsonl`
+（App 是 `antigravity`，`agy` 是 `antigravity-cli`）的第一个用户输入步骤，去掉宿主加的 `<USER_REQUEST>` 外壳；只有规范形式的 UUID 才会拼进路径，读取有字节与行数上限。
 
-共享规则由 AskHuman 严格托管：
+## 5. 插件所有权
 
-- 规则文件必须是普通文件，包含版本化托管标记、预期 frontmatter 与单一 CLI/MCP 变体。
-- Unix 读写通过固定目录描述符拒绝符号链接，并要求普通文件、当前用户所有、单链接、大小受限；单次事务内继续核验设备号、inode、所有者、模式、链接数与 SHA-256。旧格式事务目录身份按设备号、inode、所有者和模式比较；目录链接数会随条目增删变化，不作为固定身份。目录清理仍须为空。
-- 两个信任根——用户主目录与 AskHuman 配置目录（含 `ASKHUMAN_HOME`）——属于用户环境而非托管内容，构造路径时先解析为物理路径，因此 `/home → /var/home`、`/tmp → /private/tmp`、搬迁或自动挂载的主目录、由 dotfiles 管理的 `~/.askhuman` 都可使用；根之下的 `~/.gemini`、`config`、`rules` 与账本目录内条目仍逐级拒绝符号链接。拒绝时错误指出具体目录；`HOME` 无法解析为绝对路径时仍报错，不以当前目录代替。
-- 实例账本记录路径、生成版本、变体、SHA-256 与所有者 uid。持久所有权按“路径相同、摘要相同、uid 相同、托管格式合法”判定；因此备份恢复、`cp -a`/同步工具产生的新 inode、`chmod` 或跨重启设备号变化不会丢失所有权，但内容被修改时摘要不同，仍为冲突。当前实例只能清理其可证明所有权的规则。旧账本中的完整文件身份只用于读取 uid 回退，新写入不再包含它。
-- 用户修改正文、外部替换为不同内容、账本 uid 与当前文件不符、异实例账本或待恢复事务都不得被自动认领或覆盖。
-- 规则与实例账本的恢复日志保存在当前用户私有目录中。新日志使用显式格式版本，直接内嵌旧文件字节与身份作为前镜像，不再创建重复备份文件或事务子目录；读取时核验所有内嵌旧、新和恢复文件的字节与 SHA-256 一致。未知格式版本拒绝恢复并保留现场。升级后先恢复旧版无版本日志，继续执行原有独立前镜像、事务目录身份与清理检查，不跳过旧材料的校验，再开始新变更。兼容方向为旧日志升级到新版；旧二进制不能恢复新版格式的待处理日志，降级前须先用新版完成恢复或清理。
-- 正向写入和恢复写入先在同目录的随机 scratch 文件内完成并同步内容，把完整文件身份与摘要写入现有格式的日志后，才将同一文件发布到日志约定的固定 stage 名。创建或部分写入时中断留下的随机 scratch 不会被自动认领或删除，也不会阻止逻辑恢复；可在确认后手工清理。旧日志中存在但没有对应身份记录的固定 stage 仍拒绝自动恢复，不能按名称、空文件或内容前缀认领。
-- 回滚只移除有身份记录且为空的目标目录。创建子目录后尚未来得及记账，或未发布 scratch 留下内容时，保留非空目录及其内容，重新核验最终规则与账本后即可清除已恢复日志；身份漂移、符号链接和其它 I/O 错误仍报错。旧格式事务备份目录中的未知条目仍须人工检查，不适用此非空目录保留策略。
-- 读取或身份校验失败必须作为状态错误显示，不能降级成“未安装”。
+插件目录由 AskHuman 严格托管：
+
+- **实例账本**：每个 AskHuman 实例在自己的配置目录里有 `antigravity-plugin.json`，记录路径、生成版本、模式与能力清单、每个文件的 SHA-256 与所有者 uid。
+  持久所有权按「路径相同、摘要相同、uid 相同、没有链接」判定；备份恢复、`cp -a` 产生的新 inode 或跨重启设备号变化不会丢失所有权，内容被改过则摘要不同，仍为冲突。
+- 状态为：不存在、当前、已过期（内容与本版本应发布的不同）、需修复（账本有记录但目录或文件已不在）、冲突（那里有无法证明属于 AskHuman 的内容）。
+  用户改过文件、外部替换、异实例账本、符号链接或硬链接、非当前用户所有，都是冲突：不自动认领、不覆盖、不删除。
+- 新建时在插件目录同一文件系统的私有临时目录里整体写好（目录 0700、文件 0600），再用一次 `rename` 发布，宿主看不到半成品。
+  更新时先把意图写进账本，再按固定顺序（规则 → MCP → hooks → `plugin.json` → 标记）逐文件原子替换，只重写内容变了的文件；中途中断后下一次对账会完成它，而不是回滚。
+- 卸载只删账本证明属于 AskHuman 的文件与空目录；用户在目录里加的其它文件保留，目录因此不会被删。
+- 读取或身份校验失败必须作为状态错误显示，不能降级成「未安装」。
 
 最终检查与 rename/unlink 之间没有针对同一用户其它进程的原子 compare-and-swap 保证；所有权检查缩小覆盖风险，但不等同于跨进程原子事务。
 
-## 6. 模式切换
+## 6. 模式切换与迁移
 
-Antigravity 模式切换顺序为：
+模式切换顺序为：
 
-1. 读取并验证 MCP 配置，计算目标配置。
-2. 恢复当前规则实例已有的待处理日志。
-3. 确认规则所有权后发布 MCP 配置。
-4. 安装、更新或删除规则。
+1. 发布（或在 None 时卸载）插件。
+2. 协调生命周期偏好与产物。
+3. 清理更早版本留下的共享规则 `~/.gemini/config/rules/askhuman-antigravity.md` 与全局 `~/.gemini/config/mcp_config.json` 里的托管条目 `mcpServers.askhuman`。
 
-这不是跨两个文件的单一原子事务：
+先发布插件再清理旧产物：任何时刻都不会出现没有交互协议的窗口，短暂并存只是规则重复。
 
-- MCP 配置发布失败时，规则保持不变。
-- 规则变更失败时，先恢复规则日志；只有恢复到切换前的同一逻辑规则后，才尝试条件恢复 MCP 配置。
-- 如果外部进程已改写配置，恢复会拒绝覆盖。
-- 如果规则已提交但清理失败，或恢复结果不确定，错误必须报告保留状态与显式重试命令：
+- 旧产物按它们原来的严格所有权规则处理（实例账本、摘要、uid、不跟随链接、保留 JSONC 注释与无关条目）；任何一步证明不了所有权（用户改过）就保留、报告冲突、不继续清理，插件保持已发布。
+- 两者都不存在时不读不写，所以一个无关的、格式错误的全局 MCP 配置不会阻止插件安装。
+- 在插件发布之前，旧规则与全局 MCP 条目仍然定义当前模式，并显示为「需更新」；发布后状态以插件为准，旧产物残留只让规则显示需更新，不影响任务就绪判断。
+- 这不是跨多个文件的单一原子事务。失败时错误必须报告保留状态与显式重试命令：
 
 ```bash
 AskHuman agents mode antigravity <none|cli|mcp>
@@ -115,27 +125,44 @@ AskHuman agents mode antigravity <none|cli|mcp>
 
 用户看到失败或不完整更新时应检查错误所述状态，再重试明确的目标模式；不得假定切换已原子完成。
 
-整包更新和单项更新与状态查询使用同一套严格模式判定：CLI 规则缺失但实例账本仍在时，更新重建规则；MCP 配置存在但规则仍为 CLI 变体时，规则显示需更新。读取失败、配置解析错误、规则所有权冲突和待恢复日志不会降级为 None 或静默卸载；待恢复日志仍通过上述显式目标模式命令处理。
+整包更新和单项更新与状态查询使用同一套判定。读取失败、配置解析错误、所有权冲突和待恢复日志不会降级为 None 或静默卸载。
 
 ## 7. 支持边界
 
-当前实现支持提问、CLI/MCP 传输、历史恢复的安全降级和下一任务交接。以下能力没有 Antigravity 适配器：
+当前支持：提问、CLI/MCP 传输、可信会话绑定与历史恢复、生命周期追踪（会话在控制台出现、工作中 / 空闲、标题），App 与 `agy` 通用；以及：
 
-- 生命周期追踪与 Agent Console 状态
-- Stop 结束确认
+- **Stop 结束确认**（App 与 `agy`）：根会话、`terminationReason == NO_TOOL_CALL`、整棵会话树 `fullyIdle` 后出确认卡，继续 = `decision: "continue"`；开关 `agents stop antigravity`，默认关。
+- **插话**：工作中经 `PreInvocation` 的 `injectSteps` 注入（App 与 `agy`）；App 的空闲／已结束会话经 sidecar 的 `agentapi send-message`，内容前加固定的 `[USER MESSAGE]` 包装；`agy` 没有空闲通道。
+- **Watch**：读会话的 `transcript_full.jsonl`，显示回复、工具步骤与模型的 `thinking` 文字（部分模型档位才有；显示成带标签的思考）。
+- **新建任务**（手机、IM `/new`、Mac 新任务窗口）与**模型选择**：App 经 AskHuman 管理的全局 sidecar，终端用 `agy -i`；权限按 sidecar 白名单，可选 YOLO（App 用宽授权 sidecar，`agy` 用 `--dangerously-skip-permissions`）；
+  模型清单是 `agy models` 的平铺列表。App 路线需要用户一次性允许 AskHuman 管理 sidecar（`antigravityDesktop.manageSidecars`）。
+
+以下能力不提供，也不应展示为可用：
+
 - 原生权限拦截
 - 上下文恢复 Hook
-- 插话 / Watch
-- 新建任务 / Fork
+- Fork
 
-因此，Antigravity 模式不安装 lifecycle、Stop、permission、recovery、interject 或 launch/fork 产物，也不应展示为这些能力可用。
+设计、验证与未验项见深度集成规格 §9–§12、§17–§18；原生权限拦截与 Fork 只记录调研结论（§13），上下文恢复不在范围内。
+
+### 7.1 App 新建任务与 sidecar
+
+App 没有「在指定文件夹里新建会话」的公开入口，但它会为 `~/.gemini/config/sidecars/<id>/` 里的每个 sidecar 启动一个进程，该进程能运行 `agentapi` 并带着清单里授予的权限。AskHuman 据此：
+
+- 每个文件夹一个全局 sidecar：`askhuman-ws-<h8>`（只允许白名单）、`askhuman-yolo-<h8>`（宽授权，名字带「YOLO」，设置页标注、可一键移除）；另有不属于任何用户文件夹、没有授权、只用来传空闲消息的 `askhuman-ctl`。最多 20 个。
+- AskHuman 只写 `~/.askhuman/antigravity-sidecars.json`、各 sidecar 目录与 `config.json` 里的 `sidecars.askhuman-*` 条目（读-改-写，一次 `rename`，其余字节不动，用户的授权与插件开关原样保留）。
+- sidecar 进程从不启动 daemon，只连 daemon 并执行 daemon 下发的固定 `agentapi` 调用；不接受任意命令。
+- 创建 sidecar 要用户一次性允许（`antigravityDesktop.manageSidecars`，默认关）；未允许时明确拒绝，不静默创建，也不静默改走 `agy`。
+- Antigravity 里已经创建的会话由 Antigravity 管理，AskHuman 不替用户删除；移除 sidecar（`AskHuman agents sidecars remove`）只移除它自己的文件与配置条目。
+- 管理命令 `AskHuman agents sidecars [list|remove <id>|remove --all]`，设置页 Antigravity 卡里有同样的列表与规则编辑。
 
 ## 8. 平台与验证口径
 
 - Antigravity 集成变更：Unix 支持；Windows 明确不支持。
 - MCP server 运行时本身沿用 AskHuman 的跨平台进程与 Daemon 传输，但这不构成 Windows Antigravity 集成验收。
-- `run_command` / `manage_task` 等工具契约的既有观察版本为 `agy 1.2.9`；`RunPersistent` 行为尚未验证。这些维护信息只记录在规格中，不注入 always-on 规则。不能据此推断其它客户端或版本提供相同接口。
-- 当前产品证据限于 Linux/NixOS 的本地运行验证。没有据此声明托管 CI、macOS、Windows、IDE、扩展、Antigravity 2.0 或真实 24 小时等待通过验收。
-- 共享规则是家族级指令；各 Antigravity 客户端是否读取规则、提供命令工具、支持 MCP 或正确等待，仍须按客户端验证。
+- 插件与 hooks 的契约在 macOS 上用 Antigravity App 2.32.1 与 `agy` 1.5.9 实测；实测证据与未验证项（V 编号）记录在深度集成规格 §17 与附录 A。
+  `run_command` / `manage_task` 等工具契约的既有观察版本为 `agy 1.2.9`，这些维护信息只记录在规格中，不注入 always-on 规则。不能据此推断其它客户端或版本提供相同接口。
+- Linux 沿用 Unix 实现但尚未实测；没有据此声明托管 CI、Windows、IDE、扩展或真实 24 小时等待通过验收。
+- 插件是家族级指令；各 Antigravity 客户端是否读取规则、提供命令工具、支持 MCP 或正确等待，仍须按客户端验证。
 
 相关 MCP 通用契约见 [MCP 模式规格](./mcp.md)。

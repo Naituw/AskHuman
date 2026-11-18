@@ -3,7 +3,7 @@
 //! 四个平台 client 的统一请求出口（`call` 系列）失败时登记、成功时清除，daemon 的
 //! `ensure_*_router` 建连失败同样登记——覆盖建连 / 投放发送 / 卡片编辑（含 watch）全部路径，
 //! 无须在每个 `eprintln!` 点各自插桩。daemon 经 `TrayState` / `StatusInfo` 把快照带给
-//! 托盘与设置页；legacy in-process/test callers may also write this table without readers.
+//! 托盘与设置页。
 //!
 //! 语义（用户定案）：该渠道下一次任何成功操作即清；纯内存态，daemon 重启即清。
 
@@ -124,6 +124,33 @@ pub fn reconnecting_message(attempt: u32, error: &str) -> String {
     )
 }
 
+/// Longest a single WebSocket handshake (TCP connect, TLS and the HTTP upgrade) may take. A peer
+/// that accepts the connection and then says nothing would otherwise leave the connect pending
+/// forever, and with it every caller that waits for the router.
+pub const WS_CONNECT_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(15);
+
+/// The stream type of every long-connection router.
+pub type WebSocket =
+    tokio_tungstenite::WebSocketStream<tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>>;
+
+/// Open a WebSocket, giving up after [`WS_CONNECT_TIMEOUT`]. The error text is ready for the
+/// platform error types and the health table; a timeout is an ordinary connect failure to the
+/// callers, so their backoff and reporting apply unchanged.
+pub async fn connect_websocket(url: String) -> Result<WebSocket, String> {
+    connect_websocket_within(url, WS_CONNECT_TIMEOUT).await
+}
+
+async fn connect_websocket_within(
+    url: String,
+    limit: std::time::Duration,
+) -> Result<WebSocket, String> {
+    match tokio::time::timeout(limit, tokio_tungstenite::connect_async(url)).await {
+        Ok(Ok((socket, _response))) => Ok(socket),
+        Ok(Err(error)) => Err(format!("WebSocket connection failed: {error}")),
+        Err(_) => Err(format!("WebSocket connection timed out after {limit:?}")),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -209,6 +236,44 @@ mod tests {
         assert_eq!(
             reconnecting_message(0, "tls handshake eof"),
             "long connection lost; reconnecting (attempt 1): tls handshake eof"
+        );
+    }
+
+    #[tokio::test]
+    async fn a_peer_that_accepts_and_stays_silent_ends_in_a_timeout() {
+        use std::time::{Duration, Instant};
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        // Accept, then never answer the upgrade request: what a stalled gateway looks like.
+        let silent_peer = tokio::spawn(async move {
+            let (_socket, _) = listener.accept().await.unwrap();
+            std::future::pending::<()>().await;
+        });
+
+        let started = Instant::now();
+        let error =
+            connect_websocket_within(format!("ws://{address}/"), Duration::from_millis(200))
+                .await
+                .expect_err("a silent peer must not complete the handshake");
+
+        assert_eq!(error, "WebSocket connection timed out after 200ms");
+        assert!(started.elapsed() < Duration::from_secs(5));
+        silent_peer.abort();
+    }
+
+    #[tokio::test]
+    async fn a_refused_connection_reports_the_connect_error() {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        drop(listener);
+
+        let error = connect_websocket(format!("ws://{address}/"))
+            .await
+            .expect_err("nothing listens there");
+
+        assert!(
+            error.starts_with("WebSocket connection failed: "),
+            "{error}"
         );
     }
 }

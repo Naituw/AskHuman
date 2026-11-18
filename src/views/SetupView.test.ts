@@ -1010,18 +1010,20 @@ describe("setup wizard", () => {
       expect(lit(w, "tasks-channel-feishu")).toBe(false);
       expect(lit(w, "tasks-channel-telegram")).toBe(false);
       expect(lit(w, "tasks-channel-dingding")).toBe(false);
-      // The Agents a task can be created on; Antigravity has no way to start one, so it is not drawn.
+      // The Agents a task can be created on: every family, Antigravity (through its App) included.
       expect(drawn(w, "tasks-agents")).toEqual([
         "tasks-agent-claude",
         "tasks-agent-codex",
         "tasks-agent-cursor",
         "tasks-agent-grok",
+        "tasks-agent-antigravity",
         "tasks-agent-pi",
       ]);
       expect(lit(w, "tasks-agent-claude")).toBe(true);
       expect(lit(w, "tasks-agent-codex")).toBe(true);
       expect(lit(w, "tasks-agent-cursor")).toBe(false);
       expect(lit(w, "tasks-agent-grok")).toBe(false);
+      expect(lit(w, "tasks-agent-antigravity")).toBe(true);
       expect(lit(w, "tasks-agent-pi")).toBe(false);
       // What is greyed out gets one line saying it works once it is set up.
       expect(text(w, "tasks-dim-note")).toBe(message("setup.tasks.dimNote"));
@@ -1043,6 +1045,7 @@ describe("setup wizard", () => {
         "tasks-agent-codex",
         "tasks-agent-cursor",
         "tasks-agent-grok",
+        "tasks-agent-antigravity",
         "tasks-agent-pi",
       ]) {
         expect(lit(w, id)).toBe(false);
