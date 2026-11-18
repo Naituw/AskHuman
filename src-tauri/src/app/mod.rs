@@ -1147,6 +1147,11 @@ fn launch(state: AppState, view: View, popup_ipc: Option<PopupIpc>) -> tauri::Re
                                 .theme(theme);
                         let win =
                             apply_surface(builder, window_bg, effective_window_effect).build()?;
+                        #[cfg(target_os = "macos")]
+                        if let Ok(ns_window) = win.ns_window() {
+                            // SAFETY: Tauri setup runs on the main thread and win owns the NSWindow.
+                            unsafe { crate::macos_window_order::manage_in_spaces(ns_window) };
+                        }
                         popup_drag_front::install(&win);
                         #[cfg(target_os = "macos")]
                         set_runtime_window_effect_with_bg(&win, window_effect, window_bg);

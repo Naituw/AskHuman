@@ -170,7 +170,7 @@ objc2 = "0.6"
 # cold-build time and target size in every profile. `std` is the one non-binding feature that the
 # default set also provided. A missing binding fails to compile, so add it here when needed.
 objc2-foundation = { version = "0.3", default-features = false, features = ["std", "NSString", "NSArray", "NSURL", "NSGeometry", "NSData", "NSError", "NSLocale", "NSDictionary"] }
-objc2-app-kit = { version = "0.3", default-features = false, features = ["std", "NSResponder", "NSEvent", "NSApplication", "NSImage", "NSDockTile"] }
+objc2-app-kit = { version = "0.3", default-features = false, features = ["std", "NSResponder", "NSEvent", "NSApplication", "NSImage", "NSDockTile", "NSWindow"] }
 # 语音输入回调桥（block2 创建 @convention(block) 闭包供 Swift SpeechAnalyzer 回调）。
 block2 = "0.6"
 
