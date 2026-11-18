@@ -1555,7 +1555,7 @@ INSTALLED、1 位 INVITED，Friends 1 位 INSTALLED，自动通知关闭，Frien
 没有用户说过「先不出」的 iOS 改动（查了 `PROGRESS.md` 与相关文档）。
 
 出包前的验证在这份 `ios/` 源码上现场做的：`swift test`（`ios/Packages/AskHumanKit`）7 个测试包共 1058 项，987 项运行通过、0 失败，另 71 项要真实 daemon / broker 的端到端用例按预期跳过；
-真实 daemon + 本地 broker 的整套端到端（`AH_E2E_BIN`）71 项里 57 项通过、8 项跳过、6 项失败，这 6 项在流量收敛之前的二进制（`34fd3b02`）上同样失败，是用例陈旧或依赖系统语言（见 `PROGRESS.md`「6 个陈旧 / 依赖系统语言的 iOS 端到端用例」）；
+真实 daemon + 本地 broker 的整套端到端（`AH_E2E_BIN`）71 项里 57 项通过、8 项跳过、6 项失败，这 6 项在流量收敛之前的二进制（`34fd3b02`）上同样失败，是用例陈旧或依赖系统语言（之后已在测试台与用例里修好，Mac 与手机的产品代码没动）；
 新增的两个端到端用例（进前台一轮、Watch 与列表活动）通过。CI 两次的 `iOS Swift package (swift test)` 作业都通过。
 **没有跑的**：模拟器上的 UI 用例（只做了 Release 归档编译）、iPad / 其他系统版本；**真机一项都没有验过**。
 

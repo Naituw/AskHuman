@@ -173,8 +173,14 @@ final class MacInstance: @unchecked Sendable {
         precondition(env["ASKHUMAN_HOME"]?.hasPrefix(FileManager.default.temporaryDirectory.path) == true)
         // The iOS channel is hidden behind the experimental switch; the popup stays closed so that
         // requests go to the phone only.
+        //
+        // The language is pinned in the config because `LANG` above does not do it: on macOS the CLI and
+        // the daemon follow the system's preferred languages, so on a Mac set to another language they
+        // would print in that language, and the tests that look for English text (the canceled status,
+        // the away status, the Stop confirmation) would fail there.
         let settings = broker.settings()
         let seed: [String: Any] = [
+            "general": ["language": "en"],
             "experimental": ["enabled": true],
             "channels": [
                 "popup": ["enabled": false],

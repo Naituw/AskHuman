@@ -755,13 +755,12 @@ SSH 到 Mac B 的旧授权已用完，需要再次操作时当次确认。上述
 ③ 弹窗与手机的快捷回复菜单（预设在 Mac 设置里编辑）；④ CLI `AskHuman away on/off/status` 与 IM `/away`、`/back`。全貌见 `docs/overview.md`「离开模式、本会话不再使用与快捷回复」。
 
 自测（合并 main 之后；都在隔离的 Dev Instance / 临时 `ASKHUMAN_HOME` 里，没碰日常 daemon，没发到用户手机）：`cargo fmt --check` 与 `clippy -D warnings` 干净，`cargo test --bin AskHuman` 2596 通过 / 0 失败；
-`vue-tsc` 通过、vitest 1276 条全过；Swift 包 672 条 0 失败；真实 Daemon 端到端 41 通过（3 条 `AgentE2ETests` 失败，在 main 上同样失败，见下）；
+`vue-tsc` 通过、vitest 1276 条全过；Swift 包 672 条 0 失败；真实 Daemon 端到端 41 通过（3 条 `AgentE2ETests` 失败，在 main 上同样失败，是用例陈旧，之后已修好）；
 模拟器 UI 测试 128 条通过（`AskHumanAwayUITests` 中英文、`AskHumanTodoPickUITests`、主类 `AskHumanUITests` 63 条等，细节见计划「合并 main 与最终验证」；iOS 18.5 的经典条另验过，`AskHumanAwayUITests` 16/16，见「iOS 18.5 经典条补验」）；
 隔离 Daemon 里用 `CLAUDECODE` + 会话 id 冒充 Claude 会话跑通了离开 / 升级 / 不再使用的端到端；
 2026-11-05 又用**真实 Codex**（`codex exec`，隔离的一次性 Mac + 假手机，没碰日常 daemon）跑通四个场景：离开 → 提问与 whats-next 被自动回复 → `escalate` 送达手机；不再使用 → 后续调用即时回提示、Stop 确认静音；从手机解除 → 插话让它再次提问，细节见计划「真实 Codex 端到端」。
 
 **不是本功能带来、但这次验证里撞到的 main 上的已有问题**（留给对应的同学 / 会话处理）：
-- `AHE2ETests/AgentE2ETests` 的三条用例在 main 上就失败：`testAMessageToAnAgentThatIsNotWorkingIsRefused`、`testSessionsOfTheMacAreListedWithTheirState`（期望 `notWorking`，`agent_control.rs::can_interject` 现在对空闲会话返回 `idleUnsupported`）、`testAFollowedSessionReportsWhenItsTurnEnds`（等不到 `done` 事件）；用 main 的日常版二进制单独跑得到同样的失败。
 - `AskHumanInputVisibilityUITests.testEachQuestionRevealsItsOwnAttachmentEntryPoint` 偶发失败（第二题输入框点按后没有键盘焦点），在 main 上同样复现。
 - `AskHumanRequestNavigationUITests.testManualReturnRestoresTheReadingPositionOfALongForm`（`AskHumanRequestNavigationUITests.swift:101`，返回后长表单的阅读位置 15 秒内没回到原处）在 iOS 27.0 模拟器上多数时候失败，在 main（`b03606fc`，临时 worktree 单独构建）上同样 7/8；偶尔能过（重启模拟器后单跑过过一次），是已有的不稳定用例，原因没查（可能与 `-AHWebMarkdown YES` 下网页内容高度异步变化有关）。
 
@@ -1171,21 +1170,6 @@ v0.17.3 第一次发布时，两个 macOS 构建都死在「Sign macOS binary (D
 - [ ] 手机核验（要装上新的 TestFlight 构建，且 Mac 已升级）：Agents 页里没打开的「工作中」会话不再显示工具 / 步数 / 相对时间，
   打开详情仍实时；从后台回前台只补变化、没有整套刷新；Watch 一个会话时帧与列表活动照常。新旧版本互配（旧手机配新 Mac、新手机配旧 Mac）
   都照旧工作，只是没省到流量。
-
-## 待办：6 个陈旧 / 依赖系统语言的 iOS 端到端用例
-
-整套 `AHE2ETests`（`AH_E2E_BIN` + `AH_E2E_BROKER_DIR`，71 项，8 项默认跳过）里下面六个用例在流量收敛改动**之前**（用 `34fd3b02` 单独构建的二进制对照过）
-就失败，与流量收敛无关；其余 57 项通过。它们不是产品缺陷，也没有顺手改（超出当时的范围）：
-
-- `AgentE2ETests.testAMessageToAnAgentThatIsNotWorkingIsRefused`、`testSessionsOfTheMacAreListedWithTheirState`：期望 `notWorking` / `ended`，
-  现在空闲会话给出 `idleUnsupported`（`agent_control::can_send_with`）。
-- `AgentE2ETests.testAFollowedSessionReportsWhenItsTurnEnds`：用例的 `turn-end` 载荷没有 `hook_event_name: "Stop"`，现在的结果判定
-  （`agents/result.rs`）给出 `Unknown`，不再宣告「完成」；真实 Claude 的 Stop 钩子带这个字段。
-- `E2ETests.testCancellingFromThePhoneEndsTheAskWithACancelledStatus`、`AnnotationE2ETests.testCancellingDropsTheNotes`、
-  `CodexStopHookE2ETests.testTheStopHookAsksWhileAwayAndIsSilentWhenMuted`：按英文输出断言（`canceled`、`on since`），而测试台的 Mac 用系统语言
-  （本机是中文），CLI 输出是中文；英文系统上大概率通过，没有验证。
-
-下一步：把前三项的期望改成现行行为，后三项让测试台固定语言（或断言与语言无关的部分），`swift test --filter AHE2ETests` 全绿后删除本节。
 
 ## 待真机核验：多设备报文流量统计
 

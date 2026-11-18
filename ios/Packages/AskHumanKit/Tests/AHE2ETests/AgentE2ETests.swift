@@ -31,6 +31,12 @@ final class AgentE2ETests: E2ECase {
         ["hook_event_name": "PreToolUse", "tool_name": "Bash", "tool_input": ["command": command]]
     }
 
+    /// The end of a turn the way Claude's Stop hook reports it. The Mac reads the outcome from the event name: a
+    /// `turn-end` without it ends the turn with an unknown outcome, which nothing announces and no follow is spent on.
+    private func endTurn(_ session: String) async throws {
+        try await hook("turn-end", session: session, extra: ["hook_event_name": "Stop"])
+    }
+
     private func key(_ session: String, agent: String = "claude") -> String { "\(agent):\(session)" }
 
     private func agent(_ session: String) async -> AgentItem? {
@@ -59,7 +65,9 @@ final class AgentE2ETests: E2ECase {
         let idle = try unwrap(await agent("e2e-idle"))
         XCTAssertEqual(idle.view.kind, "claude")
         XCTAssertEqual(idle.view.canInterject.ok, false)
-        XCTAssertEqual(idle.view.canInterject.reason, "notWorking")
+        // A Claude session reads a message only from the hook of its next step, so there is no way to reach it while it
+        // is idle (an idle Cursor chat or Antigravity conversation has a channel of its own).
+        XCTAssertEqual(idle.view.canInterject.reason, "idleUnsupported")
         let busy = try unwrap(await agent("e2e-busy"))
         XCTAssertTrue(busy.view.canInterject.ok)
         let macId = try await macId()
@@ -68,7 +76,8 @@ final class AgentE2ETests: E2ECase {
         try await hook("session-end", session: "e2e-idle")
         await eventually("the ended session") { await self.agent("e2e-idle")?.view.state == "ended" }
         let ended = await agent("e2e-idle")
-        XCTAssertEqual(ended?.view.canInterject.reason, "ended")
+        XCTAssertEqual(ended?.view.canInterject.ok, false)
+        XCTAssertEqual(ended?.view.canInterject.reason, "idleUnsupported", "an ended session has no channel either")
     }
 
     // MARK: live watch
@@ -117,7 +126,7 @@ final class AgentE2ETests: E2ECase {
         try await phone.engine.setFollow(macId: item.macId, agentKey: item.agentKey, on: true)
         await eventually("the follow mark") { await self.agent("e2e-follow")?.view.followed == true }
 
-        try await hook("turn-end", session: "e2e-follow")
+        try await endTurn("e2e-follow")
         await eventually("the done event") {
             self.phone.events.contains {
                 if case .followEvent(_, let event) = $0 { return event.agentKey == item.agentKey && event.kind == "done" }
@@ -131,7 +140,7 @@ final class AgentE2ETests: E2ECase {
         // The next turn is not announced.
         let announced = followEvents(of: item)
         try await hook("turn-start", session: "e2e-follow")
-        try await hook("turn-end", session: "e2e-follow")
+        try await endTurn("e2e-follow")
         // The Mac waits three seconds for a turn that is really over before it says so.
         try await Task.sleep(nanoseconds: 4_500_000_000)
         XCTAssertEqual(followEvents(of: item), announced, "the second turn was announced")
@@ -150,7 +159,7 @@ final class AgentE2ETests: E2ECase {
             let phones = (try? await self.mac.jsonArray(["channel", "ios", "devices", "--json"])) ?? []
             return phones.first?["online"] as? Bool == false
         }
-        try await hook("turn-end", session: "e2e-away")
+        try await endTurn("e2e-away")
         try await Task.sleep(nanoseconds: 4_500_000_000)
 
         await phone.engine.setForeground(true)
@@ -248,7 +257,7 @@ final class AgentE2ETests: E2ECase {
             )
             XCTFail("an idle Agent takes no messages")
         } catch BackendError.rejected(let reason) {
-            XCTAssertEqual(reason, "notWorking")
+            XCTAssertEqual(reason, "idleUnsupported")
         }
     }
 
