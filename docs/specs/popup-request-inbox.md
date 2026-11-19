@@ -168,8 +168,14 @@ macOS 的统一窗口与独立弹窗在创建时显式启用 AppKit 的 `Managed
 - `Managed` 只决定窗口是否参与 Spaces / Exposé；系统头文件没有说明它与 Dock 激活时切 Space、
   谁取得键盘焦点之间的关系。
 - 真实弹窗以 `orderFrontRegardless` 非激活前置（见 `app/popup_transition.rs`），可能从未成为 key window。
-- macOS 27.2.1 上的初步对照：普通浮动层 `NSWindow`（默认 collectionBehavior）在全屏 Space 里被 Cmd+Tab
-  激活时同样会切回它所在的 Space，没有复现「浮动层默认 Transient 会阻止切 Space」；Dock 点击本身未测。
+- macOS 27.2.1 上的初步对照（用 Cmd+Tab 激活，**不是** Dock 点击）：
+  - 普通浮动层 `NSWindow`（默认 collectionBehavior）在全屏 Space 里被激活时会切回它所在的 Space。
+  - 真实弹窗（窗口层级 5）的 A/B：同一提交，仅去掉 `manage_in_spaces` 调用作为基线。弹窗先在桌面 Space
+    出现并成为前台，再进入全屏 Space，按 Cmd+Tab 激活弹窗宿主：基线与补丁都切回了弹窗所在的 Space
+    并显示弹窗，两者没有差异。
+  - 没有复现「浮动层默认 Transient 会阻止切 Space」，到目前为止也没有观察到补丁带来的差异。
+    这个对照既不能证明、也不能否定补丁对 Dock 点击的作用。Dock 点击本身仍未测：全屏 Space 里 Dock
+    是隐藏的，合成的鼠标移动也无法唤出它，需要有可见 Dock 的人工验收。
 
 验收（macOS 有图形会话，改动前后各做一次对照）：分别以合并和独立模式发起置顶作答请求。
 **不要先点击或拖动作答窗口**，否则它会被提前激活，漏掉「首次经 Dock 取得焦点」的场景。
