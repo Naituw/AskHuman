@@ -156,6 +156,13 @@ Cursor 若按其文档语义改用 `agent_message` 也不断；代价是 Cursor 
 并发工具调用（如 Claude 并行 tool use）：多个 hook 同时 poll 时，消息**只交付一个**（daemon 原子出队），
 其余 allow；等待中的多个 waiter 在提交时同样只有一个拿到消息。
 
+**子 Agent 的工具调用不领取插话（2026-11-19，[#30](https://github.com/Naituw/AskHuman/issues/30) 同批修复）**：
+Claude Code 给子 Agent 内触发的每条 hook 输入都带 `agent_id`。这样的 PreToolUse 只上报、不向 daemon 轮询
+（`report.rs::polls_for_interjection`）：deny 会落到子 Agent 身上，而用户写给的是主会话，消息却已记为送达。
+消息继续排在队列里，等主 Agent 自己的下一次工具调用领取。取舍：后台子 Agent 运行、主 Agent 已停下时，消息要等
+主 Agent 因子 Agent 的结果开始新一轮、再发起工具调用才送达。验证：隔离 daemon + 真实安装的钩子命令，修复前子 Agent 的
+PreToolUse 先把消息拿走，修复后只有主 Agent 的 PreToolUse 拿到，且只送达一次。
+
 ### D4 IPC 与轮询协议（性能优先，用户明确要求不影响所有 tool call）
 
 - **热路径零文件 IO**：队列在 daemon 内存（HashMap，O(1) 查询）；`interject.json` 只在**变更时**

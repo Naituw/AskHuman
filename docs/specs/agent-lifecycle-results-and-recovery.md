@@ -109,7 +109,7 @@ Grok 的 `Stop` 是可阻止结束的 gate。检测到其它 Stop handler 时，
 回到主会话。要点：
 
 - 带 `agent_id` 的 Claude hook 事件来自子 Agent（含 `SubagentStop`），与 Grok 的 `subagentType` 一样不修改主会话的
-  状态、回合和当前工具。判定在 `result.rs::is_subagent_event`
+  状态、回合和当前工具，也不领取插话（见 [插话 D3](agent-interject.md)）。判定在 `result.rs::is_subagent_event`
   一处，超过 10 MiB 的载荷走摘要读取，摘要保留 `agent_id`。
 - 主会话 `Stop` 载荷的 `background_tasks`（Claude Code 只列仍在运行或排队的后台任务，元素带 `type`、`status`）
   里只要有 `type == "subagent"` 且 `status` 为 `running` 或 `pending` 的条目，这次 `Stop` 就**不是回合结束**：

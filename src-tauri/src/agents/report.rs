@@ -78,9 +78,7 @@ pub fn run(args: &[String]) {
     // 插话轮询（spec agent-interject D3/D4）：仅 **PreToolUse**（stdin 判定阶段为 pre）、
     // 且已通过上方去重、且非 Grok（首期排除，无可靠传话通道）时，在上报的同一连接上
     // 读回一帧裁决；PostToolUse 与其余事件保持即发即走。
-    let interject_poll = matches!(event, super::LifecycleEvent::Activity)
-        && intended != AgentKind::Grok
-        && stdin.as_ref().and_then(detect_phase) == Some(ToolPhase::Pre);
+    let interject_poll = polls_for_interjection(intended, event, stdin.as_ref());
 
     // Only a turn that ended in an error counts: Claude and Grok send `StopFailure`, Cursor a
     // `stop` with `status: error`, Pi a `stop_reason` of `error`.
@@ -132,6 +130,23 @@ pub fn run(args: &[String]) {
     } else {
         crate::client::report_agent_event(msg);
     }
+}
+
+/// Whether this hook event asks the daemon for the human's queued interjection: a `PreToolUse`
+/// of the session itself, except for Grok (no reliable way to hand it a message).
+///
+/// A sub-agent's tool call is not the session's. The deny that carries the message would land on
+/// the sub-agent, which is not who the human wrote to, and the message would count as delivered
+/// while the main agent never saw it. It stays queued for the main agent's own next tool call.
+fn polls_for_interjection(
+    kind: AgentKind,
+    event: super::LifecycleEvent,
+    input: Option<&Value>,
+) -> bool {
+    matches!(event, super::LifecycleEvent::Activity)
+        && kind != AgentKind::Grok
+        && input.is_some_and(|input| !super::result::is_subagent_event(kind, input))
+        && input.and_then(detect_phase) == Some(ToolPhase::Pre)
 }
 
 /// Compatibility-loader deduplication shared by lifecycle and Stop hooks.
@@ -798,6 +813,59 @@ mod tests {
         let v = json!({"tool_name":"Read","tool_input":{"file_path":"/a/b.rs"},"tool_response":{"ok":true}});
         assert_eq!(detect_phase(&v), Some(ToolPhase::Post));
         assert_eq!(extract_tool(Some(&v)).unwrap().phase, ToolPhase::Post);
+    }
+
+    #[test]
+    fn only_the_sessions_own_pre_tool_use_polls_for_an_interjection() {
+        use super::super::LifecycleEvent::{Activity, TurnEnd};
+        let pre = json!({
+            "hook_event_name": "PreToolUse",
+            "tool_name": "Bash",
+            "tool_input": {"command": "ls"},
+        });
+        let post = json!({
+            "hook_event_name": "PostToolUse",
+            "tool_name": "Bash",
+            "tool_input": {"command": "ls"},
+            "tool_response": {"ok": true},
+        });
+        let mut inside_a_subagent = pre.clone();
+        inside_a_subagent["agent_id"] = json!("ab68");
+
+        assert!(polls_for_interjection(
+            AgentKind::Claude,
+            Activity,
+            Some(&pre)
+        ));
+        assert!(polls_for_interjection(
+            AgentKind::Codex,
+            Activity,
+            Some(&pre)
+        ));
+        // A sub-agent's tool call belongs to the sub-agent: the message stays queued for the
+        // main agent instead of being denied into the wrong conversation.
+        assert!(!polls_for_interjection(
+            AgentKind::Claude,
+            Activity,
+            Some(&inside_a_subagent)
+        ));
+        assert!(!polls_for_interjection(
+            AgentKind::Claude,
+            Activity,
+            Some(&post)
+        ));
+        assert!(!polls_for_interjection(
+            AgentKind::Claude,
+            TurnEnd,
+            Some(&pre)
+        ));
+        assert!(!polls_for_interjection(AgentKind::Claude, Activity, None));
+        // Grok has no reliable way to hand it a message.
+        assert!(!polls_for_interjection(
+            AgentKind::Grok,
+            Activity,
+            Some(&pre)
+        ));
     }
 
     #[test]

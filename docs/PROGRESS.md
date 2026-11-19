@@ -329,6 +329,21 @@ macOS：相关 325 条测试、提交前 clippy、Dev 正式转送、日常二�
 
 真实 Cursor 仍仅观察自然失败，不触发 Agent 验证。崩溃自愈是用户定下的另一个设计任务，已记项目待办，不在这次实现内。
 
+## 待日常观察：Claude 后台子 Agent 运行时会话不再显示空闲（已装为日常版，真实 Claude 未验）
+
+[#30](https://github.com/Naituw/AskHuman/issues/30)，2026-11-19 修复并 `./scripts/install.sh` 装为日常版（尚未推送，
+也没有回复 issue）：Claude 主会话 `Stop` 载荷的 `background_tasks` 里还有运行中或排队的子 Agent 时，这次 `Stop` 只算
+活动（会话保持运行中、不弹确认卡）；子 Agent 的工具调用刷新工作中会话的存活时间；子 Agent 的 PreToolUse 不再领走
+主会话排队的插话。规则与取舍见 [结果与恢复 §4](specs/agent-lifecycle-results-and-recovery.md)。单元测试（含变异检查）
+和隔离 daemon 重放都过，重放用 issue 里 Claude Code 2.1.321 的实测时序，基线二进制上能复现。没有跑真实的 Claude Code，
+那会消耗用户的 token，须先经用户授权。
+
+下一步：
+- [ ] 日常使用里遇到 Claude 起后台子 Agent（`Agent` 工具 `run_in_background`）时核对：Agent 控制台一直显示「运行中」，
+  直到子 Agent 的结果回来、最终 `Stop` 才变空闲并弹确认卡。不必专门造场景。
+- [ ] 已知取舍，等用户决定要不要处理：子 Agent 被手动终止、之后再没有最终 `Stop` 时，会话要等 30 分钟兜底才变空闲，
+  期间不弹确认卡。
+
 ## 待验收：Agent 最终失败确认（已合并并装为日常版；Cursor 的真实失败路径已验，其余未验）
 
 2026-11-02 已快进合并进 `main` 并 `./scripts/install.sh` 装为日常版。需求
