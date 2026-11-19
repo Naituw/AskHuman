@@ -331,8 +331,8 @@ macOS：相关 325 条测试、提交前 clippy、Dev 正式转送、日常二�
 
 ## 待日常观察：Claude 后台子 Agent 运行时会话不再显示空闲（已装为日常版，真实 Claude 未验）
 
-[#30](https://github.com/Naituw/AskHuman/issues/30)，2026-11-19 修复并 `./scripts/install.sh` 装为日常版（尚未推送，
-也没有回复 issue）：Claude 主会话 `Stop` 载荷的 `background_tasks` 里还有运行中或排队的子 Agent 时，这次 `Stop` 只算
+[#30](https://github.com/Naituw/AskHuman/issues/30)，2026-11-19 修复、`./scripts/install.sh` 装为日常版，已推送到 main，
+并已在 issue 里回复后关闭：Claude 主会话 `Stop` 载荷的 `background_tasks` 里还有运行中或排队的子 Agent 时，这次 `Stop` 只算
 活动（会话保持运行中、不弹确认卡）；子 Agent 的工具调用刷新工作中会话的存活时间；子 Agent 的 PreToolUse 不再领走
 主会话排队的插话。规则与取舍见 [结果与恢复 §4](specs/agent-lifecycle-results-and-recovery.md)。单元测试（含变异检查）
 和隔离 daemon 重放都过，重放用 issue 里 Claude Code 2.1.321 的实测时序，基线二进制上能复现。没有跑真实的 Claude Code，
@@ -341,6 +341,7 @@ macOS：相关 325 条测试、提交前 clippy、Dev 正式转送、日常二�
 下一步：
 - [ ] 日常使用里遇到 Claude 起后台子 Agent（`Agent` 工具 `run_in_background`）时核对：Agent 控制台一直显示「运行中」，
   直到子 Agent 的结果回来、最终 `Stop` 才变空闲并弹确认卡。不必专门造场景。
+- [ ] 发版后留意 #30 反馈者的确认：issue 已关闭，他若仍能复现会在里面回复，到时重新打开。
 - [ ] 已知取舍，等用户决定要不要处理：子 Agent 被手动终止、之后再没有最终 `Stop` 时，会话要等 30 分钟兜底才变空闲，
   期间不弹确认卡。
 
