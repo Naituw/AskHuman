@@ -90,7 +90,7 @@ Codex heartbeat 的通知决策保存在可选 `notify` 字段：false 只抑制
 | Grok | `StopCancelled` | 用户原因 → interrupted；`max_turns / no_progress` → incomplete；未知原因 → unknown |
 | Grok | `Notification(idle_prompt)` | 会话已空闲的补漏；不凭该通知断言完成 |
 | Grok | `SessionEnd` | 会话结束，保留已有结果 |
-| Claude | 现有 `Stop`／`StopFailure` | 接入统一结果；用户中断仍保留既有兜底，不能声称已获得完整回调 |
+| Claude | 现有 `Stop`／`StopFailure` | 接入统一结果；用户中断仍保留既有兜底，不能声称已获得完整回调。`Stop` 载荷里还有运行中的后台子 Agent 时只算活动，不算回合结束（见下） |
 | Cursor | `stop.status` | completed／error／aborted 分别对应完成候选／失败／已中断 |
 | Pi | `agent_settled` + 本轮 `stopReason` | stop／error／aborted 分别对应完成／失败／已中断；缺失原因不算成功 |
 
@@ -103,6 +103,31 @@ Grok 的 `Stop` 是可阻止结束的 gate。检测到其它 Stop handler 时，
 认定整轮最终完成：优先用原生终态确认；无可确认终态时，等待空闲补漏，只更新已确认的状态。
 这类场景可能延迟约一分钟，无法确认结果时不发完成通知。时间超时永远不能合成成功。
 `subagentType` 存在的 Grok 子代理事件不修改主会话状态。
+
+**Claude 的后台子 Agent（2026-11-19，[#30](https://github.com/Naituw/AskHuman/issues/30)）。**
+`Agent` 工具以 `run_in_background` 启动的子 Agent，在主 Agent 的 `Stop` 之后仍在运行，它的结果随后作为新一轮输入
+回到主会话。要点：
+
+- 带 `agent_id` 的 Claude hook 事件来自子 Agent（含 `SubagentStop`），与 Grok 的 `subagentType` 一样不修改主会话的
+  状态、回合和当前工具。判定在 `result.rs::is_subagent_event`
+  一处，超过 10 MiB 的载荷走摘要读取，摘要保留 `agent_id`。
+- 主会话 `Stop` 载荷的 `background_tasks`（Claude Code 只列仍在运行或排队的后台任务，元素带 `type`、`status`）
+  里只要有 `type == "subagent"` 且 `status` 为 `running` 或 `pending` 的条目，这次 `Stop` 就**不是回合结束**：
+  共享 Stop handler（`__stop-hook claude`，`track` 或 `confirm` 任一开启时）和旧版 `__agent-hook claude turn-end`
+  条目都只上报 `activity`，会话保持运行中，不记结果、不发完成提醒、不发结束确认卡。子 Agent 的结果回到主会话后
+  开始的新一轮，其 `Stop` 里不再有运行中的子 Agent，才结束这次工作并走原有的结果与确认流程。
+- 只认 `subagent`。`shell`、`monitor` 这类后台任务可能一直不结束，`workflow`、`teammate` 等也不计入，否则会话会永远停在
+  运行中。`StopFailure` 与子 Agent 自己的 `Stop` 不适用此规则。载荷没有 `background_tasks`（旧版 Claude Code）、
+  形状异常或超过 10 MiB 的摘要载荷，都按普通回合结束处理，与此前行为一致，因此不涉及 IPC 协议号。
+- 主 Agent 停下之后，子 Agent 的工具调用是会话仍在工作的唯一信号：这类 Claude `activity` 只刷新**工作中**会话的
+  `last_activity`（喂 30 分钟 working 兜底），不唤醒空闲会话、不新建会话，其余状态一概不动。Grok 子代理事件完全不进入会话，
+  不刷新。
+- 已知取舍：子 Agent 被手动终止且之后再没有最终 `Stop` 时，不会弹出结束确认卡，会话由 30 分钟兜底降为空闲。
+
+验证（2026-11-19）：载荷形状与 hook 顺序取自 issue 里 Claude Code 2.1.321 的实测记录。单元测试覆盖判定矩阵与
+注册表时序（并做过变异检查：去掉任一守卫，对应测试变红）；隔离 daemon 加上 `settings.json` 里真实安装的钩子命令
+重放同一顺序，修复前第一次 `Stop` 就变空闲并弹确认卡，修复后保持运行中、最终 `Stop` 才弹卡。没有拿真实的 Claude Code
+跑过端到端（要消耗用户的 token），见 `docs/PROGRESS.md`。
 
 ### 4.1 关联、乱序与重复
 

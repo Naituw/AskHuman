@@ -445,6 +445,21 @@ impl AgentRegistry {
 
         if let Some(observation) = observation {
             if observation.subagent {
+                // A sub-agent is not a session of its own: its events never change the session's
+                // state, turn or current tool. One thing they do prove is that the session's work
+                // is alive. A Claude background sub-agent keeps running after the main agent's
+                // `Stop`, and its tool calls are then the only sign of life, so they feed the
+                // working backstop (only while the session is working, they never wake it up).
+                // Grok sub-agent events stay entirely out of the session.
+                if kind == AgentKind::Claude && event == LifecycleEvent::Activity {
+                    if let Some(record) = inner.active.iter_mut().find(|r| {
+                        r.kind == kind
+                            && r.session_id == session_id
+                            && r.state == AgentState::Working
+                    }) {
+                        record.last_activity = record.last_activity.max(now);
+                    }
+                }
                 return AppliedObservation::default();
             }
             // A second source may complete the same result with notification intent. Enrich
@@ -2338,6 +2353,174 @@ mod tests {
         assert_eq!(stuck["activeElapsedSecs"].as_u64(), Some(0));
         // 再扫一次无变化（已是空闲）。
         assert!(!r.working_backstop_sweep(10));
+    }
+
+    fn subagent_activity() -> Observation {
+        Observation {
+            subagent: true,
+            tool_started: true,
+            ..Observation::default()
+        }
+    }
+
+    #[test]
+    fn claude_subagent_activity_keeps_a_working_session_from_the_backstop() {
+        let r = reg();
+        // Working since t=1; the main agent stopped reporting when its Stop left a sub-agent running.
+        r.apply_event(
+            AgentKind::Claude,
+            LifecycleEvent::TurnStart,
+            "s",
+            None,
+            None,
+            1,
+        );
+        let applied = r.apply_observed(
+            AgentKind::Claude,
+            LifecycleEvent::Activity,
+            "s",
+            None,
+            None,
+            now_secs(),
+            Some(&subagent_activity()),
+        );
+        // The event is still not the session's own: nothing taken, nothing to broadcast.
+        assert!(!applied.accepted && !applied.changed);
+        assert!(!r.working_backstop_sweep(10));
+        assert_eq!(r.working_count(), 1);
+    }
+
+    fn subagent_event(r: &AgentRegistry, kind: AgentKind, session: &str, ts: u64) {
+        r.apply_observed(
+            kind,
+            LifecycleEvent::Activity,
+            session,
+            None,
+            None,
+            ts,
+            Some(&subagent_activity()),
+        );
+    }
+
+    #[test]
+    fn a_straggling_claude_subagent_event_neither_wakes_nor_creates_a_session() {
+        let r = reg();
+        // A session that went idle is not woken by a straggling sub-agent event, and a session
+        // nobody has heard of is not created by one.
+        r.apply_event(
+            AgentKind::Claude,
+            LifecycleEvent::TurnStart,
+            "idle",
+            None,
+            None,
+            1,
+        );
+        r.apply_event(
+            AgentKind::Claude,
+            LifecycleEvent::TurnEnd,
+            "idle",
+            None,
+            None,
+            2,
+        );
+        subagent_event(&r, AgentKind::Claude, "idle", now_secs());
+        subagent_event(&r, AgentKind::Claude, "unknown", now_secs());
+        assert_eq!(r.working_count(), 0);
+        assert_eq!(r.idle_count(), 1);
+        let snapshot = r.snapshot();
+        let sessions = snapshot.as_array().unwrap();
+        assert_eq!(sessions.len(), 1);
+        // The idle session's own clock (it orders the list and ages the record) is left alone too.
+        assert_eq!(sessions[0]["lastActivity"], 2);
+    }
+
+    #[test]
+    fn grok_subagent_events_stay_out_of_the_session_entirely() {
+        // Agent-lifecycle spec: a Grok sub-agent's events do not even refresh the working backstop.
+        let r = reg();
+        r.apply_event(
+            AgentKind::Grok,
+            LifecycleEvent::TurnStart,
+            "grok",
+            None,
+            None,
+            1,
+        );
+        subagent_event(&r, AgentKind::Grok, "grok", now_secs());
+        assert!(r.working_backstop_sweep(10));
+        assert_eq!(r.working_count(), 0);
+    }
+
+    #[test]
+    fn a_claude_session_stays_working_while_its_background_subagent_runs() {
+        use super::super::result::{observation, stop_leaves_subagents_running, TurnOutcome};
+        use serde_json::json;
+        let r = reg();
+        let hook = |event: LifecycleEvent, input: serde_json::Value, ts: u64| {
+            let observation = observation(AgentKind::Claude, event, Some(&input));
+            r.apply_observed(
+                AgentKind::Claude,
+                event,
+                "s",
+                None,
+                None,
+                ts,
+                Some(&observation),
+            )
+        };
+        let stop = |tasks: serde_json::Value| json!({"hook_event_name": "Stop", "session_id": "s", "background_tasks": tasks});
+        let now = now_secs();
+
+        // The order Claude Code 2.1.321 sent the hooks in (issue #30).
+        hook(
+            LifecycleEvent::TurnStart,
+            json!({"hook_event_name": "UserPromptSubmit", "session_id": "s"}),
+            1,
+        );
+        hook(
+            LifecycleEvent::Activity,
+            json!({"hook_event_name": "PreToolUse", "session_id": "s", "tool_name": "Agent"}),
+            2,
+        );
+        // The main agent stops while its sub-agent runs. The Stop hook reports that as activity.
+        let first_stop = stop(json!([{"id": "ab68", "type": "subagent", "status": "running"}]));
+        assert!(stop_leaves_subagents_running(
+            AgentKind::Claude,
+            &first_stop
+        ));
+        hook(LifecycleEvent::Activity, first_stop, 3);
+        assert_eq!(r.working_count(), 1);
+
+        // From here only the sub-agent reports. Its tool calls neither end the turn nor become the
+        // session's tool, and they keep a long-running sub-agent from being timed out.
+        let applied = hook(
+            LifecycleEvent::Activity,
+            json!({"hook_event_name": "PreToolUse", "session_id": "s", "agent_id": "ab68",
+                "tool_name": "Bash"}),
+            now,
+        );
+        assert!(!applied.accepted);
+        assert!(!r.working_backstop_sweep(10));
+        assert_eq!(r.working_count(), 1);
+
+        // The sub-agent hands its result back. That starts a new turn, and the Stop that ends it,
+        // with nothing left running, ends the session's work.
+        hook(
+            LifecycleEvent::TurnStart,
+            json!({"hook_event_name": "UserPromptSubmit", "session_id": "s"}),
+            now + 1,
+        );
+        let last_stop = stop(json!([]));
+        assert!(!stop_leaves_subagents_running(
+            AgentKind::Claude,
+            &last_stop
+        ));
+        hook(LifecycleEvent::TurnEnd, last_stop, now + 2);
+        assert_eq!(r.working_count(), 0);
+        assert_eq!(
+            r.last_turn_result(AgentKind::Claude, "s").unwrap().outcome,
+            TurnOutcome::Completed
+        );
     }
 
     #[test]

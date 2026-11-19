@@ -248,6 +248,10 @@ watch 并集、渠道扰动、取消及现有卡片终态，不新增 Stop 专�
 - 选择继续：不发 `turn-end`；Agent 的 continuation 保持/重新进入 working。
 - 选择结束、超时或 fail-open：恰好上报一次 `turn-end`，清 current tool / turn steps 并置 `idle`。
 - 不允许出现“先 idle、后 working”的可见闪烁。
+- Claude `Stop` 载荷的 `background_tasks` 里还有运行中或排队的后台子 Agent 时，这次 `Stop` 不是回合结束
+  （[#30](https://github.com/Naituw/AskHuman/issues/30)）：handler 直接放行，不发确认卡，只上报 `activity`，会话保持
+  `working`。子 Agent 的结果开启的下一轮，其 `Stop` 才是确认点。判定范围与取舍见
+  [结果与恢复 §4](agent-lifecycle-results-and-recovery.md)。
 
 ## 6. 单元测试与验证要求
 
@@ -314,6 +318,7 @@ watch 并集、渠道扰动、取消及现有卡片终态，不新增 Stop 专�
   这不等价于继续当前 TUI，并有终端归属、并发 transcript、权限继承风险。
 - 不支持 Grok Stop 自动续跑，除非 Grok 后续提供可阻塞 Stop 或可消费的 follow-up 输出。
 - 不保证缺少可靠终态来源或进程崩溃时出现接管卡；已知最终失败来源的处理见最终失败确认规格，用户中断始终静默。
+- Claude 的后台子 Agent 被手动终止、之后再没有最终 `Stop` 时，不会弹确认卡，会话由 working 兜底降为空闲。
 - Agent 仍可在续跑后再次不按 Instructions 提问；本设计通过每次自然 Stop 都再次询问来保留人工接管点。
 - 多个第三方 Stop Hook 仍可能彼此影响；AskHuman 只能保证自身 handler 单一，设置/doctor 应提示同事件
   其它 handler 的共存风险。

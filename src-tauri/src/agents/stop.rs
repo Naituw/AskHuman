@@ -61,6 +61,22 @@ fn run_inner(args: &[String]) -> Option<Value> {
     }
     let cwd = stop_cwd(kind, &env, &input);
 
+    // A Stop that leaves a background sub-agent running ends no turn: the session is still working
+    // and nobody is waiting to be asked yet. The sub-agent's result starts the next turn, and the
+    // Stop that ends that turn is the one to confirm. Until then the session only shows activity.
+    if super::result::stop_leaves_subagents_running(kind, &input) {
+        if track || confirm {
+            super::report::report_simple_event(
+                kind,
+                LifecycleEvent::Activity,
+                session_id,
+                cwd,
+                &input,
+            );
+        }
+        return None;
+    }
+
     // Cursor also emits stop for aborted/error turns, but only consumes followup_message for a
     // completed turn. Non-natural stops only retain the existing lifecycle turn-end behavior.
     if !is_natural_stop(kind, &input) {

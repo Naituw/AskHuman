@@ -99,6 +99,48 @@ fn event_name(input: &Value) -> String {
         .collect()
 }
 
+/// Whether a hook payload comes from a sub-agent of the session rather than from the session
+/// itself. Grok marks its sub-agents with `subagentType`; Claude Code tags every hook input
+/// raised inside a sub-agent with that sub-agent's `agent_id`.
+pub(super) fn is_subagent_event(kind: AgentKind, input: &Value) -> bool {
+    let text = |key: &str| {
+        input
+            .get(key)
+            .and_then(Value::as_str)
+            .is_some_and(|s| !s.is_empty())
+    };
+    kind == AgentKind::Grok && text("subagentType") || kind == AgentKind::Claude && text("agent_id")
+}
+
+/// Whether a Claude `Stop` leaves a background sub-agent running.
+///
+/// The main agent's turn is over but the session's work is not: Claude Code lists the work still
+/// in flight in the `Stop` payload's `background_tasks` (only running or pending ones, each with a
+/// `type` such as `subagent`, `shell` or `monitor`). When the sub-agent finishes, Claude starts the
+/// next turn with its result, and the `Stop` that ends *that* turn is the one that ends the work.
+/// Only sub-agents count: a dev server or a watcher in the list may never finish.
+///
+/// A payload without the list (an older Claude Code) or with an unexpected shape counts as "no
+/// sub-agent running", which is the plain turn end.
+pub(super) fn stop_leaves_subagents_running(kind: AgentKind, input: &Value) -> bool {
+    kind == AgentKind::Claude
+        && event_name(input) == "stop"
+        // A sub-agent's own stop (`SubagentStop` carries an `agent_id`) is not the session's.
+        && !is_subagent_event(kind, input)
+        && input
+            .get("background_tasks")
+            .and_then(Value::as_array)
+            .is_some_and(|tasks| {
+                tasks.iter().any(|task| {
+                    task.get("type").and_then(Value::as_str) == Some("subagent")
+                        && matches!(
+                            task.get("status").and_then(Value::as_str),
+                            Some("running" | "pending")
+                        )
+                })
+            })
+}
+
 pub fn observation(
     kind: AgentKind,
     event: super::LifecycleEvent,
@@ -117,8 +159,7 @@ pub fn observation(
         256,
     );
     let name = event_name(input);
-    let subagent = kind == AgentKind::Grok && text("subagentType").is_some_and(|s| !s.is_empty())
-        || kind == AgentKind::Claude && text("agent_id").is_some_and(|s| !s.is_empty());
+    let subagent = is_subagent_event(kind, input);
     let mut observation = Observation {
         turn_id: turn_id.clone(),
         subagent,
@@ -271,6 +312,130 @@ mod tests {
             result.result.unwrap().summary.as_deref(),
             Some("API overloaded")
         );
+    }
+
+    /// A Claude Code `Stop` input carrying the given `background_tasks`: the shape observed with
+    /// Claude Code 2.1.321 and found in the bundled source of 2.1.226.
+    fn claude_stop(tasks: Value) -> Value {
+        json!({
+            "session_id": "s",
+            "hook_event_name": "Stop",
+            "stop_hook_active": false,
+            "last_assistant_message": "The sub-agent is running.",
+            "background_tasks": tasks,
+        })
+    }
+
+    fn task(kind: &str, status: &str) -> Value {
+        json!({"id": "ab68", "type": kind, "status": status, "description": "run the checks"})
+    }
+
+    #[test]
+    fn a_claude_stop_with_a_running_subagent_ends_no_turn() {
+        for status in ["running", "pending"] {
+            let input = claude_stop(json!([task("subagent", status)]));
+            assert!(
+                stop_leaves_subagents_running(AgentKind::Claude, &input),
+                "{status}"
+            );
+        }
+        // Next to other background work it still counts.
+        let mixed = claude_stop(json!([
+            task("shell", "running"),
+            task("subagent", "running")
+        ]));
+        assert!(stop_leaves_subagents_running(AgentKind::Claude, &mixed));
+    }
+
+    #[test]
+    fn only_a_running_subagent_keeps_a_claude_stop_from_ending_the_turn() {
+        // Nothing left; background commands and watchers, which may never finish; sub-agents that
+        // are done; and the shapes an older Claude Code or a malformed payload would send.
+        for tasks in [
+            json!([]),
+            json!([task("shell", "running")]),
+            json!([
+                task("monitor", "running"),
+                task("workflow", "running"),
+                task("teammate", "running")
+            ]),
+            json!([task("subagent", "completed")]),
+            json!([task("subagent", "killed"), task("subagent", "failed")]),
+            json!([{"id": "x", "type": "subagent"}]),
+            json!({"type": "subagent", "status": "running"}),
+            json!("subagent"),
+            Value::Null,
+        ] {
+            let input = claude_stop(tasks.clone());
+            assert!(
+                !stop_leaves_subagents_running(AgentKind::Claude, &input),
+                "{tasks}"
+            );
+        }
+        let without_list = json!({"hook_event_name": "Stop", "session_id": "s"});
+        assert!(!stop_leaves_subagents_running(
+            AgentKind::Claude,
+            &without_list
+        ));
+    }
+
+    #[test]
+    fn only_the_main_claude_stop_can_be_held_open_by_a_subagent() {
+        let running = json!([task("subagent", "running")]);
+        // Other agents are not read with Claude Code's payload shape.
+        for kind in [
+            AgentKind::Codex,
+            AgentKind::Cursor,
+            AgentKind::Grok,
+            AgentKind::Pi,
+            AgentKind::Antigravity,
+        ] {
+            assert!(
+                !stop_leaves_subagents_running(kind, &claude_stop(running.clone())),
+                "{}",
+                kind.as_str()
+            );
+        }
+        // A sub-agent's own stop and the other ways Claude Code ends a turn are not held open.
+        let mut subagent_stop = claude_stop(running.clone());
+        subagent_stop["hook_event_name"] = json!("SubagentStop");
+        subagent_stop["agent_id"] = json!("ab68");
+        assert!(!stop_leaves_subagents_running(
+            AgentKind::Claude,
+            &subagent_stop
+        ));
+        let mut tagged = claude_stop(running.clone());
+        tagged["agent_id"] = json!("ab68");
+        assert!(!stop_leaves_subagents_running(AgentKind::Claude, &tagged));
+        let mut failure = claude_stop(running);
+        failure["hook_event_name"] = json!("StopFailure");
+        assert!(!stop_leaves_subagents_running(AgentKind::Claude, &failure));
+    }
+
+    #[test]
+    fn a_hook_input_from_inside_a_subagent_carries_its_own_agents_marker() {
+        let claude = |input: Value| is_subagent_event(AgentKind::Claude, &input);
+        assert!(claude(
+            json!({"hook_event_name": "PreToolUse", "agent_id": "ab68"})
+        ));
+        assert!(!claude(
+            json!({"hook_event_name": "PreToolUse", "agent_id": ""})
+        ));
+        assert!(!claude(json!({"hook_event_name": "PreToolUse"})));
+        // A marker belongs to one agent: Claude's is not Grok's, and Codex has neither.
+        assert!(is_subagent_event(
+            AgentKind::Grok,
+            &json!({"subagentType": "explore"})
+        ));
+        assert!(!claude(json!({"subagentType": "explore"})));
+        assert!(!is_subagent_event(
+            AgentKind::Grok,
+            &json!({"agent_id": "ab68"})
+        ));
+        assert!(!is_subagent_event(
+            AgentKind::Codex,
+            &json!({"agent_id": "ab68", "subagentType": "explore"})
+        ));
     }
 
     #[test]

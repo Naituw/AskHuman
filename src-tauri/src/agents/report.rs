@@ -89,6 +89,19 @@ pub fn run(args: &[String]) {
             .as_ref()
             .is_some_and(|input| super::stop::turn_failed(intended, input));
 
+    // A Claude `Stop` that leaves a background sub-agent running ends no turn. The shared Stop
+    // handler (`stop.rs`) is what Claude's `Stop` normally goes through; this covers a hook entry
+    // that was written before that handler existed.
+    let event = if event == super::LifecycleEvent::TurnEnd
+        && stdin
+            .as_ref()
+            .is_some_and(|input| super::result::stop_leaves_subagents_running(intended, input))
+    {
+        super::LifecycleEvent::Activity
+    } else {
+        event
+    };
+
     let msg = ClientMsg::AgentEvent {
         agent: intended.as_str().to_string(),
         event: event.as_str().to_string(),
