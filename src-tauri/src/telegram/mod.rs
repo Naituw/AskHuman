@@ -49,6 +49,12 @@ fn track<T>(r: Result<T, TelegramError>) -> Result<T, TelegramError> {
 }
 
 impl TelegramError {
+    /// A transport failure of an HTTP request. The text names the server and each cause but
+    /// not the request path, which carries the bot token; see `channels::http_error`.
+    pub(crate) fn from_http(error: reqwest::Error) -> Self {
+        Self::Network(crate::channels::http_error::describe(error))
+    }
+
     /// GUI 可见的本地化文案：校验类按界面语言翻译；技术细节(API/网络/解析)保留英文。
     pub fn localized(&self, lang: crate::i18n::Lang) -> String {
         use crate::i18n::tr;
@@ -95,7 +101,7 @@ impl TelegramClient {
         let http = reqwest::Client::builder()
             .timeout(Duration::from_secs(30))
             .build()
-            .map_err(|e| TelegramError::Network(e.to_string()))?;
+            .map_err(TelegramError::from_http)?;
         Ok(Self {
             token,
             chat_id,
@@ -122,7 +128,7 @@ impl TelegramClient {
             .json(&params)
             .send()
             .await
-            .map_err(|e| TelegramError::Network(e.to_string()))?;
+            .map_err(TelegramError::from_http)?;
         let v: Value = resp.json().await.map_err(|_| TelegramError::BadResponse)?;
         if v.get("ok").and_then(|o| o.as_bool()) == Some(true) {
             Ok(v.get("result").cloned().unwrap_or(Value::Null))
@@ -217,7 +223,7 @@ impl TelegramClient {
             .multipart(form)
             .send()
             .await
-            .map_err(|e| TelegramError::Network(e.to_string()))?;
+            .map_err(TelegramError::from_http)?;
         let v: Value = resp.json().await.map_err(|_| TelegramError::BadResponse)?;
         if v.get("ok").and_then(|o| o.as_bool()) == Some(true) {
             Ok(v.get("result")
@@ -316,5 +322,64 @@ impl TelegramClient {
         let text = crate::i18n::tr(lang, "cmd.tgTestRemote");
         self.send_message(text, None, None).await?;
         Ok(crate::i18n::tr(lang, "cmd.tgTestSent").to_string())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A client whose server refuses connections. The bot token is part of every request URL.
+    fn unreachable_client() -> (TelegramClient, String) {
+        let (http, base_url) = crate::channels::http_error::refused_connection();
+        let mut client = TelegramClient::new(
+            "123456:SECRET-BOT-TOKEN".into(),
+            "1".into(),
+            base_url.clone(),
+        )
+        .unwrap();
+        // The client built by `new` reads proxy variables from the environment; the refusal has
+        // to come from the loopback itself.
+        client.http = http;
+        (client, base_url)
+    }
+
+    fn assert_network_error_without_token(error: TelegramError, base_url: &str) {
+        match error {
+            TelegramError::Network(text) => {
+                assert!(
+                    !text.contains("SECRET-BOT-TOKEN"),
+                    "the bot token leaked into: {text}"
+                );
+                assert!(
+                    text.contains(base_url),
+                    "the server is missing from: {text}"
+                );
+                assert!(
+                    text.contains("os error"),
+                    "the transport cause is missing from: {text}"
+                );
+            }
+            other => panic!("expected a network error, got: {other}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn a_failed_call_does_not_leak_the_bot_token() {
+        let (client, base_url) = unreachable_client();
+        let error = client.call_inner("getMe", json!({})).await.unwrap_err();
+        assert_network_error_without_token(error, &base_url);
+    }
+
+    #[tokio::test]
+    async fn a_failed_upload_does_not_leak_the_bot_token() {
+        let (client, base_url) = unreachable_client();
+        // Any readable file will do: the request fails after the file has been read.
+        let path = concat!(env!("CARGO_MANIFEST_DIR"), "/Cargo.toml");
+        let error = client
+            .send_file_inner("sendDocument", "document", path, "Cargo.toml")
+            .await
+            .unwrap_err();
+        assert_network_error_without_token(error, &base_url);
     }
 }

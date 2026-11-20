@@ -228,7 +228,7 @@ pub async fn open_socket_url(
         .bearer_auth(app_token)
         .send()
         .await
-        .map_err(|e| SlackError::Network(e.to_string()))?;
+        .map_err(SlackError::from_http)?;
     let v: Value = resp.json().await.map_err(|_| SlackError::BadResponse)?;
     if v.get("ok").and_then(|o| o.as_bool()) != Some(true) {
         let msg = v

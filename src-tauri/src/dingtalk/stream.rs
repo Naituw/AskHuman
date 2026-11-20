@@ -247,7 +247,7 @@ async fn open_ws(
         .json(&body)
         .send()
         .await
-        .map_err(|e| DingTalkError::Network(e.to_string()))?;
+        .map_err(DingTalkError::from_http)?;
     let status = resp.status();
     let v: Value = resp.json().await.map_err(|_| DingTalkError::BadResponse)?;
     if !status.is_success() {

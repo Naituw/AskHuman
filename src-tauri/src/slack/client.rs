@@ -45,7 +45,7 @@ impl SlackClient {
         let http = reqwest::Client::builder()
             .timeout(Duration::from_secs(60))
             .build()
-            .map_err(|e| SlackError::Network(e.to_string()))?;
+            .map_err(SlackError::from_http)?;
         Ok(Self {
             bot_token,
             app_token,
@@ -80,7 +80,7 @@ impl SlackClient {
             .json(&body)
             .send()
             .await
-            .map_err(|e| SlackError::Network(e.to_string()))?;
+            .map_err(SlackError::from_http)?;
         let v: Value = resp.json().await.unwrap_or(Value::Null);
         if v.get("ok").and_then(|o| o.as_bool()) == Some(true) {
             Ok(v)
@@ -198,7 +198,7 @@ impl SlackClient {
             .form(&[("filename", name), ("length", &length.to_string())])
             .send()
             .await
-            .map_err(|e| SlackError::Network(e.to_string()))?
+            .map_err(SlackError::from_http)?
             .json::<Value>()
             .await
             .map_err(|_| SlackError::BadResponse)?;
@@ -230,7 +230,7 @@ impl SlackClient {
             .multipart(form)
             .send()
             .await
-            .map_err(|e| SlackError::Network(e.to_string()))?
+            .map_err(SlackError::from_http)?
             .status();
         if !status.is_success() {
             return Err(SlackError::Api(format!(
@@ -285,17 +285,14 @@ impl SlackClient {
             .bearer_auth(&self.bot_token)
             .send()
             .await
-            .map_err(|e| SlackError::Network(e.to_string()))?;
+            .map_err(SlackError::from_http)?;
         if !resp.status().is_success() {
             return Err(SlackError::Api(format!(
                 "file download failed: HTTP {}",
                 resp.status()
             )));
         }
-        let bytes = resp
-            .bytes()
-            .await
-            .map_err(|e| SlackError::Network(e.to_string()))?;
+        let bytes = resp.bytes().await.map_err(SlackError::from_http)?;
 
         let dir = std::env::temp_dir().join("askhuman-slack");
         std::fs::create_dir_all(&dir)

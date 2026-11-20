@@ -60,6 +60,13 @@ impl fmt::Display for SlackError {
 impl std::error::Error for SlackError {}
 
 impl SlackError {
+    /// A transport failure of an HTTP request. The text names the server and each cause but
+    /// not the request path or query: a file upload goes to a one-time address that is itself
+    /// a credential. See `channels::http_error`.
+    pub(crate) fn from_http(error: reqwest::Error) -> Self {
+        Self::Network(crate::channels::http_error::describe(error))
+    }
+
     /// GUI 可见的本地化文案：校验类按界面语言翻译；技术细节(API/网络/解析)保留英文。
     pub fn localized(&self, lang: crate::i18n::Lang) -> String {
         match self {

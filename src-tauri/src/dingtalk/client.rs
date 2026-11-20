@@ -44,7 +44,7 @@ impl DingTalkClient {
         let http = reqwest::Client::builder()
             .timeout(Duration::from_secs(30))
             .build()
-            .map_err(|e| DingTalkError::Network(e.to_string()))?;
+            .map_err(DingTalkError::from_http)?;
         Ok(Self {
             client_id,
             client_secret,
@@ -98,7 +98,7 @@ impl DingTalkClient {
             .json(&body)
             .send()
             .await
-            .map_err(|e| DingTalkError::Network(e.to_string()))?;
+            .map_err(DingTalkError::from_http)?;
         let status = resp.status();
         let v: Value = resp.json().await.unwrap_or(Value::Null);
         if status.is_success() {
@@ -183,7 +183,7 @@ impl DingTalkClient {
             .multipart(form)
             .send()
             .await
-            .map_err(|e| DingTalkError::Network(e.to_string()))?;
+            .map_err(DingTalkError::from_http)?;
         let v: Value = resp.json().await.map_err(|_| DingTalkError::BadResponse)?;
         if v.get("errcode").and_then(|c| c.as_i64()) == Some(0) {
             v.get("media_id")
@@ -282,10 +282,10 @@ impl DingTalkClient {
             .get(url)
             .send()
             .await
-            .map_err(|e| DingTalkError::Network(e.to_string()))?
+            .map_err(DingTalkError::from_http)?
             .bytes()
             .await
-            .map_err(|e| DingTalkError::Network(e.to_string()))?;
+            .map_err(DingTalkError::from_http)?;
 
         let dir = std::env::temp_dir().join("askhuman-dingtalk");
         std::fs::create_dir_all(&dir)

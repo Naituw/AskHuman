@@ -39,7 +39,7 @@ pub async fn get_token(
         .json(&serde_json::json!({ "appKey": client_id, "appSecret": client_secret }))
         .send()
         .await
-        .map_err(|e| DingTalkError::Network(e.to_string()))?;
+        .map_err(DingTalkError::from_http)?;
     let status = resp.status();
     let body: Value = resp.json().await.map_err(|_| DingTalkError::BadResponse)?;
     if !status.is_success() {
