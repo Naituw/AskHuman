@@ -161,15 +161,25 @@ mod tests {
 
     #[tokio::test]
     async fn token_request_failure_names_its_cause() {
-        let (http, base_url) = crate::feishu::refused_connection();
+        let (http, base_url) = crate::channels::http_error::refused_connection();
         let error = get_token(&http, &base_url, "app-refused-test", "app-secret")
             .await
             .unwrap_err();
         match error {
-            FeishuError::Network(text) => assert!(
-                text.contains("os error"),
-                "the transport cause is missing from: {text}"
-            ),
+            FeishuError::Network(text) => {
+                assert!(
+                    text.contains(&base_url),
+                    "the server is missing from: {text}"
+                );
+                assert!(
+                    text.contains("os error"),
+                    "the transport cause is missing from: {text}"
+                );
+                assert!(
+                    !text.contains("/open-apis/"),
+                    "the request path must not be part of: {text}"
+                );
+            }
             other => panic!("expected a network error, got: {other}"),
         }
     }

@@ -5,6 +5,7 @@ pub mod conversation;
 pub mod dingding;
 pub mod feishu;
 pub mod health;
+pub mod http_error;
 pub mod ios;
 pub mod popup;
 pub mod slack;
