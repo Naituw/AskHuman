@@ -104,7 +104,7 @@ pub async fn get_token(
         .json(&serde_json::json!({ "app_id": app_id, "app_secret": app_secret }))
         .send()
         .await
-        .map_err(|e| FeishuError::Network(e.to_string()))?;
+        .map_err(FeishuError::from_http)?;
     let http_status = resp.status().as_u16();
     let log_id = super::response_log_id(resp.headers());
     let body: Value = resp
@@ -157,6 +157,21 @@ mod tests {
                 expire_at: Instant::now() + Duration::from_secs(60),
             },
         );
+    }
+
+    #[tokio::test]
+    async fn token_request_failure_names_its_cause() {
+        let (http, base_url) = crate::feishu::refused_connection();
+        let error = get_token(&http, &base_url, "app-refused-test", "app-secret")
+            .await
+            .unwrap_err();
+        match error {
+            FeishuError::Network(text) => assert!(
+                text.contains("os error"),
+                "the transport cause is missing from: {text}"
+            ),
+            other => panic!("expected a network error, got: {other}"),
+        }
     }
 
     #[test]

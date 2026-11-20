@@ -380,6 +380,10 @@ fn probe_interval() -> tokio::time::Interval {
 }
 
 /// 取长连接 endpoint：返回 (wss URL, ping 间隔秒)。
+///
+/// This is the first network step of every connection, so the diagnostic log (when enabled)
+/// records the attempt and how it ended. The wss URL is never logged: its query carries a
+/// short-lived ticket.
 async fn open_endpoint(
     http: &reqwest::Client,
     base_url: &str,
@@ -387,13 +391,32 @@ async fn open_endpoint(
     app_secret: &str,
 ) -> Result<(String, u64), FeishuError> {
     let url = format!("{}{}", base_url.trim_end_matches('/'), GEN_ENDPOINT_URI);
+    debug_log(&format!("[feishu-ws] endpoint: POST {url}"));
+    let started = std::time::Instant::now();
+    let result = request_endpoint(http, &url, app_id, app_secret).await;
+    let elapsed_ms = started.elapsed().as_millis();
+    match &result {
+        Ok(_) => debug_log(&format!("[feishu-ws] endpoint: ok in {elapsed_ms} ms")),
+        Err(error) => debug_log(&format!(
+            "[feishu-ws] endpoint: failed after {elapsed_ms} ms: {error}"
+        )),
+    }
+    result
+}
+
+async fn request_endpoint(
+    http: &reqwest::Client,
+    url: &str,
+    app_id: &str,
+    app_secret: &str,
+) -> Result<(String, u64), FeishuError> {
     let resp = http
-        .post(&url)
+        .post(url)
         .header("locale", "zh")
         .json(&json!({ "AppID": app_id, "AppSecret": app_secret }))
         .send()
         .await
-        .map_err(|e| FeishuError::Network(e.to_string()))?;
+        .map_err(FeishuError::from_http)?;
     let http_status = resp.status().as_u16();
     let log_id = super::response_log_id(resp.headers());
     let v: Value = resp
@@ -541,6 +564,21 @@ mod tests {
         assert_eq!(parse_query_i32(url, "service_id"), Some(42));
         assert_eq!(parse_query_i32(url, "device_id"), None); // 非整型
         assert_eq!(parse_query_i32("wss://h/ws", "service_id"), None);
+    }
+
+    #[tokio::test]
+    async fn endpoint_failure_names_its_cause() {
+        let (http, base_url) = crate::feishu::refused_connection();
+        let error = open_endpoint(&http, &base_url, "app-id", "app-secret")
+            .await
+            .unwrap_err();
+        match error {
+            FeishuError::Network(text) => assert!(
+                text.contains("os error"),
+                "the transport cause is missing from: {text}"
+            ),
+            other => panic!("expected a network error, got: {other}"),
+        }
     }
 
     #[test]

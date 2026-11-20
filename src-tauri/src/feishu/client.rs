@@ -56,7 +56,7 @@ impl FeishuClient {
         let http = reqwest::Client::builder()
             .timeout(Duration::from_secs(30))
             .build()
-            .map_err(|e| FeishuError::Network(e.to_string()))?;
+            .map_err(FeishuError::from_http)?;
         Ok(Self {
             app_id,
             app_secret,
@@ -129,7 +129,7 @@ impl FeishuClient {
                 .json(&body)
                 .send()
                 .await
-                .map_err(|e| FeishuError::Network(e.to_string()))?;
+                .map_err(FeishuError::from_http)?;
             let http_status = resp.status().as_u16();
             let log_id = super::response_log_id(resp.headers());
             let value: Value = resp.json().await.map_err(|_| {
@@ -319,7 +319,7 @@ impl FeishuClient {
                 .multipart(build_form())
                 .send()
                 .await
-                .map_err(|e| FeishuError::Network(e.to_string()))?;
+                .map_err(FeishuError::from_http)?;
             let http_status = resp.status().as_u16();
             let log_id = super::response_log_id(resp.headers());
             let value: Value = resp.json().await.map_err(|_| {
@@ -382,7 +382,7 @@ impl FeishuClient {
                 .bearer_auth(&access_token)
                 .send()
                 .await
-                .map_err(|e| FeishuError::Network(e.to_string()))?;
+                .map_err(FeishuError::from_http)?;
             let status = resp.status();
             let log_id = super::response_log_id(resp.headers());
             let is_json = resp
@@ -390,10 +390,7 @@ impl FeishuClient {
                 .get(reqwest::header::CONTENT_TYPE)
                 .and_then(|value| value.to_str().ok())
                 .is_some_and(|value| value.contains("json"));
-            let bytes = resp
-                .bytes()
-                .await
-                .map_err(|e| FeishuError::Network(e.to_string()))?;
+            let bytes = resp.bytes().await.map_err(FeishuError::from_http)?;
 
             let api_error = if is_json || !status.is_success() {
                 serde_json::from_slice::<Value>(&bytes)

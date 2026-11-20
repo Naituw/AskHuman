@@ -94,6 +94,26 @@ impl FeishuError {
         }
     }
 
+    /// A transport failure of an HTTP request: connect, DNS, TLS, proxy, timeout or a dropped
+    /// body.
+    ///
+    /// reqwest's own text stops at the outermost layer ("error sending request for url (…)");
+    /// the layer that says *why* exists only in the `source()` chain. Without it a refused
+    /// connection, a DNS failure and a blocked proxy all read the same. Each layer is appended
+    /// as `: cause`. The URL stays in the text: it names the host that failed, and none of the
+    /// Feishu endpoints put a credential in the URL.
+    pub(crate) fn from_http(error: reqwest::Error) -> Self {
+        use std::error::Error as _;
+        let mut text = error.to_string();
+        let mut cause = error.source();
+        while let Some(layer) = cause {
+            text.push_str(": ");
+            text.push_str(&layer.to_string());
+            cause = layer.source();
+        }
+        Self::Network(text)
+    }
+
     /// These codes identify an invalid tenant token for APIs that AskHuman always calls with a
     /// tenant token. Keep this code-based: Feishu documents `msg` as unstable display text.
     pub(crate) fn is_invalid_tenant_token(&self) -> bool {
@@ -175,9 +195,58 @@ pub(crate) fn response_log_id(headers: &reqwest::header::HeaderMap) -> Option<St
     })
 }
 
+/// A client plus a loopback base URL nothing listens on, for failure-path tests. The client
+/// ignores proxy environment variables so the refusal always comes from the loopback itself.
+#[cfg(test)]
+pub(crate) fn refused_connection() -> (reqwest::Client, String) {
+    let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    let port = listener.local_addr().unwrap().port();
+    drop(listener);
+    let http = reqwest::Client::builder().no_proxy().build().unwrap();
+    (http, format!("http://127.0.0.1:{port}"))
+}
+
 #[cfg(test)]
 mod tests {
     use super::FeishuError;
+
+    #[tokio::test]
+    async fn http_failures_keep_the_url_and_the_transport_cause() {
+        let (http, base_url) = super::refused_connection();
+        let source = http.get(&base_url).send().await.unwrap_err();
+        let text = FeishuError::from_http(source).to_string();
+        assert!(text.starts_with("network error: "), "{text}");
+        assert!(
+            text.contains(&base_url),
+            "the failing URL is missing from: {text}"
+        );
+        assert!(
+            text.contains("os error"),
+            "the transport cause is missing from: {text}"
+        );
+    }
+
+    #[tokio::test]
+    async fn a_timeout_reads_differently_from_a_refusal() {
+        // The listener completes the TCP handshake but never answers, like a firewall that
+        // swallows the traffic. It must stay alive until the request has timed out.
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let url = format!("http://{}", listener.local_addr().unwrap());
+        let http = reqwest::Client::builder()
+            .no_proxy()
+            .timeout(std::time::Duration::from_millis(100))
+            .build()
+            .unwrap();
+        let source = http.get(&url).send().await.unwrap_err();
+        assert!(source.is_timeout());
+        let text = FeishuError::from_http(source).to_string();
+        assert!(
+            text.contains("timed out"),
+            "the timeout is missing from: {text}"
+        );
+        assert!(!text.contains("os error"), "{text}");
+        drop(listener);
+    }
 
     #[test]
     fn transient_message_create_failures_are_narrowly_classified() {
