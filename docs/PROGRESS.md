@@ -22,6 +22,29 @@
 - [ ] 清理的残留：仓库外的实验目录已删；我建的测试会话还在 App（19 个）与 `agy`（21 个：G4 的 6 个 + 权限复核的 15 个）的数据目录里（没有受批准的删除办法，规格附录 A.6「还原」、A.7）；
   G1 的 T1c 在用户的 AskHuman 历史里留下 1 条来自实验目录的 `away` 记录，G2–G4、冷启动与权限复核还留下几条被取消的弹窗记录（没有改用户的历史文件，用户想删再说）。
 
+## 待外部反馈：[#32](https://github.com/Naituw/AskHuman/issues/32) 飞书长连接取 endpoint 失败（根因未找到）
+
+报告者（macOS 27.0.0、0.17.x、私有飞书域名）：终端里 `channel detect feishu` 能通，经 launchd 拉起的 daemon 里取长连接 endpoint
+失败，日志只有 `error sending request for url (…/callback/ws/endpoint)`，看不出原因。根因**还没找到**，下面只是已做的和在等的。
+
+已做：
+
+- 诊断（只加信息，没改任何行为）：飞书的网络错误文本带上 reqwest 的 `source()` 链；取 endpoint 阶段在 `ASKHUMAN_FEISHU_DEBUG=1` 时
+  写 `feishu-debug.log`。用装好的二进制验过：经 launchd 拉起的隔离 daemon，`daemon.log` 里的 `feishu router connect failed`
+  现在带 `client error (Connect): tcp connect error: Connection refused (os error 61)`；成功路径只记耗时，wss 地址（带 ticket）不落日志。
+- 在本机（macOS 27.2.1、0.17.3）走同一条 launchd 路径（CLI 触发的 `spawn_via_gui_launchd`、隔离 `ASKHUMAN_HOME`、假飞书服务）**没有复现**，
+  日常 daemon 也由 launchd 管理且飞书正常；所以本机的 launchd 路径没问题，原因可能在报告者的环境里。
+- 已[回复](https://github.com/Naituw/AskHuman/issues/32#issuecomment-7045289814)，请报告者在 launchd 里用 curl 对照访问他的飞书域名、
+  `registry.npmjs.org` 和 `http://127.0.0.1:8099/`。
+
+等报告者的 curl 结果，之后：
+
+- [ ] launchd 里的 curl 也失败：系统层面（常见是安全软件 / 防火墙按进程过滤网络），不是 AskHuman 的缺陷；回复并说明排查方向后关闭。
+- [ ] launchd 里的 curl 成功而 AskHuman 失败：回到 AskHuman。先看新版错误文本里的原因（`Connect` / DNS / 代理 / 超时指向不同方向）再定位；
+  不要先加重试或延时（AGENTS.md「不做权宜补丁」）。
+
+未验证的假设：报告者的环境里有按进程过滤网络的软件。他还没跑过 launchd 里的 curl，这只是推测。
+
 ## 待决定：2026-11-15 daemon 卡死事故修复刻意没做的部分
 
 事故与已做的修复见 [优雅排空 §9](specs/daemon-graceful-drain.md#9-渠道建连卡住时-daemon-仍然应答2026-11-15-事故补充)
