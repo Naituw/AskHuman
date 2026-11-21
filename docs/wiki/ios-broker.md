@@ -124,6 +124,8 @@ AskHuman 的 iOS 渠道用一个 MQTT broker 在 Mac 和 iPhone 之间中转消�
 
 ## 怎样自己验证
 
+**日常自检：** 设置页 iOS 渠道卡里的「测试连接」（命令行是 `AskHuman channel test ios`）会连上 broker，给自己发一条测试消息并等回声，然后向自己命名空间之外的一个随机话题发一条非保留消息；约 1.5 秒内收到回声，就警告「这个账号能读写自己话题之外的主题」。被拒绝、被丢弃和被断开连接都算已隔离。警告不挡保存与配对。它只查这一项；查得全的是下面的兼容套件。
+
 仓库里的兼容套件对任何 broker 都适用：它按 App 的方式（MQTT 3.1.1，TLS 和 WSS）连接，检查上面「要求」里的每一项，最后给出 `COMPATIBLE`、`COMPATIBLE (with warnings)` 或 `NOT COMPATIBLE`。
 
 ```bash

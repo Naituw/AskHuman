@@ -124,6 +124,8 @@ Compatibility suite (Mosquitto 2.1.2, macOS, installed with Homebrew, a throwawa
 
 ## Verify a broker yourself
 
+**Everyday check:** "Test connection" in the iOS channel card of Settings (on the command line, `AskHuman channel test ios`) connects to the broker, sends a test message to itself and waits for the echo, then publishes one non-retained message to a random topic outside its own namespace. If that message comes back within about 1.5 seconds, it warns that the account can read and write topics outside its own. Being refused, dropped or disconnected all count as isolated. The warning never blocks saving or pairing. It checks only this; the compatibility suite below checks everything.
+
 The repository's compatibility suite works with any broker: it connects the way the app does (MQTT 3.1.1, over TLS and WSS), checks every requirement above and ends with `COMPATIBLE`, `COMPATIBLE (with warnings)` or `NOT COMPATIBLE`.
 
 ```bash
