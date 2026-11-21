@@ -9,6 +9,8 @@ const iosPairQr = vi.hoisted(() => vi.fn());
 const iosTest = vi.hoisted(() => vi.fn());
 const iosConnectionImport = vi.hoisted(() => vi.fn());
 const iosConnectionExport = vi.hoisted(() => vi.fn());
+const iosDefaultRelayUrl = vi.hoisted(() => vi.fn());
+const openPath = vi.hoisted(() => vi.fn());
 const useSettingsContext = vi.hoisted(() => vi.fn());
 
 vi.mock("../../lib/ipc", () => ({
@@ -17,6 +19,8 @@ vi.mock("../../lib/ipc", () => ({
   iosTest,
   iosConnectionImport,
   iosConnectionExport,
+  iosDefaultRelayUrl,
+  openPath,
 }));
 vi.mock("./context", () => ({ useSettingsContext }));
 
@@ -40,6 +44,19 @@ function gateway(extra: Record<string, unknown> = {}) {
     pendingRequests: 0,
     ...extra,
   };
+}
+
+/** What `ios_test` resolves with when the broker and the relay are fine. */
+function testOk(warnings: string[] = []) {
+  return {
+    message: "Connected via tls (160 ms). The relay answered in 850 ms and can send pushes.",
+    warnings,
+  };
+}
+
+/** What `ios_test` rejects with (an `IosTestError`). */
+function testFailed(kind: string, message: string, warnings: string[] = []) {
+  return { kind, message, warnings };
 }
 
 describe("IosChannelCard", () => {
@@ -89,6 +106,11 @@ describe("IosChannelCard", () => {
     iosOp.mockReset();
     iosPairQr.mockReset();
     iosTest.mockReset();
+    iosDefaultRelayUrl.mockReset();
+    // A build without a public relay unless a test says otherwise.
+    iosDefaultRelayUrl.mockResolvedValue("");
+    openPath.mockReset();
+    openPath.mockResolvedValue(undefined);
     persist.mockClear();
     iosPairQr.mockResolvedValue('<svg id="qr"></svg>');
     config = makeConfig(true);
@@ -184,11 +206,13 @@ describe("IosChannelCard", () => {
     expect(wrapper.get(".ios-traffic").text()).toContain("History is incomplete");
     expect(wrapper.get(".ios-traffic-details").text()).toContain("Office Mac");
     expect(wrapper.text()).toContain("Traffic could not be saved");
-    // The card does not know which service the broker is, so it does not name one or link to its console, and
-    // it does not measure the use against a plan: the usage is the broker's to show.
+    // The traffic area does not name a service or link to its console, and it does not measure the use
+    // against a plan: the usage is the broker's to show. (The connection form below does name the
+    // services it can help with; that is a different part of the card.)
     expect(wrapper.get(".ios-traffic-details").text()).toContain("broker's console");
     expect(wrapper.find(".ios-traffic-details a").exists()).toBe(false);
-    expect(wrapper.text()).not.toMatch(/EMQX|%|allowance|quota/i);
+    const trafficArea = [".ios-status", ".ios-traffic", ".ios-traffic-details"].map((s) => wrapper.get(s).text()).join(" ");
+    expect(trafficArea).not.toMatch(/EMQX|%|allowance|quota/i);
     wrapper.unmount();
   });
 
@@ -352,7 +376,7 @@ describe("IosChannelCard", () => {
 
   it("tests the broker and the relay address of the form", async () => {
     iosOp.mockResolvedValue({ kind: "state", state: gateway() });
-    iosTest.mockResolvedValue("Connected via tls (160 ms). The relay answered in 850 ms and can send pushes.");
+    iosTest.mockResolvedValue(testOk());
     const wrapper = mountCard();
     await flushPromises();
     const testButton = () => wrapper.findAll("button").find((b) => b.text() === "Test connection")!;
@@ -370,12 +394,125 @@ describe("IosChannelCard", () => {
     expect(wrapper.get(".result").classes()).toContain("ok");
     expect(wrapper.get(".result").text()).toContain("The relay answered in 850 ms");
 
-    iosTest.mockRejectedValue("The broker works, but the relay check failed: the relay did not answer in time");
+    iosTest.mockRejectedValue(
+      testFailed("relay", "The broker works, but the relay check failed: the relay did not answer in time"),
+    );
     await testButton().trigger("click");
     await flushPromises();
     expect(wrapper.get(".result").classes()).toContain("err");
     expect(wrapper.get(".result").text()).toContain("the relay check failed");
     wrapper.unmount();
+  });
+
+  describe("test connection: warnings that never block, and a hint that fits the service", () => {
+    const testButton = (wrapper: ReturnType<typeof mountCard>) =>
+      wrapper.findAll("button").find((b) => b.text() === "Test connection")!;
+    const hint = (wrapper: ReturnType<typeof mountCard>) => wrapper.find(".ios-test-hint");
+
+    beforeEach(() => {
+      iosOp.mockResolvedValue({ kind: "state", state: gateway() });
+    });
+
+    it("shows what the check found beside a result that is fine, in the warning colour", async () => {
+      iosTest.mockResolvedValue(testOk(["The broker let this account publish outside its own topics."]));
+      const wrapper = mountCard();
+      await flushPromises();
+      await testButton(wrapper).trigger("click");
+      await flushPromises();
+      const results = wrapper.findAll(".result");
+      expect(results.map((r) => r.classes().filter((c) => c !== "result"))).toEqual([["ok"], ["warn"]]);
+      expect(results[1]!.text()).toContain("publish outside its own topics");
+      // The warning is not an error: nothing about the setting is held back.
+      expect(hint(wrapper).exists()).toBe(false);
+      wrapper.unmount();
+    });
+
+    it("keeps the warning when the relay is what failed", async () => {
+      iosTest.mockRejectedValue(testFailed("relay", "The broker works, but the relay check failed: x", ["outside"]));
+      const wrapper = mountCard();
+      await flushPromises();
+      await testButton(wrapper).trigger("click");
+      await flushPromises();
+      expect(wrapper.findAll(".result").map((r) => r.classes().filter((c) => c !== "result"))).toEqual([["err"], ["warn"]]);
+      expect(hint(wrapper).exists()).toBe(false);
+      wrapper.unmount();
+    });
+
+    it("gives each service its own hint for a refused login, no echo and a timeout", async () => {
+      const wrapper = mountCard();
+      await flushPromises();
+      const ios = config.value.channels.ios;
+
+      ios.host = "mqtt.flespi.io";
+      iosTest.mockRejectedValue(testFailed("rejected", "The broker rejected the credentials (bad user name or password)."));
+      await testButton(wrapper).trigger("click");
+      await flushPromises();
+      expect(wrapper.get(".result").text()).toContain("The broker rejected the credentials");
+      expect(hint(wrapper).text()).toContain("token's ID");
+
+      ios.host = "abc123.ala.cn-hangzhou.emqxsl.cn";
+      iosTest.mockRejectedValue(testFailed("noEcho", "Connected via tls, but a test message did not come back."));
+      await testButton(wrapper).trigger("click");
+      await flushPromises();
+      expect(hint(wrapper).text()).toContain("Access Control → Authorization");
+
+      ios.host = "broker.example.com";
+      iosTest.mockRejectedValue(testFailed("timeout", "Timed out waiting for the broker."));
+      await testButton(wrapper).trigger("click");
+      await flushPromises();
+      expect(hint(wrapper).text()).toContain("public CA");
+      wrapper.unmount();
+    });
+
+    it("has nothing to add for a failure that is not about the service's settings", async () => {
+      iosTest.mockRejectedValue(testFailed("input", "Fill in the broker host and username first"));
+      const wrapper = mountCard();
+      await flushPromises();
+      await testButton(wrapper).trigger("click");
+      await flushPromises();
+      expect(wrapper.get(".result").classes()).toContain("err");
+      expect(hint(wrapper).exists()).toBe(false);
+
+      iosTest.mockRejectedValue(testFailed("other", "The test could not run: not connected."));
+      await testButton(wrapper).trigger("click");
+      await flushPromises();
+      expect(hint(wrapper).exists()).toBe(false);
+      wrapper.unmount();
+    });
+
+    it("shows a failure that arrives as plain text, and clears the last result when it tests again", async () => {
+      iosTest.mockRejectedValue("the command failed");
+      const wrapper = mountCard();
+      await flushPromises();
+      await testButton(wrapper).trigger("click");
+      await flushPromises();
+      expect(wrapper.get(".result").text()).toBe("the command failed");
+      expect(wrapper.findAll(".result")).toHaveLength(1);
+
+      let finish: (value: ReturnType<typeof testOk>) => void = () => {};
+      iosTest.mockReturnValue(new Promise((resolve) => (finish = resolve)));
+      await testButton(wrapper).trigger("click");
+      await flushPromises();
+      expect(wrapper.find(".result").exists()).toBe(false);
+      finish(testOk());
+      await flushPromises();
+      expect(wrapper.get(".result").classes()).toContain("ok");
+      wrapper.unmount();
+    });
+
+    it("keeps the hint of the service the test ran against when the form changes afterwards", async () => {
+      config.value.channels.ios.host = "mqtt.flespi.io";
+      iosTest.mockRejectedValue(testFailed("rejected", "The broker rejected the credentials."));
+      const wrapper = mountCard();
+      await flushPromises();
+      await testButton(wrapper).trigger("click");
+      await flushPromises();
+      const before = hint(wrapper).text();
+      config.value.channels.ios.host = "broker.example.com";
+      await flushPromises();
+      expect(hint(wrapper).text()).toBe(before);
+      wrapper.unmount();
+    });
   });
 
   it("fills the form from a pasted connection string and saves it", async () => {
@@ -398,6 +535,230 @@ describe("IosChannelCard", () => {
     expect(persist).toHaveBeenCalled();
     expect(wrapper.text()).toContain("Connection settings filled in.");
     wrapper.unmount();
+  });
+
+  describe("the broker service: key points per service, ports filled in on a pick", () => {
+    const select = (wrapper: ReturnType<typeof mountCard>) => wrapper.get<HTMLSelectElement>(".ios-broker-select");
+    const points = (wrapper: ReturnType<typeof mountCard>) => wrapper.findAll(".ios-broker-points li").map((li) => li.text());
+
+    beforeEach(() => {
+      iosOp.mockResolvedValue({ kind: "state", state: gateway() });
+    });
+
+    it("lists the services and treats a host it does not know as self-hosted or another broker", async () => {
+      const wrapper = mountCard();
+      await flushPromises();
+      expect(select(wrapper).findAll("option").map((o) => o.text())).toEqual([
+        "EMQX Cloud Serverless",
+        "flespi",
+        "Self-hosted or another broker",
+      ]);
+      expect(select(wrapper).element.value).toBe("custom");
+      expect(points(wrapper)).toHaveLength(4);
+      expect(points(wrapper)[0]).toContain("MQTT 3.1.1");
+      wrapper.unmount();
+    });
+
+    it("recognizes a service by its host name, with the points that matter for it", async () => {
+      config.value.channels.ios.host = "abc123.ala.cn-hangzhou.emqxsl.cn";
+      const wrapper = mountCard();
+      await flushPromises();
+      expect(select(wrapper).element.value).toBe("emqx");
+      // The ACL step is the one that leaks other people's topics when it is skipped.
+      expect(points(wrapper).find((p) => p.includes("ACL"))).toContain("catch-all deny");
+      wrapper.unmount();
+    });
+
+    it("fills the host and ports of a service on a pick, and keeps what was typed otherwise", async () => {
+      const wrapper = mountCard();
+      await flushPromises();
+      const ios = config.value.channels.ios;
+
+      await select(wrapper).setValue("flespi");
+      await flushPromises();
+      expect([ios.host, ios.port, ios.wsPort]).toEqual(["mqtt.flespi.io", 8883, 443]);
+      expect(persist).toHaveBeenCalled();
+      expect(points(wrapper)[0]).toContain("mqtt.flespi.io");
+
+      // EMQX gives every account its own host: only the ports are filled in.
+      await select(wrapper).setValue("emqx");
+      await flushPromises();
+      expect([ios.host, ios.port, ios.wsPort]).toEqual(["mqtt.flespi.io", 8883, 8084]);
+
+      // "Self-hosted" fills nothing and does not save anything.
+      persist.mockClear();
+      ios.port = 1884;
+      await select(wrapper).setValue("custom");
+      await flushPromises();
+      expect([ios.host, ios.port, ios.wsPort]).toEqual(["mqtt.flespi.io", 1884, 8084]);
+      expect(persist).not.toHaveBeenCalled();
+      expect(select(wrapper).element.value).toBe("custom");
+      wrapper.unmount();
+    });
+
+    it("lets a pick stand while the host is still being typed, and a pasted connection string decide again", async () => {
+      const wrapper = mountCard();
+      await flushPromises();
+      await select(wrapper).setValue("emqx");
+      await flushPromises();
+      expect(select(wrapper).element.value).toBe("emqx");
+
+      iosConnectionImport.mockResolvedValue({
+        host: "mqtt.flespi.io",
+        port: 8883,
+        wsPort: 443,
+        username: "123456",
+        password: "token",
+        relayUrl: "https://relay.example.com",
+      });
+      await wrapper.get(".ios-import input").setValue("ahconn1.abc");
+      await wrapper.findAll(".ios-import button").find((b) => b.text() === "Import")!.trigger("click");
+      await flushPromises();
+      expect(select(wrapper).element.value).toBe("flespi");
+      wrapper.unmount();
+    });
+
+    it("opens the step-by-step page of the service in the reader's language", async () => {
+      config.value.channels.ios.host = "mqtt.flespi.io";
+      const wrapper = mountCard();
+      await flushPromises();
+      await wrapper.get(".ios-broker-guide").trigger("click");
+      expect(openPath).toHaveBeenLastCalledWith(
+        "https://github.com/Naituw/AskHuman/blob/main/docs/wiki/ios-broker.en.md#path-2-flespi-hosted-europe",
+      );
+
+      i18n.global.locale.value = "zh";
+      await flushPromises();
+      await wrapper.get(".ios-broker-guide").trigger("click");
+      expect(openPath).toHaveBeenLastCalledWith(
+        "https://github.com/Naituw/AskHuman/blob/main/docs/wiki/ios-broker.md#路径二flespi托管欧洲",
+      );
+      wrapper.unmount();
+    });
+  });
+
+  describe("the push relay: the public one built into the app, or one of your own", () => {
+    const PUBLIC = "https://public-relay.example";
+    const relaySelect = (wrapper: ReturnType<typeof mountCard>) => wrapper.find<HTMLSelectElement>(".ios-relay-mode");
+    const relayInput = (wrapper: ReturnType<typeof mountCard>) => wrapper.find<HTMLInputElement>(".ios-relay input");
+
+    beforeEach(() => {
+      iosOp.mockResolvedValue({ kind: "state", state: gateway() });
+    });
+
+    it("is only the address field when this build has no public relay", async () => {
+      const wrapper = mountCard();
+      await flushPromises();
+      expect(relaySelect(wrapper).exists()).toBe(false);
+      expect(wrapper.find(".ios-relay-note").exists()).toBe(false);
+      expect(wrapper.get(".ios-relay label").text()).toBe("Push relay URL");
+      expect(relayInput(wrapper).element.value).toBe("https://relay.example.com");
+      wrapper.unmount();
+    });
+
+    it("shows an empty address as the public relay, with what it does and does not do", async () => {
+      iosDefaultRelayUrl.mockResolvedValue(PUBLIC);
+      config.value.channels.ios.relayUrl = "";
+      const wrapper = mountCard();
+      await flushPromises();
+      expect(wrapper.get(".ios-relay label").text()).toBe("Push relay");
+      expect(relaySelect(wrapper).element.value).toBe("public");
+      expect(relayInput(wrapper).exists()).toBe(false);
+      const note = wrapper.get(".ios-relay-note").text();
+      expect(note).toContain("free, best effort, no availability guarantee");
+      expect(note).toContain("stores nothing");
+      expect(note).toContain("cannot read questions or answers");
+      wrapper.unmount();
+    });
+
+    it("shows an address that is set as the user's own relay, and keeps it", async () => {
+      iosDefaultRelayUrl.mockResolvedValue(PUBLIC);
+      const wrapper = mountCard();
+      await flushPromises();
+      expect(relaySelect(wrapper).element.value).toBe("own");
+      expect(relayInput(wrapper).element.value).toBe("https://relay.example.com");
+      expect(wrapper.find(".ios-relay-note").exists()).toBe(false);
+      expect(config.value.channels.ios.relayUrl).toBe("https://relay.example.com");
+      wrapper.unmount();
+    });
+
+    it("switches to the public relay by emptying the address, and back to an own one", async () => {
+      iosDefaultRelayUrl.mockResolvedValue(PUBLIC);
+      const wrapper = mountCard();
+      await flushPromises();
+
+      await relaySelect(wrapper).setValue("public");
+      await flushPromises();
+      expect(config.value.channels.ios.relayUrl).toBe("");
+      expect(persist).toHaveBeenCalled();
+      expect(relayInput(wrapper).exists()).toBe(false);
+      expect(wrapper.find(".ios-relay-note").exists()).toBe(true);
+
+      // Choosing "own" shows an empty field and stays on "own" until an address is typed or "public" is chosen again.
+      persist.mockClear();
+      await relaySelect(wrapper).setValue("own");
+      await flushPromises();
+      expect(relaySelect(wrapper).element.value).toBe("own");
+      expect(relayInput(wrapper).element.value).toBe("");
+      expect(persist).not.toHaveBeenCalled();
+
+      await relayInput(wrapper).setValue("https://mine.example.com");
+      await relayInput(wrapper).trigger("change");
+      expect(config.value.channels.ios.relayUrl).toBe("https://mine.example.com");
+      expect(persist).toHaveBeenCalled();
+
+      // Clearing the field while editing does not yank the field away.
+      await relayInput(wrapper).setValue("");
+      expect(relaySelect(wrapper).element.value).toBe("own");
+      wrapper.unmount();
+    });
+
+    it("follows an imported connection string: an empty relay in it means the public one", async () => {
+      iosDefaultRelayUrl.mockResolvedValue(PUBLIC);
+      iosConnectionImport.mockResolvedValue({
+        host: "other.example.com",
+        port: 8883,
+        wsPort: 8084,
+        username: "zzz999",
+        password: "secret",
+        relayUrl: "",
+      });
+      const wrapper = mountCard();
+      await flushPromises();
+      expect(relaySelect(wrapper).element.value).toBe("own");
+      await wrapper.get(".ios-import input").setValue("ahconn1.abc");
+      await wrapper.findAll(".ios-import button").find((b) => b.text() === "Import")!.trigger("click");
+      await flushPromises();
+      expect(config.value.channels.ios.relayUrl).toBe("");
+      expect(relaySelect(wrapper).element.value).toBe("public");
+
+      iosConnectionImport.mockResolvedValue({
+        host: "other.example.com",
+        port: 8883,
+        wsPort: 8084,
+        username: "zzz999",
+        password: "secret",
+        relayUrl: "https://relay2.example.com",
+      });
+      await wrapper.get(".ios-import input").setValue("ahconn1.def");
+      await wrapper.findAll(".ios-import button").find((b) => b.text() === "Import")!.trigger("click");
+      await flushPromises();
+      expect(relaySelect(wrapper).element.value).toBe("own");
+      expect(relayInput(wrapper).element.value).toBe("https://relay2.example.com");
+      wrapper.unmount();
+    });
+
+    it("tests with the address as it is, so an empty one is resolved to the public relay by the app", async () => {
+      iosDefaultRelayUrl.mockResolvedValue(PUBLIC);
+      config.value.channels.ios.relayUrl = "";
+      iosTest.mockResolvedValue(testOk());
+      const wrapper = mountCard();
+      await flushPromises();
+      await wrapper.findAll("button").find((b) => b.text() === "Test connection")!.trigger("click");
+      await flushPromises();
+      expect(iosTest).toHaveBeenCalledWith(expect.objectContaining({ relayUrl: "" }));
+      wrapper.unmount();
+    });
   });
 
   describe("the app's New task needs the Agent-task switch, which is in the card", () => {

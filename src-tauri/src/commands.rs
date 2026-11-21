@@ -4575,21 +4575,123 @@ pub struct IosTestArgs {
     pub password: String,
     #[serde(default)]
     pub insecure_local: bool,
-    /// Push relay address of the form; empty skips the relay check.
+    /// Push relay address of the form; empty means the built-in public relay (and skips the relay
+    /// check in a build that has none).
     #[serde(default)]
     pub relay_url: String,
 }
 
-/// Tests the settings of the form (not yet saved): connects to the broker, subscribes and sends a
-/// message to itself through it; then asks the relay (when an address is set) for its health.
+/// The public push relay built into this build; empty when it has none. The settings page offers
+/// "use the public relay" only when there is one.
 #[tauri::command]
-pub async fn ios_test(args: IosTestArgs) -> Result<String, String> {
+pub fn ios_default_relay_url() -> String {
+    crate::config::IOS_DEFAULT_RELAY_URL.trim().to_string()
+}
+
+/// What "test connection" found when it worked: what works, plus things that work but deserve a look
+/// (they never block saving or pairing).
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct IosTestResult {
+    pub message: String,
+    pub warnings: Vec<String>,
+}
+
+/// The plain-text form the command line prints: the message, then one line per warning.
+fn with_warning_lines(lang: crate::i18n::Lang, message: &str, warnings: &[String]) -> String {
+    let label = crate::i18n::tr(lang, "cmd.iosWarningLabel");
+    let mut text = message.to_string();
+    for warning in warnings {
+        text.push_str(&format!("\n{label} {warning}"));
+    }
+    text
+}
+
+impl IosTestResult {
+    pub fn to_plain_text(&self, lang: crate::i18n::Lang) -> String {
+        with_warning_lines(lang, &self.message, &self.warnings)
+    }
+}
+
+/// Why "test connection" failed. `kind` lets the settings page add a hint that fits the broker
+/// service; `message` is complete on its own (and is all the command line shows).
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct IosTestError {
+    pub message: String,
+    /// `input` (a field is missing or malformed), `rejected` (the login was refused), `noEcho`
+    /// (logged in, but the access rules swallowed the test message), `timeout`, `relay` (the
+    /// broker works, the push relay does not) or `other`.
+    pub kind: &'static str,
+    /// Findings from before the failure: the broker is checked first, so a relay failure still
+    /// carries what the broker check found.
+    pub warnings: Vec<String>,
+}
+
+impl IosTestError {
+    fn new(kind: &'static str, message: impl Into<String>) -> Self {
+        Self {
+            kind,
+            message: message.into(),
+            warnings: Vec::new(),
+        }
+    }
+
+    fn with_warnings(mut self, warnings: Vec<String>) -> Self {
+        self.warnings = warnings;
+        self
+    }
+
+    pub fn to_plain_text(&self, lang: crate::i18n::Lang) -> String {
+        with_warning_lines(lang, &self.message, &self.warnings)
+    }
+}
+
+fn describe_probe_error(
+    lang: crate::i18n::Lang,
+    error: crate::ios::transport::ProbeError,
+) -> IosTestError {
+    use crate::ios::transport::ProbeError;
+    let tr = |key: &'static str| crate::i18n::tr(lang, key);
+    match error {
+        ProbeError::Rejected { reason } => IosTestError::new(
+            "rejected",
+            tr("cmd.iosProbeRejected").replace("{reason}", &reason),
+        ),
+        ProbeError::NoEcho { via } => {
+            IosTestError::new("noEcho", tr("cmd.iosProbeNoEcho").replace("{via}", &via))
+        }
+        ProbeError::TimedOut { last_error } if last_error.is_empty() => {
+            IosTestError::new("timeout", tr("cmd.iosProbeTimedOut"))
+        }
+        ProbeError::TimedOut { last_error } => IosTestError::new(
+            "timeout",
+            tr("cmd.iosProbeTimedOutWith").replace("{error}", &last_error),
+        ),
+        ProbeError::Failed { reason } => IosTestError::new(
+            "other",
+            tr("cmd.iosProbeFailed").replace("{reason}", &reason),
+        ),
+    }
+}
+
+/// Tests the settings of the form (not yet saved): connects to the broker, subscribes and sends a
+/// message to itself through it, checks the account stays inside its own namespace; then asks the
+/// relay in effect for its health.
+#[tauri::command]
+pub async fn ios_test(args: IosTestArgs) -> Result<IosTestResult, IosTestError> {
     let lang = crate::i18n::Lang::current();
     if args.host.trim().is_empty() || args.username.trim().is_empty() {
-        return Err(crate::i18n::tr(lang, "cmd.iosFillBroker").to_string());
+        return Err(IosTestError::new(
+            "input",
+            crate::i18n::tr(lang, "cmd.iosFillBroker"),
+        ));
     }
     if !crate::ios::wire::is_valid_broker_user(args.username.trim()) {
-        return Err(crate::i18n::tr(lang, "cmd.iosBadUser").to_string());
+        return Err(IosTestError::new(
+            "input",
+            crate::i18n::tr(lang, "cmd.iosBadUser"),
+        ));
     }
     let password = fallback_secret(&args.password, |c| c.channels.ios.password.clone());
     let report = crate::ios::transport::probe(
@@ -4610,24 +4712,43 @@ pub async fn ios_test(args: IosTestArgs) -> Result<String, String> {
         },
         std::time::Duration::from_secs(20),
     )
-    .await?;
+    .await
+    .map_err(|error| describe_probe_error(lang, error))?;
     let broker = crate::i18n::tr(lang, "cmd.iosTestOk")
         .replace("{via}", &report.via)
         .replace("{ms}", &report.elapsed_ms.to_string());
-    if args.relay_url.trim().is_empty() {
-        return Ok(format!(
-            "{broker} {}",
-            crate::i18n::tr(lang, "cmd.iosRelayNone")
-        ));
+    // The account reaches past its own namespace: a warning, never an error (the setup works).
+    let mut warnings = Vec::new();
+    if report.isolation == crate::ios::transport::Isolation::Leaks {
+        warnings.push(crate::i18n::tr(lang, "cmd.iosIsolationLeak").to_string());
     }
-    match crate::ios::push::check_health(&args.relay_url).await {
-        Ok(health) if health.apns => Ok(format!(
-            "{broker} {}",
-            crate::i18n::tr(lang, "cmd.iosRelayOk").replace("{ms}", &health.elapsed_ms.to_string())
-        )),
-        Ok(health) => Err(crate::i18n::tr(lang, "cmd.iosRelayNoApns")
-            .replace("{ms}", &health.elapsed_ms.to_string())),
-        Err(error) => Err(crate::i18n::tr(lang, "cmd.iosRelayFailed").replace("{error}", &error)),
+    let relay_url = crate::config::effective_relay_url(&args.relay_url);
+    if relay_url.is_empty() {
+        return Ok(IosTestResult {
+            message: format!("{broker} {}", crate::i18n::tr(lang, "cmd.iosRelayNone")),
+            warnings,
+        });
+    }
+    match crate::ios::push::check_health(&relay_url).await {
+        Ok(health) if health.apns => Ok(IosTestResult {
+            message: format!(
+                "{broker} {}",
+                crate::i18n::tr(lang, "cmd.iosRelayOk")
+                    .replace("{ms}", &health.elapsed_ms.to_string())
+            ),
+            warnings,
+        }),
+        Ok(health) => Err(IosTestError::new(
+            "relay",
+            crate::i18n::tr(lang, "cmd.iosRelayNoApns")
+                .replace("{ms}", &health.elapsed_ms.to_string()),
+        )
+        .with_warnings(warnings)),
+        Err(error) => Err(IosTestError::new(
+            "relay",
+            crate::i18n::tr(lang, "cmd.iosRelayFailed").replace("{error}", &error),
+        )
+        .with_warnings(warnings)),
     }
 }
 

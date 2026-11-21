@@ -726,7 +726,7 @@ impl Actor {
         };
         reg.status != "gone"
             && reg.expires_at * 1000 > now
-            && !self.cfg.relay_url.trim().is_empty()
+            && !self.cfg.effective_relay_url().is_empty()
             && self.store.keys(phone_id).is_some()
     }
 
@@ -770,7 +770,7 @@ impl Actor {
             collapse_id: collapse_id.to_string(),
             ah: env,
         };
-        let relay_url = self.cfg.relay_url.clone();
+        let relay_url = self.cfg.effective_relay_url();
         let pusher = self.pusher.clone();
         let tx = self.cmd_tx.clone();
         let phone_id = phone_id.to_string();

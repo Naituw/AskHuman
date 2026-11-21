@@ -39,7 +39,9 @@ impl ConnKey {
             ws_port: cfg.ws_port,
             username: cfg.username.trim().to_string(),
             password: cfg.password.clone(),
-            relay_url: cfg.relay_url.trim().to_string(),
+            // The address in effect, so switching between "public" and an address equal to the
+            // built-in one does not reconnect the gateway.
+            relay_url: cfg.effective_relay_url(),
             mac_name: cfg.mac_name.trim().to_string(),
             insecure_local: cfg.insecure_local,
         }

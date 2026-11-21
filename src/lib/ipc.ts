@@ -29,6 +29,7 @@ import type {
   IosConnectionFields,
   IosOp,
   IosResult,
+  IosTestResult,
   NewTaskInit,
   NewTaskProject,
   ForkTaskInit,
@@ -211,9 +212,12 @@ export const iosTest = (args: {
   wsPort: number;
   username: string;
   password: string;
-  /** Push relay address; when set, its health is checked too. */
+  /** Push relay address; empty means the public relay built into this build (if it has one). The relay in effect has its health checked too. */
   relayUrl?: string;
-}) => invoke<string>("ios_test", { args });
+  // A failure rejects with an `IosTestError`.
+}) => invoke<IosTestResult>("ios_test", { args });
+/** The public push relay built into this build; empty when it has none. */
+export const iosDefaultRelayUrl = () => invoke<string>("ios_default_relay_url");
 export const iosConnectionExport = () => invoke<string>("ios_connection_export");
 export const iosConnectionImport = (text: string) =>
   invoke<IosConnectionFields>("ios_connection_import", { text });

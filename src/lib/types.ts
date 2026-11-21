@@ -1537,6 +1537,24 @@ export interface IosConnectionFields {
   relayUrl: string;
 }
 
+/** 「测试连接」成功：说明加上「能用但值得看一眼」的警告（不挡保存与配对）。 */
+export interface IosTestResult {
+  message: string;
+  warnings: string[];
+}
+
+/**
+ * 「测试连接」失败。`kind` 让设置页按服务商补一句针对性提示：`input` 字段缺失或格式不对，
+ * `rejected` 登录被拒，`noEcho` 登录成功但访问规则吞掉了测试消息，`timeout` 超时，
+ * `relay` Broker 正常而推送中继不行，`other` 其它。`message` 本身是完整的一句话。
+ */
+export interface IosTestError {
+  message: string;
+  kind: "input" | "rejected" | "noEcho" | "timeout" | "relay" | "other";
+  /** 失败之前已经查出的警告（先查 Broker，所以中继失败时仍带着它）。 */
+  warnings: string[];
+}
+
 export type AgentId = "cursor" | "claude" | "codex" | "grok" | "pi" | "antigravity";
 
 export interface UpdateInfo {

@@ -462,6 +462,9 @@ pub(crate) fn test(args: &[String], lang: Lang) -> Result<(), String> {
                     relay_url: cfg.channels.ios.relay_url.clone(),
                 })
                 .await
+                // Warnings (the broker lets the account out of its namespace) print under the message.
+                .map(|result| result.to_plain_text(lang))
+                .map_err(|error| error.to_plain_text(lang))
             }
             _ => unreachable!(),
         }
@@ -684,6 +687,16 @@ fn wizard_inner(name: &str, lang: Lang, enable_by_default: bool) -> Result<(), S
             c.ws_port = parse_port(&cfgio::prompt_line("wsPort", &c.ws_port.to_string())?, lang)?;
             c.username = cfgio::prompt_line("username", &c.username)?;
             prompt_secret_into(&mut c.password, "password", lang)?;
+            if !crate::config::effective_relay_url("").is_empty() {
+                eprintln!(
+                    "{}",
+                    cfgio::t(
+                        lang,
+                        "relayUrl: leave it empty to use the public push relay.",
+                        "relayUrl：留空即使用公共推送中继。",
+                    )
+                );
+            }
             c.relay_url = cfgio::prompt_line("relayUrl", &c.relay_url)?;
             c.mac_name = cfgio::prompt_line("macName", &c.mac_name)?;
         }
@@ -808,7 +821,7 @@ pub(crate) fn is_configured(cfg: &AppConfig, name: &str) -> bool {
         "ios" => {
             !cfg.channels.ios.host.trim().is_empty()
                 && !cfg.channels.ios.username.trim().is_empty()
-                && !cfg.channels.ios.relay_url.trim().is_empty()
+                && !cfg.channels.ios.effective_relay_url().is_empty()
                 && cfgio::secret_is_set(ACCOUNT_IOS_BROKER_PASSWORD)
         }
         _ => false,

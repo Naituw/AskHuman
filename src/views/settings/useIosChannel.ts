@@ -5,12 +5,14 @@ import { computed, onBeforeUnmount, onMounted, ref, watch } from "vue";
 import {
   iosConnectionExport,
   iosConnectionImport,
+  iosDefaultRelayUrl,
   iosOp,
   iosPairQr,
   iosTest,
 } from "../../lib/ipc";
-import type { IosGatewayState, IosPhone } from "../../lib/types";
+import type { IosGatewayState, IosPhone, IosTestError } from "../../lib/types";
 import { useSettingsContext } from "./context";
+import { brokerFill, detectBroker, isHintKind, type IosBrokerId, type IosTestHintKind } from "./iosBrokers";
 
 const IDLE_POLL_MS = 3000;
 const PAIRING_POLL_MS = 1000;
@@ -29,6 +31,40 @@ export function useIosChannel() {
   const { persist } = ctx;
   const config = computed(() => ctx.config.value!);
   const ios = computed(() => config.value.channels.ios);
+
+  // The push relay (docs/specs/ios-open-access.md OA9): an empty address means the public relay
+  // built into this build, which only exists when `defaultRelayUrl` is set. The form offers
+  // "public / own" only then; without one it is just the address field, as before.
+  const defaultRelayUrl = ref("");
+  // The user picked "own" and may not have typed an address yet (an empty field alone reads as "public").
+  const ownRelay = ref(!!ctx.config.value?.channels.ios.relayUrl?.trim());
+  const relayMode = computed<"public" | "own">(() =>
+    ownRelay.value || ios.value.relayUrl.trim() !== "" ? "own" : "public",
+  );
+
+  async function setRelayMode(mode: "public" | "own") {
+    ownRelay.value = mode === "own";
+    if (mode === "public" && ios.value.relayUrl !== "") {
+      ios.value.relayUrl = "";
+      await persist();
+    }
+  }
+
+  // The broker service (docs/specs/ios-open-access.md OA11). No config field records it: the host
+  // name decides until the user picks one here, and then the pick stands.
+  const brokerPick = ref<IosBrokerId | null>(null);
+  const broker = computed<IosBrokerId>(() => brokerPick.value ?? detectBroker(ios.value.host));
+
+  /** Picking a service fills in its ports (and its host when it has one for everybody). */
+  async function chooseBroker(id: IosBrokerId) {
+    brokerPick.value = id;
+    const fill = brokerFill(id);
+    if (!fill) return;
+    if (fill.host) ios.value.host = fill.host;
+    ios.value.port = fill.port;
+    ios.value.wsPort = fill.wsPort;
+    await persist();
+  }
 
   const state = ref<IosGatewayState | null>(null);
   const now = ref(Date.now());
@@ -73,6 +109,11 @@ export function useIosChannel() {
   onMounted(() => {
     clockTimer = setInterval(() => (now.value = Date.now()), 1000);
     refreshSoon();
+    void iosDefaultRelayUrl()
+      .then((url) => {
+        if (!disposed) defaultRelayUrl.value = url.trim();
+      })
+      .catch(() => {});
   });
   onBeforeUnmount(() => {
     disposed = true;
@@ -220,13 +261,31 @@ export function useIosChannel() {
   const testing = ref(false);
   const testMessage = ref<string | null>(null);
   const testError = ref(false);
+  // Things that work but deserve a look (the account can reach outside its own namespace): shown under
+  // the result, never blocking.
+  const testWarnings = ref<string[]>([]);
+  // A hint for the service the test ran against, for the failures a wrong setting causes there.
+  const testHint = ref<{ broker: IosBrokerId; kind: IosTestHintKind } | null>(null);
+
+  /** A failed test arrives as an `IosTestError`; anything else (a transport failure) is just its text. */
+  function asTestError(e: unknown): IosTestError {
+    if (e && typeof e === "object" && typeof (e as IosTestError).message === "string") {
+      const failure = e as Partial<IosTestError> & { message: string };
+      return { message: failure.message, kind: failure.kind ?? "other", warnings: failure.warnings ?? [] };
+    }
+    return { message: String(e), kind: "other", warnings: [] };
+  }
 
   async function runTest() {
     testing.value = true;
     testMessage.value = null;
+    testWarnings.value = [];
+    testHint.value = null;
     const c = ios.value;
+    // The service is read now: the form may change while the test runs.
+    const service = broker.value;
     try {
-      testMessage.value = await iosTest({
+      const result = await iosTest({
         host: c.host,
         port: c.port,
         wsPort: c.wsPort,
@@ -234,9 +293,14 @@ export function useIosChannel() {
         password: c.password,
         relayUrl: c.relayUrl,
       });
+      testMessage.value = result.message;
+      testWarnings.value = result.warnings ?? [];
       testError.value = false;
     } catch (e) {
-      testMessage.value = String(e);
+      const failure = asTestError(e);
+      testMessage.value = failure.message;
+      testWarnings.value = failure.warnings;
+      testHint.value = isHintKind(failure.kind) ? { broker: service, kind: failure.kind } : null;
       testError.value = true;
     } finally {
       testing.value = false;
@@ -253,6 +317,9 @@ export function useIosChannel() {
     try {
       const fields = await iosConnectionImport(text);
       Object.assign(ios.value, fields);
+      // The imported setting is the truth: an empty relay in it means "public", and the host decides the service again.
+      ownRelay.value = fields.relayUrl.trim() !== "";
+      brokerPick.value = null;
       importText.value = "";
       connectionMessage.value = doneText;
       connectionError.value = false;
@@ -276,6 +343,11 @@ export function useIosChannel() {
 
   return {
     ios,
+    broker,
+    chooseBroker,
+    defaultRelayUrl,
+    relayMode,
+    setRelayMode,
     state,
     activePhones,
     statusKind,
@@ -299,6 +371,8 @@ export function useIosChannel() {
     testing,
     testMessage,
     testError,
+    testWarnings,
+    testHint,
     runTest,
     importText,
     connectionMessage,

@@ -28,6 +28,8 @@ pub struct Connection {
     pub ws_port: u16,
     pub username: String,
     pub password: String,
+    /// The relay setting as configured, not as resolved: empty stays empty, so the Mac that
+    /// imports it also follows the public relay built into its own version.
     pub relay_url: String,
 }
 

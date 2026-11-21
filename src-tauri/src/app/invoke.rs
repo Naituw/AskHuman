@@ -265,6 +265,7 @@ fn channel(invoke: Invoke<Wry>) -> bool {
         crate::commands::telegram_test,
         crate::commands::ios_op,
         crate::commands::ios_test,
+        crate::commands::ios_default_relay_url,
         crate::commands::ios_connection_export,
         crate::commands::ios_connection_import,
         crate::commands::ios_pair_qr,

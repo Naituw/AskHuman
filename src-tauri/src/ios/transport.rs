@@ -458,6 +458,18 @@ async fn supervise(
     }
 }
 
+/// What the isolation self-check saw (docs/specs/ios-open-access.md §6.3).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Isolation {
+    /// Nothing came back from a topic outside the account's own namespace: the broker refused the
+    /// subscription or the publish, dropped the message, or closed the connection. The answer we
+    /// want, and also the default when the broker was too slow to say.
+    Isolated,
+    /// A message published outside the account's own namespace came back: the account can read
+    /// and write other accounts' topics.
+    Leaks,
+}
+
 /// What a successful connectivity probe learned.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ProbeReport {
@@ -465,14 +477,40 @@ pub struct ProbeReport {
     pub via: String,
     /// Time from the first connection attempt to the message coming back.
     pub elapsed_ms: u64,
+    /// Whether the account is held to its own namespace.
+    pub isolation: Isolation,
 }
+
+/// Why a probe failed, kept apart so the caller can word it in the user's language and the
+/// settings page can add a hint that fits the broker service.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ProbeError {
+    /// The broker refused the login.
+    Rejected { reason: String },
+    /// Logged in, but the message sent to the account's own topic never came back: the access
+    /// rules do not let the account use it.
+    NoEcho { via: String },
+    /// Never got as far as a login before the time ran out; `last_error` is the last thing the
+    /// connection reported, when it reported one.
+    TimedOut { last_error: String },
+    /// Anything else (a request the transport refused, the supervisor stopping).
+    Failed { reason: String },
+}
+
+/// How long the isolation check waits for an echo that should never come. A refusal is quick, so
+/// this only bounds the slowest honest "no": a broker that is slower than this is taken for
+/// isolated (a leak is only reported when the echo really arrived).
+const ISOLATION_WAIT: Duration = Duration::from_millis(1500);
 
 /// "Test connection" of the settings page: connects like the gateway would (TLS first, WSS as the
 /// fallback) and sends one message to itself through the broker, which proves the credentials and
-/// the access rules in one go. Uses a throwaway client id and writes nothing retained.
-pub async fn probe(mut params: ConnectParams, limit: Duration) -> Result<ProbeReport, String> {
+/// the access rules in one go; then checks that the account cannot reach outside its own
+/// namespace. Uses a throwaway client id and writes nothing retained.
+pub async fn probe(mut params: ConnectParams, limit: Duration) -> Result<ProbeReport, ProbeError> {
     let id = super::crypto::new_id();
     let topic = format!("ah/{}/t/{id}", params.username);
+    // Another account's namespace: a random name nobody has, so nothing real is ever touched.
+    let outside = format!("ah/{}/t/{id}", super::crypto::new_id());
     params.client_id = format!("probe-{id}");
     params.will = Will {
         topic: topic.clone(),
@@ -480,38 +518,52 @@ pub async fn probe(mut params: ConnectParams, limit: Duration) -> Result<ProbeRe
         retain: false,
     };
     params.prefer = None;
-    let (transport, mut events) = RumqttcTransport::spawn(params);
+    let (transport, events) = RumqttcTransport::spawn(params);
+    let outcome = probe_over(&*transport, events, &topic, &outside, limit, ISOLATION_WAIT).await;
+    transport.disconnect().await;
+    outcome
+}
+
+/// The probe over any transport (the tests use the in-process broker).
+async fn probe_over(
+    transport: &dyn BrokerTransport,
+    mut events: UnboundedReceiver<TransportEvent>,
+    topic: &str,
+    outside: &str,
+    limit: Duration,
+    isolation_wait: Duration,
+) -> Result<ProbeReport, ProbeError> {
     let started = std::time::Instant::now();
     let deadline = tokio::time::Instant::now() + limit;
     let mut via: Option<String> = None;
     let mut last_error = String::new();
-    let outcome = loop {
+    loop {
         let event = tokio::select! {
             event = events.recv() => event,
-            _ = tokio::time::sleep_until(deadline) => break Err(match &via {
-                Some(via) => format!(
-                    "connected via {via}, but a test message did not come back: check the broker's access rules for topics under ah/<username>/"
-                ),
-                None if last_error.is_empty() => "timed out".to_string(),
-                None => format!("timed out ({last_error})"),
+            _ = tokio::time::sleep_until(deadline) => return Err(match via {
+                Some(via) => ProbeError::NoEcho { via },
+                None => ProbeError::TimedOut { last_error },
             }),
         };
         match event {
             Some(TransportEvent::Connected { via: used }) => {
                 via = Some(used);
                 let sent = async {
-                    transport.subscribe(&topic).await?;
-                    transport.publish(&topic, b"probe".to_vec(), false).await
+                    transport.subscribe(topic).await?;
+                    transport.publish(topic, b"probe".to_vec(), false).await
                 }
                 .await;
-                if let Err(error) = sent {
-                    break Err(error);
+                if let Err(reason) = sent {
+                    return Err(ProbeError::Failed { reason });
                 }
             }
             Some(TransportEvent::Message { topic: got, .. }) if got == topic => {
-                break Ok(ProbeReport {
-                    via: via.clone().unwrap_or_default(),
-                    elapsed_ms: started.elapsed().as_millis() as u64,
+                let elapsed_ms = started.elapsed().as_millis() as u64;
+                return Ok(ProbeReport {
+                    via: via.unwrap_or_default(),
+                    elapsed_ms,
+                    isolation: check_isolation(transport, &mut events, outside, isolation_wait)
+                        .await,
                 });
             }
             Some(
@@ -524,15 +576,50 @@ pub async fn probe(mut params: ConnectParams, limit: Duration) -> Result<ProbeRe
                 auth_failed,
             }) => {
                 if auth_failed {
-                    break Err(format!("the broker rejected the credentials ({reason})"));
+                    return Err(ProbeError::Rejected { reason });
                 }
                 last_error = reason;
             }
-            None => break Err("the connection supervisor stopped".to_string()),
+            None => {
+                return Err(ProbeError::Failed {
+                    reason: "the connection supervisor stopped".to_string(),
+                })
+            }
         }
-    };
-    transport.disconnect().await;
-    outcome
+    }
+}
+
+/// Subscribes to a topic outside the account's namespace, publishes one non-retained QoS 1 message
+/// to it and waits briefly for the echo. Brokers separate accounts in three ways, and all three
+/// read as "isolated" here: refusing the subscription or the publish, accepting both and then
+/// never delivering across accounts, or closing the connection.
+async fn check_isolation(
+    transport: &dyn BrokerTransport,
+    events: &mut UnboundedReceiver<TransportEvent>,
+    outside: &str,
+    wait: Duration,
+) -> Isolation {
+    if transport.subscribe(outside).await.is_err()
+        || transport
+            .publish(outside, b"probe".to_vec(), false)
+            .await
+            .is_err()
+    {
+        return Isolation::Isolated;
+    }
+    let deadline = tokio::time::Instant::now() + wait;
+    loop {
+        tokio::select! {
+            event = events.recv() => match event {
+                Some(TransportEvent::Message { topic, .. }) if topic == outside => {
+                    return Isolation::Leaks;
+                }
+                Some(TransportEvent::Disconnected { .. }) | None => return Isolation::Isolated,
+                Some(_) => {}
+            },
+            _ = tokio::time::sleep_until(deadline) => return Isolation::Isolated,
+        }
+    }
 }
 
 #[cfg(test)]
@@ -770,5 +857,169 @@ mod tests {
             next(&mut first_rx).await,
             TransportEvent::Disconnected { .. }
         ));
+    }
+
+    // ---- the probe behind "Test connection", and its isolation self-check
+
+    const OWN: &str = "ah/alice/t/own";
+    const OUTSIDE: &str = "ah/zed/t/other";
+    /// Short enough for a test, long enough for the in-process broker to answer.
+    const BRIEF: Duration = Duration::from_millis(150);
+    const PLENTY: Duration = Duration::from_secs(5);
+
+    async fn run_probe(
+        transport: &dyn BrokerTransport,
+        events: UnboundedReceiver<TransportEvent>,
+        limit: Duration,
+    ) -> Result<ProbeReport, ProbeError> {
+        probe_over(transport, events, OWN, OUTSIDE, limit, BRIEF).await
+    }
+
+    /// A broker that closes the connection of an account publishing outside its namespace, which some
+    /// brokers do instead of refusing quietly.
+    struct ClosesOnForeignPublish {
+        inner: Arc<LoopbackTransport>,
+        broker: LoopbackBroker,
+        client_id: String,
+    }
+
+    #[async_trait]
+    impl BrokerTransport for ClosesOnForeignPublish {
+        async fn publish(&self, topic: &str, payload: Vec<u8>, retain: bool) -> Result<(), String> {
+            if !topic.starts_with("ah/alice/") {
+                self.broker.drop_connection(&self.client_id);
+                return Ok(());
+            }
+            self.inner.publish(topic, payload, retain).await
+        }
+        async fn subscribe(&self, topic: &str) -> Result<(), String> {
+            self.inner.subscribe(topic).await
+        }
+        async fn unsubscribe(&self, topic: &str) -> Result<(), String> {
+            self.inner.unsubscribe(topic).await
+        }
+        async fn disconnect(&self) {
+            self.inner.disconnect().await
+        }
+        fn is_connected(&self) -> bool {
+            self.inner.is_connected()
+        }
+    }
+
+    #[tokio::test]
+    async fn an_account_held_to_its_own_namespace_is_isolated() {
+        // The strict kind: the broker refuses the subscription or the publish outside `ah/alice/`.
+        let broker = LoopbackBroker::new();
+        let (transport, events) = broker.connect("probe", None, Some("ah/alice/"));
+        let report = run_probe(&*transport, events, PLENTY).await.unwrap();
+        assert_eq!(report.via, "loopback");
+        assert_eq!(report.isolation, Isolation::Isolated);
+    }
+
+    #[tokio::test]
+    async fn an_account_that_reaches_other_namespaces_is_flagged() {
+        // No access rules at all: the message to somebody else's namespace comes straight back.
+        let broker = LoopbackBroker::new();
+        let (transport, events) = broker.connect("probe", None, None);
+        let report = run_probe(&*transport, events, PLENTY).await.unwrap();
+        assert_eq!(report.isolation, Isolation::Leaks);
+    }
+
+    #[tokio::test]
+    async fn accepting_and_then_never_delivering_across_accounts_counts_as_isolated() {
+        // The delivery-layer kind (flespi, Mosquitto with a pattern ACL): subscribing and publishing
+        // both succeed, the message just never arrives.
+        let broker = LoopbackBroker::new();
+        let (transport, events) = broker.connect("probe", None, None);
+        broker.drop_publishes_to("ah/zed/");
+        let report = run_probe(&*transport, events, PLENTY).await.unwrap();
+        assert_eq!(report.isolation, Isolation::Isolated);
+        // The account's own topic still worked, and only the outside one was held back.
+        assert_eq!(report.via, "loopback");
+    }
+
+    #[tokio::test]
+    async fn being_disconnected_for_publishing_outside_counts_as_isolated() {
+        let broker = LoopbackBroker::new();
+        let (inner, events) = broker.connect("probe", None, None);
+        let transport = ClosesOnForeignPublish {
+            inner,
+            broker: broker.clone(),
+            client_id: "probe".into(),
+        };
+        // The disconnect ends the wait at once: a generous wait must not be used up.
+        let report = tokio::time::timeout(
+            Duration::from_secs(2),
+            probe_over(
+                &transport,
+                events,
+                OWN,
+                OUTSIDE,
+                PLENTY,
+                Duration::from_secs(30),
+            ),
+        )
+        .await
+        .expect("a closed connection ends the isolation check early")
+        .unwrap();
+        assert_eq!(report.isolation, Isolation::Isolated);
+    }
+
+    #[tokio::test]
+    async fn the_isolation_check_leaves_nothing_behind() {
+        // Neither of the probe's messages is retained, so there is nothing to clean up on the broker.
+        let broker = LoopbackBroker::new();
+        let (transport, events) = broker.connect("probe", None, None);
+        run_probe(&*transport, events, PLENTY).await.unwrap();
+        assert_eq!(broker.retained(OWN), None);
+        assert_eq!(broker.retained(OUTSIDE), None);
+    }
+
+    #[tokio::test]
+    async fn no_echo_on_the_accounts_own_topic_names_the_path_that_connected() {
+        // Logged in, but the access rules do not let the account use its own namespace.
+        let broker = LoopbackBroker::new();
+        let (transport, events) = broker.connect("probe", None, None);
+        broker.drop_publishes_to("ah/alice/");
+        let error = run_probe(&*transport, events, BRIEF).await.unwrap_err();
+        assert_eq!(
+            error,
+            ProbeError::NoEcho {
+                via: "loopback".into()
+            }
+        );
+    }
+
+    #[tokio::test]
+    async fn a_refused_login_and_a_connection_that_never_came_up_are_told_apart() {
+        let broker = LoopbackBroker::new();
+        let (transport, _unused) = broker.connect("probe", None, None);
+
+        let (tx, rx) = unbounded_channel();
+        tx.send(TransportEvent::Disconnected {
+            reason: "bad credentials".into(),
+            auth_failed: true,
+        })
+        .unwrap();
+        assert_eq!(
+            run_probe(&*transport, rx, PLENTY).await.unwrap_err(),
+            ProbeError::Rejected {
+                reason: "bad credentials".into()
+            }
+        );
+
+        let (tx, rx) = unbounded_channel();
+        tx.send(TransportEvent::Disconnected {
+            reason: "connection reset".into(),
+            auth_failed: false,
+        })
+        .unwrap();
+        assert_eq!(
+            run_probe(&*transport, rx, BRIEF).await.unwrap_err(),
+            ProbeError::TimedOut {
+                last_error: "connection reset".into()
+            }
+        );
+        drop(tx);
     }
 }

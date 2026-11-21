@@ -516,11 +516,40 @@ pub const IOS_ALERT_AFTER_SECS_DEFAULT: u64 = 900;
 /// Upper bound of `alert_after_secs`: 24 hours.
 pub const IOS_ALERT_AFTER_SECS_MAX: u64 = 86_400;
 
+/// The public push relay built into this binary (docs/specs/ios-open-access.md OA9): the address
+/// in effect while `IosChannelConfig::relay_url` is empty. Empty means this build ships no public
+/// relay, so an empty setting still means "no relay". It is set once the production domain serves
+/// the real relay (docs/plans/ios-open-access.md, step 3c).
+pub const IOS_DEFAULT_RELAY_URL: &str = "";
+
+/// The relay address in effect for a configured one: an explicit address wins, an empty one means
+/// the built-in public relay. Every user of the setting (pairing code, pushes, health checks)
+/// goes through this, so "empty means public" cannot drift between them.
+pub fn effective_relay_url(configured: &str) -> String {
+    effective_relay_url_with(configured, IOS_DEFAULT_RELAY_URL)
+}
+
+fn effective_relay_url_with(configured: &str, built_in: &str) -> String {
+    let configured = configured.trim();
+    if configured.is_empty() {
+        built_in.trim().to_string()
+    } else {
+        configured.to_string()
+    }
+}
+
 impl IosChannelConfig {
     /// The push timing D in effect, clamped to `0..=IOS_ALERT_AFTER_SECS_MAX`; the file keeps
     /// whatever was written.
     pub fn effective_alert_after_secs(&self) -> u64 {
         self.alert_after_secs.min(IOS_ALERT_AFTER_SECS_MAX)
+    }
+
+    /// The push relay in effect: the configured address, else the built-in public relay (empty
+    /// when this build has none). The file keeps whatever was written, so an empty setting keeps
+    /// following the built-in address of newer versions.
+    pub fn effective_relay_url(&self) -> String {
+        effective_relay_url(&self.relay_url)
     }
 }
 
@@ -1027,6 +1056,41 @@ mod tests {
             serde_json::from_str(r#"{"channels":{"ios":{"alertAfterSecs":999999999}}}"#).unwrap();
         assert_eq!(wild.channels.ios.alert_after_secs, 999_999_999);
         assert_eq!(wild.channels.ios.effective_alert_after_secs(), 86_400);
+    }
+
+    #[test]
+    fn an_empty_relay_setting_means_the_built_in_relay_and_an_address_always_wins() {
+        // An explicit address is used as written (trimmed), whatever the build ships.
+        assert_eq!(
+            effective_relay_url_with("  https://relay.example.com/ah  ", "https://public.example"),
+            "https://relay.example.com/ah"
+        );
+        assert_eq!(
+            effective_relay_url_with("https://relay.example.com", ""),
+            "https://relay.example.com"
+        );
+        // Empty or blank means the built-in address, so the file keeps following newer versions.
+        assert_eq!(
+            effective_relay_url_with("", " https://public.example "),
+            "https://public.example"
+        );
+        assert_eq!(
+            effective_relay_url_with("   ", "https://public.example"),
+            "https://public.example"
+        );
+        // A build without a public relay keeps the old meaning: empty is no relay.
+        assert_eq!(effective_relay_url_with("", ""), "");
+
+        // The setting itself is never rewritten by resolving it.
+        let cfg = IosChannelConfig::default();
+        assert_eq!(cfg.relay_url, "");
+        assert_eq!(cfg.effective_relay_url(), IOS_DEFAULT_RELAY_URL);
+        assert_eq!(cfg.relay_url, "");
+        let own = IosChannelConfig {
+            relay_url: "https://relay.example.com".into(),
+            ..IosChannelConfig::default()
+        };
+        assert_eq!(own.effective_relay_url(), "https://relay.example.com");
     }
 
     #[test]

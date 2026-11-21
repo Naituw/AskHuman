@@ -1364,6 +1364,37 @@ pub fn tr(lang: Lang, key: &'static str) -> &'static str {
             "Connected via {via} ({ms} ms). The broker accepted the credentials and routed a test message.",
             "已通过 {via} 连通（{ms} ms）。Broker 已接受凭据并成功转发测试消息。",
         ),
+        "cmd.iosWarningLabel" => pick(lang, "Warning:", "警告："),
+        "cmd.iosProbeRejected" => pick(
+            lang,
+            "The broker rejected the credentials ({reason}).",
+            "Broker 拒绝了凭据（{reason}）。",
+        ),
+        "cmd.iosProbeNoEcho" => pick(
+            lang,
+            "Connected via {via}, but a test message did not come back: check the broker's access rules for topics under ah/<username>/.",
+            "已通过 {via} 连上，但测试消息没有回来：请检查 Broker 的访问规则是否放行了 ah/<用户名>/ 下的话题。",
+        ),
+        "cmd.iosProbeTimedOut" => pick(
+            lang,
+            "Timed out waiting for the broker.",
+            "等待 Broker 响应超时。",
+        ),
+        "cmd.iosProbeTimedOutWith" => pick(
+            lang,
+            "Timed out waiting for the broker ({error}).",
+            "等待 Broker 响应超时（{error}）。",
+        ),
+        "cmd.iosProbeFailed" => pick(
+            lang,
+            "The test could not run: {reason}.",
+            "测试没能进行：{reason}。",
+        ),
+        "cmd.iosIsolationLeak" => pick(
+            lang,
+            "The broker let this account publish to and read from a topic outside its own (ah/<username>/…). Anyone with an account on this broker could read or disturb other accounts' topics; message contents stay end-to-end encrypted. Limit each account to ah/<username>/# in the broker's access rules.",
+            "Broker 放行了这个账号在自己话题（ah/<用户名>/…）之外的发布和订阅。这个 Broker 上的任何账号都能读取或干扰其他账号的话题；消息内容仍然是端到端加密的。请在 Broker 的访问规则里把每个账号限制在 ah/<用户名>/# 之内。",
+        ),
         "cmd.iosRelayOk" => pick(
             lang,
             "The relay answered in {ms} ms and can send pushes.",

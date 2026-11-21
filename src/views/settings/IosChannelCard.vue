@@ -8,6 +8,8 @@ import AgentTasksSwitchRow from "./AgentTasksSwitchRow.vue";
 import { useSettingsContext } from "./context";
 import { useIosChannel } from "./useIosChannel";
 import type { IosPhone } from "../../lib/types";
+import { openPath } from "../../lib/ipc";
+import { IOS_BROKERS, brokerGuideUrl, brokerPreset, type IosBrokerId } from "./iosBrokers";
 import {
   ALERT_AFTER_PRESETS,
   alertAfterChoices,
@@ -17,10 +19,15 @@ import {
 } from "./iosAlertTiming";
 import { aggregateTraffic, brokerEstimate, hasCompleteTrafficHistory, formatBytes, trafficReminder } from "./iosTraffic";
 
-const { t } = useI18n();
+const { t, locale } = useI18n();
 const { persist, secretsPresent, SECRET_PLACEHOLDER, clearSecret } = useSettingsContext();
 const {
   ios,
+  broker,
+  chooseBroker,
+  defaultRelayUrl,
+  relayMode,
+  setRelayMode,
   state,
   activePhones,
   statusKind,
@@ -44,6 +51,8 @@ const {
   testing,
   testMessage,
   testError,
+  testWarnings,
+  testHint,
   runTest,
   importText,
   connectionMessage,
@@ -89,6 +98,14 @@ const trafficNote = computed(() => {
   if (!reminder) return "";
   return t(reminder.reached ? "settings.experimental.ios.trafficOver" : "settings.experimental.ios.trafficNear", { gb: reminder.gigabytes });
 });
+
+// The service the broker belongs to (docs/specs/ios-open-access.md OA11): a short set of points per service,
+// and the wiki page that has the steps.
+const brokerPoints = computed(() => brokerPreset(broker.value).points);
+
+function openBrokerGuide() {
+  void openPath(brokerGuideUrl(broker.value, String(locale.value).startsWith("zh")));
+}
 
 // Push timing (docs/specs/ios-alert-timing.md): the wait before an unseen question is pushed.
 function durationText(d: SplitDuration): string {
@@ -179,6 +196,26 @@ function pushWarning(phone: IosPhone): string {
       <hr class="divider" />
 
       <p class="ios-section-title">{{ t("settings.experimental.ios.connectionTitle") }}</p>
+      <div class="field ios-broker">
+        <label>{{ t("settings.experimental.ios.brokerLabel") }}</label>
+        <select
+          class="select ios-broker-select"
+          :value="broker"
+          @change="chooseBroker(($event.target as HTMLSelectElement).value as IosBrokerId)"
+        >
+          <option v-for="b in IOS_BROKERS" :key="b.id" :value="b.id">
+            {{ t(`settings.experimental.ios.broker.${b.id}.name`) }}
+          </option>
+        </select>
+        <ul class="ios-broker-points">
+          <li v-for="key in brokerPoints" :key="key">
+            {{ t(`settings.experimental.ios.broker.${broker}.${key}`) }}
+          </li>
+        </ul>
+        <a class="link ios-broker-guide" href="#" @click.prevent="openBrokerGuide">
+          {{ t("settings.experimental.ios.brokerGuide") }} ↗
+        </a>
+      </div>
       <div class="field">
         <label>{{ t("settings.experimental.ios.host") }}</label>
         <input class="input" v-model="ios.host" spellcheck="false" @change="persist" />
@@ -218,9 +255,29 @@ function pushWarning(phone: IosPhone): string {
           </button>
         </div>
       </div>
-      <div class="field">
-        <label>{{ t("settings.experimental.ios.relayUrl") }}</label>
-        <input class="input" v-model="ios.relayUrl" spellcheck="false" @change="persist" />
+      <div class="field ios-relay">
+        <label>{{ t(defaultRelayUrl ? "settings.experimental.ios.relayTitle" : "settings.experimental.ios.relayUrl") }}</label>
+        <!-- Only a build with a public relay offers the choice; otherwise it is just the address. -->
+        <select
+          v-if="defaultRelayUrl"
+          class="select ios-relay-mode"
+          :value="relayMode"
+          @change="setRelayMode(($event.target as HTMLSelectElement).value === 'own' ? 'own' : 'public')"
+        >
+          <option value="public">{{ t("settings.experimental.ios.relayPublic") }}</option>
+          <option value="own">{{ t("settings.experimental.ios.relayOwn") }}</option>
+        </select>
+        <p v-if="defaultRelayUrl && relayMode === 'public'" class="card-desc ios-relay-note">
+          {{ t("settings.experimental.ios.relayPublicNote") }}
+        </p>
+        <input
+          v-if="!defaultRelayUrl || relayMode === 'own'"
+          class="input"
+          v-model="ios.relayUrl"
+          spellcheck="false"
+          :placeholder="defaultRelayUrl ? t('settings.experimental.ios.relayOwnPlaceholder') : ''"
+          @change="persist"
+        />
       </div>
       <div class="field">
         <label>{{ t("settings.experimental.ios.macName") }}</label>
@@ -243,6 +300,10 @@ function pushWarning(phone: IosPhone): string {
       <p v-if="testMessage" class="result" :class="testError ? 'err' : 'ok'">
         {{ testMessage }}
       </p>
+      <p v-if="testHint" class="ios-test-hint">
+        {{ t(`settings.experimental.ios.broker.${testHint.broker}.hint.${testHint.kind}`) }}
+      </p>
+      <p v-for="warning in testWarnings" :key="warning" class="result warn">⚠ {{ warning }}</p>
       <div class="field ios-import">
         <label>{{ t("settings.experimental.ios.importLabel") }}</label>
         <div class="row">

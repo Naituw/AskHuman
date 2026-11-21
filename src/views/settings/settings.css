@@ -1386,6 +1386,34 @@
   font-weight: 600;
   color: var(--text-primary);
 }
+.ios-broker-select {
+  max-width: 100%;
+}
+.ios-broker-points {
+  margin: var(--space-2) 0 var(--space-1);
+  padding-left: 18px;
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--text-secondary);
+}
+.ios-broker-points li + li {
+  margin-top: 2px;
+}
+.ios-broker-guide {
+  font-size: 12px;
+}
+.ios-relay-note {
+  margin: var(--space-2) 0 0;
+}
+.ios-test-hint {
+  margin: var(--space-1) 0 0;
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--text-secondary);
+}
+.result.warn {
+  color: #ff9f0a;
+}
 .ios-ports {
   display: grid;
   grid-template-columns: 1fr 1fr;

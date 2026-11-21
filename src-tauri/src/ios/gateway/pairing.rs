@@ -67,7 +67,8 @@ impl Actor {
             w: self.cfg.ws_port,
             u: self.cfg.username.clone(),
             pw: self.cfg.password.clone(),
-            r: self.cfg.relay_url.clone(),
+            // The phone has no built-in relay of its own: it gets the address in effect.
+            r: self.cfg.effective_relay_url(),
             m: self.mac_id.clone(),
             mn: self.mac_name(),
             t: ticket_id.clone(),
