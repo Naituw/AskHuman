@@ -430,4 +430,28 @@ final class AssetPreviewTests: XCTestCase {
         let path = await h.engine.cachedPreviewURL(ref.assetId).path
         XCTAssertFalse(FileManager.default.fileExists(atPath: path))
     }
+
+    // MARK: the app's way in
+
+    /// The app holds the engine as a `RemoteBackend`, and that protocol gives `downloadForViewing` a default that returns the
+    /// file. An engine method that only resembles the requirement (a parameter that differs in a way the compiler accepts)
+    /// would leave the default in charge: every viewer in the app would show files, no preview would ever be asked for, and no
+    /// test that calls the engine itself would notice. This one calls through the protocol, as `AppStore` does.
+    func testTheAppReachesThePreviewsThroughTheBackendProtocol() async throws {
+        let h = Harness()
+        await h.pair()
+        let (ref, _, preview) = fixture(h)
+        let backend: any RemoteBackend = h.engine
+        let macId = h.mac.macId
+
+        let viewed = try await finish(Task { try await backend.downloadForViewing(macId: macId, asset: ref) { _ in } })
+        XCTAssertTrue(viewed.isPreview, "the viewer got the file: the protocol's default answered, not the engine")
+        XCTAssertEqual(try Data(contentsOf: viewed.url), preview)
+        XCTAssertEqual(try asks(h).map(\.variant), ["preview"])
+
+        // The default would have fetched the file for the second look as well.
+        let again = try await finish(Task { try await backend.downloadForViewing(macId: macId, asset: ref) { _ in } })
+        XCTAssertEqual(again, viewed)
+        XCTAssertEqual(h.mac.count(AssetGet.type), 1, "the second look is served from the cache")
+    }
 }

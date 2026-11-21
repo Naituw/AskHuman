@@ -15,6 +15,13 @@ import XCTest
 ///   AH_E2E_BIN=<installed AskHuman> AH_E2E_REAL_FROM=<ASKHUMAN_HOME of a configured Mac> \
 ///   AH_E2E_BUNDLE_ID=<the app's bundle id> AH_E2E_SIM_UDID=<udid> swift test --filter SimulatorLiveTests
 ///
+/// That runs the scenario of the real services (pairing, questions, push). The picture scenario sends a few megabytes, so it
+/// never runs on them: it runs on the local broker (the app is a Debug build, which may reach a loopback broker over plain
+/// TCP), with no relay and so no notifications:
+///
+///   AH_E2E_BIN=<installed AskHuman> AH_E2E_BROKER_DIR=ios/Tools/local-broker AH_E2E_SIM_UDID=<udid> \
+///   swift test --filter SimulatorLiveTests/testAPictureOpensAsAPreviewOnTheRealApp
+///
 /// The simulator gets a clean start (the app is uninstalled, which also drops its notification
 /// permission, and the device keychain is **reset**), so give it a device of its own. Erasing it
 /// instead (`AH_E2E_SIM_ERASE=1`) works too but sets off the first-boot work of iOS, minutes of CPU
@@ -28,14 +35,26 @@ import XCTest
 /// for the code.
 final class SimulatorLiveTests: E2ECase {
     override func setUp() async throws {
-        let env = ProcessInfo.processInfo.environment
-        guard try E2EEnvironment.current().usesRealServices, env["AH_E2E_SIM_UDID"]?.isEmpty == false else {
-            throw XCTSkip("AH_E2E_REAL_FROM and AH_E2E_SIM_UDID are needed: this drives the real app on a simulator")
+        // Skips without the Mac binary and a broker (local, or the real services) too.
+        _ = try E2EEnvironment.current()
+        guard ProcessInfo.processInfo.environment["AH_E2E_SIM_UDID"]?.isEmpty == false else {
+            throw XCTSkip("AH_E2E_SIM_UDID is needed: this drives the real app on a simulator")
         }
         try await super.setUp()
     }
 
-    func testPairingQuestionsAndPushOnTheRealApp() async throws {
+    /// The simulator, the app build and the places a run keeps its files.
+    private struct Run {
+        let udid: String
+        let ios: URL
+        let derived: URL
+        let meeting: Meeting
+        let shots: String
+        let result: URL
+    }
+
+    /// Resets the simulator and makes ready the folders of a run; skips when the app has not been built.
+    private func prepareRun() async throws -> Run {
         let udid = try XCTUnwrap(ProcessInfo.processInfo.environment["AH_E2E_SIM_UDID"])
         let ios = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent()
             .deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
@@ -44,43 +63,65 @@ final class SimulatorLiveTests: E2ECase {
         try await resetSimulator(udid)
 
         let meeting = try Meeting()
-        defer { meeting.remove() }
         let shots = ProcessInfo.processInfo.environment["AH_E2E_SHOTS"] ?? "/tmp/ah-live-shots"
         try? FileManager.default.removeItem(atPath: shots)
         let result = FileManager.default.temporaryDirectory.appendingPathComponent("ah-live-\(UUID().uuidString.prefix(8)).xcresult")
+        return Run(udid: udid, ios: ios, derived: derived, meeting: meeting, shots: shots, result: result)
+    }
 
+    /// Starts the phone's half: the UI test `test` of `AskHumanLiveUITests`, through `xcodebuild`.
+    private func startPhone(_ test: String, _ run: Run) throws -> Cmd {
         var env = ProcessInfo.processInfo.environment
-        env["TEST_RUNNER_AH_LIVE_DIR"] = meeting.dir.path
-        env["TEST_RUNNER_AH_UI_SHOTS"] = shots
+        env["TEST_RUNNER_AH_LIVE_DIR"] = run.meeting.dir.path
+        env["TEST_RUNNER_AH_UI_SHOTS"] = run.shots
         let runner = Cmd(
             "/usr/bin/xcrun",
             [
                 "xcodebuild", "test-without-building", "-project", "AskHuman.xcodeproj", "-scheme", "AskHuman",
-                "-destination", "platform=iOS Simulator,id=\(udid)", "-derivedDataPath", derived.path,
-                "-only-testing:AskHumanUITests/AskHumanLiveUITests", "-parallel-testing-enabled", "NO",
-                "-collect-test-diagnostics", "never", "-resultBundlePath", result.path,
+                "-destination", "platform=iOS Simulator,id=\(run.udid)", "-derivedDataPath", run.derived.path,
+                "-only-testing:AskHumanUITests/AskHumanLiveUITests/\(test)", "-parallel-testing-enabled", "NO",
+                "-collect-test-diagnostics", "never", "-resultBundlePath", run.result.path,
             ],
-            env: env, cwd: ios
+            env: env, cwd: run.ios
         )
         try runner.start()
+        return runner
+    }
+
+    /// The first wait covers xcodebuild starting up and installing the app: minutes on a busy Mac. Only then does the Mac open
+    /// its pairing window, and the code goes through the pipe. Both sides must show the same check number before the Mac
+    /// allows. `code` is set as soon as there is one, so that a run that fails from here on still looks for it in what it
+    /// left behind.
+    private func pairThePhone(_ live: Live, _ meeting: Meeting, code: inout String) async throws {
+        _ = try await live.arrive("pair-ready", timeout: 900)
+        code = try await mac.startPairing()
+        try await meeting.hand(code: code)
+
+        let phoneSas = try await live.arrive("sas", timeout: 300)
+        // The phone shows its check number as soon as it has worked it out, before its request has reached the Mac (it first
+        // has to reach the broker): the Mac has its number, and something to allow, only once the request is there.
+        let pending = await poll(timeout: 60) { await self.pairingStage() == "pending" }
+        let pairing = (try await mac.status())["pairing"] as? [String: Any]
+        XCTAssertTrue(pending, "the Mac never got the pairing request (stage: \(pairing?["stage"] as? String ?? "no pairing"))")
+        XCTAssertEqual(phoneSas, pairing?["sas"] as? String, "both sides must show the same check number")
+        let allow = try await mac.cli(["channel", "ios", "allow"])
+        print("[e2e] allow: status \(allow.status) stdout \(allow.stdout.prefix(200)) stderr \(allow.stderr.prefix(200))")
+        XCTAssertEqual(allow.status, 0, allow.stderr)
+        try live.release("sas")
+    }
+
+    func testPairingQuestionsAndPushOnTheRealApp() async throws {
+        try XCTSkipUnless(environment.usesRealServices, "AH_E2E_REAL_FROM is needed: this scenario runs on the real broker and relay")
+        let run = try await prepareRun()
+        let (udid, derived, meeting, result) = (run.udid, run.derived, run.meeting, run.result)
+        defer { meeting.remove() }
+        let runner = try startPhone("testPairingQuestionsAndPushOnTheRealApp", run)
         let live = Live(meeting: meeting, runner: runner)
         var numbers: [String: Any] = [:]
         var code = ""
 
         do {
-            // The first wait covers xcodebuild starting up and installing the app: minutes on a busy Mac.
-            // Only then does the Mac open its pairing window, and the code goes through the pipe.
-            _ = try await live.arrive("pair-ready", timeout: 900)
-            code = try await mac.startPairing()
-            try await meeting.hand(code: code)
-
-            // Pairing: both sides must show the same check number before the Mac allows.
-            let phoneSas = try await live.arrive("sas", timeout: 300)
-            let pairing = (try await mac.status())["pairing"] as? [String: Any]
-            XCTAssertEqual(phoneSas, pairing?["sas"] as? String, "both sides must show the same check number")
-            let allow = try await mac.cli(["channel", "ios", "allow"])
-            XCTAssertEqual(allow.status, 0, allow.stderr)
-            try live.release("sas")
+            try await pairThePhone(live, meeting, code: &code)
 
             // Notifications allowed: the phone registers the simulator's token with the relay, the Mac gets the handle.
             // The phone first waits for its own side ("On" in the Macs tab), then the handle must reach the Mac.
@@ -208,7 +249,92 @@ final class SimulatorLiveTests: E2ECase {
         await cleanUp(result: result, derived: derived, udid: udid, code: code)
     }
 
+    /// docs/specs/ios-attachment-traffic.md on the real app (acceptance 2, 3, 7, 13): a screenshot of about 3 MB opens as its
+    /// preview and the Mac has sent that and nothing more; the button for the original brings the file, which the Mac then
+    /// counts; the same screenshot in a later request is already on the phone, so the phone does not ask for it. The Mac's own
+    /// account of what it sent is read after each step, so these are the bytes of the real app's real engine, not a model.
+    func testAPictureOpensAsAPreviewOnTheRealApp() async throws {
+        try XCTSkipIf(environment.usesRealServices, "this sends a few megabytes: it runs on the local broker, never on the real services")
+        let run = try await prepareRun()
+        let (udid, derived, meeting, result) = (run.udid, run.derived, run.meeting, run.result)
+        defer { meeting.remove() }
+        let picture = try Pictures.png(width: 2880, height: 1800, noise: Pictures.screenshotNoise)
+        let file = mac.home.appendingPathComponent("screenshot.png")
+        try picture.write(to: file)
+        let runner = try startPhone("testAPictureOpensAsAPreviewOnTheRealApp", run)
+        let live = Live(meeting: meeting, runner: runner)
+        var numbers: [String: Any] = ["screenshotBytes": picture.count]
+        var code = ""
+
+        do {
+            try await pairThePhone(live, meeting, code: &code)
+
+            // 1. Looking at the picture brings its preview and nothing else.
+            _ = try await live.arrive("ask-picture", timeout: 300)
+            let start = try await ledger()
+            let first = try mac.ask(["See the picture", "-f", file.path, "-q", "Fine?", "-o", "Yes"])
+            try live.release("ask-picture")
+            let button = try await live.arrive("preview-shown", timeout: 300)
+            let afterPreview = try await ledger()
+            let seen = afterPreview.since(start)
+            numbers["originalButton"] = button
+            numbers["previewMsgs"] = seen.part("chunk.preview").msgs
+            numbers["previewBytes"] = seen.part("chunk.preview").bytes
+            XCTAssertTrue(button.contains("Original"), "the button for the original says: \(button)")
+            XCTAssertGreaterThan(seen.part("chunk.preview").msgs, 0, "the preview came from the Mac")
+            XCTAssertLessThan(seen.part("chunk.preview").bytes * 8, picture.count, "a preview is a small part of the picture")
+            XCTAssertEqual(seen.part("chunk.original").msgs, 0, "the phone looked at the preview: no file was sent")
+            XCTAssertEqual(seen.chunks.msgs, seen.part("chunk.preview").msgs, "nothing but the preview was sent")
+            try live.release("preview-shown")
+
+            // 2. The button brings the file.
+            _ = try await live.arrive("original-shown", timeout: 300)
+            let withFile = try await ledger().since(afterPreview)
+            numbers["originalMsgs"] = withFile.part("chunk.original").msgs
+            numbers["originalBytes"] = withFile.part("chunk.original").bytes
+            XCTAssertGreaterThanOrEqual(withFile.part("chunk.original").bytes, picture.count, "the whole file was sent")
+            XCTAssertLessThan(withFile.part("chunk.original").bytes, picture.count + 20_000, "and not much more than the file")
+            XCTAssertEqual(withFile.part("chunk.preview").msgs, 0, "the preview was not sent again")
+            XCTAssertEqual(withFile.part("chunk.original.repeat").msgs, 0, "this phone had not been sent the file before")
+            try live.release("original-shown")
+            let firstStatus = await first.wait(timeout: 60)
+            XCTAssertEqual(firstStatus, 0, first.stderr)
+            XCTAssertTrue(first.stdout.contains("Yes"), "answer: \(first.stdout)")
+
+            // 3. The same screenshot in a later request is on the phone: nothing is asked for, nothing is sent.
+            _ = try await live.arrive("ask-same-picture", timeout: 300)
+            let before = try await ledger()
+            let second = try mac.ask(["See the picture again", "-f", file.path, "-q", "Fine?", "-o", "Yes"])
+            try live.release("ask-same-picture")
+            _ = try await live.arrive("same-picture-shown", timeout: 300)
+            let again = try await ledger().since(before)
+            numbers["getsForTheSamePicture"] = again.kind("in:asset.get").msgs
+            numbers["chunksForTheSamePicture"] = again.chunks.msgs
+            XCTAssertEqual(again.kind("in:asset.get").msgs, 0, "the phone asked for a picture it already has")
+            XCTAssertEqual(again.chunks.msgs, 0, "nothing was sent for it")
+            try live.release("same-picture-shown")
+            let secondStatus = await second.wait(timeout: 60)
+            XCTAssertEqual(secondStatus, 0, second.stderr)
+            XCTAssertTrue(second.stdout.contains("Yes"), "answer: \(second.stdout)")
+        } catch {
+            runner.terminate()
+            await cleanUp(result: result, derived: derived, udid: udid, code: code)
+            throw error
+        }
+
+        let status = await runner.wait(timeout: 300)
+        let tail = runner.stdout.split(separator: "\n").suffix(40).joined(separator: "\n")
+        XCTAssertEqual(status, 0, "xcodebuild:\n\(tail)")
+        report(numbers)
+        await cleanUp(result: result, derived: derived, udid: udid, code: code)
+    }
+
     // MARK: Mac side helpers
+
+    /// What the Mac counted so far (`channel ios status --json`).
+    private func ledger() async throws -> AttachmentTrafficE2ETests.Ledger {
+        AttachmentTrafficE2ETests.Ledger(status: try await mac.status())
+    }
 
     /// What the UI test types to the Agent (see `AskHumanLiveUITests`).
     private static let message = "Also run the lint."
@@ -241,6 +367,11 @@ final class SimulatorLiveTests: E2ECase {
     }
 
     private func pushState() async -> String? { await devices().first?["push"] as? String }
+
+    /// Where the Mac's pairing stands: `waiting` for a request, `pending` for the decision, `accepted`; nil without one.
+    private func pairingStage() async -> String? {
+        ((try? await mac.status())?["pairing"] as? [String: Any])?["stage"] as? String
+    }
 
     private func poll(timeout: TimeInterval, _ check: () async -> Bool) async -> Bool {
         let deadline = Date().addingTimeInterval(timeout)

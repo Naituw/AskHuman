@@ -34,24 +34,7 @@ final class AskHumanLiveUITests: XCTestCase {
         launch()
         announce("launched")
 
-        try step("pair with the Mac") {
-            requireElement("pair-a-mac").tap()
-            let field = requireElement("pairing-code")
-            field.tap()
-            // The Mac opens its (five-minute) pairing window only now and hands the code over a pipe.
-            announce("pair-ready")
-            field.typeText(try pairingCode())
-            requireElement("pair-button").tap()
-            let sas = requireElement("pairing-sas", timeout: 120).label
-            shot("pairing-check-number")
-            // The host compares it with the Mac's, then clicks Allow there.
-            _ = rendezvous("sas", sas)
-            XCTAssertTrue(
-                app.staticTexts.matching(NSPredicate(format: "label BEGINSWITH 'Paired with'")).firstMatch.waitForExistence(timeout: 120),
-                "the pairing did not finish"
-            )
-            shot("pairing-done")
-        }
+        try pairWithTheMac()
 
         try step("allow notifications") {
             let allow = springboard.alerts.buttons["Allow"]
@@ -258,7 +241,118 @@ final class AskHumanLiveUITests: XCTestCase {
         }
     }
 
+    /// A picture on the real app, over a throwaway Mac and the local broker (`SimulatorLiveTests`, the second test; there is no
+    /// relay behind that broker, so no notifications): it opens as the preview, the original comes when asked for, and the same
+    /// screenshot in a later request is already on the phone. After each step the host reads what the Mac sent.
+    func testAPictureOpensAsAPreviewOnTheRealApp() throws {
+        announce("started")
+        launch()
+        announce("launched")
+
+        try pairWithTheMac()
+
+        try step("close the pairing sheet") {
+            // A phone that was never asked about notifications offers to turn them on; there is nothing to register with.
+            let notNow = app.buttons["Not now"]
+            let done = app.buttons["pairing-close"]
+            let deadline = Date().addingTimeInterval(40)
+            while !notNow.exists, !done.exists, Date() < deadline { Thread.sleep(forTimeInterval: 0.2) }
+            if notNow.exists { notNow.tap() } else { done.tap() }
+            XCTAssertTrue(app.tabBars.buttons["Inbox"].waitForExistence(timeout: 40), "the pairing sheet did not close")
+        }
+
+        try step("look at the picture: the preview comes first") {
+            _ = rendezvous("ask-picture")
+            requireRow("inbox-row-", timeout: 90).tap()
+            openPicture("screenshot.png")
+            // The button for the original is there while a preview is on show, and only then.
+            let original = requireElement("gallery-original", timeout: 120)
+            XCTAssertTrue(pictureIsShown(), "the viewer shows no picture")
+            shot("picture-preview")
+            _ = rendezvous("preview-shown", original.label)
+        }
+
+        try step("fetch the original on request") {
+            requireElement("gallery-original").tap()
+            // The button turns into a progress ring while the file comes and both are gone when it is here.
+            XCTAssertTrue(rowGone("gallery-original", timeout: 180), "the original did not come")
+            XCTAssertTrue(pictureIsShown(), "the picture went away with the button")
+            shot("picture-original")
+            _ = rendezvous("original-shown")
+            answerFromTheViewer()
+        }
+
+        try step("the same screenshot in a later request is already on the phone") {
+            _ = rendezvous("ask-same-picture")
+            requireRow("inbox-row-", timeout: 90).tap()
+            openPicture("screenshot.png")
+            XCTAssertTrue(pictureIsShown(), "the viewer shows no picture")
+            // A button that comes late would be the sign of a preview; give it time to.
+            Thread.sleep(forTimeInterval: 3)
+            XCTAssertFalse(
+                app.descendants(matching: .any).matching(NSPredicate(format: "identifier BEGINSWITH 'gallery-original'")).firstMatch.exists,
+                "the file was on the phone already: there is no original to ask for"
+            )
+            shot("picture-again")
+            _ = rendezvous("same-picture-shown")
+            answerFromTheViewer()
+        }
+    }
+
+    /// The pairing of the first screen to the Mac of the host: its code comes over the pipe, both sides compare the check
+    /// number, the host allows it.
+    private func pairWithTheMac() throws {
+        try step("pair with the Mac") {
+            requireElement("pair-a-mac").tap()
+            let field = requireElement("pairing-code")
+            field.tap()
+            // The Mac opens its (five-minute) pairing window only now and hands the code over a pipe.
+            announce("pair-ready")
+            field.typeText(try pairingCode())
+            requireElement("pair-button").tap()
+            let sas = requireElement("pairing-sas", timeout: 120).label
+            shot("pairing-check-number")
+            // The host compares it with the Mac's, then clicks Allow there.
+            _ = rendezvous("sas", sas)
+            let paired = app.staticTexts.matching(NSPredicate(format: "label BEGINSWITH 'Paired with'")).firstMatch
+                .waitForExistence(timeout: 120)
+            if !paired { shot("pairing-stuck") }
+            XCTAssertTrue(paired, "the pairing did not finish")
+            shot("pairing-done")
+        }
+    }
+
     // MARK: helpers
+
+    /// Opens the viewer on the picture of the request that has this file name, scrolling to its thumbnail when it is below.
+    private func openPicture(_ name: String) {
+        let thumbnail = app.buttons.matching(NSPredicate(format: "label == %@", name)).firstMatch
+        var tries = 0
+        while !thumbnail.waitForExistence(timeout: tries == 0 ? 60 : 3), tries < 8 {
+            app.swipeUp(velocity: .slow)
+            tries += 1
+        }
+        XCTAssertTrue(thumbnail.exists, "the request has no thumbnail of \(name)")
+        thumbnail.tap()
+        _ = requireElement("image-gallery")
+        XCTAssertTrue(
+            waitForLabel("gallery-name", name, timeout: 30), "the viewer did not open on \(name): \(element("gallery-name").label)"
+        )
+    }
+
+    /// Whether the viewer shows a picture (its image view is named after the asset).
+    private func pictureIsShown(timeout: TimeInterval = 60) -> Bool {
+        app.descendants(matching: .any).matching(NSPredicate(format: "identifier BEGINSWITH 'viewer-zoom-'")).firstMatch
+            .waitForExistence(timeout: timeout)
+    }
+
+    /// Closes the viewer and answers the request it was opened from (its only option), which clears the inbox.
+    private func answerFromTheViewer() {
+        requireElement("gallery-close").tap()
+        tapElement("option-0-0")
+        sendForm()
+        XCTAssertTrue(rowGone("inbox-row-", timeout: 90), "the request stayed in the inbox")
+    }
 
     private func launch() {
         let app = XCUIApplication()
