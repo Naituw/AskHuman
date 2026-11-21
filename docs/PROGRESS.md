@@ -523,6 +523,7 @@ Agents 列表 + 实时观看 + 关注 + 插话读取回执 + 完成横幅、任�
 
 - 隔离自检在真实 broker 上的验证：Mosquitto 2.1.2 已实测（`pattern readwrite ah/%u/#` 时没有警告，没有 ACL 时给出警告）；真实 EMQX（有 / 无「全部用户」的兜底 deny）与 flespi（ACL token）没有跑过，只对 Aedes 夹具与回环传输验证过。要紧的是配了 ACL 的账号不能被误报，所以第一次在真实 EMQX 上点「测试连接」时看一眼结果。
 - 真实 App 在 EMQX 的 WSS 上断开时是否多发一条遗嘱，没有实测（套件探针的结果见 `ios-broker.md`）；flespi 的跨用户互验只在 TLS 上跑过。
+- 端到端套件的真实服务模式（`AH_E2E_REAL_FROM`）没有用最终代码对 flespi、EMQX 再跑：要凭据，EMQX 还会吃 Owner 的流量额度；Mosquitto 跑不了（夹具不带 `insecureLocal`，要公共 CA 的 TLS）。本地 broker 模式用装机的最终二进制跑过（80 项、0 失败）。
 - 本机还装着为测试装的 Homebrew `mosquitto`（及 `cjson libevent libwebsockets`），P5 里问 Owner 后卸载。
 - 手机端改动随下一次 TestFlight 构建发布，出包由 Owner 另行指示；`docs/release/ios-external-beta/*.txt` 与 `ios-testflight` 技能里的 EMQX 字样随那次出包一起改。
 

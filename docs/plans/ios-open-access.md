@@ -79,7 +79,7 @@
 - 文档同步：`docs/overview-ios.md`（只改变了的部分）、`docs/wiki/ios-setup*.md` 的中继一节改为「默认使用公共中继；自编译 App 才需要自己部署」、本计划与规格的状态。
 - `docs/PROGRESS.md`：删除「函数 URL 被标为仅供测试」那条待办（P3 解决）；记下未完成项（出包、复测、是否公开渠道）。
 - 清理：`brew uninstall mosquitto cjson libevent libwebsockets`（用户同意后）；`/tmp` 里的草稿；预发临时函数。
-- 三条路径用最终版套件再跑一遍，结果表落进 `ios-broker.md`；端到端套件对 flespi 与 Mosquitto 各再跑一遍最终代码。
+- 三条路径用最终版套件再跑一遍，结果表落进 `ios-broker.md`；端到端套件对 flespi 与 Mosquitto 各再跑一遍最终代码。**结果（2026-11-22）**：兼容套件自 P1 的存档运行后没有改过，存档结果仍有效；端到端套件的本地 broker 模式用装机的最终二进制跑过（`AHE2ETests`，80 项、9 项按设计跳过——Codex 付费 4、真实服务 3、模拟器 2、0 失败，约 7.6 分钟），覆盖 P4 对中继地址取值的改动在真实 daemon + 手机引擎上的配对、请求与推送路径。真实服务模式没有跑：Mosquitto 过不了（一次性 Mac 只带 `alertAfterSecs`，不带 `insecureLocal`，回环明文 TCP 会被拒，要用公共 CA 的 TLS），flespi / EMQX 要凭据，EMQX 还会吃 Owner 的流量额度。
 - 隐私政策页核对中继的描述（默认中继后，设备 token 与 IP 会经过中继）。
 - 随下一次出包改 `docs/release/ios-external-beta/*.txt` 与 `ios-testflight` 技能里的 EMQX 字样（出包由用户另行指示，OA13）。
 
