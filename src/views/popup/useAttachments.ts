@@ -5,8 +5,10 @@ import { startDrag } from "@crabnebula/tauri-plugin-drag";
 import type { FileAttachment, ImageAttachment } from "../../lib/types";
 import { invoke } from "@tauri-apps/api/core";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
+import { primaryModifierPressed } from "../../lib/platform";
 import { useAttachmentContent } from "./useAttachmentContent";
 import { useAttachmentPreview, type PreviewDelegate } from "./useAttachmentPreview";
+import { useLinkedFiles } from "./useLinkedFiles";
 import { useReplyImagePreview } from "./useReplyImagePreview";
 import fallbackDragIcon from "../../../src-tauri/icons/32x32.png?inline";
 
@@ -30,6 +32,17 @@ export function useAttachments(deps: {
   const preview = useAttachmentPreview(deps.requestId, deps.active, deps.layout, deps.layoutEvent);
   const isReplyPreview = ref(false);
   const selectedFile = computed(() => isReplyPreview.value ? null : preview.previewIndex.value);
+  // Files the text links to follow the real attachments in the owner's index space (docs/specs/popup-file-links.md).
+  // `selectedFile` may point at one of them, so every lookup of "the file at an index" goes through `fileAt`.
+  const linked = useLinkedFiles({
+    ownerId: deps.requestId,
+    shown: selectedFile,
+    attachmentAt: index => attachments.value[index] ?? null,
+    show: index => { isReplyPreview.value = false; preview.showPreview(index); },
+    collapse: () => stopPreview(),
+    showMenu: index => showPreviewMenu(index),
+  });
+  const fileAt = linked.fileAt;
   const content = useAttachmentContent(deps.requestId, selectedFile, deps.active);
   const reply = useReplyImagePreview(deps.replyImages ?? ref([]),
     computed(() => isReplyPreview.value && preview.previewOpen.value && (deps.active?.value ?? true)),
@@ -95,6 +108,12 @@ export function useAttachments(deps: {
     // Respond immediately to the first click; additional clicks in the same gesture do nothing.
     if (Date.now() < suppressClickUntil || (event && event.detail > 1)) return;
     focusedFile.value = index;
+    // ⌘ (macOS) / Ctrl: the original file in the system's default program, like Enter on the chip; the panel stays as it is.
+    if (event && primaryModifierPressed(event)) {
+      const file = fileAt(index);
+      if (file) openFile(file);
+      return;
+    }
     if (selectedFile.value === index) preview.stopPreview();
     else { isReplyPreview.value = false; preview.showPreview(index); }
   }
@@ -104,7 +123,8 @@ export function useAttachments(deps: {
     } else if (index >= 0 && index < attachments.value.length) preview.showPreview(index);
   }
   function showQuestionPreview(index: number) {
-    if (index < 0 || index >= attachments.value.length) return;
+    // The menu's quick look names a linked file by its index too: `fileAt` knows the ones this window registered.
+    if (index < 0 || !fileAt(index)) return;
     isReplyPreview.value = false; preview.showPreview(index);
   }
   function selectReplyImage(qIndex: number, index: number, event?: MouseEvent) {
@@ -115,7 +135,7 @@ export function useAttachments(deps: {
   function openFile(file: FileAttachment) { openPath(file.path).catch(() => {}); }
   const primaryBrowser = computed(() => content.previewContent.value?.kind === "markdown" && !content.currentReadingState.value?.raw);
   async function openBrowser(index = selectedFile.value) {
-    if (index === null || !attachments.value[index] || disposed || browserOpening.value) return;
+    if (index === null || !fileAt(index) || disposed || browserOpening.value) return;
     const id = deps.requestId.value, token = ++browserToken;
     browserActionError.value = null; browserOpening.value = true;
     try {
@@ -129,7 +149,7 @@ export function useAttachments(deps: {
   }
   function openPreviewFile() {
     if (primaryBrowser.value) void openBrowser();
-    else if (selectedFile.value !== null && attachments.value[selectedFile.value]) openFile(attachments.value[selectedFile.value]);
+    else if (previewFile.value) openFile(previewFile.value);
   }
   function stopPreview(finalizing = false) {
     const i = selectedFile.value;
@@ -219,8 +239,9 @@ export function useAttachments(deps: {
     });
     if (disposed) off(); else menuListener = off;
     const copyOff = await listen<{ requestId: string; index: number }>("popup-preview-copy-path", e => {
-      if (!disposed && (deps.active?.value ?? true) && e.payload.requestId === deps.requestId.value && attachments.value[e.payload.index])
-        void navigator.clipboard.writeText(attachments.value[e.payload.index].path).catch(() => {});
+      const file = fileAt(e.payload.index);
+      if (!disposed && (deps.active?.value ?? true) && e.payload.requestId === deps.requestId.value && file)
+        void navigator.clipboard.writeText(file.path).catch(() => {});
     });
     if (disposed) copyOff(); else { const previous = menuListener; menuListener = () => { previous?.(); copyOff(); }; }
     const errorOff = await listen<{ requestId: string; index: number }>("popup-preview-action-failed", e => {
@@ -239,7 +260,8 @@ export function useAttachments(deps: {
   }, { flush: "sync" });
   function disposeAttachments() {
     disposed = true; browserToken++; missingToken++; clearTimeout(refusedTimer); stopMissingWatch();
-    stopReplyRequest(); reply.dispose(); stopBrowserWatch(); stopErrorWatch(); menuListener?.(); content.disposeContent(); preview.disposePreview();
+    stopReplyRequest(); reply.dispose(); stopBrowserWatch(); stopErrorWatch(); menuListener?.(); linked.disposeLinked();
+    content.disposeContent(); preview.disposePreview();
   }
   async function onAttachmentDragStart(file: FileAttachment, e: DragEvent) {
     e.preventDefault();
@@ -256,10 +278,12 @@ export function useAttachments(deps: {
       setTimeout(() => (draggingOut.value = false), 300);
     }).catch(error => { draggingOut.value = false; console.error("Attachment drag failed", error); });
   }
-  const previewFile = computed(() => selectedFile.value === null ? null : attachments.value[selectedFile.value] ?? null);
-  const browserErrorFile = computed(() => browserErrorIndex.value === null ? null : attachments.value[browserErrorIndex.value] ?? null);
+  const previewFile = computed(() => selectedFile.value === null ? null : fileAt(selectedFile.value));
+  const browserErrorFile = computed(() => browserErrorIndex.value === null ? null : fileAt(browserErrorIndex.value));
   return {
     ...preview, ...content, showPreview, stopPreview, showPreviewMenu, revealFile, selectedFile, focusedFile, previewFile, previewActionError,
+    fileAt, isLinkedPreview: linked.isLinkedPreview, canGoBack: linked.canGoBack, goBack: linked.goBack,
+    activateLink: linked.activate, showLinkMenu: linked.showLinkMenu, activeLinkPaths: linked.activePaths,
     isReplyPreview, selectReplyImage, replyPreviewQuestion: reply.questionIndex,
     selectedReplyImage: computed(() => isReplyPreview.value && preview.previewOpen.value ? reply.index.value : null),
     previewName: computed(() => isReplyPreview.value ? reply.image.value?.filename : previewFile.value?.name),

@@ -64,6 +64,7 @@ import type {
   DraftSave,
   DropLogEntry,
   ImageAttachment,
+  LinkedFile,
   TodoDoneEntry,
   TodoEntry,
   TodoGroup,
@@ -154,6 +155,13 @@ export const confirmPopupReady = (requestId?: string) => invoke<void>("confirm_p
 export const cancelPopup = (requestId?: string) => invoke<void>("cancel_popup", { requestId });
 
 export const openPath = (path: string) => invoke<void>("open_path", { path });
+
+/**
+ * Register the file a text links to with its owner (the request id in a Popup, `history:<entry id>` in History).
+ * The preview commands then address it by the returned index, after the owner's attachments.
+ */
+export const popupPreviewLink = (requestId: string, path: string) =>
+  invoke<LinkedFile>("popup_preview_link", { requestId, path });
 
 export const previewAttachments = (paths: string[], index: number) =>
   invoke<void>("preview_attachments", { paths, index });

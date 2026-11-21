@@ -41,6 +41,24 @@ export function resolveMarkdownLink(href: string, baseDirectory = ""): MarkdownL
   return { kind: "open", target: path };
 }
 
+/**
+ * The folder a file path lives in, in either separator style. A Windows verbatim prefix (`\\?\`, what the
+ * canonical path of a file carries) is dropped first: it does not accept `/`, which authored links use.
+ */
+export function directoryOf(path: string): string {
+  const plain = path.startsWith("\\\\?\\UNC\\") ? `\\\\${path.slice(8)}`
+    : path.startsWith("\\\\?\\") ? path.slice(4)
+    : path;
+  const cut = Math.max(plain.lastIndexOf("/"), plain.lastIndexOf("\\"));
+  return cut > 0 ? plain.slice(0, cut) : cut === 0 ? plain.slice(0, 1) : "";
+}
+
+/** The local path a resolved link points at; null for web links, fragments and everything unresolved. */
+export function localFileTarget(link: MarkdownLink | null): string | null {
+  // Web destinations come back as normalized URLs, local ones as paths: a drive letter is one character.
+  return link?.kind === "open" && !/^(?:https?|mailto):/i.test(link.target) ? link.target : null;
+}
+
 /** Always cancel link navigation, including unsupported or malformed destinations. */
 export function handleMarkdownLinkClick(event: MouseEvent, baseDirectory = ""): boolean {
   const element = event.target instanceof Element ? event.target : (event.target as Node | null)?.parentElement;

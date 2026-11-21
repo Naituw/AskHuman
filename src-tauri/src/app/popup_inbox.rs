@@ -342,6 +342,10 @@ impl Inbox {
             return;
         };
         drop(state);
+        // The files the card's text linked to were only ever addressable while it was open.
+        if let Some(linked) = app.try_state::<super::linked_files::LinkedFiles>() {
+            linked.forget(&id);
+        }
         let _ = app.emit("popup-inbox-terminal", terminal);
     }
     /// The question a closed card's draft is being kept under, while it is being kept. The page's

@@ -28,6 +28,43 @@ describe("renderMarkdown", () => {
     expect(renderMarkdown("![unsafe](data:text/html,test)", { localImages: true })).not.toContain("<img");
   });
 
+  it("marks a link to a local file with the path a click names, for hosts that open local files", () => {
+    const html = renderMarkdown(
+      "[a](docs/a.md:12) [b](/tmp/b%20c.md \"Mine\") [c](file:///tmp/c.md#L3) [d](C:/x/d.md)",
+      { localImages: true, baseDirectory: "/project" },
+    );
+    expect(html).toContain('data-local-file="/project/docs/a.md"');
+    expect(html).toContain('data-local-file="/tmp/b c.md"');
+    expect(html).toContain('data-local-file="/tmp/c.md"');
+    expect(html).toContain('data-local-file="C:/x/d.md"');
+    // Hover names the file; a title the author wrote is kept.
+    expect(html).toContain('title="/project/docs/a.md"');
+    expect(html).toContain('title="Mine"');
+    expect(html).not.toContain('title="/tmp/b c.md"');
+    // The authored href stays what the WebView-blocking handlers read.
+    expect(html).toContain('href="docs/a.md:12"');
+  });
+
+  it("marks no other link, and nothing at all when the host does not open local files", () => {
+    const options = { localImages: true, baseDirectory: "/project" };
+    const others = renderMarkdown(
+      "[w](https://example.com/a.md) [m](mailto:x@y.z) [h](#section) https://example.com [j](javascript:alert(1)) [t](tel:+123)",
+      options,
+    );
+    expect(others).not.toContain("data-local-file");
+    // A relative link has no project to be relative to, so it names no file.
+    expect(renderMarkdown("[a](docs/a.md)", { localImages: true })).not.toContain("data-local-file");
+    // Console, update notes and confirm cards render without the option and keep their links as they were.
+    expect(renderMarkdown("[a](/tmp/a.md)")).not.toContain("data-local-file");
+    expect(renderMarkdown("[a](/tmp/a.md)", { baseDirectory: "/project" })).not.toContain("data-local-file");
+  });
+
+  it("escapes the path it writes into the markup", () => {
+    const html = renderMarkdown("[x](</tmp/a&b\"c.md>)", { localImages: true });
+    expect(html).toContain('data-local-file="/tmp/a&amp;b&quot;c.md"');
+    expect(html).not.toContain('b"c.md');
+  });
+
   it("wraps fenced code blocks with a localized copy button", () => {
     const html = renderMarkdown("```\nlet x = 1;\n```", {
       copyLabel: "复制",

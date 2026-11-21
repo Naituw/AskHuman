@@ -375,6 +375,19 @@
 .markdown-body a:hover {
   text-decoration: underline;
 }
+/* The file this link (or image) names is open in the attachment panel: selected like the attachment's own chip.
+   A link that wraps draws the ring on every line it spans. */
+.markdown-body a.is-active {
+  border-radius: 3px;
+  background: color-mix(in srgb, var(--accent) 12%, transparent);
+  box-shadow: 0 0 0 2px var(--accent);
+  -webkit-box-decoration-break: clone;
+  box-decoration-break: clone;
+}
+.markdown-body img.is-active {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
 .markdown-body del {
   color: var(--text-secondary);
 }

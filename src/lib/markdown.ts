@@ -1,6 +1,6 @@
 import type MarkdownIt from "markdown-it";
 import { shallowRef } from "vue";
-import { resolveMarkdownLink } from "./markdownLinks";
+import { localFileTarget, resolveMarkdownLink } from "./markdownLinks";
 
 // R4 bundle 瘦身：markdown-it（连带 entities/linkify-it 等依赖约 170KB）不进主 chunk，
 // 模块加载时立刻发起动态 import（与主 chunk 剩余执行并行）。渲染器就绪前 renderMarkdown
@@ -39,6 +39,24 @@ export const markdownReady: Promise<void> = import("markdown-it").then(
       return defaultImage(tokens, idx, options, env, self);
     };
 
+    const defaultLinkOpen = md.renderer.rules.link_open?.bind(md.renderer);
+    md.renderer.rules.link_open = (tokens, idx, options, env, self) => {
+      const settings = (env ?? {}) as MarkdownOptions;
+      if (settings.localImages) {
+        // A link to a local file carries the path a click will name, resolved here once so the click
+        // handler and the selected state agree on it. Without a title the full path shows on hover.
+        const token = tokens[idx];
+        const path = localFileTarget(resolveMarkdownLink(token.attrGet("href") ?? "", settings.baseDirectory));
+        if (path) {
+          token.attrSet("data-local-file", path);
+          if (!token.attrGet("title")) token.attrSet("title", path);
+        }
+      }
+      return defaultLinkOpen
+        ? defaultLinkOpen(tokens, idx, options, env, self)
+        : self.renderToken(tokens, idx, options);
+    };
+
     const defaultFence = md.renderer.rules.fence?.bind(md.renderer);
     md.renderer.rules.fence = (tokens, idx, options, env, self) => {
       const rendered = defaultFence
@@ -64,6 +82,7 @@ export const markdownReady: Promise<void> = import("markdown-it").then(
 export interface MarkdownOptions {
   copyLabel?: string;
   copiedLabel?: string;
+  /** The host opens local files itself: images are read through the local-image store, links name their path. */
   localImages?: boolean;
   baseDirectory?: string;
 }

@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { resolveMarkdownLink } from "./markdownLinks";
+import { directoryOf, localFileTarget, resolveMarkdownLink } from "./markdownLinks";
 
 vi.mock("./ipc", () => ({ openPath: vi.fn(async () => {}) }));
 
@@ -33,5 +33,51 @@ describe("authored Markdown link destinations", () => {
 
   it("resolves an in-document fragment without opening the file", () => {
     expect(resolveMarkdownLink("#%E4%B8%AD%E6%96%87")).toEqual({ kind: "fragment", target: "中文" });
+  });
+});
+
+describe("the local file a link names", () => {
+  it.each([
+    ["/Users/test/report.md:82", ""],
+    ["docs/report.md", "/project"],
+    ["C:/project/report.md", ""],
+    ["\\\\server\\share\\report.md", ""],
+    ["file:///Users/test/My%20Report.md", ""],
+  ])("takes %s as a file", (href, base) => {
+    const link = resolveMarkdownLink(href, base);
+    expect(localFileTarget(link)).toBe((link as { target: string }).target);
+  });
+
+  it.each([
+    "https://example.com/report", "http://example.com", "mailto:test@example.com", "//example.com/report",
+    "#section", "docs/report.md", "javascript:alert(1)",
+  ])("does not take %s as a file", href => {
+    expect(localFileTarget(resolveMarkdownLink(href))).toBeNull();
+  });
+
+  it("is null for no link at all", () => {
+    expect(localFileTarget(null)).toBeNull();
+  });
+});
+
+describe("the folder of a file path", () => {
+  it.each([
+    ["/Users/test/docs/report.md", "/Users/test/docs"],
+    ["/report.md", "/"],
+    ["C:\\project\\docs\\report.md", "C:\\project\\docs"],
+    ["C:/project/report.md", "C:/project"],
+    ["C:\\report.md", "C:"],
+    ["\\\\server\\share\\docs\\report.md", "\\\\server\\share\\docs"],
+    // The canonical path of a Windows file: `/` does not work behind the verbatim prefix, so it is dropped.
+    ["\\\\?\\C:\\project\\docs\\report.md", "C:\\project\\docs"],
+    ["\\\\?\\UNC\\server\\share\\report.md", "\\\\server\\share"],
+    ["report.md", ""],
+  ])("%s lives in %s", (path, directory) => {
+    expect(directoryOf(path)).toBe(directory);
+  });
+
+  it("is the base a relative link in that file resolves against", () => {
+    expect(localFileTarget(resolveMarkdownLink("../b.md:3", directoryOf("/p/docs/a.md")))).toBe("/p/docs/../b.md");
+    expect(localFileTarget(resolveMarkdownLink("sub/b.md", directoryOf("\\\\?\\C:\\p\\a.md")))).toBe("C:\\p\\sub/b.md");
   });
 });

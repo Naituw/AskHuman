@@ -1,11 +1,12 @@
 import { flushPromises, mount, type VueWrapper } from "@vue/test-utils";
 import { nextTick } from "vue";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import type { HistoryEntry } from "../lib/types";
 
 const mocks = vi.hoisted(() => ({
   entries: [] as unknown[],
   invoke: vi.fn(),
+  link: vi.fn(),
   listeners: new Map<string, (event: { payload: unknown }) => void>(),
 }));
 vi.mock("@tauri-apps/api/core", () => ({
@@ -31,6 +32,7 @@ vi.mock("../lib/ipc", () => ({
   openPath: vi.fn(async () => {}),
   readImageDataUrl: vi.fn(async () => ""),
   showAttachmentMenu: vi.fn(async () => {}),
+  popupPreviewLink: mocks.link,
   localImageCreateScope: vi.fn(async () => "scope"),
   localImagePrepare: vi.fn(async (_scope: string, path: string) => ({ token: path, width: 10, height: 10 })),
   localImageReleaseAsset: vi.fn(async () => {}),
@@ -38,6 +40,9 @@ vi.mock("../lib/ipc", () => ({
 }));
 import HistoryView from "./HistoryView.vue";
 import { i18n } from "../i18n";
+import { markdownReady } from "../lib/markdown";
+import { openPath } from "../lib/ipc";
+import { desktopPlatform } from "../lib/platform";
 
 function entryOf(id: string, file: string): HistoryEntry {
   return {
@@ -165,5 +170,115 @@ describe("history window attachment panel", () => {
     await publish({ revision: 50, side: "right", mainWidth: 640 });
     expect(view.find(".attachment-preview-find").exists()).toBe(false);
     expect(view.find(".attachment-preview-open").exists()).toBe(true);
+  });
+});
+
+describe("history window and the files an entry's text links to", () => {
+  beforeAll(() => markdownReady);
+
+  const linked = (path: string) => ({ path, name: path.split("/").pop()!, size: 9, isImage: false });
+  const text = "see [notes](/work/docs/notes.md:12) and [again](/work/docs/notes.md:40) and ![shot](/tmp/shot.png)";
+
+  beforeEach(() => {
+    vi.clearAllMocks(); mocks.listeners.clear(); document.body.replaceChildren();
+    i18n.global.locale.value = "en";
+    vi.stubGlobal("requestAnimationFrame", (callback: FrameRequestCallback) => { callback(0); return 1; });
+    mocks.entries = [{ ...entryOf("e1", "/tmp/one.md"), isMarkdown: true, message: { text, files: [linked("/tmp/one.md")] } }, entryOf("e2", "/tmp/two.md")];
+    // The backend registers a linked file after the entry's one attachment.
+    mocks.link.mockImplementation(async (_owner: string, path: string) => ({ kind: "file", index: 1, file: linked(path) }));
+    mocks.invoke.mockImplementation(async (command: string, args: Record<string, unknown>) => {
+      if (command === "popup_preview_prepare" || command === "popup_preview_layout") {
+        return { revision: args.version, side: args.open ? "right" : "closed", mainWidth: 600, mainHeight: 620 };
+      }
+      if (command === "popup_preview_read") {
+        return { requestId: args.requestId, index: args.index, generation: args.generation, content: { kind: "text", text: "file body" } };
+      }
+      return undefined;
+    });
+  });
+  afterEach(() => { wrapper?.unmount(); wrapper = undefined; vi.unstubAllGlobals(); });
+
+  const links = (view: VueWrapper) => view.findAll(".markdown-body a");
+  // A real click can be cancelled; the shared `click` above cannot, and jsdom would try to navigate.
+  function clickOn(target: Element, init: MouseEventInit = {}) {
+    const event = new MouseEvent("click", { bubbles: true, cancelable: true, detail: 1, ...init });
+    target.dispatchEvent(event);
+    return event;
+  }
+
+  it("opens in the panel on a click, selected while it is on show and not mistaken for an attachment", async () => {
+    const view = await mountHistory();
+    clickOn(links(view)[0].element); await flushPromises();
+    expect(mocks.link).toHaveBeenCalledExactlyOnceWith("history:e1", "/work/docs/notes.md");
+    expect(mocks.invoke).toHaveBeenCalledWith("popup_preview_layout", expect.objectContaining({ requestId: "history:e1", open: true }));
+    expect(mocks.invoke).toHaveBeenCalledWith("popup_preview_read", expect.objectContaining({ requestId: "history:e1", index: 1 }));
+    expect(openPath).not.toHaveBeenCalled();
+    await publish({ revision: 50, side: "right", mainWidth: 640 });
+    expect(view.get(".attachment-preview-name").text()).toBe("notes.md");
+    // A file on its own: nothing to step through.
+    expect(view.find(".attachment-preview-count").exists()).toBe(false);
+    // Every link to the file on show is selected, whichever line it names; the chip is not.
+    expect(links(view).map(link => link.classes("is-active"))).toEqual([true, true]);
+    expect(view.get(".attachment").classes()).not.toContain("selected");
+
+    // The chip takes the panel back to the attachments' own navigation.
+    click(view.get(".attachment").element); await flushPromises();
+    expect(view.get(".attachment-preview-name").text()).toBe("one.md");
+    expect(view.get(".attachment-preview-count").text()).toBe("1 / 1");
+    expect(links(view).some(link => link.classes("is-active"))).toBe(false);
+    expect(view.get(".attachment").classes()).toContain("selected");
+  });
+
+  it("collapses on a second click of the selected link, and with the entry that owns it", async () => {
+    const view = await mountHistory();
+    clickOn(links(view)[1].element); await flushPromises();
+    await publish({ revision: 50, side: "right", mainWidth: 640 });
+    expect(view.find(".attachment-preview").exists()).toBe(true);
+    clickOn(links(view)[1].element); await flushPromises();
+    await publish({ revision: 51, side: "closed", mainWidth: 900 });
+    expect(view.find(".attachment-preview").exists()).toBe(false);
+    expect(links(view)[1].classes("is-active")).toBe(false);
+
+    clickOn(links(view)[0].element); await flushPromises();
+    await publish({ revision: 52, side: "right", mainWidth: 640 });
+    click(view.findAll(".entry")[1].element); await flushPromises();
+    expect(view.find(".attachment-preview").exists()).toBe(false);
+    expect(mocks.invoke).toHaveBeenCalledWith("popup_preview_prepare", expect.objectContaining({ requestId: "history:e1", open: false }));
+    click(view.findAll(".entry")[0].element); await flushPromises();
+    expect(view.find(".attachment-preview").exists()).toBe(false);
+    expect(links(view).some(link => link.classes("is-active"))).toBe(false);
+  });
+
+  it("opens the attachment menu for the linked file on a right click", async () => {
+    const view = await mountHistory();
+    const menu = new MouseEvent("contextmenu", { bubbles: true, cancelable: true });
+    links(view)[0].element.dispatchEvent(menu); await flushPromises();
+    expect(menu.defaultPrevented).toBe(true);
+    expect(mocks.link).toHaveBeenCalledWith("history:e1", "/work/docs/notes.md");
+    expect(mocks.invoke).toHaveBeenCalledWith("popup_preview_menu", { requestId: "history:e1", index: 1 });
+    // The menu is not a selection: the panel stays shut.
+    expect(view.find(".attachment-preview").exists()).toBe(false);
+  });
+
+  it("previews a local image of the text in the panel and selects it", async () => {
+    const view = await mountHistory();
+    const image = view.get(".markdown-body img");
+    clickOn(image.element); await flushPromises();
+    expect(mocks.link).toHaveBeenCalledExactlyOnceWith("history:e1", "/tmp/shot.png");
+    expect(openPath).not.toHaveBeenCalled();
+    await publish({ revision: 50, side: "right", mainWidth: 640 });
+    expect(view.get(".attachment-preview-name").text()).toBe("shot.png");
+    expect(view.get(".markdown-body img").classes("is-active")).toBe(true);
+  });
+
+  it("leaves a ⌘ / Ctrl + click on a link to the system, with no panel", async () => {
+    const view = await mountHistory();
+    const mac = desktopPlatform === "mac";
+    const event = clickOn(links(view)[0].element, { metaKey: mac, ctrlKey: !mac });
+    await flushPromises();
+    expect(event.defaultPrevented).toBe(true);
+    expect(openPath).toHaveBeenCalledExactlyOnceWith("/work/docs/notes.md");
+    expect(mocks.link).not.toHaveBeenCalled();
+    expect(view.find(".attachment-preview").exists()).toBe(false);
   });
 });

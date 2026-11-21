@@ -116,13 +116,17 @@ Helper 及原有级联；只对所选模式补热，闲置的旧模式宿主回�
 
 Message、题干及 Confirm 的 Markdown 链接共用 `lib/markdownLinks.ts`，读取原始 `href`
 而不是 WebView 解析后的应用资源 URL。本地文件引用剥离行号 / 列号和片段，解码路径，
-相对路径以该请求的项目目录为基准，经 `open_path` 交给系统默认程序；缺少项目或不支持
-的链接保持原界面。Popup 建窗时注入 `popup_navigation.js`，在主文档捕获阶段取消链接
+相对路径以该请求的项目目录为基准；缺少项目或不支持的链接保持原界面。有附件预览面板的窗口
+（Popup 的 Message / 题干与历史详情）里，本地文件链接与本地图片单击在右侧面板预览，⌘ / Ctrl+单击经
+`open_path` 交给系统默认程序，右键弹出附件同一菜单，预览期间链接带选中态：用户点击的路径由
+`popup_preview_link` 登记为所有者的附件之后的“链接文件”，共用 (所有者, 索引) 命令，面板里的 Markdown
+文件中的本地链接在面板内继续打开（规格 `popup-file-links.md`）。Confirm、更新说明与 Agent 控制台没有面板，
+链接仍经 `open_path` 直接交给系统。Popup 建窗时注入 `popup_navigation.js`，在主文档捕获阶段取消链接
 的默认 click / auxclick 导航，继续让正文处理器打开目标，不影响 Mermaid sandbox 子帧。
 合并与独立模式使用相同保护，避免链接替换整个作答页面及丢失草稿；规则见规格 §20。
 `popup_navigation.rs` 在 WebView 原生导航层再校验完整初始文档 URL（保留 view / effect 查询参数），
 拒绝本地路径的 SPA 回退、其他页面与新窗口请求；允许原文档片段和 Mermaid sandbox 文档。
-被拦截动作只记录固定 `popup_navigation / blocked` 日志，不记录链接路径。DOM 点击仍负责系统打开。
+被拦截动作只记录固定 `popup_navigation / blocked` 日志，不记录链接路径。DOM 点击仍负责预览或系统打开。
 
 ## 系统结束会话
 

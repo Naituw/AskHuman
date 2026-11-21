@@ -21,6 +21,8 @@ import { loadMermaidAdapter } from "../lib/mermaidLoader";
 import { localImageCreateScope, localImagePrepare, localImageReleaseScope, openPath } from "../lib/ipc";
 import { convertFileSrc } from "@tauri-apps/api/core";
 import { effectiveColorScheme } from "../lib/theme";
+import { useOptionalAttachmentPanel } from "../views/popup/attachmentPanelContext";
+import type { LinkActivation } from "../views/popup/useLinkedFiles";
 
 const props = withDefaults(
   defineProps<{
@@ -36,6 +38,8 @@ const props = withDefaults(
 );
 
 const { t, locale } = useI18n();
+// With a preview panel (Popup, History) a local file named by the text opens there; without one it opens with the system.
+const panel = useOptionalAttachmentPanel();
 const root = ref<HTMLElement | null>(null);
 const mounted = ref(false);
 let generation = 0;
@@ -139,7 +143,8 @@ function hydrateImages(element: HTMLElement, token: number): void {
       image.classList.add("markdown-local-image");
       image.setAttribute("role", "button");
       image.tabIndex = 0;
-      image.title = t("common.imageOpenOriginal");
+      // A click reads the file in the panel, so the hover names it; without a panel a click opens the original.
+      image.title = panel ? path : t("common.imageOpenOriginal");
       image.setAttribute("aria-label", image.alt ? `${image.alt} · ${image.title}` : image.title);
     }
     if (!path || !imageObserver) start(image);
@@ -147,6 +152,7 @@ function hydrateImages(element: HTMLElement, token: number): void {
   }
 }
 
+// The system opens the original: what an image whose load failed offers, and what every local file did before the panel.
 function openLocalImage(event: MouseEvent | KeyboardEvent): boolean {
   const target = event.target instanceof Element ? event.target.closest<HTMLElement>("[data-local-image]") : null;
   const path = target?.getAttribute("data-local-image");
@@ -156,8 +162,56 @@ function openLocalImage(event: MouseEvent | KeyboardEvent): boolean {
   void openPath(path).catch(() => {});
   return true;
 }
+
+function eventElement(event: Event): Element | null {
+  return event.target instanceof Element ? event.target : (event.target as Node | null)?.parentElement ?? null;
+}
+/** The file of a local image under the event (the failed-image button is not one: it opens the original). */
+function localImageAt(event: Event): string | null {
+  return eventElement(event)?.closest("img[data-local-image]")?.getAttribute("data-local-image") || null;
+}
+function localLinkAt(event: Event): string | null {
+  return eventElement(event)?.closest("a[data-local-file]")?.getAttribute("data-local-file") || null;
+}
+
+/**
+ * Click or Enter on a local image or on a link to a local file: the panel gets it (docs/specs/popup-file-links.md
+ * §3.2). An image comes first, since it may sit inside a link.
+ */
+function activateLocal(event: Event, activation: LinkActivation, path: string | null): boolean {
+  if (!panel || !path) return false;
+  event.preventDefault();
+  event.stopPropagation();
+  panel.activateLink(path, activation);
+  return true;
+}
+
 function onRootKeydown(event: KeyboardEvent): void {
-  if (!event.ctrlKey && !event.metaKey && !event.altKey && (event.key === "Enter" || event.key === " ")) openLocalImage(event);
+  if (event.ctrlKey || event.metaKey || event.altKey || (event.key !== "Enter" && event.key !== " ")) return;
+  // The image is a button: Enter and Space act as a plain click. A focused link needs nothing, Enter clicks it.
+  if (activateLocal(event, { detail: 0, metaKey: false, ctrlKey: false }, localImageAt(event))) return;
+  openLocalImage(event);
+}
+
+function onRootContextmenu(event: MouseEvent): void {
+  const path = panel ? localImageAt(event) ?? localLinkAt(event) : null;
+  if (!panel || !path) return;
+  event.preventDefault();
+  panel.showLinkMenu(path);
+}
+
+/** Every link or image whose file is on show in the panel is selected; applied again after each DOM replacement. */
+function applyActiveLinks(): void {
+  const element = root.value;
+  if (!panel || !element) return;
+  const active = panel.activeLinkPaths.value;
+  for (const node of Array.from(element.querySelectorAll<HTMLElement>("a[data-local-file], img[data-local-image]"))) {
+    const path = node.getAttribute("data-local-file") ?? node.getAttribute("data-local-image") ?? "";
+    const on = path !== "" && active.has(path);
+    node.classList.toggle("is-active", on);
+    if (on) node.setAttribute("aria-current", "true");
+    else node.removeAttribute("aria-current");
+  }
 }
 
 function statusText(code: "rendering" | "failed" | "tooLarge" | "tooMany"): string {
@@ -400,6 +454,7 @@ async function hydrateMermaid(): Promise<void> {
   const beforeHeight = rootHeight();
   element.innerHTML = html.value;
   hydrateImages(element, token);
+  applyActiveLinks();
   if (!props.enableMermaid) {
     announceUpdate(rootHeight() - beforeHeight);
     return;
@@ -419,6 +474,7 @@ async function hydrateMermaid(): Promise<void> {
 }
 
 function onRootClick(event: MouseEvent): void {
+  if (activateLocal(event, event, localImageAt(event) ?? localLinkAt(event))) return;
   if (openLocalImage(event)) return;
   if (handleCodeCopyClick(event)) return;
   handleMarkdownLinkClick(event, props.baseDirectory);
@@ -436,6 +492,7 @@ watch(
   },
   { flush: "post" },
 );
+watch(() => panel?.activeLinkPaths.value, () => { if (mounted.value) applyActiveLinks(); }, { flush: "post" });
 
 onBeforeUnmount(() => {
   mounted.value = false;
@@ -454,5 +511,5 @@ onBeforeUnmount(() => {
 </script>
 
 <template>
-  <div ref="root" class="markdown-body" v-html="html" @click="onRootClick" @keydown="onRootKeydown"></div>
+  <div ref="root" class="markdown-body" v-html="html" @click="onRootClick" @contextmenu="onRootContextmenu" @keydown="onRootKeydown"></div>
 </template>

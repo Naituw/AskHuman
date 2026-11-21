@@ -19,6 +19,84 @@ pub fn allowed_url(url: &str, image: bool) -> bool {
         || lower.starts_with("http://")
         || (!image && (lower.starts_with("mailto:") || lower.starts_with('#')))
 }
+/// Longest link destination the popup keeps as the path a click will name.
+const MAX_LOCAL_DESTINATION: usize = 4096;
+
+/// A link destination that names a file on this machine: no scheme, a `file:` URL or a drive path.
+/// The popup keeps it as inert data (`data-local-link`) for the panel's click handler, never as a URL.
+/// Everything with another scheme (`javascript:`, `data:`, `tauri:`, `ftp:` …) stays dropped.
+pub fn local_file_destination(url: &str) -> bool {
+    if url.is_empty()
+        || url.len() > MAX_LOCAL_DESTINATION
+        || url.chars().any(|c| c.is_control())
+        || url.starts_with("//")
+        || url.starts_with('#')
+        || url.starts_with('?')
+    {
+        return false;
+    }
+    let lower = url.to_ascii_lowercase();
+    if lower.starts_with("file:") {
+        return true;
+    }
+    // A drive path is a letter, a colon and a separator, which the author may have percent-encoded.
+    let bytes = url.as_bytes();
+    if bytes.len() >= 3
+        && bytes[0].is_ascii_alphabetic()
+        && bytes[1] == b':'
+        && (matches!(bytes[2], b'/' | b'\\')
+            || lower[2..].starts_with("%5c")
+            || lower[2..].starts_with("%2f"))
+    {
+        return true;
+    }
+    !has_scheme(url)
+}
+
+/// `scheme:` in front of anything that could end the first path segment.
+fn has_scheme(url: &str) -> bool {
+    let mut chars = url.chars();
+    if !chars.next().is_some_and(|c| c.is_ascii_alphabetic()) {
+        return false;
+    }
+    for c in chars {
+        match c {
+            ':' => return true,
+            c if c.is_ascii_alphanumeric() || matches!(c, '+' | '.' | '-') => {}
+            _ => return false,
+        }
+    }
+    false
+}
+
+fn escape_attr(value: &str) -> String {
+    let mut out = String::with_capacity(value.len());
+    for c in value.chars() {
+        match c {
+            '&' => out.push_str("&amp;"),
+            '<' => out.push_str("&lt;"),
+            '>' => out.push_str("&gt;"),
+            '"' => out.push_str("&quot;"),
+            '\'' => out.push_str("&#39;"),
+            c => out.push(c),
+        }
+    }
+    out
+}
+
+/// The opening tag of a popup link to a local file: no URL semantics, the authored destination as data.
+fn local_link_open(dest: &str, title: &str) -> String {
+    let title = if title.is_empty() {
+        String::new()
+    } else {
+        format!(" title=\"{}\"", escape_attr(title))
+    };
+    format!(
+        "<a href=\"\" data-local-link=\"{}\"{title}>",
+        escape_attr(dest)
+    )
+}
+
 pub fn render(src: &str, popup: bool) -> String {
     render_bounded(src, popup, usize::MAX).unwrap()
 }
@@ -32,6 +110,11 @@ fn render_bounded(src: &str, popup: bool, max_events: usize) -> Result<String, &
         | Options::ENABLE_FOOTNOTES;
     let parser = Parser::new_ext(src, opts).map(|ev| match ev {
         Event::Html(s) | Event::InlineHtml(s) => Event::Text(s),
+        Event::Start(Tag::Link {
+            dest_url, title, ..
+        }) if popup && !allowed_url(&dest_url, false) && local_file_destination(&dest_url) => {
+            Event::Html(local_link_open(&dest_url, &title).into())
+        }
         Event::Start(Tag::Link {
             link_type,
             dest_url,
@@ -100,6 +183,103 @@ mod tests {
         assert!(!html.contains("file:///"));
         assert!(html.contains("https://example.com"));
         assert!(html.contains("type=\"checkbox\""));
+        // Neither the active link nor the local image keeps anything a WebView could request.
+        assert!(!html.contains("href=\"javascript") && !html.contains("src=\"file"));
+        assert!(html.contains("<a href=\"\">x</a>"));
+        assert!(html.contains("<img src=\"\" alt=\"x\" />"));
+    }
+
+    #[test]
+    fn popup_keeps_local_file_links_as_inert_data_for_the_click_handler() {
+        let html = render(
+            "[a](docs/a.md:12) [b](/Users/me/b.md \"Title\") [c](C:\\proj\\c.md) [d](file:///tmp/d.md#L3) [e](<../my notes/e.md>) [f](報告.md)",
+            true,
+        );
+        assert!(html.contains("<a href=\"\" data-local-link=\"docs/a.md:12\">a</a>"));
+        assert!(
+            html.contains("<a href=\"\" data-local-link=\"/Users/me/b.md\" title=\"Title\">b</a>")
+        );
+        assert!(html.contains("<a href=\"\" data-local-link=\"C:\\proj\\c.md\">c</a>"));
+        assert!(html.contains("<a href=\"\" data-local-link=\"file:///tmp/d.md#L3\">d</a>"));
+        assert!(html.contains("<a href=\"\" data-local-link=\"../my notes/e.md\">e</a>"));
+        // The destination is data as the author wrote it, not percent-encoded into a URL.
+        assert!(html.contains("data-local-link=\"報告.md\""));
+        // Nothing carries URL semantics: every anchor has an empty href.
+        assert_eq!(html.matches("href=\"\"").count(), 6);
+        assert_eq!(html.matches("<a ").count(), 6);
+    }
+
+    #[test]
+    fn popup_drops_every_other_destination_and_escapes_the_kept_ones() {
+        for dest in [
+            "javascript:alert(1)",
+            "data:text/html,x",
+            "tauri://localhost/x",
+            "ftp://host/x",
+            "vbscript:x",
+            "localhost:8080/x",
+            "//host/share",
+        ] {
+            let html = render(&format!("[x](<{dest}>)"), true);
+            assert!(html.contains("<a href=\"\">x</a>"), "{dest}: {html}");
+            assert!(!html.contains("data-local-link"), "{dest}: {html}");
+        }
+        let long = format!("[x](<{}>)", "a".repeat(MAX_LOCAL_DESTINATION + 1));
+        assert!(!render(&long, true).contains("data-local-link"));
+        let at_limit = format!("[x](<{}>)", "a".repeat(MAX_LOCAL_DESTINATION));
+        assert!(render(&at_limit, true).contains("data-local-link"));
+        // A destination cannot break out of its attribute.
+        let html = render("[x](a\"onmouseover=\"alert(1))", true);
+        assert!(
+            html.contains("data-local-link=\"a&quot;onmouseover=&quot;alert(1)\""),
+            "{html}"
+        );
+        assert!(!html.contains("\" onmouseover") && !html.contains(" onmouseover="));
+        let html = render("[x](<a'b&c> \"t<i>\")", true);
+        assert!(
+            html.contains("data-local-link=\"a&#39;b&amp;c\" title=\"t&lt;i&gt;\""),
+            "{html}"
+        );
+        assert!(!html.contains("<i>"));
+        // Images keep the strict policy, and the browser snapshot keeps its links as they were.
+        assert!(!render("![x](docs/a.png)", true).contains("docs/a.png"));
+        let snapshot = render("[a](docs/a.md)", false);
+        assert!(snapshot.contains("href=\"docs/a.md\"") && !snapshot.contains("data-local-link"));
+    }
+
+    #[test]
+    fn local_file_destinations_are_paths_not_urls() {
+        for local in [
+            "docs/a.md",
+            "./a.md",
+            "../a.md:3:4",
+            "/Users/me/a.md",
+            "C:\\a\\b.md",
+            "c:/a/b.md",
+            "C:%5Ca.md",
+            "\\\\server\\share\\a.md",
+            "file:///tmp/a.md",
+            "FILE:///tmp/a.md",
+            "docs/a:b.md",
+            "報告 最終.md",
+        ] {
+            assert!(local_file_destination(local), "{local}");
+        }
+        for other in [
+            "",
+            "#frag",
+            "?q=1",
+            "//host/x",
+            "https://example.com",
+            "mailto:a@b.c",
+            "javascript:void(0)",
+            "a:b.md",
+            "x-app://open",
+            "docs/a\u{7}.md",
+            "docs/a\n.md",
+        ] {
+            assert!(!local_file_destination(other), "{other:?}");
+        }
     }
     #[test]
     fn marks_only_explicit_mermaid_fences_and_preserves_escaped_source() {

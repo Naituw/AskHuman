@@ -3,6 +3,7 @@ import { computed, nextTick, onBeforeUnmount, ref, watch } from "vue";
 import { useI18n } from "vue-i18n";
 import { desktopPlatform } from "../../lib/platform";
 import { openPath } from "../../lib/ipc";
+import { directoryOf, localFileTarget, resolveMarkdownLink } from "../../lib/markdownLinks";
 import { useAttachmentPanelContext } from "./attachmentPanelContext";
 import { useNativeAttachmentPreview } from "./useNativeAttachmentPreview";
 import AttachmentDiffPreview from "./AttachmentDiffPreview.vue";
@@ -14,7 +15,8 @@ const { t } = useI18n();
 // The host (Popup or History window) decides which owner the panel reads and whether find is wired.
 const { previewFile, previewIndex, previewName, previewCount, previewKey, isReplyPreview, showPreview, stopPreview, openFile, openPreviewFile, primaryBrowser, browserOpening, browserActionError, browserErrorIndex, showPreviewMenu, revealFile,
   popupActive, panelContent: previewContent, panelLoading: previewLoading, panelReadingState: currentReadingState, onAttachmentDragStart, previewActionError, ownerId, nativePreviewBlocked, previewTransition, previewLayout, submitWithBareEnter, registerNativePreviewSync,
-  findSupported, findActive, findScope, openFind, refreshFind, registerAttachmentFind, readingState: ctxState } = useAttachmentPanelContext();
+  findSupported, findActive, findScope, openFind, refreshFind, registerAttachmentFind, readingState: ctxState,
+  isLinkedPreview, canGoBack, goBack, activateLink, showLinkMenu } = useAttachmentPanelContext();
 const nativeBody = ref<HTMLElement | null>(null);
 const { nativeFailed, syncNativePreview } = useNativeAttachmentPreview({
   requestId: ownerId, index: previewIndex, element: nativeBody,
@@ -72,6 +74,18 @@ function markdownClick(event: MouseEvent) {
     try { id = decodeURIComponent(href.slice(1)); } catch { return; }
     const target = body.value?.querySelector(`[id="${CSS.escape(id)}"]`); target?.scrollIntoView();
   } else if (/^(https?:\/\/|mailto:)/i.test(href)) { void openPath(href).catch(() => {}); }
+  else { const path = localLinkPath(anchor); if (path) activateLink(path, event, true); }
+}
+// A link to a local file in the Markdown file on show carries what the author wrote; a relative one is relative to that file.
+function localLinkPath(anchor: Element): string | null {
+  const destination = anchor.getAttribute("data-local-link"), file = previewFile.value;
+  return destination && file ? localFileTarget(resolveMarkdownLink(destination, directoryOf(file.path))) : null;
+}
+function markdownContextMenu(event: MouseEvent) {
+  const anchor = (event.target as Element)?.closest?.("a[data-local-link]");
+  const path = anchor ? localLinkPath(anchor) : null;
+  if (!path) return;
+  event.preventDefault(); showLinkMenu(path);
 }
 </script>
 <template>
@@ -79,15 +93,19 @@ function markdownClick(event: MouseEvent) {
     <!-- Explicit regions preserve the pointer behavior of controls and preview content. -->
     <header class="attachment-preview-toolbar" data-tauri-drag-region>
       <span class="attachment-preview-title" data-tauri-drag-region>
+        <button v-if="canGoBack" type="button" class="attachment-preview-back" :title="t('popup.preview.back')" :aria-label="t('popup.preview.back')" @click="goBack()">‹ {{ t('popup.preview.back') }}</button>
         <span class="attachment-preview-name" :title="previewName || t('popup.replyImage')" data-tauri-drag-region>{{ previewName || t('popup.replyImage') }}</span>
         <span class="attachment-preview-mode-slot" data-tauri-drag-region>
           <button v-if="canToggle" type="button" class="attachment-preview-mode" @click="toggleRaw">{{ t(raw ? 'popup.preview.rendered' : 'popup.preview.raw') }}</button>
         </span>
       </span>
       <div class="attachment-preview-actions" data-tauri-drag-region>
-        <span class="attachment-preview-count" data-tauri-drag-region>{{ (previewIndex ?? 0) + 1 }} / {{ previewCount }}</span>
-        <button type="button" :disabled="previewIndex === 0" :aria-label="t('popup.prev')" @click="showPreview((previewIndex ?? 0) - 1)">‹</button>
-        <button type="button" :disabled="previewIndex === previewCount - 1" :aria-label="t('popup.next')" @click="showPreview((previewIndex ?? 0) + 1)">›</button>
+        <!-- A file the text links to is shown on its own: there is nothing to step through. -->
+        <template v-if="!isLinkedPreview">
+          <span class="attachment-preview-count" data-tauri-drag-region>{{ (previewIndex ?? 0) + 1 }} / {{ previewCount }}</span>
+          <button type="button" :disabled="previewIndex === 0" :aria-label="t('popup.prev')" @click="showPreview((previewIndex ?? 0) - 1)">‹</button>
+          <button type="button" :disabled="previewIndex === previewCount - 1" :aria-label="t('popup.next')" @click="showPreview((previewIndex ?? 0) + 1)">›</button>
+        </template>
         <button v-if="findSupported && !isReplyPreview" type="button" class="attachment-preview-find" :title="t('popup.find.attachmentShortcut')" :aria-label="t('popup.find.attachmentShortcut')" @click="openFind(true, 'attachment')">
           <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><circle cx="10" cy="10" r="7"/><path d="m15 15 6 6"/></svg>
         </button>
@@ -117,7 +135,7 @@ function markdownClick(event: MouseEvent) {
     </template>
     <div v-else ref="body" class="attachment-preview-body" tabindex="0" @scroll.passive="saveScroll()" @markdown-content-updated="refreshFind">
       <pre v-if="previewContent && (raw || previewContent.kind === 'text')" class="attachment-preview-text">{{ 'text' in previewContent ? previewContent.text : '' }}</pre>
-      <AttachmentMarkdownContent v-else-if="previewContent?.kind === 'markdown'" :key="previewIndex ?? 0" class="attachment-preview-markdown" @click="markdownClick" :html="previewContent.html" />
+      <AttachmentMarkdownContent v-else-if="previewContent?.kind === 'markdown'" :key="previewIndex ?? 0" class="attachment-preview-markdown" @click="markdownClick" @contextmenu="markdownContextMenu" :html="previewContent.html" />
       <template v-else-if="previewContent?.kind === 'diff'">
         <p v-if="previewContent.parsed.notice" class="attachment-preview-notice">{{ t('popup.preview.diffPlain') }}</p>
         <AttachmentDiffPreview :parsed="previewContent.parsed" :viewport="body" :top="top" :query="diffQuery" :case-sensitive="diffCaseSensitive" :current="diffCurrent" />

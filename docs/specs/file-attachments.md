@@ -130,3 +130,11 @@ AskHuman "请看看这个文档有没有问题？" -f ~/Documents/some_file.md -
 - 只影响拖出：单击预览、回车 / 菜单打开原文件不变（预览面板对已不存在的文件仍显示通用的「无法读取附件」）。
   合并窗口里把自家附件拖给另一个请求（`popup-inbox-collapse.md` R17）时，源附件已不存在也同样被挡。不改 stdout、IM 与 IPC 协议。
   实现为 `attachments_exist` 命令（逐路径答复，只有 `NotFound` 算不存在）与 `useAttachments.ts` 的 `missing` / `refusedDrag`。
+
+### 2026-11-21（正文里的本地文件链接）
+
+- 请求与历史条目正文里指向本地文件的链接与图片，单击同样在右侧面板预览；点击时由 `popup_preview_link` 把路径登记为所有者的
+  “链接文件”，追加在真实附件之后、共用 (所有者, 索引) 命令。链接文件**不是附件**：不进附件列表，不计入数量，不随请求投递、
+  不写入历史，请求结束或历史换条目时丢弃。规则见 [popup-file-links.md](popup-file-links.md)。
+- 附件胶囊（Popup 与历史详情）增加 ⌘（macOS）/ Ctrl（Windows、Linux）+单击：直接用系统默认程序打开原文件，等同回车，
+  不切换预览。

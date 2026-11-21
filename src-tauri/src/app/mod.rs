@@ -6,6 +6,7 @@ pub mod confirm_coordinator;
 pub mod coordinator;
 pub mod gui_host;
 mod invoke;
+pub mod linked_files;
 #[cfg(target_os = "linux")]
 mod linux_dpi;
 pub mod popup_activation;
@@ -936,6 +937,7 @@ fn launch(state: AppState, view: View, popup_ipc: Option<PopupIpc>) -> tauri::Re
         .manage(crate::attachment_preview::ReadGeneration::default())
         .manage(crate::attachment_preview::NativeGeneration::default())
         .manage(crate::attachment_preview::NativePermits::default())
+        .manage(linked_files::LinkedFiles::default())
         .manage(crate::local_image::Registry::default());
     #[cfg(target_os = "linux")]
     let builder = builder.manage(linux_dpi::PageScaleState::default());

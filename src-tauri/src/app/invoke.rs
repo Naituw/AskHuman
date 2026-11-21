@@ -188,6 +188,7 @@ fn core(invoke: Invoke<Wry>) -> bool {
         crate::commands::popup_preview_thumbnail,
         crate::commands::popup_preview_reveal,
         crate::commands::popup_preview_menu,
+        crate::commands::popup_preview_link,
         crate::commands::preview_attachments,
         crate::commands::read_image_data_url,
         crate::commands::attachments_exist,

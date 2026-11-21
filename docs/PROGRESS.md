@@ -1005,6 +1005,11 @@ gate（AskHuman 项目 todo #3），完成后删除本节。Markdown 浏览器�
 DPI / 多屏、X11 / Wayland 的定位限制，以及右键 / 更多菜单（`popup_preview_actions.rs` 现按所有者 ID 找窗口；
 本机没有非 macOS 编译目标，这部分只由 CI 编译）。同样不得以 macOS 证据代替。
 
+2026-11-21 正文里的本地文件链接与本地图片也进入这块面板（规格 `docs/specs/popup-file-links.md`）：单击预览、右键同一菜单、预览期间链接有选中态，
+附件胶囊加了 ⌘ / Ctrl+单击。macOS 以安装后的二进制与浏览器里的真实 `PopupView` 验证；这两平台还需补验：Ctrl+单击交给系统打开、右键 Tauri 菜单
+（`popup_preview_actions.rs`，只由 CI 编译）；Windows 的 `C:\`、UNC、`file:///C:/` 链接，以及面板里 Markdown 的相对链接在 `\\?\` 规范路径下的基准
+（`directoryOf`）；目录链接由资源管理器 / 文件管理器打开；含中文与空格的路径；历史窗口同样；选中态在深浅色与高 DPI 下的观感。同样不得以 macOS 证据代替。
+
 ## 待外部验收：Windows / Linux 合并窗口的稍后回答与小窗
 
 macOS 的「稍后回答」标记、小窗「待答 N」、拖入文件的停留展开 / 切换、切走缩回已实现，并由用户在真实窗口验收；需求决策见

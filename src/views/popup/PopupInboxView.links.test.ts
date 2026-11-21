@@ -22,7 +22,7 @@ function request(id: string): PopupInboxRequest {
 describe("file links in real shared popup forms", () => {
   beforeAll(() => markdownReady);
   afterEach(() => vi.unstubAllGlobals());
-  it("opens each request's own file and preserves both forms and their drafts", async () => {
+  it("previews each request's own linked file in its own panel and preserves both forms and their drafts", async () => {
     vi.stubGlobal("CSS", { escape: (value: string) => value });
     // This test is about forms and drafts, not motion: requests are switched without the body swap animation.
     vi.stubGlobal("matchMedia", () => ({ matches: true, addEventListener: vi.fn(), removeEventListener: vi.fn() }));
@@ -37,6 +37,11 @@ describe("file links in real shared popup forms", () => {
       }
       if (command === "popup_inbox_layout" || command === "popup_inbox_commit") return { revision: 1, sidebarWidth: 240, mainWidth: 560, mainHeight: 620, previewWidth: 0, frame: { width: 806, height: 620 } };
       if (command === "popup_agent_resolved") return {};
+      // The backend registers the linked file after the request's (here: no) attachments.
+      if (command === "popup_preview_link") {
+        const { path } = args as unknown as { path: string };
+        return { kind: "file", index: 0, file: { path, name: "report.md", size: 5, isImage: false } };
+      }
       if (command === "todos_list") return [];
       if (command === "popup_update_state") return { available: false, pending: false };
       return false;
@@ -51,7 +56,11 @@ describe("file links in real shared popup forms", () => {
       linkA.element.dispatchEvent(click);
       await flushPromises();
       expect(click.defaultPrevented).toBe(true);
-      expect(invoke).toHaveBeenCalledWith("open_path", { path: "/project-a/docs/report.md" });
+      // A click on a link to a local file reads the file in the panel; the system is not involved.
+      expect(invoke).toHaveBeenCalledWith("popup_preview_link", { requestId: "a", path: "/project-a/docs/report.md" });
+      expect(invoke).toHaveBeenCalledWith("popup_preview_read", expect.objectContaining({ requestId: "a", index: 0 }));
+      expect(invoke).not.toHaveBeenCalledWith("open_path", expect.anything());
+      expect(linkA.classes("is-active")).toBe(true);
       expect(wrapper.get('[data-inbox-request="a"] textarea').element).toBe(editorA.element);
       expect((editorA.element as HTMLTextAreaElement).value).toBe("draft A");
       expect(wrapper.findAll(".inbox-row")).toHaveLength(2);
@@ -61,11 +70,19 @@ describe("file links in real shared popup forms", () => {
       expect(wrapper.get('[data-inbox-request="b"]').isVisible()).toBe(true);
       const editorB = wrapper.get('[data-inbox-request="b"] textarea');
       await editorB.setValue("draft B");
+      // B's own selection is untouched by what A's link did.
+      expect(wrapper.get('[data-inbox-request="b"] .markdown-body a').classes("is-active")).toBe(false);
       await wrapper.get('[data-inbox-request="b"] .markdown-body a').trigger("click");
-      expect(invoke).toHaveBeenCalledWith("open_path", { path: "/project-b/docs/report.md" });
+      await flushPromises();
+      expect(invoke).toHaveBeenCalledWith("popup_preview_link", { requestId: "b", path: "/project-b/docs/report.md" });
+      expect(invoke).toHaveBeenCalledWith("popup_preview_read", expect.objectContaining({ requestId: "b", index: 0 }));
+      expect(wrapper.get('[data-inbox-request="b"] .markdown-body a').classes("is-active")).toBe(true);
+      expect(invoke).not.toHaveBeenCalledWith("open_path", expect.anything());
       await wrapper.get('[data-inbox-row="a"]').trigger("click");
       await flushPromises();
       expect(wrapper.get('[data-inbox-request="a"]').isVisible()).toBe(true);
+      // Each request keeps its own selection.
+      expect(wrapper.get('[data-inbox-request="a"] .markdown-body a').classes("is-active")).toBe(true);
       expect((editorA.element as HTMLTextAreaElement).value).toBe("draft A");
       expect((editorB.element as HTMLTextAreaElement).value).toBe("draft B");
       expect(wrapper.find(".status-error").exists()).toBe(false);

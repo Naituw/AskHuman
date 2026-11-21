@@ -11,13 +11,22 @@ const mocks = vi.hoisted(() => ({
   openPath: vi.fn(async () => {}),
   startDrag: vi.fn(async () => {}),
   attachmentsExist: vi.fn(async (paths: string[]) => paths.map(() => true)),
+  // The backend numbers linked files after the three attachments, in the order they are first asked for.
+  popupPreviewLink: vi.fn(async (_owner: string, path: string): Promise<unknown> => ({
+    kind: "file", index: 3, file: { path, name: path.split("/").pop(), size: 7, isImage: false },
+  })),
+  platform: { value: "mac" as "mac" | "windows" | "linux" },
   listeners: new Map<string, (event: { payload: unknown }) => void>(),
 }));
 vi.mock("@tauri-apps/api/core", () => ({ invoke: mocks.invoke }));
 vi.mock("../../lib/ipc", () => ({
   fileIconDataUrl: vi.fn(async () => ""), openPath: mocks.openPath, attachmentsExist: mocks.attachmentsExist,
-  readImageDataUrl: vi.fn(async () => ""), showAttachmentMenu: vi.fn(async () => {}),
+  readImageDataUrl: vi.fn(async () => ""), showAttachmentMenu: vi.fn(async () => {}), popupPreviewLink: mocks.popupPreviewLink,
 }));
+vi.mock("../../lib/platform", async importOriginal => {
+  const actual = await importOriginal<typeof import("../../lib/platform")>();
+  return { ...actual, primaryModifierPressed: (event: Pick<KeyboardEvent, "metaKey" | "ctrlKey">) => actual.primaryModifierPressed(event, mocks.platform.value) };
+});
 vi.mock("@tauri-apps/api/event", () => ({ listen: vi.fn(async (name: string, handler: (event: { payload: unknown }) => void) => {
   mocks.listeners.set(name, handler); return () => mocks.listeners.delete(name);
 }) }));
@@ -42,7 +51,7 @@ function key(el: HTMLElement, value: string, extra: KeyboardEventInit = {}) {
 async function settle() { for (let i=0; i<30; i++) await Promise.resolve(); }
 describe("same-window attachment activation", () => {
   beforeEach(() => {
-    vi.clearAllMocks(); mocks.listeners.clear(); document.body.replaceChildren();
+    vi.clearAllMocks(); mocks.listeners.clear(); document.body.replaceChildren(); mocks.platform.value = "mac";
     mocks.attachmentsExist.mockImplementation(async paths => paths.map(() => true));
     vi.stubGlobal("requestAnimationFrame", (callback: FrameRequestCallback) => { callback(0); return 1; });
   });
@@ -368,6 +377,172 @@ describe("same-window attachment activation", () => {
         expect(notice.attributes("role")).toBe("alert");
         expect(notice.text()).toBe("1.patch — The file no longer exists");
       } finally { wrapper.unmount(); state.disposeAttachments(); }
+    });
+  });
+  describe("⌘ / Ctrl click on an attachment", () => {
+    it("opens the original with the system and leaves the panel and the selection as they are", async () => {
+      const { state } = setup(); state.selectFile(1); await settle();
+      const layouts = () => mocks.invoke.mock.calls.filter(([command]) => command === "popup_preview_layout").length;
+      const before = layouts();
+      state.selectFile(0, new MouseEvent("click", { metaKey: true, detail: 1 }));
+      expect(mocks.openPath).toHaveBeenCalledExactlyOnceWith(files[0].path);
+      expect(state.selectedFile.value).toBe(1);
+      expect(state.focusedFile.value).toBe(0);
+      expect(layouts()).toBe(before);
+      // The second click of a double click does nothing, as for a plain click.
+      state.selectFile(0, new MouseEvent("click", { metaKey: true, detail: 2 }));
+      expect(mocks.openPath).toHaveBeenCalledTimes(1);
+      // Even with the panel closed it does not open it.
+      state.stopPreview(); await settle();
+      state.selectFile(2, new MouseEvent("click", { metaKey: true, detail: 1 }));
+      expect(mocks.openPath).toHaveBeenLastCalledWith(files[2].path);
+      expect(state.previewOpen.value).toBe(false);
+      state.disposeAttachments();
+    });
+
+    it("is ⌘ on macOS and Ctrl on Windows and Linux, and the other key is a plain click", async () => {
+      const { state } = setup();
+      // Ctrl-click is a right click on macOS.
+      state.selectFile(0, new MouseEvent("click", { ctrlKey: true, detail: 1 }));
+      expect(state.selectedFile.value).toBe(0); expect(mocks.openPath).not.toHaveBeenCalled();
+      mocks.platform.value = "windows";
+      state.selectFile(1, new MouseEvent("click", { ctrlKey: true, detail: 1 }));
+      expect(mocks.openPath).toHaveBeenCalledExactlyOnceWith(files[1].path);
+      state.selectFile(2, new MouseEvent("click", { metaKey: true, detail: 1 }));
+      expect(state.selectedFile.value).toBe(2); expect(mocks.openPath).toHaveBeenCalledTimes(1);
+      state.disposeAttachments();
+    });
+
+    it("works on a rendered chip", async () => {
+      const { state } = setup();
+      const wrapper = mount(MessageSection, {
+        global: {
+          plugins: [createI18n({ legacy: false, locale: "en", messages: { en } })],
+          provide: { [PopupCtxKey as symbol]: {
+            ...state, attachments: computed(() => files), request: ref(null), showDescription: ref(true),
+            messageText: ref(""), viewSource: ref(false), copiedMessage: ref(false), copyMessage: vi.fn(),
+          } as unknown as PopupContext },
+        },
+      });
+      try {
+        const chip = wrapper.findAll(".attachment")[1];
+        chip.element.dispatchEvent(new MouseEvent("click", { bubbles: true, detail: 1, metaKey: true }));
+        expect(mocks.openPath).toHaveBeenCalledExactlyOnceWith(files[1].path);
+        expect(state.previewOpen.value).toBe(false);
+        chip.element.dispatchEvent(new MouseEvent("click", { bubbles: true, detail: 1 }));
+        expect(state.selectedFile.value).toBe(1);
+      } finally { wrapper.unmount(); state.disposeAttachments(); }
+    });
+  });
+  describe("a file the text links to", () => {
+    const link = "/proj/docs/report.md";
+    const click = () => new MouseEvent("click", { detail: 1 });
+    async function openLinked(state: ReturnType<typeof setup>["state"]) { state.activateLink(link, click()); await settle(); }
+
+    it("is shown by the index the backend gave and handled by every command like an attachment", async () => {
+      const { state } = setup(); await openLinked(state);
+      expect(mocks.popupPreviewLink).toHaveBeenCalledExactlyOnceWith("request-1", link);
+      expect(state.selectedFile.value).toBe(3);
+      expect(state.previewFile.value).toMatchObject({ path: link, name: "report.md" });
+      expect(state.previewName.value).toBe("report.md");
+      expect(state.isLinkedPreview.value).toBe(true);
+      expect(state.activeLinkPaths.value).toEqual(new Set([link]));
+      expect(mocks.invoke).toHaveBeenCalledWith("popup_preview_read", expect.objectContaining({ requestId: "request-1", index: 3 }));
+      state.showPreviewMenu(); await state.revealFile();
+      expect(mocks.invoke).toHaveBeenCalledWith("popup_preview_menu", { requestId: "request-1", index: 3 });
+      expect(mocks.invoke).toHaveBeenCalledWith("popup_preview_reveal", { requestId: "request-1", index: 3 });
+      state.openPreviewFile();
+      expect(mocks.openPath).toHaveBeenCalledExactlyOnceWith(link);
+      state.disposeAttachments();
+    });
+
+    it("gives way to an attachment chip, which brings the attachment navigation back", async () => {
+      const { state } = setup(); await openLinked(state);
+      state.selectFile(1); await settle();
+      expect(state.selectedFile.value).toBe(1);
+      expect(state.isLinkedPreview.value).toBe(false);
+      expect(state.previewCount.value).toBe(3);
+      expect(state.activeLinkPaths.value.has(link)).toBe(false);
+      // The same link opens it again, through the backend.
+      state.activateLink(link, click()); await settle();
+      expect(state.selectedFile.value).toBe(3);
+      expect(mocks.popupPreviewLink).toHaveBeenCalledTimes(2);
+      state.disposeAttachments();
+    });
+
+    it("collapses on a second click on the link, as an attachment's chip does", async () => {
+      const { state } = setup(); await openLinked(state);
+      state.activateLink(link, click()); await settle();
+      expect(state.previewOpen.value).toBe(false);
+      expect(mocks.invoke).toHaveBeenLastCalledWith("popup_preview_layout", expect.objectContaining({ open: false }));
+      expect(state.activeLinkPaths.value.size).toBe(0);
+      state.disposeAttachments();
+    });
+
+    it("is not stepped through by the toolbar's arrows", async () => {
+      const { state } = setup(); await openLinked(state);
+      const toolbar = document.createElement("div"); toolbar.className = "attachment-preview-toolbar";
+      expect(state.handleAttachmentKey(key(toolbar, "ArrowLeft"))).toBe(false);
+      expect(state.handleAttachmentKey(key(toolbar, "ArrowRight"))).toBe(false);
+      expect(state.selectedFile.value).toBe(3);
+      // Escape still closes the panel.
+      expect(state.handleAttachmentKey(key(toolbar, "Escape"))).toBe(true);
+      expect(state.previewOpen.value).toBe(false);
+      state.disposeAttachments();
+    });
+
+    it("follows the menu's quick look and copy-path actions by index, once registered by this window", async () => {
+      const { state } = setup(); await state.initAttachmentPreviewListeners();
+      const write = vi.fn(async () => {});
+      Object.defineProperty(navigator, "clipboard", { value: { writeText: write }, configurable: true });
+      // The menu was asked for after the link was registered: the quick look finds the file.
+      state.activateLink(link, click()); await settle();
+      state.stopPreview(); await settle();
+      mocks.listeners.get("popup-preview-show")!({ payload: { requestId: "request-1", index: 3 } });
+      expect(state.selectedFile.value).toBe(3);
+      mocks.listeners.get("popup-preview-copy-path")!({ payload: { requestId: "request-1", index: 3 } });
+      expect(write).toHaveBeenCalledExactlyOnceWith(link);
+      // An index nobody registered here names nothing.
+      state.stopPreview(); await settle();
+      mocks.listeners.get("popup-preview-show")!({ payload: { requestId: "request-1", index: 9 } });
+      expect(state.previewOpen.value).toBe(false);
+      mocks.listeners.get("popup-preview-copy-path")!({ payload: { requestId: "request-1", index: 9 } });
+      expect(write).toHaveBeenCalledTimes(1);
+      state.disposeAttachments();
+    });
+
+    it("reports a failed browser open for the linked file on the owner it was asked of", async () => {
+      const { state } = setup(); await openLinked(state);
+      const original = mocks.invoke.getMockImplementation()!;
+      mocks.invoke.mockImplementation(async (command, args) => {
+        if (command === "popup_preview_open_browser") throw "limit";
+        return original(command, args);
+      });
+      await state.openBrowser(); await settle();
+      expect(state.browserErrorFile.value).toMatchObject({ path: link });
+      expect(state.browserActionError.value).toBe("limit");
+      mocks.invoke.mockImplementation(original); state.disposeAttachments();
+    });
+
+    it("is forgotten when another owner takes the window, and the next click is asked of the new owner", async () => {
+      const { state, requestId } = setup(); await openLinked(state);
+      requestId.value = "request-2"; await settle();
+      expect(state.fileAt(3)).toBeNull();
+      expect(state.previewFile.value).toBeNull();
+      expect(state.activeLinkPaths.value.size).toBe(0);
+      state.activateLink(link, click()); await settle();
+      expect(mocks.popupPreviewLink).toHaveBeenLastCalledWith("request-2", link);
+      state.disposeAttachments();
+    });
+
+    it("opens the system's way when the link names something the backend would not register", async () => {
+      const error = vi.spyOn(console, "error").mockImplementation(() => {});
+      const { state } = setup();
+      mocks.popupPreviewLink.mockRejectedValueOnce("too many linked files");
+      state.activateLink(link, click()); await settle();
+      expect(mocks.openPath).toHaveBeenCalledExactlyOnceWith(link);
+      expect(state.previewOpen.value).toBe(false);
+      error.mockRestore(); state.disposeAttachments();
     });
   });
 });

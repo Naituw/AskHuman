@@ -16,6 +16,7 @@
 .attachment-preview-title { display: flex; align-items: center; gap: 6px; flex: 1; min-width: 0; }
 .attachment-preview-name { flex: 0 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 13px; font-weight: 600; }
 .attachment-preview-mode-slot { flex: 0 0 100px; }
+.attachment-preview .attachment-preview-back { flex: 0 0 auto; color: var(--accent); }
 .attachment-preview-actions { margin-left: auto; display: flex; align-items: center; gap: 3px; flex-shrink: 0; font-size: 11px; white-space: nowrap; }
 .attachment-preview-count { min-width: 38px; text-align: center; font-variant-numeric: tabular-nums; }
 .attachment-preview button { border: 1px solid transparent; border-radius: 5px; background: transparent; color: var(--text-primary); padding: 4px 6px; font-size: 12px; cursor: pointer; white-space: nowrap; }

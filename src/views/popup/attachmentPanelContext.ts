@@ -13,6 +13,9 @@ export type AttachmentPanelContext = Pick<Attachments,
   | "browserActionError" | "browserErrorIndex" | "showPreviewMenu" | "revealFile"
   | "panelContent" | "panelLoading" | "panelReadingState" | "readingState"
   | "onAttachmentDragStart" | "previewActionError" | "previewTransition" | "previewLayout"
+  // Files the text links to (docs/specs/popup-file-links.md): the panel hides its navigation for them and offers
+  // Back, the text routes clicks and draws the selected state.
+  | "isLinkedPreview" | "canGoBack" | "goBack" | "activateLink" | "showLinkMenu" | "activeLinkPaths"
 > & {
   /** Owner id of the attachments on show: the request id in a Popup, `history:<entry id>` in History. */
   ownerId: Readonly<Ref<string>>;
@@ -41,4 +44,9 @@ export function useAttachmentPanelContext(): AttachmentPanelContext {
   const ctx = inject(AttachmentPanelKey);
   if (!ctx) throw new Error("attachment panel context not provided");
   return ctx;
+}
+
+/** The context when the window has a panel; a text rendered elsewhere (the Agent console) has none and keeps opening files with the system. */
+export function useOptionalAttachmentPanel(): AttachmentPanelContext | null {
+  return inject(AttachmentPanelKey, null);
 }

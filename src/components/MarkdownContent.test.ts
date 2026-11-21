@@ -1,9 +1,11 @@
 import { enableAutoUnmount, flushPromises, mount } from "@vue/test-utils";
+import { nextTick, shallowRef } from "vue";
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { i18n } from "../i18n";
 import { markdownReady } from "../lib/markdown";
 import { applyTheme } from "../lib/theme";
 import { openPath, localImageCreateScope, localImagePrepare, localImageReleaseScope } from "../lib/ipc";
+import { AttachmentPanelKey, type AttachmentPanelContext } from "../views/popup/attachmentPanelContext";
 import MarkdownContent from "./MarkdownContent.vue";
 
 const renderMermaid = vi.hoisted(() => vi.fn());
@@ -362,5 +364,194 @@ describe("MarkdownContent", () => {
     expect(wrapper.find(".mermaid-source-toggle").text()).toBe(
       "查看 Mermaid 源码",
     );
+  });
+});
+
+describe("MarkdownContent in a window with an attachment panel", () => {
+  beforeAll(() => markdownReady);
+
+  beforeEach(() => {
+    vi.mocked(openPath).mockClear();
+    vi.mocked(localImageCreateScope).mockReset().mockResolvedValue("scope");
+    vi.mocked(localImagePrepare).mockReset().mockResolvedValue({ token: "image", width: 320, height: 180 });
+    vi.unstubAllGlobals();
+    renderMermaid.mockReset();
+    renderMermaid.mockResolvedValue(renderedDocument);
+    i18n.global.locale.value = "en";
+    applyTheme("light");
+  });
+
+  function panel() {
+    const activeLinkPaths = shallowRef<ReadonlySet<string>>(new Set());
+    const context = { activateLink: vi.fn(), showLinkMenu: vi.fn(), activeLinkPaths } as unknown as AttachmentPanelContext & {
+      activateLink: ReturnType<typeof vi.fn>; showLinkMenu: ReturnType<typeof vi.fn>;
+    };
+    return { context, activeLinkPaths };
+  }
+  async function mountIn(context: AttachmentPanelContext, source: string, props: Record<string, unknown> = {}) {
+    const wrapper = mount(MarkdownContent, {
+      props: { source, baseDirectory: "/project", ...props },
+      global: { plugins: [i18n], provide: { [AttachmentPanelKey as symbol]: context } },
+      attachTo: document.body,
+    });
+    await flushPromises();
+    return wrapper;
+  }
+  const mouse = (type: string, init: MouseEventInit = {}) => new MouseEvent(type, { bubbles: true, cancelable: true, ...init });
+
+  it("gives a click on a link to a local file to the panel, as the click was, and not to the system", async () => {
+    const { context } = panel();
+    const wrapper = await mountIn(context, "[report](docs/report.md:82) [abs](/Users/me/My%20Notes.md#L3) [site](https://example.com)");
+    const [report, abs, site] = wrapper.findAll("a");
+    const click = mouse("click", { metaKey: true, detail: 1 });
+    report.element.dispatchEvent(click);
+    expect(click.defaultPrevented).toBe(true);
+    expect(context.activateLink).toHaveBeenCalledExactlyOnceWith("/project/docs/report.md", click);
+    abs.element.dispatchEvent(mouse("click"));
+    expect(context.activateLink).toHaveBeenLastCalledWith("/Users/me/My Notes.md", expect.any(MouseEvent));
+    expect(openPath).not.toHaveBeenCalled();
+    // Web links keep going to the system.
+    site.element.dispatchEvent(mouse("click"));
+    expect(context.activateLink).toHaveBeenCalledTimes(2);
+    expect(openPath).toHaveBeenCalledExactlyOnceWith("https://example.com/");
+  });
+
+  it("stops the click at the text, so no outer handler opens the file a second time", async () => {
+    const { context } = panel();
+    const outer = vi.fn();
+    const wrapper = await mountIn(context, "[report](/tmp/report.md)");
+    wrapper.element.parentElement!.addEventListener("click", outer);
+    wrapper.get("a").element.dispatchEvent(mouse("click"));
+    expect(outer).not.toHaveBeenCalled();
+    expect(context.activateLink).toHaveBeenCalledTimes(1);
+  });
+
+  it("leaves a link nobody can resolve inert, with no project to be relative to", async () => {
+    const { context } = panel();
+    const wrapper = await mountIn(context, "[nowhere](docs/report.md) [ftp](ftp://example.com/a)", { baseDirectory: "" });
+    for (const anchor of wrapper.findAll("a")) {
+      const click = mouse("click");
+      anchor.element.dispatchEvent(click);
+      expect(click.defaultPrevented).toBe(true);
+    }
+    expect(context.activateLink).not.toHaveBeenCalled();
+    expect(openPath).not.toHaveBeenCalled();
+  });
+
+  it("opens the attachment menu on a right click of a local link or image, and leaves other targets alone", async () => {
+    const { context } = panel();
+    const wrapper = await mountIn(context, "[report](docs/report.md) [site](https://example.com) ![chart](/tmp/chart.png)");
+    const [report, site] = wrapper.findAll("a");
+    const right = mouse("contextmenu");
+    report.element.dispatchEvent(right);
+    expect(right.defaultPrevented).toBe(true);
+    expect(context.showLinkMenu).toHaveBeenCalledExactlyOnceWith("/project/docs/report.md");
+    const web = mouse("contextmenu");
+    site.element.dispatchEvent(web);
+    expect(web.defaultPrevented).toBe(false);
+    const image = mouse("contextmenu");
+    wrapper.get("img").element.dispatchEvent(image);
+    expect(image.defaultPrevented).toBe(true);
+    expect(context.showLinkMenu).toHaveBeenLastCalledWith("/tmp/chart.png");
+    const text = mouse("contextmenu");
+    wrapper.element.dispatchEvent(text);
+    expect(text.defaultPrevented).toBe(false);
+    expect(context.showLinkMenu).toHaveBeenCalledTimes(2);
+  });
+
+  it("reads a local image in the panel on click or Enter, names the file on hover, and keeps the failed-image button on the system", async () => {
+    vi.mocked(localImagePrepare).mockRejectedValueOnce("limit");
+    const { context } = panel();
+    const wrapper = await mountIn(context, "![large](/tmp/large.png) ![small](/tmp/small.png)");
+    const image = wrapper.get("img");
+    expect(image.attributes("title")).toBe("/tmp/small.png");
+    expect(image.attributes("aria-label")).toBe("small · /tmp/small.png");
+    const click = mouse("click", { ctrlKey: true });
+    image.element.dispatchEvent(click);
+    expect(context.activateLink).toHaveBeenCalledExactlyOnceWith("/tmp/small.png", click);
+    await image.trigger("keydown", { key: "Enter" });
+    expect(context.activateLink).toHaveBeenLastCalledWith("/tmp/small.png", { detail: 0, metaKey: false, ctrlKey: false });
+    await image.trigger("keydown", { key: " " });
+    expect(context.activateLink).toHaveBeenCalledTimes(3);
+    // A modified key press is none of the component's business.
+    await image.trigger("keydown", { key: "Enter", metaKey: true });
+    await image.trigger("keydown", { key: "a" });
+    expect(context.activateLink).toHaveBeenCalledTimes(3);
+    // The file that could not be shown inline is still the user's to open, with the system.
+    await wrapper.get(".markdown-image-error").trigger("click");
+    expect(openPath).toHaveBeenCalledExactlyOnceWith("/tmp/large.png");
+    expect(context.activateLink).toHaveBeenCalledTimes(3);
+    await wrapper.get(".markdown-image-error").trigger("contextmenu");
+    expect(context.showLinkMenu).not.toHaveBeenCalled();
+  });
+
+  it("prefers the image over the link it sits in", async () => {
+    const { context } = panel();
+    const wrapper = await mountIn(context, "[![chart](/tmp/chart.png)](/tmp/report.md)");
+    wrapper.get("img").element.dispatchEvent(mouse("click"));
+    expect(context.activateLink).toHaveBeenCalledExactlyOnceWith("/tmp/chart.png", expect.any(MouseEvent));
+    wrapper.get("a").element.dispatchEvent(mouse("click"));
+    expect(context.activateLink).toHaveBeenLastCalledWith("/tmp/report.md", expect.any(MouseEvent));
+  });
+
+  it("selects every link and image whose file is on show, and follows the panel", async () => {
+    const { context, activeLinkPaths } = panel();
+    const wrapper = await mountIn(context, "[a](/tmp/a.md) [again](/tmp/a.md:7) [b](/tmp/b.md) ![chart](/tmp/chart.png)");
+    const state = () => [...wrapper.findAll("a, img")].map(node => [node.classes("is-active"), node.attributes("aria-current") ?? null]);
+    expect(state()).toEqual([[false, null], [false, null], [false, null], [false, null]]);
+    activeLinkPaths.value = new Set(["/tmp/a.md"]);
+    await nextTick();
+    expect(state()).toEqual([[true, "true"], [true, "true"], [false, null], [false, null]]);
+    activeLinkPaths.value = new Set(["/tmp/chart.png", "/tmp/b.md"]);
+    await nextTick();
+    expect(state()).toEqual([[false, null], [false, null], [true, "true"], [true, "true"]]);
+    activeLinkPaths.value = new Set();
+    await nextTick();
+    expect(state().every(([active, current]) => !active && current === null)).toBe(true);
+  });
+
+  it("selects again after the text is drawn again: new source, new language, new theme", async () => {
+    const { context, activeLinkPaths } = panel();
+    const wrapper = await mountIn(context, "[a](/tmp/a.md) [b](/tmp/b.md)");
+    activeLinkPaths.value = new Set(["/tmp/b.md"]);
+    await nextTick();
+    const selected = () => wrapper.findAll("a").map(anchor => anchor.classes("is-active"));
+    expect(selected()).toEqual([false, true]);
+    await wrapper.setProps({ source: "intro [b](/tmp/b.md) and [a](/tmp/a.md)" }); await flushPromises();
+    expect(selected()).toEqual([true, false]);
+    i18n.global.locale.value = "zh"; await flushPromises();
+    expect(selected()).toEqual([true, false]);
+    applyTheme("dark"); await flushPromises();
+    expect(selected()).toEqual([true, false]);
+    // A new document with the file on show has it selected from the start.
+    await wrapper.setProps({ source: "[c](/tmp/b.md)" }); await flushPromises();
+    expect(selected()).toEqual([true]);
+    expect(wrapper.get("a").attributes("aria-current")).toBe("true");
+  });
+
+  it("keeps a failed image's replacement unselected", async () => {
+    vi.mocked(localImagePrepare).mockRejectedValueOnce("limit");
+    const { context, activeLinkPaths } = panel();
+    activeLinkPaths.value = new Set(["/tmp/large.png"]);
+    const wrapper = await mountIn(context, "![large](/tmp/large.png)");
+    expect(wrapper.find("img").exists()).toBe(false);
+    expect(wrapper.get(".markdown-image-error").classes("is-active")).toBe(false);
+  });
+
+  it("opens everything with the system when the window has no panel", async () => {
+    const wrapper = mount(MarkdownContent, {
+      props: { source: "[report](docs/report.md) ![chart](/tmp/chart.png)", baseDirectory: "/project" },
+      global: { plugins: [i18n] },
+    });
+    await flushPromises();
+    expect(wrapper.get("img").attributes("title")).toBe("Open original image");
+    wrapper.get("a").element.dispatchEvent(mouse("click"));
+    expect(openPath).toHaveBeenLastCalledWith("/project/docs/report.md");
+    wrapper.get("img").element.dispatchEvent(mouse("click"));
+    expect(openPath).toHaveBeenLastCalledWith("/tmp/chart.png");
+    const right = mouse("contextmenu");
+    wrapper.get("a").element.dispatchEvent(right);
+    expect(right.defaultPrevented).toBe(false);
+    expect(wrapper.get("a").classes("is-active")).toBe(false);
   });
 });

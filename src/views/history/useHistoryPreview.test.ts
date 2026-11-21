@@ -8,6 +8,7 @@ const mocks = vi.hoisted(() => ({
   invoke: vi.fn(),
   listeners: new Map<string, (event: { payload: unknown }) => void>(),
   closeWindow: vi.fn(async () => {}),
+  link: vi.fn(),
 }));
 vi.mock("@tauri-apps/api/core", () => ({
   invoke: mocks.invoke,
@@ -26,12 +27,14 @@ vi.mock("../../lib/ipc", () => ({
   openPath: vi.fn(async () => {}),
   readImageDataUrl: vi.fn(async () => ""),
   showAttachmentMenu: vi.fn(async () => {}),
+  popupPreviewLink: mocks.link,
   localImageCreateScope: vi.fn(async () => "scope"),
   localImagePrepare: vi.fn(async (_scope: string, path: string) => ({ token: path, width: 10, height: 10 })),
   localImageReleaseAsset: vi.fn(async () => {}),
   localImageReleaseScope: vi.fn(async () => {}),
 }));
 import { localImagePrepare, localImageReleaseScope } from "../../lib/ipc";
+import { desktopPlatform } from "../../lib/platform";
 import { useHistoryPreview, type HistoryPreview } from "./useHistoryPreview";
 
 function entryOf(id: string, files: string[] = [], replyImages: string[][] = []): HistoryEntry {
@@ -68,6 +71,9 @@ describe("history attachment preview controller", () => {
   beforeEach(() => {
     vi.clearAllMocks(); mocks.listeners.clear(); document.body.replaceChildren();
     mocks.content = { kind: "text", text: "hello" };
+    // The backend registers a linked file after the entry's own attachments, here always as the third file.
+    mocks.link.mockImplementation(async (_owner: string, path: string) =>
+      ({ kind: "file", index: 2, file: { path, name: path.split("/").pop()!, size: 1, isImage: false } }));
     mocks.invoke.mockImplementation(async (command: string, args: Record<string, unknown>) => {
       if (command === "popup_preview_prepare" || command === "popup_preview_layout") {
         return { revision: args.version, side: args.open ? "right" : "closed", mainWidth: 600, mainHeight: 620 };
@@ -218,5 +224,73 @@ describe("history attachment preview controller", () => {
     expect(mocks.listeners.size).toBe(0);
     preview.attach.selectFile(0);
     expect(press("Escape").defaultPrevented).toBe(false);
+  });
+
+  describe("a file the entry's text links to", () => {
+    const click = { detail: 1, metaKey: false, ctrlKey: false };
+    const linked = "/tmp/linked.md";
+
+    it("is registered under the history owner id and read by the index the backend hands back", async () => {
+      const { preview } = host(ref(entryOf("a", ["/tmp/a.md", "/tmp/b.md"])));
+      preview.attach.activateLink(linked, click); await settle();
+      expect(mocks.link).toHaveBeenCalledExactlyOnceWith("history:a", linked);
+      expect(mocks.invoke).toHaveBeenCalledWith("popup_preview_read", expect.objectContaining({ requestId: "history:a", index: 2 }));
+      expect(preview.attach.previewFile.value?.path).toBe(linked);
+      expect(preview.attach.isLinkedPreview.value).toBe(true);
+      expect(preview.attach.activeLinkPaths.value.has(linked)).toBe(true);
+      // The panel is handed the very same state, so the text and the panel agree.
+      expect(preview.panel.activeLinkPaths).toBe(preview.attach.activeLinkPaths);
+      expect(preview.panel.isLinkedPreview).toBe(preview.attach.isLinkedPreview);
+      expect(preview.panel.activateLink).toBe(preview.attach.activateLink);
+    });
+
+    it("collapses, with its selection and registration, when another entry takes the window", async () => {
+      const entry = shallowRef<HistoryEntry | null>(entryOf("a", ["/tmp/a.md", "/tmp/b.md"]));
+      const { preview } = host(entry);
+      preview.attach.activateLink(linked, click); await settle();
+      entry.value = entryOf("b", ["/tmp/c.md"]);
+      expect(preview.attach.previewOpen.value).toBe(false);
+      expect(preview.attach.previewFile.value).toBeNull();
+      expect(preview.attach.activeLinkPaths.value.size).toBe(0);
+      expect(preview.attach.fileAt(2)).toBeNull();
+      await settle();
+      preview.attach.activateLink(linked, click); await settle();
+      expect(mocks.link).toHaveBeenLastCalledWith("history:b", linked);
+    });
+
+    it("stays on show when a reload brings the same entry again", async () => {
+      const entry = shallowRef<HistoryEntry | null>(entryOf("a", ["/tmp/a.md", "/tmp/b.md"]));
+      const { preview } = host(entry);
+      preview.attach.activateLink(linked, click); await settle();
+      entry.value = entryOf("a", ["/tmp/a.md", "/tmp/b.md"]); await settle();
+      expect(preview.attach.previewFile.value?.path).toBe(linked);
+      expect(preview.attach.activeLinkPaths.value.has(linked)).toBe(true);
+      expect(mocks.link).toHaveBeenCalledTimes(1);
+    });
+
+    it("is opened with the system by ⌘ / Ctrl + click, which leaves the panel alone", async () => {
+      const { openPath } = await import("../../lib/ipc");
+      const { preview } = host(ref(entryOf("a", ["/tmp/a.md"])));
+      // The one modifier the platform advertises: ⌘ on macOS, Ctrl elsewhere.
+      const modified = desktopPlatform === "mac"
+        ? { detail: 1, metaKey: true, ctrlKey: false } : { detail: 1, metaKey: false, ctrlKey: true };
+      preview.attach.activateLink(linked, modified); await settle();
+      expect(openPath).toHaveBeenCalledExactlyOnceWith(linked);
+      expect(mocks.link).not.toHaveBeenCalled();
+      expect(preview.attach.previewOpen.value).toBe(false);
+    });
+
+    it("opens an attachment's original with ⌘ / Ctrl + click on its chip, and previews it with a plain click", async () => {
+      const { openPath } = await import("../../lib/ipc");
+      const { preview } = host(ref(entryOf("a", ["/tmp/a.md", "/tmp/b.md"])));
+      const mac = desktopPlatform === "mac";
+      preview.attach.selectFile(1, new MouseEvent("click", { metaKey: mac, ctrlKey: !mac })); await settle();
+      expect(openPath).toHaveBeenCalledExactlyOnceWith("/tmp/b.md");
+      expect(preview.attach.previewOpen.value).toBe(false);
+      preview.attach.selectFile(1, new MouseEvent("click")); await settle();
+      expect(preview.attach.previewFile.value?.path).toBe("/tmp/b.md");
+      expect(preview.attach.isLinkedPreview.value).toBe(false);
+      expect(openPath).toHaveBeenCalledTimes(1);
+    });
   });
 });

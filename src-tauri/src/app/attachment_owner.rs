@@ -8,6 +8,11 @@
 //!
 //! The window label and the owner kind must agree: a Popup cannot name a history entry, and the
 //! History window cannot name a request. Any other window owns nothing.
+//!
+//! The one exception is a file the owner's text links to: when the user clicks the link, the
+//! frontend names its path to `popup_preview_link`, which registers it behind the owner's real
+//! attachments (see `linked_files`). From then on it is addressed by index like any attachment.
+use super::linked_files::LinkedFiles;
 use crate::attachment_preview::{
     NativeGeneration, NativePermits, ReadGeneration, HISTORY_OWNER_PREFIX,
 };
@@ -37,9 +42,8 @@ fn unavailable() -> String {
     "attachment preview is unavailable in this window".to_string()
 }
 
-/// The owner's attachments. `require_presented` only matters for a Popup, whose request must
-/// already be on screen; a history entry has no such phase.
-pub fn files(
+/// The owner's real attachments, without the files its text links to.
+fn attachments(
     window: &Window,
     owner_id: &str,
     require_presented: bool,
@@ -51,6 +55,35 @@ pub fn files(
             .ok_or_else(|| "history entry no longer exists".to_string()),
         _ => Err(unavailable()),
     }
+}
+
+/// What the owner can preview: its attachments, then the files its text links to (registered by
+/// [`link`] when the user clicked them, see `linked_files`). One index space, so every command
+/// that takes an index treats both alike. `require_presented` only matters for a Popup, whose
+/// request must already be on screen; a history entry has no such phase.
+pub fn files(
+    window: &Window,
+    owner_id: &str,
+    require_presented: bool,
+) -> Result<Vec<FileAttachment>, String> {
+    let mut files = attachments(window, owner_id, require_presented)?;
+    if let Some(linked) = window.app_handle().try_state::<LinkedFiles>() {
+        files.extend(linked.of(owner_id));
+    }
+    Ok(files)
+}
+
+/// Register a file the owner's text links to and return its index. The one place a preview path
+/// comes from the frontend; the caller has already looked at the file.
+pub fn link(window: &Window, owner_id: &str, file: FileAttachment) -> Result<usize, String> {
+    let attachments = attachments(window, owner_id, true)?;
+    let linked = window
+        .app_handle()
+        .try_state::<LinkedFiles>()
+        .ok_or_else(unavailable)?;
+    linked
+        .add(owner_id, &attachments, file)
+        .map_err(str::to_owned)
 }
 
 /// One attachment of the owner; the index is checked against the owner's own list.
@@ -78,9 +111,13 @@ pub fn check_window(window: &Window, owner_id: &str) -> Result<(), String> {
 }
 
 /// Everything the History window leaves behind when it closes: its panel geometry, the read
-/// generations and the native-preview permits. A window opened later starts from nothing.
+/// generations, the native-preview permits and the files its entry's text linked to. A window
+/// opened later starts from nothing.
 pub fn forget_history(app: &AppHandle) {
     super::popup_preview::reset_history(app);
+    if let Some(state) = app.try_state::<LinkedFiles>() {
+        state.forget_history();
+    }
     if let Some(state) = app.try_state::<ReadGeneration>() {
         state.forget_history();
     }

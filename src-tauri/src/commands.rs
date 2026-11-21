@@ -2083,6 +2083,34 @@ pub fn popup_preview_menu(
         .map_err(|e| e.to_string())
 }
 
+/// Register a file that the owner's text (or a previewed Markdown file) links to, so the preview
+/// commands can address it by index like an attachment. The one preview command that takes a path
+/// from the frontend; the path is looked at and bounded here, and only a user gesture reaches it
+/// (docs/specs/popup-file-links.md §4).
+#[tauri::command]
+pub async fn popup_preview_link(
+    window: tauri::Window,
+    request_id: String,
+    path: String,
+) -> Result<crate::app::linked_files::Linked, String> {
+    use crate::app::linked_files::{resolve, Linked, Resolved};
+    // Look at nothing on disk for an owner this window may not preview.
+    crate::app::attachment_owner::files(&window, &request_id, true)?;
+    let resolved = tauri::async_runtime::spawn_blocking(move || resolve(&path))
+        .await
+        .map_err(|e| e.to_string())?
+        .map_err(str::to_owned)?;
+    match resolved {
+        Resolved::Other => Ok(Linked::Other),
+        Resolved::File(file) => {
+            // The owner may have finished while the file was being looked at: register against
+            // the owner as it is now.
+            let index = crate::app::attachment_owner::link(&window, &request_id, file.clone())?;
+            Ok(Linked::File { index, file })
+        }
+    }
+}
+
 /// Read an image file into a base64 data URL. Shared by `read_image_data_url` and the popup's
 /// drop reader (`popup_drop::popup_drop_read_image`), which needs the `io::Error` to say why.
 pub(crate) fn image_data_url(path: &str) -> std::io::Result<String> {

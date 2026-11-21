@@ -508,6 +508,14 @@ export interface FileAttachment {
   isImage: boolean;
 }
 
+/**
+ * What `popup_preview_link` made of a path the user clicked in a text: a file the preview commands now
+ * address by `index` (after the owner's attachments), or something the system should open (a directory…).
+ */
+export type LinkedFile =
+  | { kind: "file"; index: number; file: FileAttachment }
+  | { kind: "other" };
+
 export interface ImageAttachment {
   data: string;
   mediaType: string;
