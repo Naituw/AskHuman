@@ -1420,6 +1420,10 @@
   gap: var(--space-3);
   margin-top: var(--space-2);
 }
+/* Side by side, not stacked: the spacing between stacked fields would push the second one down. */
+.ios-ports > .field + .field {
+  margin-top: 0;
+}
 .ios-import {
   margin-top: var(--space-3);
 }

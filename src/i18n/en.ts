@@ -467,6 +467,8 @@ export default {
       ios: {
         title: "iOS app channel",
         desc: "Answer questions from the AskHuman app on your iPhone. Messages are end-to-end encrypted: the broker only sees ciphertext. You bring your own MQTT broker and a push relay.",
+        // Shown instead of `desc` when this build has a public relay built in.
+        descPublicRelay: "Answer questions from the AskHuman app on your iPhone. Messages are end-to-end encrypted: the broker only sees ciphertext. You bring your own MQTT broker; pushes go through the public relay unless you choose your own.",
         connectionTitle: "Connection",
         brokerLabel: "Broker service",
         brokerGuide: "Step by step",

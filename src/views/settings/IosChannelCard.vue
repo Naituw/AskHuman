@@ -168,7 +168,9 @@ function pushWarning(phone: IosPhone): string {
         <span class="track"></span>
       </label>
     </div>
-    <p class="card-desc">{{ t("settings.experimental.ios.desc") }}</p>
+    <p class="card-desc">
+      {{ t(defaultRelayUrl ? "settings.experimental.ios.descPublicRelay" : "settings.experimental.ios.desc") }}
+    </p>
 
     <template v-if="ios.enabled">
       <p class="badge ios-status">

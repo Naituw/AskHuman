@@ -653,6 +653,8 @@ describe("IosChannelCard", () => {
       expect(wrapper.find(".ios-relay-note").exists()).toBe(false);
       expect(wrapper.get(".ios-relay label").text()).toBe("Push relay URL");
       expect(relayInput(wrapper).element.value).toBe("https://relay.example.com");
+      // The card's introduction agrees: with no public relay the user brings one.
+      expect(wrapper.get(".card-desc").text()).toContain("You bring your own MQTT broker and a push relay.");
       wrapper.unmount();
     });
 
@@ -668,6 +670,10 @@ describe("IosChannelCard", () => {
       expect(note).toContain("free, best effort, no availability guarantee");
       expect(note).toContain("stores nothing");
       expect(note).toContain("cannot read questions or answers");
+      // The card's introduction agrees: only the broker is the user's to bring.
+      const intro = wrapper.get(".card-desc").text();
+      expect(intro).toContain("pushes go through the public relay unless you choose your own");
+      expect(intro).not.toContain("and a push relay");
       wrapper.unmount();
     });
 

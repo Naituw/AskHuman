@@ -455,6 +455,8 @@ export default {
       ios: {
         title: "iOS App 渠道",
         desc: "在 iPhone 上用 AskHuman App 回答问题。消息端到端加密，Broker 只能看到密文。需要自备 MQTT Broker 和推送中继。",
+        // Shown instead of `desc` when this build has a public relay built in.
+        descPublicRelay: "在 iPhone 上用 AskHuman App 回答问题。消息端到端加密，Broker 只能看到密文。需要自备 MQTT Broker；推送默认走公共中继，也可以换成自己的。",
         connectionTitle: "连接设置",
         brokerLabel: "Broker 服务商",
         brokerGuide: "详细步骤",
