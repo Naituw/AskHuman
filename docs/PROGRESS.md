@@ -1235,32 +1235,33 @@ v0.17.3 第一次发布时，两个 macOS 构建都死在「Sign macOS binary (D
 同日 Apple 开发者服务大面积宕机），没有发出任何东西；同一提交删掉未发布的标签重推后一次成功。再遇到同一步失败时要先看日志（`gh auth login` 或浏览器）。
 2026-11-21 已用两台 Mac 的 `trafficBreakdown` 与 EMQX 控制台核对（规格 [§9](specs/ios-traffic-reduction.md#9-实测2026-11-21)）：
 台账与 EMQX 的报文流量对上（差 0.1%）；除附件外的同步约 13 MB/天（整月约 0.4 GB），低于当时推算的 0.73 GB；
-但附件分块占落地后总字节的 92%，11 月到 11-21 已计费 1.67 GB。附件不在这份规格的范围内，由 [附件流量收敛](specs/ios-attachment-traffic.md) 接手（见下一节，2026-11-21 已出规格与计划并开工，P1 已完成）。
+但附件分块占落地后总字节的 92%，11 月到 11-21 已计费 1.67 GB。附件不在这份规格的范围内，由 [附件流量收敛](specs/ios-attachment-traffic.md) 接手（见下一节，2026-11-21 已实现，待出构建与真机核验）。
 
 - [ ] 手机核验（要装上新的 TestFlight 构建，且 Mac 已升级）：Agents 页里没打开的「工作中」会话不再显示工具 / 步数 / 相对时间，
   打开详情仍实时；从后台回前台只补变化、没有整套刷新；Watch 一个会话时帧与列表活动照常。新旧版本互配（旧手机配新 Mac、新手机配旧 Mac）
   都照旧工作，只是没省到流量。
 
-## 待办：iOS 附件流量收敛（预览优先、二进制传输、内容去重）
+## 待办：iOS 附件流量收敛（已实现并验证，待出构建与真机核验）
 
-2026-11-21 Owner 看过定稿方案，批准并要求写成规格与实施计划（只写了文档，没有任何代码改动）：
-[规格](specs/ios-attachment-traffic.md)（决策 AT1–AT20；AT14–AT20 是写规格时我补的细节，Owner 已全部确认）、
-[计划](plans/ios-attachment-traffic.md)（P1 二进制传输 → P2 预览 → P3 内容去重与本地计数，合成一个 Mac 版本和一个 TestFlight 构建）。
-方向：手机先看 AVIF 预览（长边 ≤ 1600 px、固定质量 76，Mac 在手机要图时现做），点查看器工具栏的「原图」才下载原文件，分享、拖出、保存始终是原文件；
-去掉「先 base64、再加密、再 base64」，所有主题消息换二进制信封、大块字节换 blob 帧；按内容哈希去重；本地计数拆出预览与原图。
-按规格 §10 估算整月约 0.58 GiB（现在约 5.3 GiB），前提是「看过的图里有 10% 要再取原图」，这个比例没有数据，要靠新增的本地计数回答。
+2026-11-21 做完并提交（Owner 选了主工作树）：[规格](specs/ios-attachment-traffic.md)（决策 AT1–AT20，Owner 都已确认）、
+[计划](plans/ios-attachment-traffic.md)（P1–P4，逐阶段的实施记录、测量与对照实验都在里面）。
+手机先看 AVIF 预览（长边 ≤ 1600 px、固定质量 76，Mac 在手机要图时现做），点查看器工具栏的「原图」才下载原文件，分享、拖出、保存始终是原文件；
+去掉「先 base64、再加密、再 base64」，主题消息换二进制信封、大块字节换 blob 帧；按内容哈希去重；本地计数拆出预览与原图
+（`status --json` 的 `trafficBreakdown.assets`）。预览与它的编解码依赖按 opt-level 3 编译（AT20；漏设会慢 4–20 倍且没有任何报错，见 `docs/development.md`）。
 
-写规格时发现一个会推翻「零点几秒」的前提：仓库的 `release` 档是 `opt-level = "z"`、装机用的 `local-install` 档是 0，
-预览生成按原样编译，同一批图实测约 1.2 s（release）与约 5.4 s（local-install），opt 3 下约 0.3 s。
-规格 AT20 的办法是把预览代码放进独立 crate，只对它和它的编解码依赖设 opt 3（实测两档都回到约 0.3 s），
-Owner 已确认；实现时先做计划里的 P2-0（建 crate、设两档配置、量真实工程的耗时、编译时间与体积）。
+验证过的（数字与细节见计划 P4 的实施记录）：Rust 全量、Swift 全量、真实 daemon + 本地 broker 的端到端（新旧互配四格都跑过）、
+模拟器 UI 测试、模拟器上的真 App（看预览、点「原图」、同一张截图再来不再下载）。
+一张 3.7 MB 的合成截图：预览线上约 28.6 KB，原图线上约 3.72 MB（旧版 Mac 发同一张图约 6.6 MB）。整月用量按规格 §10 估算约 0.58 GiB（现在约 5.3 GiB），
+前提是「看过的图里有 10% 要再取原图」，这个比例没有数据。新 Mac 二进制已装在本机，但日常 daemon 进程还是旧的（要重启或走升级才生效），也还没有发布。
 
-2026-11-21 开工，Owner 选了主工作树。**P1（二进制传输）已完成并提交**：Mac 与手机的线协议加二进制信封与 blob 帧（`feat(ios): add binary envelopes and blob frames to the wire protocol`，随后一个 `fix(ios)` 更正了空文件分块的 `data`），手机引擎收发（`feat(ios): send and receive binary frames in the phone engine`）。
-对一次性 daemon 的端到端实测：600 000 字节的文件下载线上 600 872 字节，400 000 字节上传线上 400 531 字节（JSON + base64 约多三分之一）；同样的前台进入同步 3 223 → 2 236 字节（少 31%）。
-整套 E2E 72 条（8 条要额外环境的跳过）0 失败，`TrafficReductionE2ETests` 的字节预算已按实测收紧（6 000 → 4 000）。新旧版本互配（手机不声明 `binary`、或 Mac 不带 `caps.binary`）仍走 JSON，有用例覆盖。详情见计划的「实施记录」。
-
-下一步：计划 P2-0（预览 crate 与两档 opt-level 3 的编译配置，先量耗时、编译时间、二进制大小与 target 目录体积预算）→ P2a/b/c（预览）→ P3（内容去重与本地计数）→ P4（全量验证、文档同步；规格状态与 `docs/specs/ios-channel.md`、`docs/overview-ios.md` 此时才改）。
-P4 装机验证后，出 TestFlight 构建要 Owner 另行授权（按 `ios-testflight` skill）；真机跑几天、读到实测数字后，本节换成「待核验」，再改 wiki 里的月用量说法。
+- [ ] 出 Mac 版本与 TestFlight 构建（按 `ios-testflight` skill，默认 Internal 与 Friends 两组；要 Owner 另行授权）。
+- [ ] 真机核验（装上新的 TestFlight 构建、Mac 已升级）：预览在真机、最低 iOS 17 上的解码与观感（固定质量 76，不满意改 `ios/preview.rs` 里的常量）；
+  打开一张图是预览、有「原图」按钮；分享拿到原文件；同一份内容再来不再下载；新旧版本互配照旧。
+- [ ] 真机用几天后读 `AskHuman channel ios status --json` 的 `trafficBreakdown.assets`（预览 / 原图 / 重复各多少）与 EMQX 用量，换算整月，
+  把规格 §10.2 的推算换成实测；再改 `docs/wiki/ios-setup*.md` 里的月用量说法。完成后本节换成「待核验」或删除。
+- [ ] 待 Owner 决定（只是建议，还没有接受）：给 `sha2` 及其依赖（`digest`、`block-buffer`、`crypto-common`、`generic-array`、`cpufeatures`）也设 opt-level 3。
+  装机版（`local-install`，opt 0）里，建请求时给附件算 SHA-256 很慢：20 个 10 MiB 的文件 4.9 s，设了之后 0.38 s；典型的几张截图是几十到一百多毫秒。
+  这超出 AT20 写明的范围（「其它依赖的配置不动」），所以没做。
 
 ## 待真机核验：多设备报文流量统计
 

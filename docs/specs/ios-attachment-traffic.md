@@ -1,6 +1,6 @@
 # 需求：iOS 附件流量收敛（预览优先、二进制传输、内容去重）
 
-> 状态：**2026-11-21 起草**。方案经 Owner 三轮 AskHuman 问答定稿（每条决策的来源见 §3，原话见 §16），本文把定稿方案写成规格，写规格时补的 AT14–AT20 也已由 Owner 确认（2026-11-21，见 §16）；**目前没有任何代码改动**，实施计划见 [`docs/plans/ios-attachment-traffic.md`](../plans/ios-attachment-traffic.md)。起因是 Owner 的问题：「附件占落地后总字节的 92%，先看哪些能省」。
+> 状态：**2026-11-21 起草并实现**。方案经 Owner 三轮 AskHuman 问答定稿（每条决策的来源见 §3，原话见 §16），本文把定稿方案写成规格，写规格时补的 AT14–AT20 也已由 Owner 确认（2026-11-21，见 §16）。**P1–P4 已按 [实施计划](../plans/ios-attachment-traffic.md) 做完并验证**（Rust 与 Swift 全量测试、真实 daemon 端到端含新旧互配四格、模拟器 UI 测试、模拟器上的真 App）；与规格写法不同的地方见 §17，逐阶段的记录、测量与对照实验在计划的「实施记录」里。**还没有出 Mac 版本与 TestFlight 构建，真机上的观感和整月用量也还没核对**（§15、`docs/PROGRESS.md`）。起因是 Owner 的问题：「附件占落地后总字节的 92%，先看哪些能省」。
 > 关联：[同步流量收敛](ios-traffic-reduction.md)（§9 实测出附件是剩下的大头；该规格 §2 把附件和二进制信封都列为「不做」，本文接手这两件事）、[多设备报文流量统计](ios-traffic.md)（台账）、[iOS 渠道](ios-channel.md)（§6.5 附件、§8 协议与安全）、[历史里的图](ios-history-pictures.md)（走同一条 `asset.get` 取图路径）、[附件拖出](ios-attachment-drag-export.md)（导出的始终是原文件）、[iOS 渠道总览](../overview-ios.md)。
 > 平台：Mac（Rust）+ iOS App（iOS 17+，iPad 随既有布局）。手机线协议 `PROTO` 仍为 1，本机 IPC 的 `PROTOCOL_VERSION` 与恢复存储（`daemon/recovery.rs`）不动。
 
@@ -337,24 +337,24 @@ Rust `ios/wire.rs` · `envelope.rs` 与 Swift `AHProtocol` 同一批改动、共
 
 ## 15. 没验证的与实现时再定
 
-**没验证的**：
+**没验证的**（2026-11-21 实现之后的状态；写规格时列的六条，逐条更新）：
 
-1. **p**（要再取原图的比例）与「到底多取了多少」：靠 §6.6 的计数。
-2. AVIF 在**真机、最低 iOS 17 运行时**上的解码耗时（只在 macOS 与 iOS 18.5 模拟器里量过）；查看器用 `UIImage(contentsOfFile:)` 打开的是 `AssetPage.named` 拷出的临时文件，预览的拷贝要用 `.avif` 扩展名，这条路径没在真机上跑过。
-3. rav1e 带汇编加速后的耗时；核少的 Mac 的真实耗时（只用线程数上限模拟过）；真实网关里「生成预览同时还有别的工作」时的耗时。
-4. 非 sRGB 图经 `moxcms` 转 sRGB 再进 AVIF 的颜色（JPEG 路径验过，AVIF 路径实现时验）。
-5. 固定 q76 在真机上的观感（画质分只是客观指标）；不满意改 q85。
-6. AT20 的配置在**真实工程**里的编译时间与二进制大小：§10.3 的数是一个只有这几个依赖的小工程量的；真实工程里 `image`、`png`、`flate2`、`zune-jpeg`、`moxcms`、`rayon` 等与别的代码共用，把它们设成 opt 3 也会让别处的解码变快、体积与编译时间怎么变要实测。
+1. **p**（要再取原图的比例）与「到底多取了多少」：计数已经做好（§6.6，键名见 §17），要等真机用几天后读 `status --json` 的 `trafficBreakdown.assets`；现在没有真实数据。
+2. AVIF 在**真机、最低 iOS 17 运行时**上的解码耗时与显示：没验证，也没有 iOS 17 的模拟器运行时。已验证的是真 App 的解码路径：模拟器里（iOS 26.2 与 18.5，跑在 Mac 的 CPU 上，耗时不代表真机）App 用 `UIImage(contentsOfFile:)` 打开 Mac 现做的 AVIF 预览并显示出来。预览直接读引擎的缓存文件、不拷成 `.avif`（§17），`UIImage` 按内容识别格式。
+3. rav1e 带汇编加速后的耗时：没开汇编，没量。核少的 Mac 的真实耗时：仍只用线程数上限模拟过。真实 daemon 里的完整路径量过（验收 15，数字与做法见计划 P4 的记录）：从手机发出 `asset.get` 到收齐首个预览，合成的 2880 × 1800、3.7 MB 的 PNG：装机版（`local-install`）中位 0.44 s、`release` 中位 0.34 s（各 5 次）；两张真实的手机截图（3.2 与 3.4 MB，各 3 次）：`local-install` 0.39 s、`release` 0.33 s；daemon 的 CPU 约 1.7–2.0 核·秒；Mac 缓存命中后 0.01–0.02 s。这是整条路径（含 broker 一跳与网关）而不是流水线自己，也是这台 18 核 Mac 上量的。
+4. 非 sRGB 图转 sRGB 再进 AVIF 的颜色：转换函数有数值用例（Display P3 的 (200, 100, 100) 变成更饱和的 sRGB 三元组、sRGB 原样），sRGB 与 Display P3 的图都能出预览；没有肉眼对比。
+5. 固定 q76 在真机上的观感：没验证（只在模拟器里看过合成截图）；不满意改常量（q85）。
+6. AT20 的配置在真实工程里的编译时间与二进制大小：已量，见计划 P2-0 的记录（干净构建 `local-install` 墙钟 +19%、CPU +30%，`release` +3% 与 +5.5%；二进制 `local-install` +0.5 MiB，`release` +1.4 MiB，比 AT2 估的约 0.9 MB 多，没追查构成）。
 
-**实现时再定**（不影响用户可见行为）：
+**实现时再定**（不影响用户可见行为；都已定）：
 
-1. 「小于 400 KiB 不做预览」的最后取值。
-2. 预览内存缓存的条目数与总量上限（几十个条目、几十 MiB）；同时生成预览数的上限；解码内存上限的数值。
-3. 三页同时取预览时要不要让手机先发当前页（现在三页同时开始）。
-4. 非 sRGB 源图转换做不到时：发原图，还是接受色偏照发预览。
-5. 本地计数的键名；手机缓存目录里按哈希索引的存法。
-6. 建视图时哈希的开销（§6.2）：附件很多的请求实测一次；太慢就只给前 N 个附件带 `sha256`（与 `MAX_REQUEST_IMAGES` 的做法相同），只影响去重的覆盖，不影响正确性。
-7. 预览 crate 的位置与名字（暂定 `src-tauri/crates/ah-preview`，路径依赖）、要设 opt 3 的依赖清单（`cargo tree` 定，§6.4）、`dev` 档是否也设（`cargo test` 里跑预览用例是否需要）、生成预览用的线程池（rayon 全局池还是限线程数的专用池，§6.5 的并发上限一起定）。
+1. 「小于 400 KiB 不做预览」：保持 400 KiB（`PREVIEW_MIN_ORIGINAL_BYTES`）。
+2. 预览内存缓存 32 条 / 32 MiB（「做不了预览」的结论每条按 256 B 计）；同时生成预览数 3；源图 ≤ 5000 万像素、解码分配 ≤ 256 MiB、边长 ≤ 32 768 px。
+3. 三页同时取预览：没改，仍是三页同时开始。
+4. 非 sRGB 源图转换做不到：发原图（`UnsupportedColor`），不发色偏的预览。
+5. 本地计数的键名：`TrafficBreakdown.assets` 里的七个键（§17）；手机缓存目录里按哈希索引的存法：目录本身（`<sha256>`、`<sha256>.preview`，同一份字节的第二个名字是硬链接）。
+6. 建视图时哈希的开销：量过、没有加上限（计划 P2a 的记录：20 个 10 MiB 的文件，`release` 档 0.74 s、`local-install` 档 4.9 s；典型的几张截图，`local-install` 档几十到一百多毫秒）。`local-install` 档慢是因为 `sha2` 等依赖按 opt 0 编译，给它们也设 opt 3 能快约 13 倍，但超出 AT20 的范围，没做，留给 Owner 决定（`docs/PROGRESS.md`）。
+7. 预览 crate：`src-tauri/crates/ah-preview`（路径依赖，也是工作区成员与默认成员）；opt 3 的清单 51 项写在 `[profile.release.package]`，`local-install` 继承；`dev` 档不设（网关用例注入假预览器；真实编码由 crate 自己的 15 条与端到端覆盖）；没建专用线程池，用 `ravif` 的 `threading`（rayon 全局池），同时生成数的上限是 3（§6.5）。
 
 ## 16. 反馈意见
 
@@ -375,3 +375,15 @@ Rust `ios/wire.rs` · `envelope.rs` 与 Swift `AHProtocol` 同一批改动、共
 最后他选「把定稿方案写成规格和实施计划，并在 `docs/PROGRESS.md` 登记（只写文档，不改代码）」，即本文与 [计划](../plans/ios-attachment-traffic.md)。AT14–AT20 是写规格时我补的细节，其中 AT20 是写规格时发现、补测后加的：之前所有耗时都是 opt-level 3 量的，而仓库两档的优化等级是 `z` 和 0，装机版会慢约 20 倍（§10.3），动到 `Cargo.toml` 的编译配置。
 
 **写规格后的确认**（2026-11-21，我把规格与计划作为附件发给他，并列出 AT14–AT19 与 AT20 的依据）：AT20 选「确认 AT20：预览代码放独立 crate，release 与 local-install 两档对它和它的编解码依赖设 opt-level 3（实测两档都约 0.3 s，构建代价小）」，没有选只设 release 档、不动配置、改后台预热这三个备选；AT14–AT19 选「都接受」，没有提出修改。
+
+## 17. 实现与规格的差异
+
+2026-11-21 实现完成后补。逐阶段的记录、测量与对照实验在[计划的「实施记录」](../plans/ios-attachment-traffic.md#实施记录)；下面只列实现与上文写法不同的地方，以实现为准：
+
+- **AT19 的核对挪到「用的时候、按请求」**（§6.4 第 0 步）：缓存与合并按文件身份（路径 + 大小 + 修改时间），同一个身份下可以有记着不同 `sha256` 的请求，所以比对放在每个等待者拿结果的那一刻；可观察的行为与第 0 步相同。「做不了预览」的结论仍被记住，但不记原因。
+- **AT20 的配置**：`local-install` 继承 `release` 的包级覆盖，清单只写一份（51 项），不是两份；另外给 `src-tauri/Cargo.toml` 加了 `[workspace]`（预览 crate 是成员与默认成员，`vendor/*` 在外），否则 `cargo test`、`clippy` 覆盖不到它。
+- **计数**（§6.6）：`TrafficBreakdown` 多一个 `assets` 视图，七个固定键：`chunk.preview`、`chunk.preview.repeat`、`chunk.original`、`chunk.original.repeat`、`get.request`、`get.history`、`get.unresolved`；`kinds` 原样不动，四个 `chunk.*` 之和恒等于 `kinds["out:asset.chunk"]`。「重复」指这部手机已经被发完过同一份内容、同一类（预览或原图）的全部块；Mac 看不到手机是否真的收到，所以可能偏高。`get.*` 数的是网关处理了的 `asset.get`。
+- **手机缓存**（§7）：哈希索引就是缓存目录本身（`<sha256>`、`<sha256>.preview`，同一份字节的第二个名字是硬链接）；同一个请求里内容相同的两个附件同时在途时各取一次。
+- **查看器**（§7）：预览直接读引擎的缓存文件，不拷成 `.avif`；原图下载失败用 `.alert`（标题、「重试」「取消」），预览与按钮留着，而不是整页错误——这是对「沿用现有错误提示与重试」的一种读法；辅助功能字号下按钮只写「原图」，大小留给 VoiceOver（`accessibilityLabel` 始终带大小）。
+- **线协议**（§5）：`AssetChunk.data`、`UploadChunk.data` 解码时缺省为空，序列化规则不动；blob 帧的头部是「消息去掉 `data` 键」，空文件仍发一块零字节的数据。
+- **没做**：给 `sha2` 及其依赖（`digest`、`block-buffer`、`crypto-common`、`generic-array`、`cpufeatures`）设 opt 3（装机版里算附件哈希会快约 13 倍，但超出 AT20，留给 Owner 决定）；出 Mac 版本与 TestFlight 构建；真机核验（§15）。

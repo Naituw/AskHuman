@@ -90,7 +90,8 @@ AskHuman/
     styles/{tokens,base,controls}.css   设计 token、基础与控件样式
 
   src-tauri/                 Rust 后端
-    Cargo.toml               Rust 依赖与 feature
+    Cargo.toml               Rust 依赖与 feature；`[workspace]` 把 `crates/ah-preview` 设为成员和默认成员（`vendor/*` 仍在工作区外）；`[profile.release.package]` 给预览 crate 与它的编解码依赖设 opt-level 3（`local-install` 继承，原因见 docs/development.md）
+    crates/ah-preview/       iOS 渠道的图片预览（解码、转色、缩放、AVIF 编码），对外只有一个非泛型函数；放进独立 crate 是为了让它按 opt-level 3 编译（docs/specs/ios-attachment-traffic.md AT20）
     vendor/drag/             drag 2.1.1 的本地补丁副本（[patch.crates-io]，只改 objc2 特性声明；原因见 docs/development.md）
     vendor/tao/              tao 0.35.3 的本地补丁副本（[patch.crates-io]，只改 macOS 的窗口拖动事件；见其中的 ASKHUMAN-PATCH.md）
     tauri.conf.json          Tauri 构建和窗口配置

@@ -187,6 +187,16 @@ request a network timestamp). After a successful copy it enforces per-profile ta
 Cargo-coordinated cleanup: local package artifacts are removed first, while dependency caches are
 retained whenever they fit.
 
+One exception to those optimization levels is deliberate: `[profile.release.package]` in
+`src-tauri/Cargo.toml` sets `opt-level = 3` for the image-preview crate (`src-tauri/crates/ah-preview`)
+and every codec crate beneath it, and `local-install` inherits the list. The preview of a typical
+screenshot (decode, Lanczos resize, AV1 encode) takes about 0.3 s with it, about 1.2 s in a plain
+`release` build (`opt-level = "z"`) and 5 s or more in a plain `local-install` build (`opt-level = 0`),
+and nothing reports a missing entry. When the crate's dependency tree changes (a new codec, a version
+bump that adds a transitive crate), derive the list again (`cargo tree -p ah-preview --edges normal`,
+without the procedural macros) and measure a preview once. Reasons and measurements:
+[`ios-attachment-traffic.md`](specs/ios-attachment-traffic.md) AT20 and §10.3.
+
 The installer builds with `--message-format=json-render-diagnostics` and installs the executable that
 cargo reports for the `AskHuman` target (`scripts/cargo-artifact.mjs`). It prints that path
 (`编译产物:`) and stops when cargo reports none. A path rebuilt from the repository layout broke as

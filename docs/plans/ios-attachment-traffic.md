@@ -1,6 +1,6 @@
 # 计划：iOS 附件流量收敛（预览优先、二进制传输、内容去重）
 
-> 需求：`docs/specs/ios-attachment-traffic.md`（决策编号 AT1–AT20 均指其 §3）。状态：**2026-11-21 起草并开工，进度见文末「实施记录」**。规格里写规格时补的 AT14–AT20（AT20 动到 `Cargo.toml` 的编译配置）已由 Owner 确认；规格与本计划一并发给他看过，没有提出修改。下文各阶段的文件名与函数名是起草时按现有代码读出来的设想，**开工后实际以文末「实施记录」为准**。
+> 需求：`docs/specs/ios-attachment-traffic.md`（决策编号 AT1–AT20 均指其 §3）。状态：**2026-11-21 起草并开工，同日 P1–P4 做完并验证；还没有出 Mac 版本与 TestFlight 构建。进度与结果见文末「实施记录」**。规格里写规格时补的 AT14–AT20（AT20 动到 `Cargo.toml` 的编译配置）已由 Owner 确认；规格与本计划一并发给他看过，没有提出修改。下文各阶段的文件名与函数名是起草时按现有代码读出来的设想，**开工后实际以文末「实施记录」为准**。
 > 工作方式：**开工前**按 `AGENTS.md` 问一次工作位置（主工作树与单独的 Dev Worktree 同列、一轮问完）。那一问里要说清：本功能会改 `Cargo.toml` 的依赖与编译配置，在主工作树里装机会替换 Owner 日常用的二进制。写计划时主工作树里有别的会话**未提交**的改动（「弹窗文件链接」一类：`src-tauri/src/app/*`、`commands.rs`、`attachment_markdown.rs`、`src/` 下的前端文件与几份弹窗规格）：本功能只提交自己的文件与自己的段落，不碰它们；要改同一份文档时只用精确替换，提交前逐个 hunk 核对。
 
 ## 阶段
@@ -270,3 +270,46 @@
 **验证**：`cargo fmt -- --check`、`cargo clippy --all-targets -- -D warnings` 干净（告警只来自仓库里带的 `tao` 的 vendor 代码，不是这次的）；`cargo test --bin AskHuman ios::`：498 通过 / 0 失败（含新的 13 + 3 条；全量 `cargo test` 在 P4）；`swift test`：Transport 14、Store 40、Protocol 84、Markdown 16、Core 354、App 566 条，0 失败，E2E 包 72 条因为没有 `AH_E2E_BIN` 全部跳过（P4 才跑）。**更正**：P2b、P2c 的记录里写的「整包 566 条」是 `swift test` 末尾那一行，只是最后一个包（App）的合计，不是整包的总数，已在那两处改了。
 
 **没有处理（留给之后或不做）**：同一个请求里内容相同的两个附件同时在途时各取一次（在途的下载按 `assetId` 加变体分键，不按哈希合并，要等先到的那份下载完，第二份才命中）——多一份流量，行为是对的；手机一侧没有单独的计数（命中缓存就是没有流量，Mac 一侧的 `asset.get` 数与 `*.repeat` 就是证据）；`AskHuman channel ios status` 的文字输出本来就不打印 `trafficBreakdown`，只有 `--json` 读得到，没有改。
+
+### P4 全量验证与文档同步（已完成）
+
+按计划做完。数字都是 2026-11-21 在同一台 Mac 上量的（18 核，后台常有别的会话的负载）。每次长任务前跑的 `node scripts/machine-health.mjs` 都是 ok（交换区已用 11.5–12.8 GiB / 12–14 GiB，负载 4–11），没有出现退出码 2。我这边自 P3 之后没有改过 Rust 功能（只改了 `ah-preview/Cargo.toml` 里一条过期的注释），所以 P4 没有重新装机：整套 E2E、真 App 的运行与合成图的计时用的都是 P3 那次装的二进制。**P4 期间主工作树里别的会话提交了自己的 Rust 改动**（`e2c37a8f`，iOS 引导式 broker 设置：`transport.rs`、`config.rs`、`commands.rs` 等）并在 03:16 重新装了机，`~/.local/bin/AskHuman` 从那一刻起是它的版本；预览与取图的代码（`ios/preview.rs`、`gateway/assets.rs`、`views.rs`、`history_view.rs`、`traffic.rs`、`store.rs`、`crates/ah-preview`、`Cargo.toml`）与 P3 逐字相同。所以真实截图那一组改用冻结下来的二进制副本跑，见下面「验收 13 与 15 的数字」。
+
+- **测试总数**：`cargo fmt -- --check`、`cargo clippy --all-targets -- -D warnings` 干净（告警只来自仓库里带的 `tao` 的 vendor 代码，另有一条依赖 `block 0.1.6` 的「将来版本不兼容」提示，都不是这次的）。全量 `cargo test`：主 crate 3 610 通过 / 0 失败 / 12 忽略，预览 crate 15 通过。全量 `swift test`（设了 `AH_E2E_BIN` 与 `AH_E2E_BROKER_DIR`，E2E 包也跑）：Transport 14、Store 40、Protocol 84、Markdown 16、Core 355、App 566、E2E 80（9 条跳过：4 条付费 Codex、3 条真实服务、2 条模拟器场景，要另外的环境变量），0 失败，E2E 包 491 s。Core 比 P3 的记录多 1 条，见下面的「协议默认实现」。
+- **新的端到端用例**（`AHE2ETests/AttachmentTrafficE2ETests.swift`，一次性 daemon + 本地 broker，不碰真实 EMQX）：6 条，另有 `SyntheticPicturesTests` 1 条检查合成图的大小。① 截图先看预览、再取原图：预览是 AVIF、长边 ≤ 1600、宽高比不变、字节不到原图的 1/8；`chunk.preview` 的条数等于预览的块数、字节在「预览字节」与「预览字节 + 每块信封」之间；`chunk.original` 此时为 0；原图与 Mac 上的文件逐字节相同；`chunk.*` 之和等于 `kinds["out:asset.chunk"]`，`get.request` 等于 `in:asset.get`，`get.unresolved` 为 0。② 同一内容换了 `assetId` 的第二条请求，手机什么都不问（`asset.get` 0、块 0）；原图取一次之后，第三条请求的预览与导出都不问；手机的缓存清空后再取，记为 `*.repeat`。③ 不做预览的图：小图（Mac 不提供预览）、带透明像素的（提供，但 Mac 回原图并回显 `original`）、JPEG（有预览）。④ 建请求之后文件被改（大小不变）：发原图，不留哈希名。⑤ 「Mac 给什么，文件都完整收到」：这一条对旧 Mac 照样跑（`AH_E2E_BIN` 指向旧版二进制），按 Mac 声明的能力断言线上格式。⑥ 验收 15 的计时（只量，防线是「最多 4 s」，用来逮依赖没按 opt 3 编译：那样一张图约 5 s）。`AH_E2E_PICTURE=<png/jpeg>` 可以换成自己的图。
+- **新旧互配四格（验收 9）**（旧 = 已发布的 v0.17.3 的 Mac 二进制与 `AskHumanKit` 包，在 `/tmp` 的副本里跑，不碰工作树）：新手机 × 新 Mac 是上面的整套 E2E。新手机 × 旧 Mac：当前树的 `E2ETests` 19 条全过（旧 Mac 不声明 `binary` 与 `assetPreview`），加上面的⑤：同一张 3 714 670 B 的图，线上 6 609 833 B（JSON + 两层 base64，1.78 倍），手机照样收齐。旧手机 × 新 Mac：v0.17.3 的 `AHE2ETests` 72 条里 61 条通过、8 条按环境跳过、3 条失败（`AgentE2ETests` 的 `testAFollowedSessionReportsWhenItsTurnEnds`、`testAMessageToAnAgentThatIsNotWorkingIsRefused`、`testSessionsOfTheMacAreListedWithTheirState`，共 5 处断言），**同一套对旧 Mac（旧手机 × 旧 Mac）的结果完全一样**，所以这 3 条是旧版测试与测试台自己的问题，与新 Mac 无关；当前树的 `AgentE2ETests` 13 条全过。旧手机下载附件（`testAnAttachedFileIsDownloadedFromTheMac`、`testAReplyAttachmentArrivesAsAFileOnTheMac`）在新 Mac 上通过，拿到的是原文件。第一次跑旧手机套件时 `testCancellingFromThePhoneEndsTheAskWithACancelledStatus` 失败，是 CLI 语言的问题（旧套件没有固定英文输出，Mac 跟系统语言），在副本里固定语言后通过，工作树没动。
+- **协议默认实现的接线缺口**（P4 逮到、已守住）：`RemoteBackend` 在协议扩展里给 `downloadForViewing`、`downloadForExport` 留了默认实现（返回原图），所以 `PhoneEngine` 的方法签名只要和协议要求只是「相似」（标签、默认参数），它照样「符合协议」，经协议调用的应用拿到的却是默认实现——预览永远不会被用上，而直接调引擎的所有测试都照常通过。新用例 `testTheAppReachesThePreviewsThroughTheBackendProtocol`（`AssetPreviewTests`，现在 21 条）经 `any RemoteBackend` 调用，断言走到了引擎的预览路径、第二次看走缓存。做过对照实验（让引擎的签名偏离协议要求）：这一条失败，直接调引擎的那些用例仍然通过。
+- **模拟器上的真 App（验收 2、3、7、13）**：新增 `SimulatorLiveTests.testAPictureOpensAsAPreviewOnTheRealApp` 与 `AskHumanLiveUITests.testAPictureOpensAsAPreviewOnTheRealApp`（模拟器里是真的 `AskHuman.app`；Mac 是一次性 daemon，用已装的 `AskHuman`，经本地 broker——不是日常 daemon，也不是真实 EMQX）。过程：配对 → Mac 发一张 3 714 670 B 的合成截图 → 真 App 打开：显示 AVIF 预览与按钮「Original · 3.7 MB」→ 点按钮 → 换成原图、按钮消失 → 同一张截图的第二条请求，打开即是原图、没有按钮。宿主按 Mac 的台账断言：预览 1 块、线上 28 577 B；原图 19 块、线上 3 718 574 B；第二条请求 0 条 `asset.get`、0 块。iOS 26.2 与 iOS 18.5 各用一台专用模拟器通过一次，截图看过（预览、原图、同一张再来），用完删除了这两台模拟器。真 App 里 AVIF 的解码确实发生了：显示出来的是 `UIImage(contentsOfFile:)` 读缓存里的 AVIF。
+  - **发现**：第一、二次跑用的是未签名的构建（`CODE_SIGNING_ALLOWED=NO`，与别的 UI 测试一样），配对一直完不成（手机停在「等 Mac 确认」，Mac 停在 `waiting`、从没收到请求）。推断原因是未签名的包没有钥匙串授权，`Vault.phoneId()` 每次读到的手机 ID 都不同，Mac 把对不上的 `pair.request` 悄悄丢掉；没有抓到钥匙串的报错，所以只是推断。换成文档里的签名构建（`xcodebuild build-for-testing` 不带 `CODE_SIGNING_ALLOWED=NO`）后通过。一个我没有解释的现象：两次失败里 `channel ios allow` 的退出码是 0、状态却仍是 `waiting`，而单独探测过「没有待确认的请求时 `allow` 退出 1」。
+  - **顺手修的**：宿主侧继承来的一个竞态：手机在算出校验码时就显示它（此时 Mac 还没收到请求），原先宿主立刻读 Mac 的校验码；现在先等 Mac 进入 `pending`。真实服务场景 `testPairingQuestionsAndPushOnTheRealApp` 没有在真实服务上重跑，没有 `AH_E2E_REAL_FROM` 时跳过。
+- **UI 测试（验收 14）**（`xcodebuild test`，都是本轮重新跑的）：iPhone 17 / iOS 26.2 英文：`AskHumanAttachmentPreviewUITests` 14、`AskHumanHistoryPicturesUITests` 14、`AskHumanUITests` 里既有的四条图片用例（缩略图方块、宽图、翻页、文件）、`AskHumanArrivalUITests` 与 `AskHumanDeveloperUITests` 里各一条涉及查看器的用例，共 34 条通过（两条 `AskHumanLiveUITests` 没有环境变量，照常跳过）；iPhone 17 简体中文：`AskHumanAttachmentPreviewUITests` 14；iPad Pro 11 寸（M5）/ iOS 26.2 英文：同一个类 14；iPhone 16 / iOS 18.5 英文：与 iPhone 17 英文同一批 34 条。看过的截图：中文的预览态（「原图 · 3.4 MB」与分享键在一个胶囊里）与最大字号（只写「原图」、标题仍在）。`AskHumanAttachmentDragUITests` 4 条需要宿主侧接收器，照常跳过。VoiceOver 没有真开，只验证了辅助功能标签与值（按钮的标签始终带大小、进度环带百分比）。
+  - **一次不稳定**：iPhone 17 英文第一次跑，测试进程先在启动时崩溃（`AskHumanUITests-Runner` 在 UIKit 启动里 SIGSEGV，有一份崩溃报告，没连上就死了）；重跑时 9 条用例被「Test crashed with signal kill」杀掉（测试进程被 SIGKILL，用例没有跑完；终端汇总行仍写 0 failures，要看末尾的 `Failing tests:` 或结果包才看得到）。这 9 条单独重跑全部通过，其余各组各跑一次、没有再出现。原因没有查清（当时交换区约 91% 满；主机日志里没找到是谁杀的）。通过的数字都是看到用例通过后才算的，不是被汇总行吞掉的。
+- **验收 13 与 15 的数字**（装机版 `local-install` 与单独编的 `release` 档，同一批用例交替跑）：
+  - 合成截图（2880 × 1800，3 714 670 B），各 5 次（机器负载 6–9）：首个预览从 `asset.get` 发出到收齐，`release` 中位 0.343 s（0.313–0.409），`local-install` 0.437 s（0.404–0.440）；daemon 的 CPU `release` 中位 1.91 核·秒（1.84–1.99），`local-install` 2.00（1.90–2.07）；Mac 缓存命中后 0.012 s / 0.018 s；预览 28 283 B（1600 × 1000）。
+  - 两张真实的手机截图（`~/Downloads` 里 3.2 与 3.4 MB 的 PNG，2007 × 2853，无透明；只量字节与耗时，没有看内容、没有留存，数据没有离开本机），各 3 次（机器负载 3–5）：预览 69 157 B（原图的 2.14%）与 47 664 B（1.42%）；首个预览 `release` 0.333 s 与 0.327 s、`local-install` 0.392 s 与 0.390 s；CPU `release` 1.79 与 1.65、`local-install` 1.86 与 1.71 核·秒；缓存命中 0.012–0.021 s。整套 6 条 E2E 用第一张真实截图跑也全部通过。这一组对冻结的二进制副本跑（`local-install` 是 03:16 别的会话装的那份，`release` 是上面单独编的那份）：第一次跑这一组时 `~/.local/bin/AskHuman` 正好在中途被换掉，哪几条用的哪一份说不清，所以重跑；两次的数字一致（首个预览差在 ±0.05 s 内）。
+  - 对照 §10.3（opt 3 下流水线自身，中位 0.27–0.31 s，CPU 中位 1.8、最大 3.2 核·秒）：`release` 约 1.1 倍；`local-install` 合成图约 1.4 倍、真实截图约 1.2 倍；都不超过约 1.5 倍，CPU 没有成倍。**这里量的是整条路径**（含 broker 一跳与网关），不是流水线自己，每张图只有 3–5 次，所以只能说同量级，不能说比 §10.3 慢多少；`local-install` 比 `release` 慢约 0.05–0.1 s，应是 daemon 其余部分按 opt 0 编译，没有单独验证。
+  - 线上字节（Mac 台账，单向）：合成图的预览 28 577 B、原图 3 718 574 B（19 块，比文件多 0.1%）；第一张真实截图预览 69 451 B、原图 3 234 764 B；旧 Mac 把同一张合成图发给手机要 6 609 833 B（量过）。真实截图按同样的 1.78 倍，旧路径约 5.75 MB（算的，没对旧 Mac 量）。EMQX 按发布与投递各算一次，账上的数是这些的两倍。
+  - 合成图比真实截图好压（预览占 0.76%，真实的 1.4–2.1%，§10.3 的 81 张语料中位 3.3%），所以验收 13 看的是「同一量级」：预览 0.03–0.07 MB 对旧路径的约 6 MB（§13 第 13 条的 0.15 MB 对 10.7 MB 是 EMQX 账上的数）。
+  - 另编的 `release` 档（`cargo build --release … --features custom-protocol`，与 CI 一致，放在 `/tmp` 的临时 target 目录里，用完删了）：干净构建 107 s 墙钟、user 695 s + sys 61 s，二进制 22.9 MiB；与 P2-0 表里的数不是同一棵树与同一组特性，不直接比较。
+- **验收对照**：
+
+  | 验收 | 结果 | 依据 |
+  |---|---|---|
+  | 1 满块 ≤ 200 KB、同步类更小、未协商的逐字节相同 | 通过 | P1 的单元与夹具；E2E：600 000 B 文件 4 块，线上 600 872 B（满块约 196.8 KB，旧路径约 350 KB）；前台进入同步 3 179 → 2 234 B（−30%，旧 Mac 与新 Mac 的数） |
+  | 2 点开大图只收预览、有「原图」按钮 | 通过 | E2E ①、真 App（iOS 26.2 / 18.5）、UI |
+  | 3 点「原图」原位替换、哈希一致、失败可重试 | 通过 | E2E ①、真 App、UI（失败提示、取消、重试） |
+  | 4 分享 / 拖出 / 保存是原文件 | 通过（拖出只有单元覆盖） | UI（分享先取原图）、Swift 单元（`downloadForExport` 永远是原图）；拖出的 UI 用例 4 条需宿主侧接收器、跳过，路径没改 |
+  | 5 不做预览的图发原图 | 通过 | E2E ③、Rust 与 Swift 单元（动图、透明、解不开、不更小）、UI |
+  | 6 相邻页只取预览 | 通过 | UI |
+  | 7 同内容两条请求；改过的文件不进哈希缓存 | 通过 | E2E ②④、真 App、`AssetContentCacheTests` 12 条 |
+  | 8 预览解不开改取原图、无提示 | 通过 | UI（`testAPreviewThePhoneCannotOpenIsReplacedByTheOriginalWithoutAnError`） |
+  | 9 四格互配 | 通过 | 见上；旧手机 × 旧、新 Mac 的 3 条失败是同一套旧测试的问题 |
+  | 10 畸形帧 | 通过 | P1 的夹具（23 条）与单元、七种伪造帧 |
+  | 11 预览期间网关照常收发 | 通过 | Rust（P2a：预览器挂住时 `ping` 与别的 `asset.get` 照答；同键并发只生成一次） |
+  | 12 `status --json` 读得到各部分 | 通过 | E2E ①、`tests_counts` 13 条 |
+  | 13 真实 Mac + 手机上的台账 | 通过（一次性 Mac，模拟器与真实截图的字节） | 见上；不是日常 daemon，也不是真实 EMQX |
+  | 14 深色、最大字号、iPad、VoiceOver | 通过（VoiceOver 只验标签） | UI，设备与语言见上 |
+  | 15 两档的预览耗时与 CPU | 通过（整条路径、几次） | 见上 |
+
+- **与计划、规格不同的地方**：计划的提交清单里没有单独的测试提交；P4 的测试放进一个 `test(ios)` 提交（端到端用例、协议默认实现的用例、真 App 的图片场景），文档一个 `docs(ios)` 提交。文档同步的范围比计划多两处：`docs/overview.md`（布局图里的 `Cargo.toml` 与 `crates/ah-preview/` 两行，因为 P2a 加了工作区）与 `docs/development.md`（一段英文，说明 `[profile.release.package]` 的 opt 3 例外）；`ah-preview/Cargo.toml` 里一条过期的注释（写着「不是工作区成员」，P2a 之后不对了）改成现状，只动注释。没有改 `docs/wiki/ios-setup*.md`（等真机数据）。规格新增 §17「实现与规格的差异」，§15 的两张清单按实现后的状态逐条更新。
+- **没有处理（留给之后或 Owner）**：出 Mac 版本与 TestFlight 构建（要 Owner 另行授权）；真机与最低 iOS 17 上的 AVIF 解码和 q76 的观感（没有 iOS 17 运行时，也没有真机）；真机用几天后读 `trafficBreakdown.assets` 与 EMQX 用量，把 §10.2 的推算换成实测；给 `sha2` 及其依赖也设 opt 3（P2a 的记录，超出 AT20，待 Owner 决定）；CI 上三平台的 `rav1e` 构建与真正的 `cargo audit` 本机验证不了（P2a 的记录）；上面 UI 测试那次不稳定的原因。

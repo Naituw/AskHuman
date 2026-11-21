@@ -7,8 +7,8 @@ license = "MIT"
 publish = false
 description = "Downscaled AVIF previews of image attachments for the iOS channel"
 
-# This crate is a path dependency of `humaninloop` and is not a workspace member, so it takes the profiles of the
-# root manifest (`src-tauri/Cargo.toml`). Read the `opt-level = 3` overrides there before changing anything here:
+# This crate is a path dependency of `humaninloop` and a member of the workspace rooted at `src-tauri/Cargo.toml`, so it
+# takes the profiles of that root manifest. Read the `opt-level = 3` overrides there before changing anything here:
 # the preview pipeline is only fast when this crate and the codecs it uses are compiled with them.
 [dependencies]
 # The same `image` (and so the same compiled copy) the main crate already uses; only the formats an attachment preview
