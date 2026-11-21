@@ -100,7 +100,7 @@ public actor PhoneEngine: RemoteBackend {
     var deviceToken: Data?
     var pushStatus: PushStatus = .noToken
     var pushSent: [String: String] = [:]
-    var downloads: [String: Download] = [:]
+    var downloads: [DownloadKey: Download] = [:]
     var uploadMailboxes: [String: UploadMailbox] = [:]
     var uploadOwners: [String: String] = [:]
     var uploadBegins: [String: UploadBegin] = [:]

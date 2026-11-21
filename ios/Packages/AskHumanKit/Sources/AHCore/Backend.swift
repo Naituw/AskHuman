@@ -63,8 +63,12 @@ public protocol RemoteBackend: AnyObject, Sendable {
     func removeRequestForNow(macId: String, requestId: String) async
     /// Uploads a reply attachment; returns the upload id to put into the answer.
     func upload(macId: String, requestId: String, source: UploadSource, progress: @escaping @Sendable (Double) -> Void) async throws -> String
-    /// Downloads an attachment of a request into the cache.
+    /// Downloads an attachment of a request into the cache. Always the file itself.
     func download(macId: String, asset: AssetRef, progress: @escaping @Sendable (Double) -> Void) async throws -> URL
+    /// What an image viewer shows of an attachment: the downscaled preview when the Mac offers one for it and the file is
+    /// not on the phone yet, the file itself otherwise (docs/specs/ios-attachment-traffic.md §7.1). Sharing, saving and
+    /// dragging never use this: they go through `download` and `downloadForExport`.
+    func downloadForViewing(macId: String, asset: AssetRef, progress: @escaping @Sendable (Double) -> Void) async throws -> ViewableAsset
     /// Delivers a file requested by another app, including while this app is in the background.
     func downloadForExport(macId: String, asset: AssetRef, progress: @escaping @Sendable (Double) -> Void) async throws -> URL
 
@@ -140,6 +144,10 @@ public protocol RemoteBackend: AnyObject, Sendable {
 public extension RemoteBackend {
     func downloadForExport(macId: String, asset: AssetRef, progress: @escaping @Sendable (Double) -> Void) async throws -> URL {
         try await download(macId: macId, asset: asset, progress: progress)
+    }
+
+    func downloadForViewing(macId: String, asset: AssetRef, progress: @escaping @Sendable (Double) -> Void) async throws -> ViewableAsset {
+        ViewableAsset(url: try await download(macId: macId, asset: asset, progress: progress), isPreview: false)
     }
 
     func createTask(macId: String, draft: TaskDraft) async throws -> String {

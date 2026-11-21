@@ -43,8 +43,9 @@ final class TestMac: @unchecked Sendable {
     /// What the Mac says it can do. `binary` is on, as on the real Mac: it opens binary envelopes and blob frames, and
     /// sends them to a phone that said in its latest `hello` that it does too (docs/specs/ios-attachment-traffic.md §5).
     /// Switched off, the Mac is one of an older build: it reads the JSON envelope only, and the binary format reaches it
-    /// as garbage.
-    var caps = Caps(newTask: false, interject: false, watch: false, binary: true)
+    /// as garbage. `assetPreview` is on too, as on the real Mac: a phone may ask it for the preview of a picture
+    /// (switched off, it is a Mac that would send the whole file for such a request, so the phone must not ask).
+    var caps = Caps(newTask: false, interject: false, watch: false, binary: true, assetPreview: true)
     /// Whether the chunks of an asset go to a phone that takes binary as blob frames (the bytes raw behind the header),
     /// which is what the real Mac does. Off, they are JSON messages in the binary envelope, which a phone must read too.
     var blobChunks = true
@@ -65,6 +66,13 @@ final class TestMac: @unchecked Sendable {
     }
     /// Number of upcoming `asset.get` requests to ignore.
     var dropAssetGets = 0
+    /// The previews the Mac holds, by asset id: what it sends for an `asset.get` that names `variant: preview`
+    /// (docs/specs/ios-attachment-traffic.md §5.4). An asset with none is answered with the file, saying `original`, as
+    /// the real Mac does when it cannot make one.
+    private var previews: [String: Data] = [:]
+    /// The Mac answers every request for a preview with the file, whatever it holds (a picture that changed after the
+    /// request was built, a preview that turned out to be no smaller).
+    var answerPreviewsWithFiles = false
     /// Reason the Mac refuses uploads with (nil = accept).
     var uploadError: String?
     var ignoreUploads = false
@@ -375,6 +383,13 @@ final class TestMac: @unchecked Sendable {
         lock.unlock()
     }
 
+    /// The preview the Mac sends for `id` when a phone asks for one (the file itself is `register(asset:data:)`).
+    func register(preview id: String, data: Data) {
+        lock.lock()
+        previews[id] = data
+        lock.unlock()
+    }
+
     func uploaded(_ id: String) -> (name: String, data: Data)? {
         lock.lock(); defer { lock.unlock() }
         return uploads[id].map { ($0.name, $0.data) }
@@ -560,11 +575,25 @@ final class TestMac: @unchecked Sendable {
 
     private func serveAsset(_ get: AssetGet, to phoneId: String) async {
         lock.lock()
-        let data = assets[get.assetId]
+        let file = assets[get.assetId]
+        let preview = previews[get.assetId]
         lock.unlock()
-        guard let data else {
+        guard let file else {
             await sendDown(AssetError(assetId: get.assetId, reason: "notFound"), to: phoneId)
             return
+        }
+        // A request that names a preview is answered with the preview the Mac holds, and with the file when it holds none
+        // (or when the test says the picture changed, `answerPreviewsWithFiles`); the chunks always say which it is. A Mac
+        // that does not declare previews does not know the field: it sends the file and says nothing of it.
+        var data = file
+        var variant: String?
+        if get.variant == "preview", caps.assetPreview {
+            if let preview, !answerPreviewsWithFiles {
+                data = preview
+                variant = "preview"
+            } else {
+                variant = "original"
+            }
         }
         let size = Wire.assetChunkBytes
         let total = max(1, (data.count + size - 1) / size)
@@ -576,7 +605,7 @@ final class TestMac: @unchecked Sendable {
             let slice = data.subdata(in: (index * size)..<min((index + 1) * size, data.count))
             let chunk = AssetChunk(
                 assetId: get.assetId, index: UInt64(index), total: UInt64(total), size: UInt64(data.count),
-                sha256: index == 0 ? sha : nil, data: blobs ? "" : Bytes.b64u(slice)
+                sha256: index == 0 ? sha : nil, variant: variant, data: blobs ? "" : Bytes.b64u(slice)
             )
             if blobs {
                 await sendBlobDown(chunk, bytes: slice, to: phoneId)

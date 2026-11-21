@@ -7,6 +7,21 @@ import AHStore
 // eight chunks; files the user attaches to a reply are pushed in chunks with a rolling
 // acknowledgement. Both verify a SHA-256 over the whole file.
 
+/// What a download brings: the file itself, or the downscaled preview of a picture the Mac makes on request
+/// (docs/specs/ios-attachment-traffic.md §5.4). The raw values are what the wire calls them (`AssetGet.variant`,
+/// `AssetChunk.variant`).
+enum AssetVariant: String, Sendable {
+    case original
+    case preview
+}
+
+/// A download is told apart by what it brings as well as by the asset: the preview and the file of one asset may be on
+/// their way at the same time, and every chunk says which of the two it belongs to (§7.1).
+struct DownloadKey: Hashable, Sendable {
+    var assetId: String
+    var variant: AssetVariant
+}
+
 struct Download {
     var macId: String
     var assetId: String
@@ -16,7 +31,7 @@ struct Download {
     var chunks: [UInt64: Data] = [:]
     /// First index of the window currently requested.
     var windowStart: UInt64 = 0
-    var waiters: [UUID: CheckedContinuation<URL, Error>] = [:]
+    var waiters: [UUID: CheckedContinuation<ViewableAsset, Error>] = [:]
     var progress: [UUID: @Sendable (Double) -> Void] = [:]
     var retried = false
 }
@@ -92,142 +107,245 @@ extension PhoneEngine {
         config.assetDirectory.appendingPathComponent(assetId, isDirectory: false)
     }
 
+    /// Where the preview of a picture is kept, apart from the file (`cachedAssetURL`), which may arrive later.
+    func cachedPreviewURL(_ assetId: String) -> URL {
+        config.assetDirectory.appendingPathComponent(assetId + ".preview", isDirectory: false)
+    }
+
+    /// The file of an attachment, whatever else is on the phone of it.
     public func download(macId: String, asset: AssetRef, progress: @escaping @Sendable (Double) -> Void) async throws -> URL {
+        try await fetch(macId: macId, asset: asset, preferPreview: false, progress: progress).url
+    }
+
+    public func downloadForViewing(
+        macId: String, asset: AssetRef, progress: @escaping @Sendable (Double) -> Void
+    ) async throws -> ViewableAsset {
+        try await fetch(macId: macId, asset: asset, preferPreview: true, progress: progress)
+    }
+
+    /// The one path of every download (docs/specs/ios-attachment-traffic.md §7.1). A file that is on the phone serves
+    /// every purpose. Otherwise a preview is what comes when the caller prefers one, the asset offers it, and the Mac
+    /// declared in this session that it makes them; in every other case it is the file.
+    private func fetch(
+        macId: String, asset: AssetRef, preferPreview: Bool, progress: @escaping @Sendable (Double) -> Void
+    ) async throws -> ViewableAsset {
         guard Bytes.isValidId(asset.assetId) else { throw BackendError.invalid("Bad asset id.") }
         if asset.tooLarge { throw BackendError.tooLarge }
         let url = cachedAssetURL(asset.assetId)
         if let attributes = try? FileManager.default.attributesOfItem(atPath: url.path),
            (attributes[.size] as? NSNumber)?.uint64Value == asset.size {
             progress(1)
-            return url
+            return ViewableAsset(url: url, isPreview: false)
+        }
+        var variant = AssetVariant.original
+        if preferPreview, asset.preview {
+            // A preview that is here is shown whatever the link to the Mac is doing.
+            let preview = cachedPreviewURL(asset.assetId)
+            if FileManager.default.fileExists(atPath: preview.path) {
+                progress(1)
+                return ViewableAsset(url: preview, isPreview: true)
+            }
+            if macs[macId]?.caps?.assetPreview == true { variant = .preview }
         }
         guard macs[macId]?.sync == .synced else { throw BackendError.macOffline }
 
+        let key = DownloadKey(assetId: asset.assetId, variant: variant)
         let waiter = UUID()
         return try await withTaskCancellationHandler {
-            try await withCheckedThrowingContinuation { (cont: CheckedContinuation<URL, Error>) in
-                if downloads[asset.assetId] == nil {
-                    downloads[asset.assetId] = Download(macId: macId, assetId: asset.assetId)
-                    downloads[asset.assetId]?.size = asset.size
-                    Task { await self.requestWindow(asset.assetId, from: 0) }
+            try await withCheckedThrowingContinuation { (cont: CheckedContinuation<ViewableAsset, Error>) in
+                if downloads[key] == nil {
+                    downloads[key] = Download(macId: macId, assetId: asset.assetId)
+                    // The size of a preview is not known before its first chunk says it; the file's is.
+                    if variant == .original { downloads[key]?.size = asset.size }
+                    Task { await self.requestWindow(key, from: 0) }
                 }
-                downloads[asset.assetId]?.waiters[waiter] = cont
-                downloads[asset.assetId]?.progress[waiter] = progress
+                downloads[key]?.waiters[waiter] = cont
+                downloads[key]?.progress[waiter] = progress
             }
         } onCancel: {
-            Task { await self.cancelDownloadWaiter(asset.assetId, waiter) }
+            Task { await self.cancelDownloadWaiter(waiter) }
         }
     }
 
-    func cancelDownloadWaiter(_ assetId: String, _ waiter: UUID) {
-        guard var download = downloads[assetId] else { return }
-        download.waiters.removeValue(forKey: waiter)?.resume(throwing: BackendError.cancelled)
-        download.progress[waiter] = nil
-        downloads[assetId] = download
-        if download.waiters.isEmpty {
-            downloads[assetId] = nil
-            cancelTimer("asset." + assetId)
+    /// Takes a waiter out of the download it waits in, wherever that is by now (a waiter of a preview moves to the file's
+    /// download when the Mac answers with the file), and drops the download when nobody waits for it any more.
+    func cancelDownloadWaiter(_ waiter: UUID) {
+        for (key, var download) in downloads where download.waiters[waiter] != nil {
+            download.waiters.removeValue(forKey: waiter)?.resume(throwing: BackendError.cancelled)
+            download.progress[waiter] = nil
+            downloads[key] = download
+            if download.waiters.isEmpty {
+                downloads[key] = nil
+                cancelTimer(timerKey(key))
+            }
+            return
         }
     }
 
-    func requestWindow(_ assetId: String, from index: UInt64) async {
-        guard var download = downloads[assetId] else { return }
+    func timerKey(_ key: DownloadKey) -> String { "asset.\(key.assetId).\(key.variant.rawValue)" }
+
+    func requestWindow(_ key: DownloadKey, from index: UInt64) async {
+        guard var download = downloads[key] else { return }
         download.windowStart = index
-        downloads[assetId] = download
-        await send(AssetGet(assetId: assetId, from: index, count: UInt64(Wire.maxAssetChunksPerGet)), to: download.macId)
-        after("asset." + assetId, Self.windowTimeout) { engine in await engine.windowTimedOut(assetId) }
+        downloads[key] = download
+        // Only a preview is asked for by name: nothing asks for the file but the plain request every Mac knows.
+        let variant = key.variant == .preview ? AssetVariant.preview.rawValue : nil
+        await send(
+            AssetGet(assetId: key.assetId, from: index, count: UInt64(Wire.maxAssetChunksPerGet), variant: variant),
+            to: download.macId
+        )
+        after(timerKey(key), Self.windowTimeout) { engine in await engine.windowTimedOut(key) }
     }
 
-    func windowTimedOut(_ assetId: String) async {
-        guard var download = downloads[assetId] else { return }
+    func windowTimedOut(_ key: DownloadKey) async {
+        guard var download = downloads[key] else { return }
         if macs[download.macId]?.recoveringUpdate == true {
-            after("asset." + assetId, Self.windowTimeout) { engine in await engine.windowTimedOut(assetId) }
+            after(timerKey(key), Self.windowTimeout) { engine in await engine.windowTimedOut(key) }
             return
         }
         if download.retried {
-            failDownload(assetId, with: BackendError.timedOut)
+            failDownload(key, with: BackendError.timedOut)
             return
         }
         download.retried = true
-        downloads[assetId] = download
+        downloads[key] = download
         // Ask again from the first chunk we still miss.
         var next = download.windowStart
         while download.chunks[next] != nil { next += 1 }
-        await requestWindow(assetId, from: next)
+        await requestWindow(key, from: next)
     }
 
     /// One chunk of a download. Its bytes come raw in `blob` when it arrived as a blob frame, and in `chunk.data` as
     /// base64 when it arrived as JSON.
     func onAssetChunk(_ macId: String, _ chunk: AssetChunk, blob: Data?) async {
-        guard var download = downloads[chunk.assetId], download.macId == macId else { return }
+        guard let key = downloadKey(of: chunk, from: macId), var download = downloads[key], download.macId == macId else { return }
         guard let bytes = blob ?? Bytes.b64uDecode(chunk.data), bytes.count <= Wire.assetChunkBytes, chunk.index < chunk.total,
               chunk.size <= UInt64(Wire.maxAssetBytes)
         else {
-            failDownload(chunk.assetId, with: BackendError.invalid("Bad chunk."))
+            failDownload(key, with: BackendError.invalid("Bad chunk."))
             return
         }
         download.total = chunk.total
         download.size = chunk.size
         if let sha = chunk.sha256 { download.sha256 = sha.lowercased() }
         download.chunks[chunk.index] = bytes
-        downloads[chunk.assetId] = download
+        downloads[key] = download
 
         let fraction = Double(download.chunks.count) / Double(max(1, chunk.total))
         for report in download.progress.values { report(min(0.99, fraction)) }
 
         if UInt64(download.chunks.count) == chunk.total {
-            finishDownload(chunk.assetId)
+            finishDownload(key)
             return
         }
         // The window is complete once all of its chunks are in: ask for the next one.
         let end = min(download.windowStart + UInt64(Wire.maxAssetChunksPerGet), chunk.total)
         if (download.windowStart..<end).allSatisfy({ download.chunks[$0] != nil }) {
-            cancelTimer("asset." + chunk.assetId)
-            downloads[chunk.assetId]?.retried = false
-            await requestWindow(chunk.assetId, from: end)
+            cancelTimer(timerKey(key))
+            downloads[key]?.retried = false
+            await requestWindow(key, from: end)
         }
+    }
+
+    /// The download a chunk belongs to. A chunk with no `variant` is the file's (every Mac that does not know of previews
+    /// sends those), `preview` is the preview's, and `original` is the answer to a request for a preview that is the file
+    /// instead (the Mac cannot make one, or the file is not what the request described; §5.4). Anything else is not
+    /// something this phone asked for.
+    private func downloadKey(of chunk: AssetChunk, from macId: String) -> DownloadKey? {
+        switch chunk.variant {
+        case nil: return DownloadKey(assetId: chunk.assetId, variant: .original)
+        case AssetVariant.preview.rawValue: return DownloadKey(assetId: chunk.assetId, variant: .preview)
+        case AssetVariant.original.rawValue: return adoptOriginal(of: chunk.assetId, from: macId)
+        default: return nil
+        }
+    }
+
+    /// The Mac answered the request for the preview of `assetId` with the file. What is on its way now is the file, so
+    /// the download of the preview becomes the download of the file (§7.1): it joins the one of the file that is already
+    /// under way, or takes its place. Its later windows ask for the file, and the file satisfies everyone waiting.
+    /// Returns the download the chunk belongs to, `nil` when there is none (the viewer left in the meantime).
+    private func adoptOriginal(of assetId: String, from macId: String) -> DownloadKey? {
+        let previewKey = DownloadKey(assetId: assetId, variant: .preview)
+        let originalKey = DownloadKey(assetId: assetId, variant: .original)
+        guard let preview = downloads[previewKey], preview.macId == macId else {
+            // The rest of a window whose first chunks already moved the download over.
+            return downloads[originalKey]?.macId == macId ? originalKey : nil
+        }
+        guard preview.chunks.isEmpty else {
+            // Chunks of a preview came first and the file follows: the file changed under the request. They do not make one
+            // file together.
+            failDownload(previewKey, with: BackendError.invalid("The file changed."))
+            return nil
+        }
+        downloads[previewKey] = nil
+        cancelTimer(timerKey(previewKey))
+        if var original = downloads[originalKey], original.macId == macId {
+            original.waiters.merge(preview.waiters) { current, _ in current }
+            original.progress.merge(preview.progress) { current, _ in current }
+            downloads[originalKey] = original
+        } else {
+            downloads[originalKey] = preview
+            after(timerKey(originalKey), Self.windowTimeout) { engine in await engine.windowTimedOut(originalKey) }
+        }
+        return originalKey
     }
 
     func onAssetError(_ macId: String, _ error: AssetError) {
-        guard let download = downloads[error.assetId], download.macId == macId else { return }
-        failDownload(error.assetId, with: error.reason == "tooLarge" ? BackendError.tooLarge : BackendError.unavailable(error.reason))
+        // An error is about the asset, whichever of its variants was asked for.
+        let reason = error.reason == "tooLarge" ? BackendError.tooLarge : BackendError.unavailable(error.reason)
+        for (key, download) in downloads where key.assetId == error.assetId && download.macId == macId {
+            failDownload(key, with: reason)
+        }
     }
 
-    func finishDownload(_ assetId: String) {
-        guard let download = downloads[assetId], let total = download.total else { return }
+    func finishDownload(_ key: DownloadKey) {
+        guard let download = downloads[key], let total = download.total else { return }
         var data = Data()
         for index in 0..<total {
-            guard let part = download.chunks[index] else { return failDownload(assetId, with: BackendError.invalid("Missing chunk.")) }
+            guard let part = download.chunks[index] else { return failDownload(key, with: BackendError.invalid("Missing chunk.")) }
             data.append(part)
         }
-        guard UInt64(data.count) == download.size else { return failDownload(assetId, with: BackendError.invalid("Size mismatch.")) }
+        guard UInt64(data.count) == download.size else { return failDownload(key, with: BackendError.invalid("Size mismatch.")) }
         if let expected = download.sha256 {
             let actual = SHA256.hash(data: data).map { String(format: "%02x", $0) }.joined()
-            guard actual == expected else { return failDownload(assetId, with: BackendError.invalid("Checksum mismatch.")) }
+            guard actual == expected else { return failDownload(key, with: BackendError.invalid("Checksum mismatch.")) }
         }
-        let url = cachedAssetURL(assetId)
+        let isPreview = key.variant == .preview
+        let url = isPreview ? cachedPreviewURL(key.assetId) : cachedAssetURL(key.assetId)
         do {
             try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
             try data.write(to: url, options: .atomic)
         } catch {
-            return failDownload(assetId, with: BackendError.unavailable("Could not store the file."))
+            return failDownload(key, with: BackendError.unavailable("Could not store the file."))
         }
-        cancelTimer("asset." + assetId)
-        downloads[assetId] = nil
+        cancelTimer(timerKey(key))
+        downloads[key] = nil
         for report in download.progress.values { report(1) }
-        for waiter in download.waiters.values { waiter.resume(returning: url) }
+        for waiter in download.waiters.values { waiter.resume(returning: ViewableAsset(url: url, isPreview: isPreview)) }
+        if !isPreview { satisfyPreviewWaiters(withFileOf: key.assetId, at: url, from: download.macId) }
     }
 
-    func failDownload(_ assetId: String, with error: Error) {
-        guard let download = downloads.removeValue(forKey: assetId) else { return }
-        cancelTimer("asset." + assetId)
+    /// The file is here, so a viewer still waiting for the preview of it has no use for one: it gets the file, and what
+    /// the Mac may still send of the preview is not wanted (§7.1).
+    private func satisfyPreviewWaiters(withFileOf assetId: String, at url: URL, from macId: String) {
+        let previewKey = DownloadKey(assetId: assetId, variant: .preview)
+        guard let preview = downloads[previewKey], preview.macId == macId else { return }
+        downloads[previewKey] = nil
+        cancelTimer(timerKey(previewKey))
+        for report in preview.progress.values { report(1) }
+        for waiter in preview.waiters.values { waiter.resume(returning: ViewableAsset(url: url, isPreview: false)) }
+    }
+
+    func failDownload(_ key: DownloadKey, with error: Error) {
+        guard let download = downloads.removeValue(forKey: key) else { return }
+        cancelTimer(timerKey(key))
         for waiter in download.waiters.values { waiter.resume(throwing: error) }
     }
 
     /// Fails the transfers of one Mac, or all of them when `macId` is `nil`.
     func failTransfers(for macId: String? = nil, with error: BackendError) {
-        for (assetId, download) in downloads where macId == nil || download.macId == macId {
-            failDownload(assetId, with: error)
+        for (key, download) in downloads where macId == nil || download.macId == macId {
+            failDownload(key, with: error)
         }
         for (uploadId, mailbox) in uploadMailboxes {
             if macId == nil || uploadOwners[uploadId] == macId {

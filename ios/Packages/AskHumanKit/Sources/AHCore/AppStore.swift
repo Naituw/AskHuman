@@ -789,9 +789,16 @@ public final class AppStore {
         }
     }
 
-    /// Downloads an attachment of a request.
+    /// Downloads an attachment of a request. Always the file itself.
     public func download(macId: String, asset: AssetRef, progress: @escaping @Sendable (Double) -> Void) async throws -> URL {
         try await backend.download(macId: macId, asset: asset, progress: progress)
+    }
+
+    /// What an image viewer shows: the preview of a picture when the Mac offers one, the file otherwise.
+    public func downloadForViewing(
+        macId: String, asset: AssetRef, progress: @escaping @Sendable (Double) -> Void
+    ) async throws -> ViewableAsset {
+        try await backend.downloadForViewing(macId: macId, asset: asset, progress: progress)
     }
 
     public func downloadForExport(macId: String, asset: AssetRef, progress: @escaping @Sendable (Double) -> Void) async throws -> URL {
