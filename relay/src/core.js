@@ -2,21 +2,25 @@
 
 // Runtime-agnostic core of the AskHuman push relay.
 //
-// Only Node built-ins (`crypto`) are used; there is no HTTP server, no environment access and no
-// network I/O here. `adapters/scf.js` wires this core to Tencent SCF (HTTP server, env vars, APNs
-// over HTTP/2). Porting to another cloud only needs a new adapter.
+// Only Node built-ins (`crypto`, `net` for address parsing) are used; there is no HTTP server, no
+// environment access and no network I/O here. `adapters/scf.js` wires this core to Tencent SCF
+// (HTTP server, env vars, APNs over HTTP/2). Porting to another cloud only needs a new adapter.
 //
 // Trust model: the relay sees the device token and the opaque end-to-end encrypted envelope `ah`
 // (it can never decrypt it). A Mac only holds an opaque, revocable "handle"; the APNs signing key
 // never leaves the relay.
 
 const crypto = require('node:crypto');
+const net = require('node:net');
 
 const HANDLE_PREFIX = 'v1.';
 const HANDLE_AAD = Buffer.from('ah-relay-handle-v1');
 const HANDLE_LIFETIME_SECS = 180 * 24 * 3600;
 const MAX_PUSH_BYTES = 4096; // APNs payload limit for alert pushes.
 const JWT_WINDOW_SECS = 1800;
+// Proxies that append themselves to X-Forwarded-For in front of the function on Tencent SCF
+// (gateway + function host). See `clientIpFromForwardedFor` in adapters/scf.js.
+const DEFAULT_TRUSTED_HOPS = 2;
 
 // The relay builds the alert itself from this allowlist, so a Mac can never choose arbitrary
 // alert text. The strings are localized on the phone (Localizable.xcstrings).
@@ -64,6 +68,9 @@ function parseConfig(env) {
       .map((s) => s.trim())
       .filter(Boolean),
   );
+  // An unset or malformed value keeps the measured default: a wrong hop count only makes the
+  // registration limiter coarser (everyone shares one bucket), it never takes the relay down.
+  const hopsRaw = String(env.TRUSTED_PROXY_HOPS ?? '').trim();
   return {
     handleKey,
     topic: env.APNS_TOPIC || '',
@@ -71,6 +78,7 @@ function parseConfig(env) {
       ? { p8, keyId: env.APNS_KEY_ID, teamId: env.APNS_TEAM_ID, topic: env.APNS_TOPIC }
       : null,
     revoked,
+    trustedHops: /^[0-8]$/.test(hopsRaw) ? Number(hopsRaw) : DEFAULT_TRUSTED_HOPS,
   };
 }
 
@@ -251,6 +259,45 @@ function makeJwtSigner(apns) {
   };
 }
 
+// ---------------------------------------------------------------- client address
+
+// Expands an IPv6 literal (already validated by `net.isIP`) into eight 16-bit groups. A trailing
+// dotted IPv4 part becomes the last two groups; a zone id is ignored.
+function expandIpv6(ip) {
+  let s = ip.split('%')[0];
+  const v4 = s.match(/(\d+)\.(\d+)\.(\d+)\.(\d+)$/);
+  if (v4) {
+    const [a, b, c, d] = v4.slice(1).map(Number);
+    s = `${s.slice(0, v4.index)}${((a << 8) | b).toString(16)}:${((c << 8) | d).toString(16)}`;
+  }
+  const halves = s.split('::');
+  if (halves.length > 2) return null;
+  const head = halves[0] ? halves[0].split(':') : [];
+  const tail = halves.length === 2 && halves[1] ? halves[1].split(':') : [];
+  const fill = 8 - head.length - tail.length;
+  if (halves.length === 2 ? fill < 1 : fill !== 0) return null;
+  const groups = [...head, ...Array(Math.max(fill, 0)).fill('0'), ...tail];
+  if (groups.length !== 8 || !groups.every((g) => /^[0-9a-f]{1,4}$/i.test(g))) return null;
+  return groups.map((g) => parseInt(g, 16));
+}
+
+// Turns a textual IP address into a rate-limit bucket key; null when it is not an IP literal.
+// IPv4 is used as is, an IPv4-mapped IPv6 address collapses to its IPv4 form, and any other IPv6
+// address collapses to its /64 prefix: one subscriber normally owns a whole /64 and could
+// otherwise get a fresh bucket for every address inside it.
+function ipBucketKey(ip) {
+  if (typeof ip !== 'string') return null;
+  const kind = net.isIP(ip);
+  if (kind === 4) return ip;
+  if (kind !== 6) return null;
+  const g = expandIpv6(ip);
+  if (!g) return null;
+  if (g.slice(0, 5).every((x) => x === 0) && g[5] === 0xffff) {
+    return `${g[6] >> 8}.${g[6] & 0xff}.${g[7] >> 8}.${g[7] & 0xff}`;
+  }
+  return `v6:${g.slice(0, 4).map((x) => x.toString(16)).join(':')}`;
+}
+
 // ---------------------------------------------------------------- rate limit
 
 // Best-effort in-memory token bucket (not shared between instances).
@@ -278,6 +325,7 @@ class TokenBuckets {
 }
 
 module.exports = {
+  DEFAULT_TRUSTED_HOPS,
   HANDLE_LIFETIME_SECS,
   LOC_KEYS,
   MAX_PUSH_BYTES,
@@ -286,6 +334,7 @@ module.exports = {
   buildPush,
   decodeHandle,
   encodeHandle,
+  ipBucketKey,
   makeJwtSigner,
   mapApnsResult,
   parseConfig,

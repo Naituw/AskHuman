@@ -5,6 +5,7 @@
 
 const http = require('node:http');
 const http2 = require('node:http2');
+const net = require('node:net');
 const core = require('../core');
 
 const APNS_ORIGINS = {
@@ -14,6 +15,20 @@ const APNS_ORIGINS = {
 const MAX_BODY_BYTES = 16 * 1024;
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+
+// The SCF gateway appends "<client ip>, <gateway>, <function host>" to whatever X-Forwarded-For
+// the caller sent (measured on function URLs and on custom domains), so the real client address
+// is the entry `trustedHops` positions before the last one; anything before it is caller-supplied
+// and can be forged. Returns null when the header is missing, too short or not an IP literal.
+// The platform's own `x-real-ip` is the gateway, and `forwarded` / `true-client-ip` pass through
+// unmodified, so none of them can be used.
+function clientIpFromForwardedFor(header, trustedHops) {
+  if (typeof header !== 'string') return null;
+  const parts = header.split(',').map((s) => s.trim());
+  const at = parts.length - 1 - trustedHops;
+  if (at < 0) return null;
+  return net.isIP(parts[at]) ? parts[at] : null;
+}
 
 // Sends one APNs request. HTTP/2 sessions are reused inside a warm instance and rebuilt after a
 // GOAWAY / reset; a failed attempt on a stale session is retried once on a fresh one.
@@ -145,7 +160,11 @@ function createServer({
   const cfg = core.parseConfig(env);
   const sign = cfg.apns ? core.makeJwtSigner(cfg.apns) : null;
   const pushLimiter = new core.TokenBuckets({ capacity: 10, refillPerSec: 2 });
-  const registerLimiter = new core.TokenBuckets({ capacity: 30, refillPerSec: 0.5 });
+  // Registration is limited per client address first, so one abuser cannot use up the budget of
+  // everybody else, and then by a global backstop. Both are per-instance memory (each instance
+  // counts on its own): a fairness measure, not a cost control.
+  const registerPerClient = new core.TokenBuckets({ capacity: 30, refillPerSec: 0.5, maxKeys: 5000 });
+  const registerGlobal = new core.TokenBuckets({ capacity: 200, refillPerSec: 10 });
 
   async function handlePush(body) {
     const nowMs = now();
@@ -178,7 +197,14 @@ function createServer({
       return { status: 200, body: { ok: true, v: 1, apns: Boolean(cfg.apns && cfg.handleKey) } };
     }
     if (method === 'POST' && path === '/v1/register') {
-      if (!registerLimiter.allow('all', now())) throw new core.RelayError(429, 'rate_limited');
+      // A request whose address cannot be determined shares one small bucket ('unknown').
+      const client =
+        core.ipBucketKey(clientIpFromForwardedFor(req.headers['x-forwarded-for'], cfg.trustedHops)) ||
+        'unknown';
+      const nowMs = now();
+      if (!registerPerClient.allow(client, nowMs) || !registerGlobal.allow('all', nowMs)) {
+        throw new core.RelayError(429, 'rate_limited');
+      }
       const result = core.register(await readJson(req), cfg, Math.floor(now() / 1000));
       return { status: 200, body: result };
     }
@@ -224,4 +250,4 @@ if (require.main === module) {
   process.on('SIGTERM', () => server.close(() => process.exit(0)));
 }
 
-module.exports = { createApnsSender, createServer };
+module.exports = { clientIpFromForwardedFor, createApnsSender, createServer };

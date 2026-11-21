@@ -48,6 +48,17 @@ test('parseConfig turns literal \\n into newlines in the p8 key', () => {
   assert.equal(cfg.apns.p8, 'line1\nline2');
 });
 
+test('parseConfig trusts two proxy hops unless TRUSTED_PROXY_HOPS says otherwise', () => {
+  assert.equal(core.DEFAULT_TRUSTED_HOPS, 2);
+  assert.equal(core.parseConfig(makeEnv()).trustedHops, 2);
+  assert.equal(core.parseConfig(makeEnv({ TRUSTED_PROXY_HOPS: '3' })).trustedHops, 3);
+  assert.equal(core.parseConfig(makeEnv({ TRUSTED_PROXY_HOPS: ' 0 ' })).trustedHops, 0);
+  // Anything that is not a single digit falls back to the default instead of breaking the relay.
+  for (const bad of ['', 'two', '-1', '9', '1.5', '10']) {
+    assert.equal(core.parseConfig(makeEnv({ TRUSTED_PROXY_HOPS: bad })).trustedHops, 2, bad);
+  }
+});
+
 test('handle round trip carries device token, env and expiry', () => {
   const cfg = core.parseConfig(makeEnv());
   const { handle, expiresAt } = registerOk(cfg);
@@ -257,6 +268,40 @@ test('JWT is cached within a window and renewed in the next one', () => {
   const a = sign(base + 10);
   assert.equal(sign(base + 1700), a);
   assert.notEqual(sign(base + 1800), a);
+});
+
+test('ipBucketKey keeps IPv4 addresses and rejects everything that is not an IP literal', () => {
+  assert.equal(core.ipBucketKey('203.0.113.9'), '203.0.113.9');
+  for (const bad of ['', 'localhost', '203.0.113.9:443', '203.0.113', '1.2.3.4.5', '[::1]', 'unknown']) {
+    assert.equal(core.ipBucketKey(bad), null, bad);
+  }
+  for (const notString of [undefined, null, 42, {}]) {
+    assert.equal(core.ipBucketKey(notString), null);
+  }
+});
+
+test('ipBucketKey collapses IPv6 addresses of one /64 into one bucket', () => {
+  const a = core.ipBucketKey('2001:db8:1:2:aaaa:bbbb:cccc:dddd');
+  assert.equal(a, 'v6:2001:db8:1:2');
+  assert.equal(core.ipBucketKey('2001:DB8:1:2::1'), a);
+  assert.equal(core.ipBucketKey('2001:db8:0001:0002:0:0:0:ffff'), a);
+  assert.notEqual(core.ipBucketKey('2001:db8:1:3::1'), a);
+  // Zero compression in every position.
+  assert.equal(core.ipBucketKey('::1'), 'v6:0:0:0:0');
+  assert.equal(core.ipBucketKey('::'), 'v6:0:0:0:0');
+  assert.equal(core.ipBucketKey('2001:db8::'), 'v6:2001:db8:0:0');
+  assert.equal(core.ipBucketKey('1:2:3:4:5:6:7::'), 'v6:1:2:3:4');
+  assert.equal(core.ipBucketKey('fe80::1%en0'), 'v6:fe80:0:0:0');
+  // Compression must not change which /64 an address belongs to.
+  assert.equal(core.ipBucketKey('2001:db8:0:0:1::1'), 'v6:2001:db8:0:0');
+});
+
+test('ipBucketKey maps IPv4-mapped IPv6 addresses back to IPv4', () => {
+  assert.equal(core.ipBucketKey('::ffff:203.0.113.9'), '203.0.113.9');
+  assert.equal(core.ipBucketKey('::ffff:cb00:7109'), '203.0.113.9');
+  assert.equal(core.ipBucketKey('0:0:0:0:0:ffff:1.2.3.4'), '1.2.3.4');
+  // Other embedded-IPv4 forms are ordinary IPv6 addresses.
+  assert.equal(core.ipBucketKey('64:ff9b::1.2.3.4'), 'v6:64:ff9b:0:0');
 });
 
 test('token buckets refill over time and evict old keys', () => {

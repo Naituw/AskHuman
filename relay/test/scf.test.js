@@ -6,7 +6,7 @@ const crypto = require('node:crypto');
 const http = require('node:http');
 const http2 = require('node:http2');
 const { once } = require('node:events');
-const { createApnsSender, createServer } = require('../src/adapters/scf');
+const { clientIpFromForwardedFor, createApnsSender, createServer } = require('../src/adapters/scf');
 
 const TOPIC = 'com.naituw.humaninloop.ios';
 
@@ -160,6 +160,106 @@ test('per-handle rate limit returns 429 after the burst', async () => {
     last = (await call(r.base, 'POST', '/v1/push', pushBody(handle))).status;
   }
   assert.equal(last, 429);
+  await r.close();
+});
+
+// What the SCF gateway sends: the real client first, then the gateway and the function host.
+const viaGateway = (client) => `${client}, 11.163.3.223, 10.130.162.47`;
+
+async function registerStatus(base, forwardedFor) {
+  const res = await fetch(`${base}/v1/register`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json', ...(forwardedFor ? { 'x-forwarded-for': forwardedFor } : {}) },
+    body: JSON.stringify({ deviceToken: 'b'.repeat(64), env: 'dev', bundleId: TOPIC, appVer: '1' }),
+  });
+  await res.arrayBuffer();
+  return res.status;
+}
+
+async function registerMany(base, forwardedFor, count) {
+  const statuses = [];
+  for (let i = 0; i < count; i++) statuses.push(await registerStatus(base, forwardedFor(i)));
+  return statuses;
+}
+
+test('client address is the entry before the two trusted hops', () => {
+  const ip = (header, hops = 2) => clientIpFromForwardedFor(header, hops);
+  assert.equal(ip(viaGateway('198.51.100.7')), '198.51.100.7');
+  assert.equal(ip('  198.51.100.7 ,11.1.1.1,  10.1.1.1 '), '198.51.100.7');
+  assert.equal(ip(viaGateway('2001:db8::5')), '2001:db8::5');
+  // Whatever the caller put in front of the gateway's entries is ignored.
+  assert.equal(ip(`1.2.3.4, 5.6.7.8, ${viaGateway('198.51.100.7')}`), '198.51.100.7');
+  // The hop count moves the pick; zero hops means the last entry itself.
+  assert.equal(ip(viaGateway('198.51.100.7'), 1), '11.163.3.223');
+  assert.equal(ip(viaGateway('198.51.100.7'), 0), '10.130.162.47');
+});
+
+test('client address is null when the header cannot be trusted', () => {
+  const ip = (header, hops = 2) => clientIpFromForwardedFor(header, hops);
+  for (const header of [undefined, null, 42, '', ' ', '198.51.100.7', '11.163.3.223, 10.130.162.47']) {
+    assert.equal(ip(header), null, String(header));
+  }
+  for (const client of ['garbage', '', '198.51.100.7:4433', '[2001:db8::5]', 'unknown']) {
+    assert.equal(ip(viaGateway(client)), null, client);
+  }
+});
+
+test('registration is limited per client address, not for everybody at once', async () => {
+  const r = await startRelay({ server: { now: () => 1_800_000_000_000 } });
+  const burst = await registerMany(r.base, () => viaGateway('198.51.100.1'), 31);
+  assert.deepEqual(burst.slice(0, 30), Array(30).fill(200));
+  assert.equal(burst[30], 429);
+  // Another client is not affected by the first one's exhausted bucket.
+  assert.equal(await registerStatus(r.base, viaGateway('198.51.100.2')), 200);
+  await r.close();
+});
+
+test('a forged X-Forwarded-For prefix does not buy a fresh bucket', async () => {
+  const r = await startRelay({ server: { now: () => 1_800_000_000_000 } });
+  const forged = (i) => `9.9.9.${i}, ${viaGateway('198.51.100.1')}`;
+  const statuses = await registerMany(r.base, forged, 31);
+  assert.deepEqual(statuses.slice(0, 30), Array(30).fill(200));
+  assert.equal(statuses[30], 429);
+  await r.close();
+});
+
+test('IPv6 clients share a bucket per /64', async () => {
+  const r = await startRelay({ server: { now: () => 1_800_000_000_000 } });
+  const sameNet = (i) => viaGateway(`2001:db8:1:2::${(i + 1).toString(16)}`);
+  const statuses = await registerMany(r.base, sameNet, 31);
+  assert.equal(statuses.filter((s) => s === 200).length, 30);
+  assert.equal(statuses[30], 429);
+  assert.equal(await registerStatus(r.base, viaGateway('2001:db8:1:3::1')), 200);
+  await r.close();
+});
+
+test('requests without a usable client address share one small bucket', async () => {
+  const r = await startRelay({ server: { now: () => 1_800_000_000_000 } });
+  const mixed = (i) => (i % 2 ? 'bogus' : undefined);
+  const statuses = await registerMany(r.base, mixed, 31);
+  assert.equal(statuses.filter((s) => s === 200).length, 30);
+  assert.equal(statuses[30], 429);
+  // Identified clients still have their own buckets.
+  assert.equal(await registerStatus(r.base, viaGateway('198.51.100.1')), 200);
+  await r.close();
+});
+
+test('a global backstop caps registration across many clients', async () => {
+  const r = await startRelay({ server: { now: () => 1_800_000_000_000 } });
+  const distinct = (i) => viaGateway(`198.51.${Math.floor(i / 250)}.${(i % 250) + 1}`);
+  const statuses = await registerMany(r.base, distinct, 201);
+  assert.equal(statuses.filter((s) => s === 200).length, 200);
+  assert.equal(statuses[200], 429);
+  await r.close();
+});
+
+test('TRUSTED_PROXY_HOPS selects which forwarded address is the client', async () => {
+  const env = { ...makeEnv(), TRUSTED_PROXY_HOPS: '1' };
+  const r = await startRelay({ server: { env, now: () => 1_800_000_000_000 } });
+  const oneHop = (client) => `${client}, 10.130.162.47`;
+  const burst = await registerMany(r.base, () => oneHop('198.51.100.1'), 31);
+  assert.equal(burst[30], 429);
+  assert.equal(await registerStatus(r.base, oneHop('198.51.100.2')), 200);
   await r.close();
 });
 
