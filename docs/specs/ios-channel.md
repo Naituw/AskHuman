@@ -5,6 +5,7 @@
 > 前置资料：`docs/investigations/native-ios-channel-handoff.md`（2026-10-24 交接：EMQX 杭州实测、Mac / iOS 交互原型、费用模型）
 > 依赖：Daemon 渠道体系（`Channel` / Coordinator）、统一作答窗口（`popup-request-inbox.md`）、IM watch（`im-watch.md`）、插话（`agent-interject.md`）、IM 创建任务（`im-agent-task-launch.md`）、「实验」设置 Tab。
 > 平台：Mac 端沿用现有 Daemon（首期只在 macOS 验证）；手机端为 iPhone，iOS 17+，中 / 英双语。
+> 2026-11-21 修订：iOS 渠道向更多用户开放，**不再绑定 EMQX**（D3、D23）。下文提到 EMQX 之处是当时的设计与实测背景，保持原样；对 broker 的要求、EMQX / flespi / 自建 Mosquitto 三条已实测的路径见 [`docs/wiki/ios-broker.md`](../wiki/ios-broker.md)。
 
 ## 1. 背景与目标
 
@@ -44,7 +45,7 @@
 |---|---|---|
 | D1 | 使用范围 | 先自用 + 少量朋友（TestFlight 邀请）；协议与配置按「将来可公开发行」设计，首期不上架 App Store |
 | D2 | 渠道形态 | iOS 作为 Daemon 的新通信渠道 `ios`，与飞书等并列；Mac 端配置 broker 凭据与中继地址，再用配对关联手机 |
-| D3 | 传输 | 继续使用 EMQX Serverless（杭州实例）：TLS 8883 为主，WSS 8084 备；一份 broker 凭据所有 Mac 共用，手机经二维码获得，也支持「一行连接串」复制导入 |
+| D3 | 传输 | ~~继续使用 EMQX Serverless（杭州实例）~~ **2026-11-21 修订：不绑定某一家 broker**，EMQX Serverless、flespi、自建 Mosquitto 并列，任何满足 [`ios-broker.md`](../wiki/ios-broker.md) 要求的 MQTT broker 都可用。TLS 8883 为主，WSS 8084 备（默认端口，可改）；一份 broker 凭据所有 Mac 共用，手机经二维码获得，也支持「一行连接串」复制导入 |
 | D4 | 端到端加密 | 每个配对独立的端到端密钥；broker 与中继只见密文及最小元数据；撤销靠删除配对密钥，不靠更换 broker 密码 |
 | D5 | 配对确认 | 扫码后 Mac 端**必须点「允许」**，界面显示手机名称 + 6 位校验码，两端一致才允许；二维码 5 分钟内一次性有效 |
 | D6 | 多 Mac | 同一部手机可与多台 Mac 配对；统一收件箱按时间混排，行内带 Mac 名称标签，导航栏的筛选菜单可按 Mac / 类型筛选，按项目分组与 Mac 弹窗一致 |
@@ -64,7 +65,7 @@
 | D20 | 安全门 | 提交新任务（含 YOLO）需要 Face ID / 设备密码；回答与插话不需要 |
 | D21 | 标识 | Bundle ID `com.naituw.humaninloop.ios`；通知扩展 `com.naituw.humaninloop.ios.notification`；显示名「AskHuman」（若 App Store Connect 名称被占用，退回「AskHuman Mobile」）；Team 沿用 `DMJXDB9H6Q` |
 | D22 | 设置入口 | 内测期放「实验」Tab（需先打开隐蔽开关 `experimental.enabled`）；对外发行后再转正到「渠道」Tab（与「Agent 任务」从实验转正走同一路径） |
-| D23 | 成本红线 | 按量计费；不把固定月费作为默认方案；EMQX 两个实例的消费上限保持 0（额度用尽即停，不自动付费）；不创建管理 API Key |
+| D23 | 成本红线 | 按量计费；不把固定月费作为默认方案；~~EMQX 两个实例的消费上限保持 0（额度用尽即停，不自动付费）~~ **2026-11-21 修订：不替用户付费**，用托管 broker 时保持免费套餐、用尽即停（EMQX 的消费上限保持 0；各服务的做法见 [`ios-broker.md`](../wiki/ios-broker.md)）；不创建管理 API Key |
 | D24 | 本期功能边界 | 回答、确认、附件、Watch、Follow、插话、新任务、本地历史。用户未选的备选项（锁屏快捷操作、Live Activity、小组件 / 快捷指令）本期不做 |
 
 ## 4. 总体架构

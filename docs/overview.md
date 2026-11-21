@@ -370,8 +370,8 @@ Popup 的窗口、附件、来源标题与交互实现地图见 `docs/overview-p
 
 Daemon 里的又一个渠道：手机上的 AskHuman App 回答问题、看 / 关注 / 观察 / 插话 Agent、创建 Agent 任务。专题实现地图见 `docs/overview-ios.md`，需求与计划见 `docs/specs/ios-channel.md`、`docs/plans/ios-channel.md`，用户说明见 `docs/wiki/ios-setup.md`。
 
-- **形态**：Mac Gateway ↔ 自备 EMQX（MQTT TLS / WSS）↔ iOS App；推送经 `relay/` 的无状态云函数到 APNs。Mac 不持有任何 APNs 密钥，中继不存任何状态。
-- **不变量**：端到端加密（每配对一对方向密钥，broker 与中继只见密文）；一份 broker 凭据多台 Mac 共用；状态变更消息按 `msgId` 幂等；渠道藏在 `experimental.enabled` 后，`channel list` 与帮助默认不列出；EMQX 消费上限保持 0，不自动付费。
+- **形态**：Mac Gateway ↔ 自备 MQTT broker（TLS / WSS；对 broker 的要求与已实测的服务见 `docs/wiki/ios-broker.md`）↔ iOS App；推送经 `relay/` 的无状态云函数到 APNs。Mac 不持有任何 APNs 密钥，中继不存任何状态。
+- **不变量**：端到端加密（每配对一对方向密钥，broker 与中继只见密文）；一份 broker 凭据多台 Mac 共用；状态变更消息按 `msgId` 幂等；渠道藏在 `experimental.enabled` 后，`channel list` 与帮助默认不列出；不替用户付费（用托管 broker 时保持免费套餐、用尽即停）。
 - **投递与通知分开**：iOS 不参与 IM 的活跃槽 / `channels.autoActivation`——每个提问和确认都挂给所有已配对手机，手机一打开就能拉到；手机没在看时的系统推送只在 Mac 键盘 / 鼠标空闲满 `channels.ios.alertAfterSecs`（默认 15 分钟，`0` = 立即）后才发，每题每手机最多一条，不重复提醒。规格见 `docs/specs/ios-alert-timing.md`。
 - **手机上的回答与离开模式**：提问里可以选项目待办（`AnswerSubmit.todoIds`，Mac 网关按提问的项目反查并合并进回答，What's next 里看完整队列；`Caps.answerTodos` 缺失的旧 Mac 不显示），回答的底栏菜单有快捷回复与「离开模式 / 不再使用」两条指令（`AskView.quickReplies`、`AnswerSubmit.directive`），Agents 页有离开模式的常驻条、开启页与会话行（`away.state` / `away.set` / `away.session.set`、`Caps.away`）。细节见 `docs/overview-ios.md`，规格 `docs/specs/special-replies.md`。
 - **跨语言**：Rust `ios/{crypto,envelope,wire}.rs` 与 Swift `AHProtocol` 共用 `ios/Fixtures/wire-v1/`，限额常量两边一致；改线协议先改夹具。
