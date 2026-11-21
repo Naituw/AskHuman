@@ -4,33 +4,32 @@
 
 The AskHuman iOS app is a communication channel next to Feishu and Slack: your Agent asks on the Mac, you answer on your iPhone. You can also see what your Agents are doing, watch one live, send it a message and start new tasks. **Several Macs can pair with one phone** (home and office, say); all their questions land in one inbox.
 
-> This is an **experimental feature** and you bring three things yourself: an MQTT broker (the free tier of EMQX Serverless is enough), a push relay (a Tencent Cloud function, free tier is enough) and an Apple developer account (to create a push key and install the app). The steps below cover all of it.
+> This is an **experimental feature** and you bring three things yourself: an MQTT broker (the free tier of a hosted service or one you run yourself, see [Brokers: requirements, options and verification](./ios-broker.en.md)), a push relay (a Tencent Cloud function, free tier is enough) and an Apple developer account (to create a push key and install the app). The steps below cover all of it.
 
 ## How it works, and who can see what
 
 ```
-Agent ─► AskHuman on the Mac ──MQTT (TLS)──► EMQX ──► AskHuman on the iPhone
+Agent ─► AskHuman on the Mac ──MQTT (TLS)──► your broker ──► AskHuman on the iPhone
                  └── push relay (cloud function) ──► APNs ──► iPhone notification
 ```
 
-- **End-to-end encrypted.** Every pairing creates a pair of keys only that Mac and that phone know. EMQX and the push relay see ciphertext and metadata such as "who is online", never your questions or answers.
+- **End-to-end encrypted.** Every pairing creates a pair of keys only that Mac and that phone know. The broker and the push relay see ciphertext and metadata such as "who is online", never your questions or answers.
 - **Your APNs key lives only in the cloud function.** The Mac holds no Apple key; the relay is stateless and forwards the encrypted preview to Apple from a fixed allowlist.
 - **Push content is encrypted too.** The question summary on the lock screen is decrypted by the notification extension on the phone; if that fails you only see a generic line.
 - **One broker account for all your Macs.** Set up the first Mac, then paste its "connection string" into the others.
 
-## 1. Prepare EMQX (the broker)
+## 1. Prepare the broker
 
-1. Create a **Serverless** deployment on [EMQX Cloud](https://cloud.emqx.com/) (China site) or the [international site](https://cloud-intl.emqx.com/) (free tier: 1 million connection minutes and 1 GB of traffic a month).
-2. Note the **connection address** on the deployment overview, and the ports: TLS `8883`, WSS `8084`.
-3. **Authentication**: add a username and password. Use **letters and digits only** for the username (it is also the topic namespace `ah/<username>/` of the line).
-4. **Authorization (ACL)** (console: Access Control → Client Authorization). The page defaults to **blacklist mode: anything not explicitly denied is allowed**, so rule 1 below, the catch-all, is **required**; without it every account can read and write everyone else's topics:
-   1. Switch to the "All users" tab and add: topic `#`, action "Publish & Subscribe", **Deny** (catch-all).
-   2. Switch to the "Username" tab and add: the username from the previous step, topic `ah/<username>/#`, action "Publish & Subscribe", **Allow**. EMQX checks the account's own rules first and the "All users" rules after, so only its own topics get through.
+The broker is the relay station between the Mac and the phone, and you bring it. Start with **[Brokers: requirements, options and verification](./ios-broker.en.md)**: it lists what a broker must do and puts three tested paths side by side (EMQX Cloud Serverless, hosted in China; flespi, hosted in Europe; self-hosted Mosquitto, with a reference configuration in the repository), each with step-by-step setup, its free allowance and its drawbacks. Any MQTT broker that meets the requirements works.
 
-   Afterwards you can check the isolation with `ios/Tools/broker-probe/acl-check.cjs` (it needs one account's username and password; run `npm install` in `ios/Tools/broker-probe` first and pass the password in the `AH_PROBE_PASSWORD` environment variable, see the notes at the top of the script).
-5. **Keep the spend cap at 0.** When the free quota is used up the service pauses; nothing is charged automatically. AskHuman tells you as this month's traffic gets close to each GB (see "Traffic and cost").
+Whichever path you take, you end up with:
 
-> Sharing with a friend: create a separate username and password for each person and add one `ah/<username>/#` allow rule of their own (rule 2); leave the "All users" catch-all alone. They cannot see each other's topics.
+1. A **host name**, a TLS port (default `8883`) and a WSS port (default `8084`; it differs per service, flespi uses `443`, for example).
+2. A **username and password**. Use **letters and digits only** for the username; it is also the topic namespace `ah/<username>/` of the line.
+3. **Access control**: the account may only read and write `ah/<username>/#`. It is required when several people share one broker; the broker page has the exact steps for each service.
+4. When it is set up, verify it with the repository's compatibility suite: run `npm ci` in `ios/Tools/broker-probe`, then `AH_PROBE_PASSWORD='…' node compat.cjs --host <host> --user <username> --ws-port <WSS port>`; it should end with `COMPATIBLE` (details in [Verify a broker yourself](./ios-broker.en.md#verify-a-broker-yourself)).
+
+> Sharing with a friend: give each person their own account that can only use its own `ah/<username>/#`; see [Sharing a broker with friends](./ios-broker.en.md#sharing-a-broker-with-friends).
 
 ## 2. Prepare the Apple developer resources
 
@@ -60,7 +59,7 @@ Agent ─► AskHuman on the Mac ──MQTT (TLS)──► EMQX ──► AskHum
 
 1. AskHuman Settings → **General** → at the very bottom turn on "Experimental features"; an "Experimental" tab appears (or run `AskHuman config set experimental.enabled true`).
 2. **Experimental** → **iOS App channel**, switch it on and fill in:
-   - broker host, TLS port (8883), WSS port (8084), username, password;
+   - broker host, TLS port (default 8883), WSS port (default 8084), username, password, as your broker needs them (see the [broker page](./ios-broker.en.md));
    - the push relay URL (the function URL);
    - the name this Mac shows on the phone (empty uses the computer name).
 3. Click **Test connection**: it connects to the broker and sends itself a message, reporting whether `tls` or `wss` was used and the round-trip time; then it asks the relay for its health and reports how fast it answered and whether it has an APNs key (without a relay address it warns that the phone gets no pushes).
@@ -107,8 +106,8 @@ Agent ─► AskHuman on the Mac ──MQTT (TLS)──► EMQX ──► AskHum
 
 ## Traffic and cost
 
-- EMQX China-site free tier: 1 million connection minutes and 1 GB of traffic (in plus out) a month. A phone in the background causes no sync traffic. With the Mac and the phone both on a version that compresses the lists and sends Agent changes by attention, the sync itself (coming to the foreground, the lists and states while there, requests, to-dos) measured about 0.4 GB a month under heavy use (seven or eight Agents in parallel, the app opened about 70 times a day). **Attachments are the big part**: the phone downloads a picture from the Mac only when you open it in the viewer, and one screenshot of about 2 MB opened once counts about 7 MB at EMQX (published plus delivered), so a month's total depends mostly on how many large pictures you open (the traffic figure below is the real one).
-- The Mac settings and the phone's Macs tab both show this month's traffic (counted locally; a message counts twice, published and delivered). **When this month's traffic gets close to each GB (from 0.8 GB by default) the Inbox says so once**: close the note at the top with its ✕ and it comes back only when the use gets close to the next GB. The "Data use reminders" option on the phone's Macs tab changes it to every 2 / 5 / 10 GB, or turns it off. The note only counts; it does not judge whether the free quota is used up, so a top-up or a plan change needs no action, and it starts over each month (UTC). With the spend cap at 0 the broker refuses connections once the quota is gone and the app says so: "the broker refused the connection, this month's free allowance may be used up".
+- Whether your broker has a free allowance, how large it is and what happens when it runs out depends on the service you chose; each service's allowance, where to see its usage and its drawbacks are on the [broker page](./ios-broker.en.md). A phone in the background causes no sync traffic. With the Mac and the phone both on a version that compresses the lists and sends Agent changes by attention, the sync itself (coming to the foreground, the lists and states while there, requests, to-dos) measured about 0.4 GB a month under heavy use (seven or eight Agents in parallel, the app opened about 70 times a day; counted on this device, where a message counts twice, published and delivered). **Attachments are the big part**: the phone downloads a picture from the Mac only when you open it in the viewer, and one screenshot of about 2 MB opened once counts about 7 MB by that count, so a month's total depends mostly on how many large pictures you open (the traffic figure below is the real one).
+- The Mac settings and the phone's Macs tab both show this month's traffic (counted locally; a message counts twice, published and delivered). **When this month's traffic gets close to each GB (from 0.8 GB by default) the Inbox says so once**: close the note at the top with its ✕ and it comes back only when the use gets close to the next GB. The "Data use reminders" option on the phone's Macs tab changes it to every 2 / 5 / 10 GB, or turns it off. The note only counts; it reads nothing from your broker and does not judge whether an allowance is used up, so a top-up or a plan change needs no action, and it starts over each month (UTC). For the real usage on the broker's side, look in its console. When the broker refuses connections because an allowance is gone, the app says so: "the broker refused the connection, this month's free allowance may be used up".
 - The cloud function sees very few calls (roughly 1,000 to 20,000 a month); check your account's billing rules in the cost center before deploying so there is no surprise fixed fee.
 
 ## Troubleshooting
@@ -122,7 +121,7 @@ Agent ─► AskHuman on the Mac ──MQTT (TLS)──► EMQX ──► AskHum
 | "This phone's clock differs too much from a Mac's" | Messages have a ±15 minute replay window; fix Date & Time on the phone |
 | You want a Mac gone from the phone | Unpair it in the phone's Mac details and revoke the phone on the Mac |
 | That Mac shows offline on the phone | Its daemon is not running (it exits when idle without Agent activity): have an Agent ask once, or set the daemon lifecycle to keepalive |
-| Traffic warning | Use less live watching and fewer attachments, or check the usage in the EMQX console; the local count only covers this device's messages |
+| Traffic warning | Use less live watching and fewer attachments, or check the usage in your broker's console (where to look is on the [broker page](./ios-broker.en.md)); the local count only covers this device's messages |
 
 ## Limits
 

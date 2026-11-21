@@ -21,17 +21,11 @@ AskHuman setup
 
 Connect the agents you use in the wizard; you can skip other messaging tools. Restart any open agent sessions afterward to load the integration.
 
-## 2. Create your own EMQX deployment
+## 2. Prepare your own broker
 
-1. Register and sign in to the [EMQX China console](https://cloud.emqx.com/console/). Create a project named `AskHuman`. These steps use that console.
-2. In the project, create a **Serverless** deployment named `askhuman`. Set the **spending limit to `0`**, leave other options at their defaults, and wait until it is running.
-3. Open the deployment's **Access Control → Authentication**. Add username `ah01`, choose a password and save it.
-4. In **Access Control → Authorization**, add these rules:
-   - **Username** tab: username `ah01`, topic `ah/ah01/#`, action **Publish & Subscribe**, permission **Allow**.
-   - **All Users** tab: topic `#`, action **Publish & Subscribe**, permission **Deny**. Remove any existing rule allowing `#`.
-5. Return to **Overview** and copy the hostname under **Connection Information** for the next step.
+The broker is the relay station between your Mac and your phone. You bring it, and AskHuman is not tied to any one service. Choose a path in **[Brokers: requirements, options and verification](https://github.com/Naituw/AskHuman/blob/main/docs/wiki/ios-broker.en.md)** and set it up: EMQX Cloud Serverless (hosted in China), flespi (hosted in Europe) or self-hosted Mosquitto. All three are tested, and each has step-by-step setup, its free allowance and its drawbacks.
 
-A spending limit of `0` uses only the free allowance and stops the deployment when it is exhausted. See [EMQX billing](https://docs.emqx.com/en/cloud/latest/price/pricing.html).
+Write down the **host name**, the TLS port (default `8883`), the WSS port (default `8084`; flespi uses `443`), the **username** and the **password**. The account must only be able to read and write `ah/<username>/#`, so it cannot see anyone else's topics.
 
 ## 3. Enter the Mac connection settings
 
@@ -42,11 +36,11 @@ Run `AskHuman --settings` to open Settings:
 
    | Field | Value |
    |---|---|
-   | Broker host | The EMQX hostname, without a scheme, port or path |
-   | TLS port | `8883` |
-   | WSS port | `8084` |
-   | Username | `ah01` |
-   | Password | The client password you just created |
+   | Broker host | The host name from the previous step, without a scheme, port or path |
+   | TLS port | The TLS port you wrote down, usually `8883` |
+   | WSS port | The WSS port you wrote down, usually `8084` (`443` for flespi) |
+   | Username | The username from the previous step (the token ID for flespi) |
+   | Password | The password from the previous step (the full token for flespi) |
    | Push relay URL | The complete URL supplied separately by the maintainer |
 
 3. Click **Test connection**. Both the **broker round trip and relay health check must pass**.

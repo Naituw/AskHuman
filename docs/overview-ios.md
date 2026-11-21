@@ -6,7 +6,7 @@ AHCore 保留更新期间的草稿和原提交 ID，完成新 epoch 同步后自
 `Caps.liveUpdate` 与 Presence 可选 `u` 保持旧手机互通，详细契约见 [即时换新](specs/daemon-live-update.md)。
 
 
-> 本文是 `docs/overview.md` 的专题补充，记录 iOS 渠道（实验功能）当前的实现地图与不变量；需求决策见 `docs/specs/ios-channel.md`，实现步骤见 `docs/plans/ios-channel.md`，用户使用说明见 `docs/wiki/ios-setup.md`。
+> 本文是 `docs/overview.md` 的专题补充，记录 iOS 渠道（实验功能）当前的实现地图与不变量；需求决策见 `docs/specs/ios-channel.md`，实现步骤见 `docs/plans/ios-channel.md`，用户使用说明见 `docs/wiki/ios-setup.md`；broker 的要求、三条已实测路径与兼容性验证见 `docs/wiki/ios-broker.md` 与 `ios/Tools/broker-probe/`。
 
 ## 形态
 
@@ -114,6 +114,8 @@ Agent / CLI ─► Daemon ── IosGateway（一个 actor）──► MQTT（TL
 | Rust（含 Gateway 测试台与跨语言夹具） | `cargo test --manifest-path src-tauri/Cargo.toml ios::` |
 | Swift 包（单元 + 进程内集成） | `cd ios/Packages/AskHumanKit && swift test` |
 | 中继 | `cd relay && npm test` |
+| Broker 兼容套件（离线自测，Aedes 回环 broker） | `cd ios/Tools/broker-probe && npm ci && npm test` |
+| 对真实 broker 跑兼容套件（手动） | `cd ios/Tools/broker-probe && AH_PROBE_PASSWORD=… node compat.cjs --host <主机> --user <用户名> [--ws-port <端口>] [--user2 … --slow --markdown]`；用法、判定与各 broker 的实测结果见 `docs/wiki/ios-broker.md`。必须项（must）判兼容与否，警告（should）与测量值（info）不影响退出码（`--strict` 例外） |
 | 设置页 | `npx vitest run src/views/settings` |
 | App UI（模拟器） | `xcodebuild test -project ios/AskHuman.xcodeproj -scheme AskHuman -destination 'platform=iOS Simulator,id=<UDID>' -derivedDataPath ios/build/DerivedData CODE_SIGNING_ALLOWED=NO -parallel-testing-enabled NO -collect-test-diagnostics never`（`TEST_RUNNER_AH_UI_LANG=zh-Hans` 切中文，`TEST_RUNNER_AH_UI_SHOTS=<dir>` 保存截图）。必须前台跑；后台会被工具杀掉 |
 | 大屏 UI 测试（iPad mini 或 iPhone Duo 模拟器） | 同上一行，destination 换成 iPad / Duo 的 UDID，加 `-only-testing:AskHumanUITests/AskHumanLargeScreenUITests`；用例按窗口宽度（≥ 700pt 并排）自己分支，phone 尺寸会跳过。Duo 转屏用 `duoctl`；真实开合回归由 `ios/Tools/test-fold-navigation.py` 驱动 `AskHumanFoldNavigationUITests`（入口见折叠排查记录） |
@@ -122,7 +124,7 @@ Agent / CLI ─► Daemon ── IosGateway（一个 actor）──► MQTT（TL
 | 真实 Agent 端到端（Codex，付费，手动） | 在上面「本地 broker」那一行的命令前加 `AH_E2E_CODEX=1`，过滤改成 `--filter CodexAgentE2ETests`；可选 `AH_E2E_CODEX_MODEL=<模型>`（缺省用 Codex 自己的默认模型）、`AH_E2E_CODEX_BIN=<codex>`。起真实的 `codex exec` 对一台一次性 Mac，由假手机作答：离开 → 升级、不再使用、从手机解除后插话（要登录过 Codex、装了 AskHuman 的 Codex hooks，否则自动跳过）。每个用例半分钟到两分钟，要花钱；线程在结束时自行归档。同文件里的 `CodexStopHookE2ETests`（Stop hook 级，不起 Codex）随「本地 broker」那一行默认跑。做法、隔离与结果见 `docs/plans/special-replies.md`「真实 Codex 端到端」 |
 | 真实服务 + 模拟器上的真 App | 先 `xcodegen generate`，在 `ios/` 下 `xcodebuild build-for-testing -project AskHuman.xcodeproj -scheme AskHuman -destination 'platform=iOS Simulator,id=<UDID>' -derivedDataPath build/DerivedDataLive -allowProvisioningUpdates`（要签名：推送需要真 token）；再在 `ios/Packages/AskHumanKit` 下 `AH_E2E_BIN=… AH_E2E_REAL_FROM=… AH_E2E_BUNDLE_ID=… AH_E2E_SIM_UDID=<UDID> swift test --filter SimulatorLiveTests`（缺 `AH_E2E_SIM_UDID` 或构建产物时跳过）。要一台专用模拟器，必须前台跑，约 2 分钟，机器忙时成倍 |
 
-CI（`.github/workflows/build.yml`）只跑上表的「Swift 包」与「中继」两行，各占一个 job（`ios-kit`：`macos-26` 上 `swift test`；`relay`：`npm test`），与四平台构建矩阵并行；不跑 `xcodebuild`（App 本体与 UI 测试要模拟器）、真实 daemon 端到端和真实服务场景（端到端缺环境变量会自动跳过）。Rust 侧的 `ios::` 测试已包含在矩阵里的 `cargo test`。
+CI（`.github/workflows/build.yml`）只跑上表的「Swift 包」「中继」与「Broker 兼容套件（离线自测）」三行，各占一个 job（`ios-kit`：`macos-26` 上 `swift test`；`relay`：`npm test`；`broker-probe`：`npm ci` + `npm test`，不连外部 broker），与四平台构建矩阵并行；不跑 `xcodebuild`（App 本体与 UI 测试要模拟器）、真实 daemon 端到端和真实服务场景（端到端缺环境变量会自动跳过）。Rust 侧的 `ios::` 测试已包含在矩阵里的 `cargo test`。
 
 端到端测试台会起**一台一次性的 Mac**：独立 `ASKHUMAN_HOME`、`HOME`、`ASKHUMAN_NO_KEYCHAIN=1`，加本地 Node broker；`agentTasks.enabled` 保持关闭，所以不会真的启动任何终端。界面语言固定为英文（种子配置 `general.language = "en"`）：macOS 上 CLI 与 daemon 跟随系统首选语言、不看 `LANG`，不固定的话，断言英文输出的用例（取消状态、`away status`、Stop 确认卡）在中文系统上会失败。伪造的 Agent 会话通过隐藏命令 `AskHuman __agent-hook <agent> <event>` 注入。
 
