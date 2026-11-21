@@ -499,6 +499,30 @@ Agents 列表 + 实时观看 + 关注 + 插话读取回执 + 完成横幅、任�
 - 提问正文里的本地图片尚未改写为 `ahasset://`，列表项的墓碑展示也未做；撤回插话只取回文字、不取回附件。
 - 发行给朋友之前：EMQX 自动开户与额度共享、TestFlight 外部测试说明、隐私政策网址与联系邮箱。
 
+## 进行中：iOS 渠道免费开放（公共中继 + 厂商中立的 Broker）——P1、P2 已完成，下一步 P3（要 Owner 配合腾讯云控制台）
+
+2026-11-21 Owner 批准的 [规格](specs/ios-open-access.md)（决策 OA1–OA14）与 [计划](plans/ios-open-access.md)：iOS 端免费开放给更多用户，不绑定 EMQX；
+公共侧只做推送中继（绑已备案域名，最大独占配额封顶 + 告警 + 手动熄火），broker 仍由用户自备（EMQX、flespi、自建 Mosquitto 三条并列）。
+
+已完成：
+
+- P1：兼容套件 `ios/Tools/broker-probe/`（离线自测进 CI）、[Broker 文档](wiki/ios-broker.md)、`ios-setup` 与朋友内测指南改成中性；三个 broker 各跑过一遍（2026-11-21，结果在 `ios-broker.md`）。
+- P2：Mac 设置卡与手机 Macs 页去掉写死 1 GiB 的百分比、EMQX 控制台链接与点名 EMQX 的文案，保留 GB 步进提醒；`ios-channel.md` 的 D3、D23 标已修订。
+
+下一步（P3 起要改线上）：
+
+- [ ] 先问 Owner：中继用已备案域名的哪个子域名（单域名，不支持泛域名）。
+- [ ] P3a 预发验证：用一个临时函数验证最大独占配额与超限返回码、自定义域名能否映射到别名、客户端真实 IP 在哪个请求头、「仅供测试」限制是否波及自定义域名、每实例拒绝类请求的吞吐、有没有可配限流；任何一项不成立先停下问 Owner。
+- [ ] P3b 中继注册限流改为按客户端 IP 分桶 + 全局兜底（`relay/`）。
+- [ ] P3c 生产部署：别名与函数 URL、自定义域名与 HTTPS、最大独占配额 512 MB、告警与预算、熄火 / 恢复演练（Owner 在控制台点，我给逐步清单并从外部验证，不需要任何凭据）。
+- [ ] P4 向导与默认中继（默认地址要等域名生效后才合入）；P5 收尾（见计划），其中要删掉上一节「iOS 原生渠道」里「函数 URL 被标为仅供测试」那条待办。
+
+悬而未决的小项：
+
+- 真实 App 在 EMQX 的 WSS 上断开时是否多发一条遗嘱，没有实测（套件探针的结果见 `ios-broker.md`）；flespi 的跨用户互验只在 TLS 上跑过。
+- 本机还装着为测试装的 Homebrew `mosquitto`（及 `cjson libevent libwebsockets`），P5 里问 Owner 后卸载。
+- 手机端改动随下一次 TestFlight 构建发布，出包由 Owner 另行指示；`docs/release/ios-external-beta/*.txt` 与 `ios-testflight` 技能里的 EMQX 字样随那次出包一起改。
+
 ## 进行中：Mac 互通（弹窗网）——需求与计划已评审通过，等 `ios-alert-timing` 合并后开工
 
 2026-10-26 用户提出用 iOS 渠道的 MQTT 设施让多台 Mac 互通（在公司 Mac 上回答家里 Agent 的提问）。经 6 轮问答定稿设计，2026-10-27 写成需求

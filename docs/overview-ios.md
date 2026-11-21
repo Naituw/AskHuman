@@ -6,7 +6,7 @@ AHCore 保留更新期间的草稿和原提交 ID，完成新 epoch 同步后自
 `Caps.liveUpdate` 与 Presence 可选 `u` 保持旧手机互通，详细契约见 [即时换新](specs/daemon-live-update.md)。
 
 
-> 本文是 `docs/overview.md` 的专题补充，记录 iOS 渠道（实验功能）当前的实现地图与不变量；需求决策见 `docs/specs/ios-channel.md`，实现步骤见 `docs/plans/ios-channel.md`，用户使用说明见 `docs/wiki/ios-setup.md`；broker 的要求、三条已实测路径与兼容性验证见 `docs/wiki/ios-broker.md` 与 `ios/Tools/broker-probe/`。
+> 本文是 `docs/overview.md` 的专题补充，记录 iOS 渠道（实验功能）当前的实现地图与不变量；需求决策见 `docs/specs/ios-channel.md`，实现步骤见 `docs/plans/ios-channel.md`，用户使用说明见 `docs/wiki/ios-setup.md`；免费开放的决策见 `docs/specs/ios-open-access.md`，broker 的要求、三条已实测路径与兼容性验证见 `docs/wiki/ios-broker.md` 与 `ios/Tools/broker-probe/`。
 
 ## 形态
 
