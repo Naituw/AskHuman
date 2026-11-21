@@ -43,13 +43,18 @@ public struct Caps: Codable, Equatable, Sendable {
     /// (docs/specs/ios-attachment-traffic.md §5.3). A phone sends binary only after it has read this in `hello.ack`;
     /// a Mac that does not send it gets the JSON envelope, which every Mac reads. Left out of the wire when false.
     @OmitFalse public var binary: Bool
+    /// The Mac answers `asset.get` with `variant: preview` by sending a downscaled AVIF of an image that has
+    /// `AssetRef.preview` (docs/specs/ios-attachment-traffic.md §5.4). A phone asks for a preview only of a Mac that
+    /// declares this; an older Mac would send the whole file anyway. Left out of the wire when false.
+    @OmitFalse public var assetPreview: Bool
 
     public init(
         newTask: Bool, interject: Bool, watch: Bool, todos: Bool = false, answerTodos: Bool = false,
         away: Bool = false, annotations: Bool = false, liveUpdate: Bool = false, sessionHistory: Bool = false,
         historyPictures: Bool = false, trafficSync: Bool = false, trafficUsage: Bool = false,
-        leanAgents: Bool = false, binary: Bool = false
+        leanAgents: Bool = false, binary: Bool = false, assetPreview: Bool = false
     ) {
+        self.assetPreview = assetPreview
         self.binary = binary
         self.leanAgents = leanAgents
         self.trafficUsage = trafficUsage
@@ -82,6 +87,7 @@ public struct Caps: Codable, Equatable, Sendable {
         historyPictures = try c.decodeIfPresent(Bool.self, forKey: .historyPictures) ?? false
         leanAgents = try c.decodeIfPresent(Bool.self, forKey: .leanAgents) ?? false
         binary = try c.decodeIfPresent(Bool.self, forKey: .binary) ?? false
+        assetPreview = try c.decodeIfPresent(Bool.self, forKey: .assetPreview) ?? false
     }
 }
 
@@ -304,8 +310,16 @@ public struct AssetRef: Codable, Equatable, Hashable, Sendable {
     /// A picture of the history whose file is no longer on the Mac (docs/specs/ios-history-pictures.md HP8): it has
     /// no thumbnail and cannot be fetched. Never set on the files of a request.
     @OmitFalse public var gone: Bool
+    /// The phone may ask for a downscaled preview of this image instead of the file (`AssetGet.variant`;
+    /// docs/specs/ios-attachment-traffic.md §5.4). Judged by the Mac from the type and the size alone, so it may still
+    /// answer with the original. Left out of the wire when false.
+    @OmitFalse public var preview: Bool
+    /// SHA-256 (lowercase hex) of the file as it was when the request was built: the key a phone caches what it
+    /// downloaded under, so the same content in a later request is not downloaded again. The files of a request only,
+    /// never the pictures of the history (docs/specs/ios-attachment-traffic.md AT13).
+    public var sha256: String?
 
-    public init(assetId: String, name: String, size: UInt64, mime: String, isImage: Bool, thumb: String? = nil, tooLarge: Bool = false, gone: Bool = false) {
+    public init(assetId: String, name: String, size: UInt64, mime: String, isImage: Bool, thumb: String? = nil, tooLarge: Bool = false, gone: Bool = false, preview: Bool = false, sha256: String? = nil) {
         self.assetId = assetId
         self.name = name
         self.size = size
@@ -314,6 +328,8 @@ public struct AssetRef: Codable, Equatable, Hashable, Sendable {
         self.thumb = thumb
         self.tooLarge = tooLarge
         self.gone = gone
+        self.preview = preview
+        self.sha256 = sha256
     }
 }
 
@@ -1703,11 +1719,15 @@ public struct AssetGet: WireMessage {
     public var assetId: String
     public var from: UInt64
     public var count: UInt64
+    /// `preview` asks for the downscaled preview of an image (docs/specs/ios-attachment-traffic.md §5.4); nothing asks
+    /// for the file itself. Only sent to a Mac that declares `Caps.assetPreview`, for an asset with `AssetRef.preview`.
+    public var variant: String?
 
-    public init(assetId: String, from: UInt64, count: UInt64) {
+    public init(assetId: String, from: UInt64, count: UInt64, variant: String? = nil) {
         self.assetId = assetId
         self.from = from
         self.count = count
+        self.variant = variant
     }
 }
 
@@ -1721,6 +1741,11 @@ public struct AssetChunk: WireMessage {
     public var size: UInt64
     /// SHA-256 (hex) of the whole file, present on the first chunk only.
     public var sha256: String?
+    /// What these chunks are: `preview`, or `original` for a file the Mac sent as it is although the phone asked for a
+    /// preview. Present only when the `asset.get` had a `variant`; a chunk without one belongs to the file itself.
+    /// `index`, `total`, `size` and `sha256` describe the bytes that are sent, preview or file
+    /// (docs/specs/ios-attachment-traffic.md §5.4).
+    public var variant: String?
     /// base64url chunk data. A blob frame carries the bytes after its header instead, so its header has no `data` and
     /// it reads as empty. The message itself always has the key, an empty file's one chunk included, as older peers
     /// require it.

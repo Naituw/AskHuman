@@ -9,6 +9,7 @@ use sha2::{Digest, Sha256};
 
 use super::Actor;
 use crate::ios::crypto;
+use crate::ios::preview::{self, Generated, Made, PreviewKey, Waiter};
 use crate::ios::views::AssetSource;
 use crate::ios::wire::{
     AssetChunk, AssetError, AssetGet, Msg, UploadAck, UploadBegin, UploadCancel, UploadChunk,
@@ -139,7 +140,7 @@ impl Uploads {
             upload.hasher.update(&data);
             if upload.complete {
                 anyhow::ensure!(
-                    upload.received == upload.size && hex(&Sha256::digest(&data)) == upload.sha256,
+                    upload.received == upload.size && crypto::sha256_hex(&data) == upload.sha256,
                     "saved upload failed verification"
                 );
             } else {
@@ -175,10 +176,6 @@ fn safe_file_name(raw: &str) -> String {
 
 fn chunk_count(size: u64) -> u64 {
     size.div_ceil(ASSET_CHUNK_BYTES as u64).max(1)
-}
-
-fn hex(bytes: &[u8]) -> String {
-    bytes.iter().map(|b| format!("{b:02x}")).collect()
 }
 
 impl Actor {
@@ -229,12 +226,31 @@ impl Actor {
         );
     }
 
-    /// Sends the chunks `get` asks for of `source`'s file, or says why it cannot.
+    /// Sends what `get` asks for of `source`'s file, or says why it cannot.
     fn serve_asset(&mut self, phone_id: &str, get: &AssetGet, source: &AssetSource) {
         if source.size > MAX_ASSET_BYTES {
             self.send_asset_error(phone_id, &get.asset_id, "tooLarge");
             return;
         }
+        match get.variant.as_deref() {
+            // No variant: the file, sent exactly as it has always been.
+            None => self.serve_original(phone_id, get, source, false),
+            Some(preview::VARIANT_PREVIEW) => self.serve_preview(phone_id, get, source),
+            // A variant this Mac does not know is a request for the file, and the chunks say so.
+            Some(_) => self.serve_original(phone_id, get, source, true),
+        }
+    }
+
+    /// Sends the chunks `get` asks for of the file itself. `named` is set when the phone named a variant: the chunks
+    /// then say `original`, which is how a phone that asked for a preview learns that it got the file
+    /// (docs/specs/ios-attachment-traffic.md §5.4).
+    fn serve_original(
+        &mut self,
+        phone_id: &str,
+        get: &AssetGet,
+        source: &AssetSource,
+        named: bool,
+    ) {
         // Attachments are small (<= 10 MB) and read from the local disk: a plain read keeps the
         // actor's state free of in-flight transfers.
         let data = match std::fs::read(&source.path) {
@@ -248,6 +264,94 @@ impl Actor {
                 return;
             }
         };
+        let variant = named.then_some(preview::VARIANT_ORIGINAL);
+        self.send_window(phone_id, get, &data, None, variant);
+    }
+
+    /// Answers a request for the preview of a picture: the preview when there is one, the file itself (and the chunks
+    /// say `original`) when there is not.
+    fn serve_preview(&mut self, phone_id: &str, get: &AssetGet, source: &AssetSource) {
+        if !self.host.caps().asset_preview || !preview::eligible(&source.name, source.size) {
+            self.serve_original(phone_id, get, source, true);
+            return;
+        }
+        let Some(key) = PreviewKey::of(&source.path) else {
+            self.send_asset_error(phone_id, &get.asset_id, "notFound");
+            return;
+        };
+        if let Some(made) = self.previews.lookup(&key) {
+            self.serve_made(phone_id, get, source, &made);
+            return;
+        }
+        let waiter = Waiter {
+            phone_id: phone_id.to_string(),
+            get: get.clone(),
+            source: source.clone(),
+        };
+        if self.previews.join(key.clone(), waiter) {
+            // The preview of this file is being made already; the answer comes with it.
+            return;
+        }
+        // The preview is made off the actor, so the gateway's other messages go on meanwhile.
+        let work = self.previews.generation(source.path.clone());
+        self.spawn_then(work, move |actor, generated| {
+            actor.finish_preview(&key, generated)
+        });
+    }
+
+    /// The preview of `key` is done (or could not be made): answers everyone who waited for it.
+    fn finish_preview(&mut self, key: &PreviewKey, generated: Generated) {
+        let made = match &generated {
+            Generated::Made(made) => Some(made.clone()),
+            Generated::Unreadable | Generated::TooLarge => None,
+        };
+        for waiter in self.previews.finish(key, made) {
+            let Waiter {
+                phone_id,
+                get,
+                source,
+            } = waiter;
+            match &generated {
+                Generated::Made(made) => self.serve_made(&phone_id, &get, &source, made),
+                Generated::Unreadable => {
+                    self.send_asset_error(&phone_id, &get.asset_id, "notFound")
+                }
+                Generated::TooLarge => self.send_asset_error(&phone_id, &get.asset_id, "tooLarge"),
+            }
+        }
+    }
+
+    /// Sends the preview in `made` when it is the preview of `source`'s picture, and the file itself otherwise: no
+    /// preview could be made, or the file is not the one the request was built with (docs/specs/
+    /// ios-attachment-traffic.md AT19).
+    fn serve_made(&mut self, phone_id: &str, get: &AssetGet, source: &AssetSource, made: &Made) {
+        match made.preview_for(source) {
+            Some(preview) => {
+                let preview = preview.clone();
+                self.send_window(
+                    phone_id,
+                    get,
+                    &preview.avif,
+                    Some(&preview.sha256),
+                    Some(preview::VARIANT_PREVIEW),
+                );
+            }
+            None => self.serve_original(phone_id, get, source, true),
+        }
+    }
+
+    /// Sends the chunks `get` asks for of `data`: `get.from` and the `get.count` after it (at most
+    /// [`MAX_ASSET_CHUNKS_PER_GET`]). The first chunk carries the SHA-256 of all of `data`, which the caller may have
+    /// at hand already, and every chunk says it is `variant` when that is given. `index`, `total` and `size` are those
+    /// of `data`.
+    fn send_window(
+        &mut self,
+        phone_id: &str,
+        get: &AssetGet,
+        data: &[u8],
+        sha256: Option<&str>,
+        variant: Option<&str>,
+    ) {
         let total = chunk_count(data.len() as u64);
         if get.from >= total {
             self.send_asset_error(phone_id, &get.asset_id, "internal");
@@ -255,7 +359,11 @@ impl Actor {
         }
         let count = get.count.clamp(1, MAX_ASSET_CHUNKS_PER_GET as u64);
         let end = (get.from + count).min(total);
-        let sha256 = (get.from == 0).then(|| hex(&Sha256::digest(&data)));
+        let sha256 = (get.from == 0).then(|| {
+            sha256
+                .map(str::to_string)
+                .unwrap_or_else(|| crypto::sha256_hex(data))
+        });
         for index in get.from..end {
             let start = index as usize * ASSET_CHUNK_BYTES;
             let stop = (start + ASSET_CHUNK_BYTES).min(data.len());
@@ -267,6 +375,7 @@ impl Actor {
                     total,
                     size: data.len() as u64,
                     sha256: if index == 0 { sha256.clone() } else { None },
+                    variant: variant.map(str::to_string),
                     data: String::new(),
                 },
                 &data[start..stop],
@@ -481,7 +590,7 @@ impl Actor {
         upload.next += 1;
         let next = upload.next;
         if is_last {
-            let digest = hex(&upload.hasher.clone().finalize());
+            let digest = crypto::hex_lower(&upload.hasher.clone().finalize());
             if digest != upload.sha256 {
                 return self.fail_upload(phone_id, &id, "checksum");
             }

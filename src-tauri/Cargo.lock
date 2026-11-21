@@ -35,6 +35,8 @@ version = "0.1.0"
 dependencies = [
  "image",
  "imgref",
+ "moxcms",
+ "png 0.18.1",
  "ravif",
  "rgb",
 ]

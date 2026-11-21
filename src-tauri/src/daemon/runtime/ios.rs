@@ -172,6 +172,7 @@ impl Host for DaemonHost {
             history_pictures: true,
             lean_agents: true,
             binary: true,
+            asset_preview: true,
         }
     }
 

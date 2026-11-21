@@ -43,6 +43,7 @@ fn asset_file(dir: &std::path::Path, name: &str, data: &[u8]) -> AssetSource {
         name: name.to_string(),
         mime: "application/octet-stream".into(),
         size: data.len() as u64,
+        sha256: None,
     }
 }
 
@@ -51,6 +52,7 @@ fn get(asset_id: &str, from: u64, count: u64) -> wire::AssetGet {
         asset_id: asset_id.into(),
         from,
         count,
+        variant: None,
     }
 }
 
@@ -827,6 +829,7 @@ fn the_gateway_remembers_at_most_a_few_hundred_pictures_and_drops_the_oldest() {
         name: format!("{n}.png"),
         mime: "image/png".into(),
         size: 1,
+        sha256: None,
     };
     let mut memory = assets::HistoryAssets::default();
     for n in 0..300 {

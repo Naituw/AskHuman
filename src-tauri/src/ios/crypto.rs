@@ -32,6 +32,17 @@ pub fn b64u_decode(s: &str) -> Option<Vec<u8>> {
     URL_SAFE_NO_PAD.decode(s.as_bytes()).ok()
 }
 
+/// Lowercase hexadecimal digits of `bytes`.
+pub fn hex_lower(bytes: &[u8]) -> String {
+    bytes.iter().map(|byte| format!("{byte:02x}")).collect()
+}
+
+/// SHA-256 of `data` as 64 lowercase hex digits, the form `AssetRef::sha256` and `AssetChunk::sha256` carry.
+pub fn sha256_hex(data: &[u8]) -> String {
+    use sha2::Digest;
+    hex_lower(&Sha256::digest(data))
+}
+
 /// Lowercase RFC 4648 base32 without padding.
 pub fn base32_lower(data: &[u8]) -> String {
     const ALPHABET: &[u8; 32] = b"abcdefghijklmnopqrstuvwxyz234567";

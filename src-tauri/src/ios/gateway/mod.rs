@@ -28,6 +28,8 @@ mod tests_binary;
 #[cfg(test)]
 mod tests_history;
 #[cfg(test)]
+mod tests_preview;
+#[cfg(test)]
 mod tests_reduction;
 #[cfg(test)]
 mod tests_requests;
@@ -54,6 +56,7 @@ use tokio::sync::oneshot;
 
 use super::crypto;
 use super::envelope::{self, Format, Opened, Plain, Scope};
+use super::preview;
 use super::push::{PushClient, PushOutcome};
 use super::store::{PhoneState, Store, Traffic, TrafficBreakdown};
 use super::transport::{BrokerTransport, TransportEvent};
@@ -223,6 +226,12 @@ pub trait Host: Send + Sync + 'static {
     /// `asset.get` names an asset that no pending request holds.
     async fn history_picture(&self, _asset_id: &str) -> Option<super::views::AssetSource> {
         None
+    }
+
+    /// What makes the downscaled preview of a picture file (docs/specs/ios-attachment-traffic.md §6.4). The AVIF maker
+    /// of the product is the default; a test host swaps in one it can count, slow down and script.
+    fn preview_maker(&self) -> Arc<dyn preview::PreviewMaker> {
+        Arc::new(preview::AvifMaker)
     }
 
     /// Seconds since the last keyboard / mouse input on this Mac; `None` when unknown. A question
@@ -699,6 +708,9 @@ pub(crate) struct Actor {
     pub uploads: Uploads,
     /// Pictures of the history phones asked for lately (docs/specs/ios-history-pictures.md HP7).
     pub history_assets: assets::HistoryAssets,
+    /// The previews of picture files: the cache, the requests waiting for one, and the cap on previews made at once
+    /// (docs/specs/ios-attachment-traffic.md §6.5).
+    pub previews: preview::Previews,
     /// Agent list cache, Follow bookkeeping and tasks waiting for their session.
     pub live: agents::Live,
     /// Phones watching the todos.
@@ -802,6 +814,7 @@ impl Actor {
         let now = host.now_ms();
         let mac_id = store.state.mac_id.clone();
         let outbox = Outbox::spawn(transport.clone());
+        let previews = preview::Previews::new(host.preview_maker());
         let mut actor = Self {
             last_update_status: None,
             recovery_loaded: false,
@@ -829,6 +842,7 @@ impl Actor {
             requests: requests::Requests::default(),
             uploads: Uploads::default(),
             history_assets: assets::HistoryAssets::default(),
+            previews,
             live: agents::Live::default(),
             todos: todos::TodoLive::default(),
             last_slot: None,

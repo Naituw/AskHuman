@@ -15,6 +15,7 @@ use std::path::{Path, PathBuf};
 use sha2::{Digest, Sha256};
 
 use super::crypto;
+use super::preview;
 use super::views::mime_for;
 use super::wire::{
     AssetRef, SessionExchange, SessionQuestion, HISTORY_INPUT_MAX_CHARS, HISTORY_MESSAGE_MAX_CHARS,
@@ -186,6 +187,10 @@ fn picture_ref(entry: &HistoryEntry, held: &Held<'_>, probe: &dyn PictureProbe) 
         thumb: None,
         too_large: false,
         gone: false,
+        preview: false,
+        // The file of a picture is read as it is when a phone asks for it, so there is no hash to remember
+        // (docs/specs/ios-attachment-traffic.md AT13).
+        sha256: None,
     };
     match probe.size(path) {
         None => reference.gone = true,
@@ -194,6 +199,7 @@ fn picture_ref(entry: &HistoryEntry, held: &Held<'_>, probe: &dyn PictureProbe) 
             reference.too_large = size > MAX_ASSET_BYTES;
             if !reference.too_large {
                 reference.thumb = probe.thumbnail(path).map(|bytes| crypto::b64u(&bytes));
+                reference.preview = preview::eligible(&held.name, size);
             }
         }
     }
@@ -615,6 +621,64 @@ mod tests {
         // Exactly at the limit is still fetchable.
         let ok = &exchange.pictures[2];
         assert!(!ok.too_large && ok.thumb.is_some());
+    }
+
+    /// A picture of the history offers a preview by its type and size alone (docs/specs/ios-attachment-traffic.md
+    /// AT10, AT17), and never carries a hash (AT13).
+    #[test]
+    fn a_big_picture_of_a_supported_type_offers_a_preview_and_no_picture_has_a_hash() {
+        let min = preview::PREVIEW_MIN_ORIGINAL_BYTES;
+        let mut recorded = entry_with_pictures();
+        recorded.message.files = [
+            "big.png",
+            "short.jpg",
+            "wide.webp",
+            "moving.gif",
+            "limit.png",
+        ]
+        .iter()
+        .map(|name| attachment(&format!("/work/{name}"), name, true))
+        .chain([
+            attachment("/work/huge.png", "huge.png", true),
+            attachment("/work/gone.png", "gone.png", true),
+        ])
+        .collect();
+        let probe = Probe::default()
+            .with("/work/big.png", min, None)
+            .with("/work/short.jpg", min - 1, None)
+            .with("/work/wide.webp", 2_000_000, None)
+            .with("/work/moving.gif", 2_000_000, None)
+            .with("/work/limit.png", MAX_ASSET_BYTES, None)
+            .with("/work/huge.png", MAX_ASSET_BYTES + 1, None);
+        let exchange = exchange_with_pictures(&recorded, &probe);
+
+        let offered: Vec<(&str, bool)> = exchange
+            .pictures
+            .iter()
+            .map(|picture| (picture.name.as_str(), picture.preview))
+            .collect();
+        assert_eq!(
+            offered,
+            [
+                ("big.png", true),
+                ("short.jpg", false),
+                ("wide.webp", true),
+                ("moving.gif", false),
+                ("limit.png", true),
+                ("huge.png", false),
+                ("gone.png", false),
+            ]
+        );
+        assert!(exchange
+            .pictures
+            .iter()
+            .all(|picture| picture.sha256.is_none()));
+        // And the bit is left out of the JSON of a picture that does not offer one.
+        let value = serde_json::to_value(&exchange.pictures[1]).unwrap();
+        assert!(
+            value.get("preview").is_none() && value.get("sha256").is_none(),
+            "{value}"
+        );
     }
 
     #[test]

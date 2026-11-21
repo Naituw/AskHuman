@@ -325,6 +325,25 @@
     {"type": "history.exchange", "name": "missing", "body": {"reqId": "x2", "id": "req-gone"}},
 
     {"type": "hello", "name": "binary", "body": {"nonce": "q3ZkL1m0Xw4", "proto": 1, "appVer": "1.0 (1)", "deviceName": "Wutian iPhone", "lifecycleResults": true, "trafficUsage": true, "leanWatch": true, "leanAgents": true, "compression": true, "binary": true}},
-    {"type": "hello.ack", "name": "binary", "body": {"nonce": "q3ZkL1m0Xw4", "epoch": "0123456789abcdef", "macName": "Home Mac", "caps": {"newTask": true, "interject": true, "watch": true, "todos": true, "answerTodos": true, "away": true, "leanAgents": true, "binary": true}, "slot": {"active": true, "autoActivation": true}}}
+    {"type": "hello.ack", "name": "binary", "body": {"nonce": "q3ZkL1m0Xw4", "epoch": "0123456789abcdef", "macName": "Home Mac", "caps": {"newTask": true, "interject": true, "watch": true, "todos": true, "answerTodos": true, "away": true, "leanAgents": true, "binary": true}, "slot": {"active": true, "autoActivation": true}}},
+
+    {"type": "hello.ack", "name": "asset-preview", "body": {"nonce": "q3ZkL1m0Xw4", "epoch": "0123456789abcdef", "macName": "Home Mac", "caps": {"newTask": true, "interject": true, "watch": true, "todos": true, "answerTodos": true, "away": true, "leanAgents": true, "binary": true, "assetPreview": true}, "slot": {"active": true, "autoActivation": true}}},
+    {"type": "request.new", "name": "asset-preview", "body": {"rev": 15, "full": true, "request": {
+      "id": "req5", "kind": "ask", "createdAt": 1792900004000,
+      "agent": {"kind": "claude", "label": "Claude Code"}, "project": {"key": "p1", "name": "HumanInLoop"},
+      "source": "mcp", "contentHash": "sha256-prev",
+      "ask": {
+        "isMarkdown": false,
+        "message": {"text": "Is this screenshot right?", "files": [
+          {"assetId": "a1", "name": "shot.png", "size": 3145728, "mime": "image/png", "isImage": true, "thumb": "/9j/4AAQ", "preview": true, "sha256": "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad"},
+          {"assetId": "a2", "name": "log.txt", "size": 1200, "mime": "text/plain", "isImage": false, "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"}
+        ]},
+        "questions": [{"text": "Ship it?", "options": []}],
+        "selectOnly": false, "single": false
+      }
+    }}},
+    {"type": "asset.get", "name": "preview", "body": {"assetId": "a1", "from": 0, "count": 4, "variant": "preview"}},
+    {"type": "asset.chunk", "name": "preview-first", "body": {"assetId": "a1", "index": 0, "total": 1, "size": 77000, "sha256": "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad", "variant": "preview", "data": "AAEC"}},
+    {"type": "asset.chunk", "name": "original-instead", "body": {"assetId": "a1", "index": 0, "total": 3, "size": 400000, "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855", "variant": "original", "data": "AAEC"}}
   ]
 }

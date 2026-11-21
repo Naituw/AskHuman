@@ -98,6 +98,90 @@ pub struct TestHost {
     pub away_ops: Mutex<Vec<crate::daemon::away::AwayOp>>,
     /// Whether the host declares `Caps::binary`; false makes it act like a Mac that predates the binary format.
     pub binary_supported: std::sync::atomic::AtomicBool,
+    /// Whether the host declares `Caps::asset_preview`; false makes it act like a Mac that predates previews.
+    pub preview_supported: std::sync::atomic::AtomicBool,
+    /// What makes the previews (`Host::preview_maker`): counts, can be held back and scripted.
+    pub previews: Arc<FakePreviews>,
+}
+
+/// A preview maker a test can count, hold back and script. Its previews are bytes that are not an image and
+/// are not any slice of the original, so a test can tell which of the two reached the phone.
+pub struct FakePreviews {
+    /// How many times a preview was made.
+    pub calls: AtomicUsize,
+    /// How many of them run at the same time, at most.
+    pub most_running: AtomicUsize,
+    running: AtomicUsize,
+    /// The original each call was given.
+    pub seen: Mutex<Vec<Vec<u8>>>,
+    /// While true `make` waits (on its blocking thread).
+    pub held: AtomicBool,
+    /// What the next calls come to: a preview of this many bytes, or a reason there is none.
+    answer: Mutex<Result<usize, ah_preview::Skip>>,
+}
+
+impl FakePreviews {
+    fn new() -> Arc<Self> {
+        Arc::new(Self {
+            calls: AtomicUsize::new(0),
+            most_running: AtomicUsize::new(0),
+            running: AtomicUsize::new(0),
+            seen: Mutex::new(Vec::new()),
+            held: AtomicBool::new(false),
+            answer: Mutex::new(Ok(5_000)),
+        })
+    }
+
+    /// The preview of `len` bytes that every call from now on returns.
+    pub fn make_previews_of(&self, len: usize) {
+        *self.answer.lock().unwrap() = Ok(len);
+    }
+
+    /// Every call from now on finds the picture not worth a preview, for `reason`.
+    pub fn skip_with(&self, reason: ah_preview::Skip) {
+        *self.answer.lock().unwrap() = Err(reason);
+    }
+
+    /// The bytes of a preview of `len` bytes.
+    pub fn bytes_of(len: usize) -> Vec<u8> {
+        (0..len).map(|i| (i % 251) as u8 ^ 0x5a).collect()
+    }
+
+    /// Waits (in real time) until `n` calls have started.
+    pub async fn started(&self, n: usize) {
+        for _ in 0..2_000 {
+            if self.calls.load(Ordering::SeqCst) >= n {
+                return;
+            }
+            tokio::time::sleep(Duration::from_millis(5)).await;
+        }
+        panic!("fewer than {n} previews were started");
+    }
+}
+
+impl crate::ios::preview::PreviewMaker for FakePreviews {
+    fn make(&self, original: &[u8]) -> Result<ah_preview::Preview, ah_preview::Skip> {
+        self.calls.fetch_add(1, Ordering::SeqCst);
+        self.seen.lock().unwrap().push(original.to_vec());
+        let now = self.running.fetch_add(1, Ordering::SeqCst) + 1;
+        self.most_running.fetch_max(now, Ordering::SeqCst);
+        // A held call gives up after ten seconds, so a test that forgets to release it fails instead of hanging.
+        for _ in 0..10_000 {
+            if !self.held.load(Ordering::SeqCst) {
+                break;
+            }
+            std::thread::sleep(Duration::from_millis(1));
+        }
+        self.running.fetch_sub(1, Ordering::SeqCst);
+        match *self.answer.lock().unwrap() {
+            Ok(len) => Ok(ah_preview::Preview {
+                avif: Self::bytes_of(len),
+                width: 1,
+                height: 1,
+            }),
+            Err(skip) => Err(skip),
+        }
+    }
 }
 
 impl TestHost {
@@ -146,6 +230,8 @@ impl TestHost {
             escalated_waiting: std::sync::atomic::AtomicU32::new(0),
             away_ops: Mutex::new(Vec::new()),
             binary_supported: std::sync::atomic::AtomicBool::new(true),
+            preview_supported: std::sync::atomic::AtomicBool::new(true),
+            previews: FakePreviews::new(),
         })
     }
 
@@ -257,7 +343,12 @@ impl Host for TestHost {
             history_pictures: true,
             lean_agents: true,
             binary: self.binary_supported.load(Ordering::SeqCst),
+            asset_preview: self.preview_supported.load(Ordering::SeqCst),
         }
+    }
+
+    fn preview_maker(&self) -> Arc<dyn crate::ios::preview::PreviewMaker> {
+        self.previews.clone()
     }
 
     fn slot(&self) -> SlotInfo {

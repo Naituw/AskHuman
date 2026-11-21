@@ -310,6 +310,11 @@ pub struct Caps {
     /// envelope. Left out when false, like `lean_agents`.
     #[serde(default, skip_serializing_if = "is_false")]
     pub binary: bool,
+    /// The Mac answers `asset.get` with `variant: preview` by sending a downscaled AVIF of an image that has
+    /// `AssetRef::preview` (docs/specs/ios-attachment-traffic.md §5.4). Older Macs do not send it, and the phone
+    /// then asks for the original. Left out when false, like `binary`.
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub asset_preview: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -514,6 +519,17 @@ pub struct AssetRef {
     /// it has no thumbnail and cannot be fetched. Never set on the files of a request.
     #[serde(default, skip_serializing_if = "is_false")]
     pub gone: bool,
+    /// The phone may ask for a downscaled preview of this image instead of the file (`AssetGet::variant`;
+    /// docs/specs/ios-attachment-traffic.md §5.4). Judged from the type and the size alone, so the Mac may still
+    /// answer with the original. Phones that predate it ignore it, and a phone asks for a preview only of a Mac that
+    /// declares `Caps::asset_preview`. Left out when false.
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub preview: bool,
+    /// SHA-256 (lowercase hex) of the file as it was when the request was built. A phone caches what it downloaded
+    /// under this hash, so the same content in a later request is not downloaded again. The files of a request only,
+    /// never the pictures of the history (docs/specs/ios-attachment-traffic.md AT13).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub sha256: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -1711,6 +1727,10 @@ pub struct AssetGet {
     pub asset_id: String,
     pub from: u64,
     pub count: u64,
+    /// `preview` asks for the downscaled preview of an image (docs/specs/ios-attachment-traffic.md §5.4); nothing, or
+    /// any value this Mac does not know, asks for the file itself.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub variant: Option<String>,
 }
 msg!(AssetGet, t::ASSET_GET);
 
@@ -1726,6 +1746,12 @@ pub struct AssetChunk {
     /// SHA-256 (hex) of the whole file, present on the first chunk only.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub sha256: Option<String>,
+    /// What these chunks are: `preview`, or `original` for a file that was sent as it is although the phone asked
+    /// for a preview. Present only when the `asset.get` had a `variant`, so the chunks of a request without one are
+    /// the same as they always were. `index`, `total`, `size` and `sha256` describe the bytes that are sent, preview
+    /// or file.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub variant: Option<String>,
     /// Base64 chunk data. A blob frame carries the bytes after its header instead, so its header has no `data`: the sender
     /// takes the key out of the header (`gateway::assets::send_chunk`), and the default applies when it is read. The
     /// message itself always has the key, an empty file's one empty chunk included, as older peers require it.
@@ -2124,6 +2150,7 @@ mod tests {
             history_pictures: false,
             lean_agents,
             binary: false,
+            asset_preview: false,
         };
         assert!(serde_json::to_value(caps(false))
             .unwrap()
@@ -2174,6 +2201,7 @@ mod tests {
             history_pictures: false,
             lean_agents: false,
             binary: false,
+            asset_preview: false,
         };
         assert!(serde_json::to_value(caps(false))
             .unwrap()
@@ -2283,6 +2311,7 @@ mod tests {
             history_pictures: false,
             lean_agents: false,
             binary: false,
+            asset_preview: false,
         };
         assert!(serde_json::to_value(caps(false))
             .unwrap()
@@ -2452,6 +2481,8 @@ mod tests {
             thumb: thumb.then(|| "AAAA".into()),
             too_large: false,
             gone: false,
+            preview: false,
+            sha256: None,
         }
     }
 
@@ -2491,6 +2522,7 @@ mod tests {
             history_pictures,
             lean_agents: false,
             binary: false,
+            asset_preview: false,
         };
         assert!(serde_json::to_value(caps(false))
             .unwrap()
@@ -2550,6 +2582,106 @@ mod tests {
         }))
         .unwrap();
         assert!(old.pictures.is_empty() && old.qs[0].pictures.is_empty());
+    }
+
+    /// The preview additions are additive (docs/specs/ios-attachment-traffic.md §5.4): each new field is left out when
+    /// there is nothing to say and read as "none" when missing, so a peer that predates them neither sends nor needs
+    /// them.
+    #[test]
+    fn the_preview_additions_are_additive_in_both_directions() {
+        // The picture a file offers: nothing new in the JSON of one that has neither a preview nor a hash.
+        let plain = picture("a.png", false);
+        let value = serde_json::to_value(&plain).unwrap();
+        assert!(
+            value.get("preview").is_none() && value.get("sha256").is_none(),
+            "{value}"
+        );
+        let hash = "ab".repeat(32);
+        let rich = AssetRef {
+            preview: true,
+            sha256: Some(hash.clone()),
+            ..plain
+        };
+        let value = serde_json::to_value(&rich).unwrap();
+        assert_eq!(value["preview"], true);
+        assert_eq!(value["sha256"], hash);
+        assert_eq!(serde_json::from_value::<AssetRef>(value).unwrap(), rich);
+        let old: AssetRef = serde_json::from_value(serde_json::json!({
+            "assetId": "a", "name": "n", "size": 1, "mime": "image/png", "isImage": true
+        }))
+        .unwrap();
+        assert!(!old.preview && old.sha256.is_none());
+
+        // The request for the file and the chunks of the answer name a variant only when the phone did.
+        let get = AssetGet {
+            asset_id: "a".into(),
+            from: 0,
+            count: 1,
+            variant: None,
+        };
+        assert!(get.to_value().get("variant").is_none());
+        let named = AssetGet {
+            variant: Some("preview".into()),
+            ..get.clone()
+        };
+        assert_eq!(named.to_value()["variant"], "preview");
+        let old: AssetGet = serde_json::from_value(serde_json::json!({
+            "assetId": "a", "from": 0, "count": 1
+        }))
+        .unwrap();
+        assert_eq!(old, get);
+        let chunk = AssetChunk {
+            asset_id: "a".into(),
+            index: 0,
+            total: 1,
+            size: 1,
+            sha256: None,
+            variant: None,
+            data: String::new(),
+        };
+        assert!(chunk.to_value().get("variant").is_none());
+        let named = AssetChunk {
+            variant: Some("original".into()),
+            ..chunk.clone()
+        };
+        assert_eq!(named.to_value()["variant"], "original");
+        let old: AssetChunk = serde_json::from_value(serde_json::json!({
+            "assetId": "a", "index": 0, "total": 1, "size": 1, "data": ""
+        }))
+        .unwrap();
+        assert_eq!(old, chunk);
+
+        // The Mac's capability bit.
+        let caps = |asset_preview: bool| Caps {
+            traffic_usage: false,
+            traffic_sync: false,
+            live_update: false,
+            new_task: true,
+            interject: true,
+            watch: true,
+            todos: true,
+            answer_todos: true,
+            away: true,
+            annotations: false,
+            session_history: false,
+            history_pictures: false,
+            lean_agents: false,
+            binary: false,
+            asset_preview,
+        };
+        assert!(serde_json::to_value(caps(false))
+            .unwrap()
+            .get("assetPreview")
+            .is_none());
+        assert_eq!(
+            serde_json::to_value(caps(true)).unwrap()["assetPreview"],
+            true
+        );
+        let old: Caps = serde_json::from_value(serde_json::json!({
+            "newTask": true, "interject": true, "watch": true
+        }))
+        .unwrap();
+        assert!(!old.asset_preview);
     }
 
     #[test]

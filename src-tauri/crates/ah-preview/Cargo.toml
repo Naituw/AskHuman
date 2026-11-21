@@ -19,3 +19,9 @@ image = { version = "0.25", default-features = false, features = ["png", "jpeg",
 ravif = { version = "0.11", default-features = false, features = ["threading"] }
 rgb = "0.8"
 imgref = "1"
+# ICC profile conversion to sRGB. The copy `image` already depends on, with its default features.
+moxcms = "0.8"
+
+[dev-dependencies]
+# Writes the PNG fixtures with a color profile or with animation frames (the copy `image` already uses).
+png = "0.18"

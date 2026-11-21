@@ -20,6 +20,14 @@ name = "popup_collapse_demo"
 path = "examples/popup_collapse_demo.rs"
 required-features = ["collapse-prototype"]
 
+# `ah-preview` is a member (and a default member) so that `cargo test`, `cargo clippy` and `cargo fmt --check` in this
+# directory cover it as well: Cargo refuses to test a path crate that has dev-dependencies and is not a member. The
+# vendored crates below stay outside the workspace, as they were before it existed.
+[workspace]
+members = ["crates/ah-preview"]
+default-members = [".", "crates/ah-preview"]
+exclude = ["vendor/drag", "vendor/tao"]
+
 [features]
 # 生产构建（直接 `cargo build --release`，不经 tauri CLI）必须启用此特性：
 # 否则 tauri 的 build.rs 判定 dev=true，二进制会去连 devUrl(localhost) 而非内嵌资源，导致白屏。

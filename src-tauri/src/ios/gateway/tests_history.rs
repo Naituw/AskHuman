@@ -231,6 +231,8 @@ fn picture(name: &str, thumb_chars: usize) -> wire::AssetRef {
         thumb: (thumb_chars > 0).then(|| "t".repeat(thumb_chars)),
         too_large: false,
         gone: false,
+        preview: false,
+        sha256: None,
     }
 }
 

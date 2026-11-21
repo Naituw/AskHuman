@@ -147,6 +147,7 @@ fn picture_source(
         name: found.name,
         path: found.path,
         size,
+        sha256: None,
     })
 }
 

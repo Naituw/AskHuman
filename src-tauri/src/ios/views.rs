@@ -10,6 +10,7 @@ use crate::models::{
 };
 
 use super::crypto;
+use super::preview;
 use super::wire::{
     AgentRef, AskView, AssetRef, ConfirmChoiceView, ConfirmDetailView, ConfirmFieldView,
     ConfirmInputView, ConfirmView, MessageView, OptionView, ProjectRef, QuestionView, RequestView,
@@ -25,6 +26,11 @@ pub struct AssetSource {
     pub name: String,
     pub mime: String,
     pub size: u64,
+    /// SHA-256 (lowercase hex) of the file as it was when the request was built, the same value as
+    /// `AssetRef::sha256`. A preview made from other bytes is not served for this asset
+    /// (docs/specs/ios-attachment-traffic.md AT19). `None` for a picture of the history, whose file is read as it is,
+    /// and for a file that could not be read when the request was built.
+    pub sha256: Option<String>,
 }
 
 pub struct BuiltView {
@@ -153,6 +159,30 @@ pub fn clean_session_title(raw: &str) -> Option<String> {
     Some(format!("{}…", cut.trim_end()))
 }
 
+/// SHA-256 (lowercase hex) of the file at `path`; `None` when it cannot be read or has grown past what a phone may
+/// download. Blocking. The file is read in pieces, so a request with several large pictures does not hold them all.
+fn file_sha256(path: &std::path::Path) -> Option<String> {
+    use sha2::{Digest, Sha256};
+    use std::io::Read;
+
+    let mut file = std::fs::File::open(path).ok()?;
+    let mut hasher = Sha256::new();
+    let mut buffer = vec![0u8; 64 * 1024];
+    let mut total: u64 = 0;
+    loop {
+        let read = file.read(&mut buffer).ok()?;
+        if read == 0 {
+            break;
+        }
+        total += read as u64;
+        if total > MAX_ASSET_BYTES {
+            return None;
+        }
+        hasher.update(&buffer[..read]);
+    }
+    Some(crypto::hex_lower(&hasher.finalize()))
+}
+
 fn asset_for(file: &FileAttachment, with_thumb: bool) -> (AssetRef, Option<AssetSource>) {
     let asset_id = crypto::new_id();
     let mime = mime_for(&file.name).to_string();
@@ -161,6 +191,9 @@ fn asset_for(file: &FileAttachment, with_thumb: bool) -> (AssetRef, Option<Asset
         .then(|| thumbnail(std::path::Path::new(&file.path)))
         .flatten()
         .map(|bytes| crypto::b64u(&bytes));
+    let sha256 = (!too_large)
+        .then(|| file_sha256(std::path::Path::new(&file.path)))
+        .flatten();
     let reference = AssetRef {
         asset_id: asset_id.clone(),
         name: file.name.clone(),
@@ -170,6 +203,8 @@ fn asset_for(file: &FileAttachment, with_thumb: bool) -> (AssetRef, Option<Asset
         thumb,
         too_large,
         gone: false,
+        preview: file.is_image && !too_large && preview::eligible(&file.name, file.size),
+        sha256: sha256.clone(),
     };
     let source = (!too_large).then(|| AssetSource {
         asset_id,
@@ -177,6 +212,7 @@ fn asset_for(file: &FileAttachment, with_thumb: bool) -> (AssetRef, Option<Asset
         name: file.name.clone(),
         mime,
         size: file.size,
+        sha256,
     });
     (reference, source)
 }
@@ -498,6 +534,96 @@ mod tests {
         // Oversized files are listed but cannot be fetched.
         assert_eq!(built.assets.len(), 2);
         assert_eq!(built.assets[0].asset_id, files[0].asset_id);
+    }
+
+    /// The files of a request carry the SHA-256 of what is on the disk, and the pictures that qualify offer a
+    /// preview (docs/specs/ios-attachment-traffic.md AT10, AT13); the source the gateway keeps carries the same hash.
+    #[test]
+    fn attachments_carry_the_hash_of_their_file_and_big_pictures_offer_a_preview() {
+        let dir = tempfile::tempdir().unwrap();
+        let min = preview::PREVIEW_MIN_ORIGINAL_BYTES as usize;
+        // More than one read buffer, so the hash really runs over pieces.
+        let big: Vec<u8> = (0..min + 3_000).map(|i| (i % 253) as u8).collect();
+        let small = vec![5u8; 2_000];
+        let file = |name: &str, data: &[u8], is_image: bool| {
+            let path = dir.path().join(name);
+            std::fs::write(&path, data).unwrap();
+            FileAttachment {
+                path: path.display().to_string(),
+                name: name.into(),
+                size: data.len() as u64,
+                is_image,
+            }
+        };
+        let mut files = vec![
+            file("big.png", &big, true),
+            file("small.png", &small, true),
+            file("big.gif", &big, true),
+            file("big.txt", &big, false),
+        ];
+        files.push(FileAttachment {
+            path: dir.path().join("gone.png").display().to_string(),
+            name: "gone.png".into(),
+            size: big.len() as u64,
+            is_image: true,
+        });
+        files.push(FileAttachment {
+            path: dir.path().join("huge.png").display().to_string(),
+            name: "huge.png".into(),
+            size: MAX_ASSET_BYTES + 1,
+            is_image: true,
+        });
+        let request = AskRequest::new(
+            MessagePrompt {
+                development: None,
+                text: String::new(),
+                files,
+            },
+            vec![],
+            false,
+        );
+
+        let built = ask_view(&request, &origin(), 0);
+        let shown = built.view.ask.unwrap().message.files;
+        let summary: Vec<(&str, bool, bool)> = shown
+            .iter()
+            .map(|f| (f.name.as_str(), f.preview, f.sha256.is_some()))
+            .collect();
+        assert_eq!(
+            summary,
+            [
+                ("big.png", true, true),
+                ("small.png", false, true),
+                ("big.gif", false, true),
+                ("big.txt", false, true),
+                // The file is gone: nothing to hash, and the phone finds that out when it asks.
+                ("gone.png", true, false),
+                // Over the limit: not fetchable, so neither previewed nor hashed.
+                ("huge.png", false, false),
+            ]
+        );
+        assert_eq!(
+            shown[0].sha256.as_deref(),
+            Some(crypto::sha256_hex(&big).as_str())
+        );
+        assert_eq!(
+            shown[1].sha256.as_deref(),
+            Some(crypto::sha256_hex(&small).as_str())
+        );
+
+        // The gateway's own record of each fetchable file has the same hash.
+        for source in &built.assets {
+            let reference = shown
+                .iter()
+                .find(|f| f.asset_id == source.asset_id)
+                .unwrap();
+            assert_eq!(source.sha256, reference.sha256, "{}", source.name);
+        }
+        assert_eq!(
+            built.assets.len(),
+            5,
+            "everything but the huge file can be fetched"
+        );
     }
 
     /// A screenshot-like picture: flat areas with a few edges, which is what the history mostly holds.
