@@ -18,7 +18,7 @@ Agent / CLI ─► Daemon ── IosGateway（一个 actor）──► MQTT（TL
 
 - iOS 是 Daemon 里的又一个渠道（`channels/ios.rs`），受 `experimental.enabled` 隐藏；一个 Mac 一份 broker 凭据，多台 Mac 共用同一份（连接串可导入导出），手机经二维码配对。
 - **端到端加密**：每个配对一对方向密钥（ChaCha20-Poly1305），broker 只见密文；配对用一次性票据 + 6 位校验码，由 Mac 用户在设置页或 CLI 上放行。推送预览同样加密，由手机上的通知扩展解密。
-- **Mac 不持有 APNs 密钥**：Mac 把加密后的信封和手机的不透明句柄交给中继，中继按固定白名单拼出提醒并转给 APNs。
+- **Mac 不持有 APNs 密钥**：Mac 把加密后的信封和手机的不透明句柄交给中继，中继按固定白名单拼出提醒并转给 APNs。中继地址只经 `config::effective_relay_url` 取：`channels.ios.relayUrl` 为空 = 用内置的公共中继（`config::IOS_DEFAULT_RELAY_URL`，该常量为空的构建没有公共中继，必须自己填），二维码里的 `r`、推送、连接串、健康检查因此不会各自处理空值。Broker 不绑任何服务商：设置页的服务商目录只是向导（`docs/specs/ios-open-access.md`）。
 - 手机能做的事：回答问题 / 确认（含多题、推荐、附件；回答时还能从该项目的待办里选几条随回答发给 Agent，What's next 能看到完整队列，`docs/specs/special-replies.md` D28 / D29）、看 Agent 列表（App 里没有手动关注：手机新建任务或原会话接续的新一轮出结果时 Mac 会通知，列表行与详情页只读地标出）、实时观察（Watch，≤2 路、仅前台）、给 Agent 插话、新建 Agent 任务（Face ID 确认）、管理待办（「待办」标签：来源是某台 Mac 或「iCloud」，浏览项目、增 / 改 / 勾 / 删 / 排序、⚡ 自动执行、看执行历史；`docs/specs/ios-todos.md`）；请求页里出现的每一份待办清单（提问页「待办」卡、What's next 与 Stop 的队列行）都能完成 / 删除 / 添加：右滑完成、左滑删除（也有长按菜单与 VoiceOver 操作），清单末尾「＋ 添加待办」只有文字、写到该请求所在的那台 Mac（`docs/specs/todo-list-actions.md`，取代了请求页「⋯」→「添加待办…」的半屏页）；可选的开发者模式（Macs 标签里的开关，默认关）：全局浮动按钮，按住滑到条目松手，v1 只有「快速添加待办」，不用离开当前界面（`docs/specs/ios-developer-mode.md`）。
 - **投递与通知分开**（`docs/specs/ios-alert-timing.md`）：iOS 不参与 IM 的活跃槽，`attach_im_channels` / `confirm_im_candidates` 在选完 IM 候选后用 `with_ios` 把它并进来，每个提问 / 确认都挂给所有已配对手机，手机一连上就从 hello 快照（`request.get`）拉到。手机在看（在线 + 前台 + 已 hello）时经 MQTT 实时送达、不推送；不在看时只有系统推送能打扰人，而它要等 Mac 键盘 / 鼠标空闲满 `channels.ios.alertAfterSecs`（默认 900 秒，`0` = 立即）才发，每题每手机最多一条，没有提醒。
 
@@ -34,7 +34,7 @@ Agent / CLI ─► Daemon ── IosGateway（一个 actor）──► MQTT（TL
 | 位置 | 职责 |
 |---|---|
 | `ios/crypto.rs` · `envelope.rs` · `wire.rs` | 密钥派生、信封（JSON 信封，和对方声明了 `binary` 才用的二进制信封：首字节 `0xA1`、字段按字节排布，加密与 AAD 与 JSON 信封一致；含协商后的 raw DEFLATE 压缩，`z:1`）、`asset.chunk` / `upload.chunk` 的 blob 帧（头 JSON + 原始字节，永不压缩）、全部线协议消息与限额常量；与 Swift `AHProtocol` 共用 `ios/Fixtures/wire-v1/` 夹具，两边测试必须同时通过 |
-| `ios/transport.rs` | `rumqttc` 传输（TLS 优先、WSS 备用、退避重连）、`LoopbackTransport`（仅测试编译，在 `ios/transport/loopback.rs`：丢包 / 乱序 / 断线注入）、`probe`（设置页「测试连接」）。明文 TCP 只对回环地址生效（`first_via`） |
+| `ios/transport.rs` | `rumqttc` 传输（TLS 优先、WSS 备用、退避重连）、`LoopbackTransport`（仅测试编译，在 `ios/transport/loopback.rs`：丢包 / 乱序 / 断线注入）、`probe`（设置页「测试连接」：先收自己话题上的回声；成功后做隔离自检——向自己命名空间之外的随机话题发一条非保留 QoS 1 消息，约 1.5 s 内回来就报 `Isolation::Leaks`，被拒、被丢、被断开都算已隔离）。明文 TCP 只对回环地址生效（`first_via`） |
 | `ios/store.rs` | `~/.askhuman/ios/` 下的 `state.json`（手机、关注集、推送句柄、本月流量）与 `journal.json`（状态变更消息的幂等日志）；配对密钥在系统钥匙串，缺钥匙串时回退 `keys.json` 并在设置页提示 |
 | `ios/views.rs` | 把请求投影成手机渲染的视图（选项原文、TODO、确认变体、快捷回复 `quickReplies`、升级标记 `escalated` 与可附注 `annotatable`） |
 | `ios/todos_view.rs` | 待办「项目列表」的纯函数：候选 + 同步元数据 → 带不透明 id、同名后缀、分段的行（与桌面端侧栏的 `mergeProjects` / `labelProjects` 同一算法，两边各有镜像用例）；只有哈希 id 与最少的上层目录名上线，路径不出 Mac |
@@ -49,13 +49,13 @@ Agent / CLI ─► Daemon ── IosGateway（一个 actor）──► MQTT（TL
 | `daemon/runtime/task_launch.rs` | IM `/new` 与 iOS 共用的任务启动（门槛、冲突、终端 / Codex App 路径） |
 | `channels/ios.rs` | `Channel` 实现：请求交给 Gateway，首个终态获胜后撤销手机上的请求 |
 | `cli/ios_cmd.rs` | `AskHuman channel ios status / pair / allow / devices / revoke …` 与 `channel set ios …`（密码经 stdin / 文件 / 环境变量，从不进 argv） |
-| `commands.rs` | 设置页用的 Tauri 命令：`ios_op`（经 IPC 的 `ClientMsg::Ios`）、`ios_test`、`ios_pair_qr`、`ios_connection_import` / `export` |
+| `commands.rs` | 设置页用的 Tauri 命令：`ios_op`（经 IPC 的 `ClientMsg::Ios`）、`ios_test`（broker 回声 + 隔离自检 + 中继检查，返回「消息 + 警告列表」，失败时带 `kind`；是 Tauri 命令返回值，不是 IPC 消息，不涉及 `PROTOCOL_VERSION`）、`ios_default_relay_url`（内置公共中继地址，空串 = 这个构建没有）、`ios_pair_qr`、`ios_connection_import` / `export` |
 
-前端：`src/views/settings/IosChannelCard.vue` + `useIosChannel.ts`（状态轮询、配对流程）、`iosTraffic.ts`（多设备报文流量统计与记录完整性，见 [流量统计](specs/ios-traffic.md)）、`iosAlertTiming.ts`（「推送时机」下拉的预设与时长显示）。
+前端：`src/views/settings/IosChannelCard.vue` + `useIosChannel.ts`（状态轮询、配对流程）、`iosTraffic.ts`（多设备报文流量统计与记录完整性，见 [流量统计](specs/ios-traffic.md)）、`iosAlertTiming.ts`（「推送时机」下拉的预设与时长显示）、`iosBrokers.ts`（Broker 服务商目录，纯数据：按主机后缀识别、要点与官方文档锚点；下拉、端口填写与测试失败时的针对性提示都从它来）。
 
 ## 推送中继（`relay/`）
 
-零依赖 Node.js（`http` / `http2` / `crypto`），为腾讯云云函数 Web 函数而写：`src/core.js`（句柄编解码、请求校验、载荷白名单、ES256 JWT、错误映射、令牌桶）与 `src/adapters/scf.js`（HTTP 服务、环境变量、HTTP/2 到 APNs）。接口 `GET /v1/health`、`POST /v1/register`、`POST /v1/push`。密钥只在云函数环境变量里（`APNS_KEY_P8` 等），仓库与日志里没有任何密钥。`scripts/build-zip.sh` 产出上传用的 zip，`npm test` 跑 `node --test`。
+零依赖 Node.js（`http` / `http2` / `crypto`），为腾讯云云函数 Web 函数而写：`src/core.js`（句柄编解码、请求校验、载荷白名单、ES256 JWT、错误映射、令牌桶）与 `src/adapters/scf.js`（HTTP 服务、环境变量、HTTP/2 到 APNs）。接口 `GET /v1/health`、`POST /v1/register`、`POST /v1/push`。密钥只在云函数环境变量里（`APNS_KEY_P8` 等），仓库与日志里没有任何密钥。注册限流按客户端 IP 分桶（取 `X-Forwarded-For` 里跳过 `TRUSTED_PROXY_HOPS` 个平台代理后的一项，默认 2，即从右数第三项）并有全局兜底，推送限流按句柄编号；桶在各实例自己的内存里，只是公平性手段，不是成本手段，成本由云函数的最大独占配额与告警封顶（`docs/specs/ios-open-access.md` §4）。`scripts/build-zip.sh` 产出上传用的 zip，`npm test` 跑 `node --test`。
 
 ## iOS App（`ios/`）
 

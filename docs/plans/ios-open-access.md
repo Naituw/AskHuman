@@ -1,6 +1,6 @@
 # iOS 渠道免费开放：开发与交付计划
 
-日期：2026-11-21。状态：P1、P2 已完成；P3 的预发验证（3a）、注册限流（3b）、域名与证书、告警与预算已完成，生产函数的切换（3c）等 Owner 批准；P4 的默认中继地址要等 3c 之后才合入。需求与决策见 [`docs/specs/ios-open-access.md`](../specs/ios-open-access.md)。
+日期：2026-11-21。状态：P1、P2、P4 已完成（P4 的默认中继地址常量仍为空）；P3 的预发验证（3a）、注册限流（3b）、域名与证书、告警与预算已完成，生产函数的切换（3c）等 Owner 批准；3c 之后在一个小提交里填入默认中继地址并同步文案。需求与决策见 [`docs/specs/ios-open-access.md`](../specs/ios-open-access.md)。
 
 在主工作树做；同一棵树里常有别的会话的未提交改动，提交时只暂存自己的文件或自己的改动块（`git apply --cached` 一个只含自己改动块的补丁）。
 
@@ -61,7 +61,7 @@
 
 验证：外部 `curl`（`/v1/health`、`/v1/register` 错误路径、`/v1/push` 无效句柄）；小规模并发压测（几十并发、十几秒，费用可忽略）观察超限返回；日志仍只含方法、状态、耗时。
 
-## P4：向导与默认中继（Mac 设置页与 Rust）
+## P4：向导与默认中继（Mac 设置页与 Rust）（已完成，默认地址除外）
 
 - **4a 服务商目录与向导**：`src/views/settings/iosBrokers.ts`（纯数据）；`IosChannelCard.vue` 顶部加下拉与要点块；i18n 中英文；组件测试。不新增配置字段。
 - **4b 默认中继**：Rust 新增 `effective_relay_url(cfg)`；`pairing.rs`（二维码里的 `r`）、`requests.rs`（推送）、`connstr.rs`、`daemon/runtime/ios.rs`、`cli/channel_cmd.rs`、`commands.rs`（健康检查）全部改用它；界面「使用公共中继 / 使用自己的中继」开关；设置里写明公共中继的数据与可用性说明。**默认地址要等 3c 域名生效后才合入。**
@@ -69,6 +69,10 @@
 - **4d 错误提示**：认证失败 / 超时按服务商给针对性提示。
 
 验证：vitest、`vue-tsc`、`cargo test`；`node scripts/machine-health.mjs` → `./scripts/install.sh`；在 Dev 实例里打开设置页把向导、测试连接、公共 / 自己的中继开关实际点一遍并存截图。配置不新增字段，不改 IPC，不需要 recovery 迁移。提交 `feat(ios): …`（`Release-Note: skip`）。
+
+**结果（2026-11-22，`e2c37a8f`，后续小修 `30471705`）**：4a–4d 都做完了，`./scripts/install.sh` 已装机。验证：前端全量 142 个文件、2078 项，`vue-tsc` 干净；Rust 的 `ios::transport`、`config::`、`cli::channel`、`i18n` 共 121 项，clippy `-D warnings` 干净。隔离自检用装机的真实二进制跑过：对 Aedes 夹具 broker 的三种 ACL（`suback`、`forward`、`none`）和**真实 Mosquitto 2.1.2**（`pattern readwrite ah/%u/#` → 没有警告；没有 ACL → 给出警告），错误路径（密码错 → 拒绝、端口不通 → 超时）的提示文案也看过。设置页没有用 Dev 实例的真实窗口点（被遮挡的窗口内容截不到），改在浏览器里用**真实的 `SettingsView` + mock 后端**点了一遍并看过截图：服务商识别与要点、公共 / 自己的中继开关、测试成功 / 警告 / 失败 + 按服务商的提示（中英文各看过）。顺手修了两处：卡片简介随「有没有公共中继」换说法；端口两栏 4px 错位（既有问题）。
+
+仍为空的是默认中继地址常量 `IOS_DEFAULT_RELAY_URL`：3c 之后用一个小提交填入 `https://askhuman-relay.maipo.me`，同一次提交改 CLI `--relay-url` 帮助、`ios-setup*.md` 的中继一节。没做：隔离自检在真实 EMQX、flespi 上的运行（要凭据，见 `docs/PROGRESS.md` 悬而未决项）。
 
 ## P5：收尾
 

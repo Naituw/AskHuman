@@ -499,7 +499,7 @@ Agents 列表 + 实时观看 + 关注 + 插话读取回执 + 完成横幅、任�
 - 提问正文里的本地图片尚未改写为 `ahasset://`，列表项的墓碑展示也未做；撤回插话只取回文字、不取回附件。
 - 发行给朋友之前：EMQX 自动开户与额度共享、TestFlight 外部测试说明、隐私政策网址与联系邮箱。
 
-## 进行中：iOS 渠道免费开放（公共中继 + 厂商中立的 Broker）——P1、P2、P3a/b 已完成，等 Owner 批准 3c（切换生产函数）
+## 进行中：iOS 渠道免费开放（公共中继 + 厂商中立的 Broker）——P1、P2、P3a/b、P4 已完成，等 Owner 批准 3c（切换生产函数）
 
 2026-11-21 Owner 批准的 [规格](specs/ios-open-access.md)（决策 OA1–OA14）与 [计划](plans/ios-open-access.md)：iOS 端免费开放给更多用户，不绑定 EMQX；
 公共侧只做推送中继（绑已备案域名，最大独占配额封顶 + 告警 + 手动熄火），broker 仍由用户自备（EMQX、flespi、自建 Mosquitto 三条并列）。
@@ -510,6 +510,7 @@ Agents 列表 + 实时观看 + 关注 + 插话读取回执 + 完成横幅、任�
 - P2：Mac 设置卡与手机 Macs 页去掉写死 1 GiB 的百分比、EMQX 控制台链接与点名 EMQX 的文案，保留 GB 步进提醒；`ios-channel.md` 的 D3、D23 标已修订。
 - P3a / P3b 与域名、告警、预算（2026-11-21～22）：在临时函数 `askhuman-relay-verify` 上验证了最大独占配额（超限返回 HTTP 432、函数不执行；512 MB / 4 可用，128 MB / 1 会卡死在 432）、自定义域名映射到别名（每个别名要有自己的函数 URL）、`X-Forwarded-For` 从右数第三项是真实客户端 IP、没有可配限流（结果在规格 §7）；
   中继注册限流改为按 IP 分桶 + 全局兜底（`545f5c5f`）；域名 `askhuman-relay.maipo.me`（托管证书已开自动续期）、两条云监控告警、¥30 月预算都已建在 Owner 的腾讯云账号上，映射目前指向预发函数。
+- P4（2026-11-22，`e2c37a8f`、`30471705`）：设置页的 Broker 服务商向导（EMQX / flespi / 自建，按主机后缀识别，填端口、要点、官方文档链接）、公共 / 自己的中继开关（`config::effective_relay_url` 一处取值；内置默认地址常量 `IOS_DEFAULT_RELAY_URL` **仍为空**，3c 之后才填）、「测试连接」的隔离自检（警告级，不挡保存与配对）与按服务商的失败提示。前端全量与 `vue-tsc`、Rust `ios::transport` 等 121 项、clippy 都干净；隔离自检用真实二进制对 Aedes 夹具 broker 的三种 ACL 和真实 Mosquitto 2.1.2 跑过；设置页在浏览器里用真实 `SettingsView` + mock 后端点过一遍并看过截图。
 
 下一步：
 
@@ -517,10 +518,11 @@ Agents 列表 + 实时观看 + 关注 + 插话读取回执 + 完成横幅、任�
 - [ ] 核对 432 在账单里是否计费：压测所在整点（2026-11-21 晚到 22 日凌晨）的明细账单（费用中心 → 账单详情，按资源 `askhuman-relay-verify` 过滤），把 `Web 函数调用次数` 与响应流量对照云监控里的调用次数与成功次数；结论写回规格 4.2 与 §7。
 - [ ] 上线一周后：用明细账单核对单次推送的真实运行时长（规格 4.1 的 0.3 s 是估算）与两条告警的阈值。
 - [ ] 约 2027-01：确认托管证书（2027-02-19 到期）已自动续期并部署到 SCF 自定义域名。
-- [ ] P4 向导与默认中继（默认地址要等 3c 之后才合入）；P5 收尾（见计划），其中要删掉上一节「iOS 原生渠道」里「函数 URL 被标为仅供测试」那条待办。
+- [ ] 3c 之后：在一个小提交里把 `IOS_DEFAULT_RELAY_URL` 设为 `https://askhuman-relay.maipo.me`，同时改 CLI `--relay-url` 帮助、`ios-setup*.md` 的中继一节与 `overview*` 里公共中继的描述，删预发函数。P5 其余收尾见计划，其中要删掉上一节「iOS 原生渠道」里「函数 URL 被标为仅供测试」那条待办。
 
 悬而未决的小项：
 
+- 隔离自检在真实 broker 上的验证：Mosquitto 2.1.2 已实测（`pattern readwrite ah/%u/#` 时没有警告，没有 ACL 时给出警告）；真实 EMQX（有 / 无「全部用户」的兜底 deny）与 flespi（ACL token）没有跑过，只对 Aedes 夹具与回环传输验证过。要紧的是配了 ACL 的账号不能被误报，所以第一次在真实 EMQX 上点「测试连接」时看一眼结果。
 - 真实 App 在 EMQX 的 WSS 上断开时是否多发一条遗嘱，没有实测（套件探针的结果见 `ios-broker.md`）；flespi 的跨用户互验只在 TLS 上跑过。
 - 本机还装着为测试装的 Homebrew `mosquitto`（及 `cjson libevent libwebsockets`），P5 里问 Owner 后卸载。
 - 手机端改动随下一次 TestFlight 构建发布，出包由 Owner 另行指示；`docs/release/ios-external-beta/*.txt` 与 `ios-testflight` 技能里的 EMQX 字样随那次出包一起改。
