@@ -128,7 +128,10 @@ final class TrafficReductionE2ETests: E2ECase {
         }
 
         report(["enteredBytes": entered, "agentSnapshotBytes": snapshot.bytes, "agentsPlainBytes": plainBytes])
-        XCTAssertLessThan(entered, 6_000, "a foreground entry of \(sessions) sessions sent \(entered) B")
+        // Measured on 2026-11-21 against this build, one run each: 2,236 B in the binary envelope (the Agent snapshot
+        // 526 B), 3,223 B (742 B) when the phone does not say `binary` in `hello` and the Mac sends JSON. The limit keeps
+        // about the headroom the JSON figure had under the old 6,000 B (1.9x) over the binary one.
+        XCTAssertLessThan(entered, 4_000, "a foreground entry of \(sessions) sessions sent \(entered) B")
     }
 
     func testAWatchOpenedRightAfterComingBackGetsItsFramesAndItsListActivity() async throws {

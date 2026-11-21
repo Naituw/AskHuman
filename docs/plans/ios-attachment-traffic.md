@@ -158,9 +158,19 @@
 - **协商**：Mac 向手机发二进制的条件是 `rt.binary && rt.hello_at.is_some()`（`hello.binary && caps.binary`，以最近一次 `hello` 为准，随下线的 presence 一起清掉）；手机向 Mac 发二进制只在本次握手的 `hello.ack` 带 `caps.binary` 之后（Swift 一侧在 P1b）。`hello`、配对主题、presence、push 恒为 JSON；配对主题上的二进制帧不收。
 - **夹具（只追加）**：`crypto.json` 加 `binaryEnvelopes`（3 条，含 `kid` 大于 255）、`compressedBinaryEnvelopes`（1 条，只开不比，同 `compressedEnvelopes`）、`blobFrames`（2 条，字节里有 0、`{`、大于 0x7f 的值）、`malformedFrames`（23 条：解析层、认证层、blob 读取层各一批）；`messages.json` 加 2 条样本（带 `binary` 的 `hello` 与 `hello.ack`）。两边对同一份文件通过：Rust 字节对字节比对，Swift 打开 Rust 封的帧并用同样的 nonce 封出同样的字节。
 - **节省**：一块满的 192 KiB 分块，blob 帧实测约为 JSON 信封的 56%（JSON 里是 base64 套两层；测试断言 < 60%）；一条小消息的二进制信封测试断言 < JSON 信封的 75%。
-- **验证**：`cargo clippy --all-targets -- -D warnings` 干净；全量 `cargo test` 3560 通过 / 0 失败 / 12 忽略；`swift test --filter AHProtocolTests` 78 通过；`./scripts/install.sh` 装好（`local-install` 档）。
+- **验证**：`cargo clippy --all-targets -- -D warnings` 干净；全量 `cargo test` 3560 通过 / 0 失败 / 12 忽略（含下一条更正提交的两条测试后是 3562）；`swift test --filter AHProtocolTests` 78 通过；`./scripts/install.sh` 装好（`local-install` 档）。
 - **一次格式化的副作用**：开发中跑过一次整包的 `cargo fmt`，顺带重排了另一个会话的两个未提交文件（`src-tauri/src/attachment_markdown.rs`、`src-tauri/src/app/linked_files.rs`），只改了排版、没有改逻辑。之后只对自己的文件用 `rustfmt`，整包只用 `cargo fmt -- --check`。
 
-### P1b 手机引擎
+### P1b 手机引擎（已完成）
 
-（未开工。）
+按计划做完，与计划设想不同的地方（以实现为准）：
+
+- **收**（`PhoneEngine.openFromMac`）：改走 `AHEnvelope.parseFrame` + `openMessage`，两种格式任何时候都收；返回 `(macId, plain, blob)`。blob 只认 `asset.chunk` 且头部里没有 `data`（头部自己也带 `data` 是「两条消息塞在一条里」），别的一律丢，跟 Mac 一侧 `open_up` 对称；丢弃不影响后续。`dispatch` 多一个 `blob` 参数，`onAssetChunk(macId, chunk, blob:)` 优先用 blob 的字节，没有再解 `chunk.data`（旧路径一字不动）。
+- **发**（`send`、新增 `sendUploadChunk`）：是否发二进制只由 `MacRuntime.takesBinary` 决定，它是 `sync.isHandshaken && caps?.binary == true`。握手前是 `.none` / `.helloSent`，所以 `hello` 恒为 JSON、握手前的一切也是 JSON；`resetSession()` 把 `sync` 置回 `.none`，所以断线、Mac 下线、Mac 重启后的新 `hello`（新 epoch）都会让手机回到 JSON，直到本次会话的 `hello.ack`，旧会话的 `caps` 不会带过来（不需要为此另写重置）。`upload.chunk` 协商后走 blob 帧（`Plain(blobHeader:)` 去掉 `data`，字节原样跟在后面），封不出来（id 不规范、超长）就回退成带 base64 `data` 的 JSON 消息，与以前逐字节相同。
+- **hello**：`binary: true`（`PhoneEngine+Sync.swift`）。`PhoneEngine+Pairing.swift` 与 `AHStore/PushDecryptor.swift` 不动，仍只认 JSON（配对主题、push 恒为 JSON）。
+- **测试夹具**（`TestMac`）：`caps.binary` **缺省开**，与真实 Mac 一致，所以 `AHCoreTests` 里原有的三百多条用例现在都是走二进制路径的回归；关掉它就是旧版 Mac——只读 JSON 信封，二进制到它那里等于乱码（所以手机若误发二进制，用例会失败而不是悄悄通过）。新增 `blobChunks`（关掉时块是二进制信封里的 JSON 消息）、`Arrival`（每条消息到达的格式）、`sendBytes` / `downKeys`（手工伪造帧）、`inboxRevision`（让伪造的 `request.resolved` 是手机下一条会采用的那个修订号，真漏进去就看得见）。
+- **新增用例**（没有按计划放进 `TransferTests` / `TrafficReductionTests`，单独一个 `AHCoreTests/BinaryTransportTests.swift`，9 条）：`hello` 是 JSON 且带 `binary`；握手前 JSON、本次 `hello.ack` 后二进制、Mac 重启后在新 ack 之前又回到 JSON；Mac 回来时换成旧版（`caps.binary` 没了）则又发 JSON；旧版 Mac 全程 JSON（上传、下载都成）；上传的每块是 blob 帧；下载的 19 块是 blob 帧；块是二进制信封里的 JSON 消息也收；空文件的那一块在 blob、二进制里的 JSON、旧版 JSON 三种下都下载成功；七种伪造帧（别的消息当 blob、头部带 `data`、别的主题、别的密钥、翻一位、截断、只有魔数）全部丢弃，不改收件箱、不让在等的下载提前完成，之后两种格式的消息仍照常处理。
+- **对照实验**（用完即还原）：三处各改一遍再跑这九条，失败的恰好是预期的那几条。`takesBinary` 忽略 `caps`：「旧版 Mac 全程 JSON」与「Mac 回来时换成旧版」两条失败（这两条在失败前先发一条 `ping` 并确认旧版 Mac 读到了，所以是立刻失败而不是等超时挂住）；`takesBinary` 恒 `false`：协商时机、「Mac 回来时」、上传 blob 三条失败；去掉 blob 头部的校验：伪造帧一条失败。第一次做最后一个实验时伪造帧用例没有逮到「别的消息当 blob」，原因是探针里的修订号不连续、手机本来就会因此重新同步，改成下一个修订号之后才逮得到。
+- **真实 daemon 端到端**：新增 `AHE2ETests/BinaryTransportE2ETests.swift`（一个一次性的 Mac daemon + 本地 broker，不碰真实 EMQX）：600 000 字节的文件下载 4 块，线上 600 872 字节（比文件多 0.15%）；400 000 字节上传 3 块，线上 400 531 字节；Mac 自己的 `trafficBreakdown`（`out:asset.chunk`、`in:upload.chunk`）按线上字节数记，两个方向的文件都逐字节一致；JSON + base64 会是文件的约 1.33 倍。整套 `AHE2ETests` 72 条：64 通过、8 跳过（真实服务、模拟器、付费 Codex 要另外的环境变量）、0 失败。
+- **预算重量**（`TrafficReductionE2ETests`，AT 里说的「改预算要写依据」）：同一个用例，手机声明 `binary` 时前台进入一次 2 236 字节（Agent 快照 526），不声明（Mac 回 JSON）时 3 223 字节（742），少 31%（快照少 29%）；各只跑了一次。上限从 6 000 降到 4 000，保持原来对 JSON 数字大约 1.9 倍的余量，理由写在用例的注释里。这是收紧，不是放宽。
+- **验证**：整包 `swift test`（不含 E2E）通过：Transport 14、Store 39、Protocol 78、Markdown 16、Core 313、App 556，共 1 016 条，0 失败；E2E 用的是更正提交之后 `./scripts/install.sh` 装好的二进制（此后 Rust 没有再改）。

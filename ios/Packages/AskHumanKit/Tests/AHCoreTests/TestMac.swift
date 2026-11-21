@@ -27,6 +27,9 @@ final class TestMac: @unchecked Sendable {
     private var assets: [String: Data] = [:]
     private var uploads: [String: (name: String, size: Int, chunks: Int, sha: String, data: Data, next: Int)] = [:]
     private var inboxLog: [(phoneId: String, plain: Plain)] = []
+    private var arrivalLog: [Arrival] = []
+    private var binaryCount = 0
+    private var blobCount = 0
     private var answersSeen: [String: AnswerSubmit] = [:]
 
     /// Behaviors tests can switch.
@@ -37,7 +40,14 @@ final class TestMac: @unchecked Sendable {
     var ignoreAnswers = false
     var dropNextRequestGet = false
     var corruptAssetChecksum = false
-    var caps = Caps(newTask: false, interject: false, watch: false)
+    /// What the Mac says it can do. `binary` is on, as on the real Mac: it opens binary envelopes and blob frames, and
+    /// sends them to a phone that said in its latest `hello` that it does too (docs/specs/ios-attachment-traffic.md §5).
+    /// Switched off, the Mac is one of an older build: it reads the JSON envelope only, and the binary format reaches it
+    /// as garbage.
+    var caps = Caps(newTask: false, interject: false, watch: false, binary: true)
+    /// Whether the chunks of an asset go to a phone that takes binary as blob frames (the bytes raw behind the header),
+    /// which is what the real Mac does. Off, they are JSON messages in the binary envelope, which a phone must read too.
+    var blobChunks = true
     /// Whether the Mac compresses the list streams for a phone that asked for it in its latest `hello`, as the real
     /// one does (docs/specs/ios-traffic-reduction.md §3.3): a list type of at least 512 bytes, when that is smaller.
     var compressesLists = true
@@ -224,12 +234,21 @@ final class TestMac: @unchecked Sendable {
         let topic = Wire.topicDown(user: user, phoneId: phoneId)
         let plain = try! Plain(body, nowMs: clock.nowMs())
         let bytes = sealedDown(plain, key: key.m2p, kid: key.kid, topic: topic, phoneId: phoneId)
+        if bytes.first == AHEnvelope.binaryMagic { lock.withLock { binaryCount += 1 } }
         return await client.publish(topic: topic, payload: bytes, retain: false)
     }
 
-    /// Seals a message for a phone, compressed when the real Mac would (see `compressesLists`).
+    /// Whether the Mac sends `phoneId` the binary envelope, as the real one does: it declared `caps.binary`, and that phone
+    /// said in its latest `hello` that it opens binary. The `hello.ack` is the first message that may be binary.
+    private func sendsBinary(to phoneId: String) -> Bool {
+        caps.binary && lock.withLock { helloOf[phoneId]?.binary == true }
+    }
+
+    /// Seals a message for a phone: in the binary envelope when it takes it, compressed when the real Mac would (see
+    /// `compressesLists`).
     private func sealedDown(_ plain: Plain, key: Data, kid: Int, topic: String, phoneId: String) -> Data {
         let plaintext = try! AHJSON.encoder.encode(plain)
+        let format: WireFormat = sendsBinary(to: phoneId) ? .binary : .json
         lock.lock()
         let asked = helloOf[phoneId]?.compression == true
         lock.unlock()
@@ -243,11 +262,53 @@ final class TestMac: @unchecked Sendable {
                 lock.lock()
                 compressedCount += 1
                 lock.unlock()
-                return AHEnvelope.encode(Envelope(f: macId, k: kid, n: Bytes.b64u(nonce), c: Bytes.b64u(ciphertext), z: 1))
+                let frame = EnvelopeFrame(sender: macId, kid: kid, nonce: nonce, ciphertext: ciphertext, compressed: true)
+                return AHEnvelope.encode(frame, scope: .topic(topic), format: format)
             }
         }
-        return try! plain.sealed(key: key, scope: .topic(topic), sender: macId, kid: kid)
+        return try! plain.sealed(key: key, scope: .topic(topic), sender: macId, kid: kid, format: format)
     }
+
+    /// Sends the chunk of an asset as a blob frame: the message without its `data`, and the bytes raw behind it.
+    @discardableResult
+    private func sendBlobDown(_ chunk: AssetChunk, bytes: Data, to phoneId: String) async -> Bool {
+        let key = lock.withLock { keys[phoneId] }
+        guard let key else { return false }
+        let topic = Wire.topicDown(user: user, phoneId: phoneId)
+        let head = try! Plain(blobHeader: chunk, nowMs: clock.nowMs())
+        guard let frame = AHEnvelope.sealBlob(
+            key: key.m2p, scope: .topic(topic), sender: macId, kid: key.kid, head: head, bytes: bytes
+        ) else {
+            XCTFail("the blob frame does not fit the binary header")
+            return false
+        }
+        lock.withLock {
+            binaryCount += 1
+            blobCount += 1
+        }
+        return await client.publish(topic: topic, payload: frame, retain: false)
+    }
+
+    /// Publishes bytes as they are on the topic of a phone: a frame built by hand, damaged or forged.
+    func sendBytes(_ payload: Data, to phoneId: String) async {
+        _ = await client.publish(topic: Wire.topicDown(user: user, phoneId: phoneId), payload: payload, retain: false)
+    }
+
+    /// The key a message for `phoneId` is sealed with and the topic it goes to, for a test that builds a frame by hand.
+    func downKeys(for phoneId: String) -> (kid: Int, m2p: Data, topic: String)? {
+        lock.withLock { keys[phoneId] }.map { ($0.kid, $0.m2p, Wire.topicDown(user: user, phoneId: phoneId)) }
+    }
+
+    /// The revision of the inbox: the next change the phone applies is the one that carries `inboxRevision + 1`.
+    var inboxRevision: UInt64 { lock.withLock { rev } }
+
+    /// Number of messages the Mac sent in the binary envelope.
+    var binarySent: Int { lock.withLock { binaryCount } }
+    /// Number of blob frames the Mac sent (a subset of `binarySent`).
+    var blobsSent: Int { lock.withLock { blobCount } }
+
+    /// How the messages of one type reached the Mac, oldest first.
+    func arrivals(_ type: String) -> [Arrival] { lock.withLock { arrivalLog.filter { $0.type == type } } }
 
     /// Sends a `z: 1` envelope that carries `deflated` as it is (a damaged stream, a bomb), properly encrypted so that
     /// the phone gets as far as inflating it.
@@ -346,15 +407,35 @@ final class TestMac: @unchecked Sendable {
             await onTicket(topic: topic, payload: payload)
             return
         }
-        guard topic == Wire.topicUp(user: user, macId: macId), let env = try? AHEnvelope.parse(payload) else { return }
+        guard topic == Wire.topicUp(user: user, macId: macId), let opened = openUp(topic: topic, payload: payload) else { return }
         lock.lock()
-        let key = keys[env.f]
+        inboxLog.append((opened.phoneId, opened.plain))
+        arrivalLog.append(Arrival(type: opened.plain.t, binary: opened.binary, blob: opened.blob != nil))
         lock.unlock()
-        guard let key, env.k == key.kid, let plain = try? Plain.open(key: key.p2m, scope: .topic(topic), envelope: env) else { return }
-        lock.lock()
-        inboxLog.append((env.f, plain))
-        lock.unlock()
-        await handle(plain, from: env.f)
+        await handle(opened.plain, from: opened.phoneId, blob: opened.blob)
+    }
+
+    /// Opens what the phone sent, the way the Mac of `caps` would. A blob frame comes back as its header with the bytes;
+    /// only a chunk of an upload may come that way, and its header must not say the bytes too.
+    private func openUp(topic: String, payload: Data) -> (phoneId: String, plain: Plain, blob: Data?, binary: Bool)? {
+        if caps.binary {
+            guard let frame = try? AHEnvelope.parseFrame(payload), let key = lock.withLock({ keys[frame.sender] }),
+                  frame.kid == key.kid,
+                  let opened = try? AHEnvelope.openMessage(key: key.p2m, scope: .topic(topic), frame: frame)
+            else { return nil }
+            switch opened {
+            case .message(let plain):
+                return (frame.sender, plain, nil, frame.binary)
+            case .blob(let head, let bytes):
+                guard head.t == UploadChunk.type, head.b["data"] == nil else { return nil }
+                return (frame.sender, head, bytes, true)
+            }
+        }
+        // An older Mac reads the JSON envelope only.
+        guard let env = try? AHEnvelope.parse(payload), let key = lock.withLock({ keys[env.f] }), env.k == key.kid,
+              let plain = try? Plain.open(key: key.p2m, scope: .topic(topic), envelope: env)
+        else { return nil }
+        return (env.f, plain, nil, false)
     }
 
     private func onTicket(topic: String, payload: Data) async {
@@ -376,7 +457,7 @@ final class TestMac: @unchecked Sendable {
         await sendOnTicket(PairPending(macId: macId), ticket: t)
     }
 
-    private func handle(_ plain: Plain, from phoneId: String) async {
+    private func handle(_ plain: Plain, from phoneId: String, blob: Data?) async {
         switch plain.t {
         case Wire.T.hello:
             guard let hello = try? plain.body(as: Hello.self) else { return }
@@ -431,7 +512,10 @@ final class TestMac: @unchecked Sendable {
                 await sendDown(UploadAck(uploadId: begin.uploadId, nextIndex: 0, status: "ok", reason: nil), to: phoneId)
             }
         case UploadChunk.type:
-            if let chunk = try? plain.body(as: UploadChunk.self) { await takeUploadChunk(chunk, from: phoneId) }
+            // The bytes are raw behind the header of a blob frame, base64 in `data` of a JSON message.
+            if let chunk = try? plain.body(as: UploadChunk.self) {
+                await takeUploadChunk(chunk, bytes: blob ?? Bytes.b64uDecode(chunk.data), from: phoneId)
+            }
         case AwaySet.type, AwaySessionSet.type:
             await handleAway(plain, from: phoneId)
         case SessionHistoryGet.type:
@@ -487,22 +571,28 @@ final class TestMac: @unchecked Sendable {
         var sha = SHA256.hash(data: data).map { String(format: "%02x", $0) }.joined()
         if corruptAssetChecksum { sha = String(repeating: "0", count: 64) }
         let end = min(Int(get.from) + Int(get.count), total)
+        let blobs = blobChunks && sendsBinary(to: phoneId)
         for index in Int(get.from)..<end {
             let slice = data.subdata(in: (index * size)..<min((index + 1) * size, data.count))
-            await sendDown(
-                AssetChunk(assetId: get.assetId, index: UInt64(index), total: UInt64(total), size: UInt64(data.count), sha256: index == 0 ? sha : nil, data: Bytes.b64u(slice)),
-                to: phoneId
+            let chunk = AssetChunk(
+                assetId: get.assetId, index: UInt64(index), total: UInt64(total), size: UInt64(data.count),
+                sha256: index == 0 ? sha : nil, data: blobs ? "" : Bytes.b64u(slice)
             )
+            if blobs {
+                await sendBlobDown(chunk, bytes: slice, to: phoneId)
+            } else {
+                await sendDown(chunk, to: phoneId)
+            }
         }
     }
 
-    private func takeUploadChunk(_ chunk: UploadChunk, from phoneId: String) async {
+    private func takeUploadChunk(_ chunk: UploadChunk, bytes: Data?, from phoneId: String) async {
         lock.lock()
         guard var upload = uploads[chunk.uploadId] else {
             lock.unlock()
             return
         }
-        if Int(chunk.index) == upload.next, let bytes = Bytes.b64uDecode(chunk.data) {
+        if Int(chunk.index) == upload.next, let bytes {
             upload.data.append(bytes)
             upload.next += 1
             uploads[chunk.uploadId] = upload
@@ -517,6 +607,15 @@ final class TestMac: @unchecked Sendable {
 }
 
 // MARK: - helpers
+
+/// How one message of the phone reached the Mac.
+struct Arrival: Equatable {
+    var type: String
+    /// In the binary envelope (a blob frame always is).
+    var binary: Bool
+    /// As a blob frame: the message is its header and the bytes came raw behind it.
+    var blob: Bool
+}
 
 func sampleAsk(
     id: String = Bytes.newId(), text: String = "Which database should we use?", options: [String] = ["PostgreSQL", "SQLite"],

@@ -156,9 +156,11 @@ extension PhoneEngine {
         await requestWindow(assetId, from: next)
     }
 
-    func onAssetChunk(_ macId: String, _ chunk: AssetChunk) async {
+    /// One chunk of a download. Its bytes come raw in `blob` when it arrived as a blob frame, and in `chunk.data` as
+    /// base64 when it arrived as JSON.
+    func onAssetChunk(_ macId: String, _ chunk: AssetChunk, blob: Data?) async {
         guard var download = downloads[chunk.assetId], download.macId == macId else { return }
-        guard let bytes = Bytes.b64uDecode(chunk.data), bytes.count <= Wire.assetChunkBytes, chunk.index < chunk.total,
+        guard let bytes = blob ?? Bytes.b64uDecode(chunk.data), bytes.count <= Wire.assetChunkBytes, chunk.index < chunk.total,
               chunk.size <= UInt64(Wire.maxAssetBytes)
         else {
             failDownload(chunk.assetId, with: BackendError.invalid("Bad chunk."))
@@ -295,7 +297,7 @@ extension PhoneEngine {
             let start = next * chunkSize
             let end = min(start + chunkSize, source.data.count)
             let part = source.data.subdata(in: start..<end)
-            let sent = await send(UploadChunk(uploadId: uploadId, index: UInt64(next), data: Bytes.b64u(part)), to: macId)
+            let sent = await sendUploadChunk(uploadId, index: UInt64(next), bytes: part, to: macId)
             guard sent else { throw BackendError.macOffline }
             progress(Double(next + 1) / Double(chunks) * 0.98)
             next += 1

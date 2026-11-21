@@ -1209,7 +1209,7 @@ v0.17.3 第一次发布时，两个 macOS 构建都死在「Sign macOS binary (D
 同日 Apple 开发者服务大面积宕机），没有发出任何东西；同一提交删掉未发布的标签重推后一次成功。再遇到同一步失败时要先看日志（`gh auth login` 或浏览器）。
 2026-11-21 已用两台 Mac 的 `trafficBreakdown` 与 EMQX 控制台核对（规格 [§9](specs/ios-traffic-reduction.md#9-实测2026-11-21)）：
 台账与 EMQX 的报文流量对上（差 0.1%）；除附件外的同步约 13 MB/天（整月约 0.4 GB），低于当时推算的 0.73 GB；
-但附件分块占落地后总字节的 92%，11 月到 11-21 已计费 1.67 GB。附件不在这份规格的范围内，由 [附件流量收敛](specs/ios-attachment-traffic.md) 接手（见下一节，2026-11-21 已出规格与计划，未开工）。
+但附件分块占落地后总字节的 92%，11 月到 11-21 已计费 1.67 GB。附件不在这份规格的范围内，由 [附件流量收敛](specs/ios-attachment-traffic.md) 接手（见下一节，2026-11-21 已出规格与计划并开工，P1 已完成）。
 
 - [ ] 手机核验（要装上新的 TestFlight 构建，且 Mac 已升级）：Agents 页里没打开的「工作中」会话不再显示工具 / 步数 / 相对时间，
   打开详情仍实时；从后台回前台只补变化、没有整套刷新；Watch 一个会话时帧与列表活动照常。新旧版本互配（旧手机配新 Mac、新手机配旧 Mac）
@@ -1229,7 +1229,11 @@ v0.17.3 第一次发布时，两个 macOS 构建都死在「Sign macOS binary (D
 规格 AT20 的办法是把预览代码放进独立 crate，只对它和它的编解码依赖设 opt 3（实测两档都回到约 0.3 s），
 Owner 已确认；实现时先做计划里的 P2-0（建 crate、设两档配置、量真实工程的耗时、编译时间与体积）。
 
-下一步：开工前按 `AGENTS.md` 问工作位置；按计划 P1 → P4 实现。
+2026-11-21 开工，Owner 选了主工作树。**P1（二进制传输）已完成并提交**：Mac 与手机的线协议加二进制信封与 blob 帧（`feat(ios): add binary envelopes and blob frames to the wire protocol`，随后一个 `fix(ios)` 更正了空文件分块的 `data`），手机引擎收发（`feat(ios): send and receive binary frames in the phone engine`）。
+对一次性 daemon 的端到端实测：600 000 字节的文件下载线上 600 872 字节，400 000 字节上传线上 400 531 字节（JSON + base64 约多三分之一）；同样的前台进入同步 3 223 → 2 236 字节（少 31%）。
+整套 E2E 72 条（8 条要额外环境的跳过）0 失败，`TrafficReductionE2ETests` 的字节预算已按实测收紧（6 000 → 4 000）。新旧版本互配（手机不声明 `binary`、或 Mac 不带 `caps.binary`）仍走 JSON，有用例覆盖。详情见计划的「实施记录」。
+
+下一步：计划 P2-0（预览 crate 与两档 opt-level 3 的编译配置，先量耗时、编译时间、二进制大小与 target 目录体积预算）→ P2a/b/c（预览）→ P3（内容去重与本地计数）→ P4（全量验证、文档同步；规格状态与 `docs/specs/ios-channel.md`、`docs/overview-ios.md` 此时才改）。
 P4 装机验证后，出 TestFlight 构建要 Owner 另行授权（按 `ios-testflight` skill）；真机跑几天、读到实测数字后，本节换成「待核验」，再改 wiki 里的月用量说法。
 
 ## 待真机核验：多设备报文流量统计

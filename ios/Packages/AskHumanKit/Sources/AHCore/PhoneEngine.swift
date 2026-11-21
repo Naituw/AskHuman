@@ -575,35 +575,48 @@ public actor PhoneEngine: RemoteBackend {
         }
     }
 
-    /// Opens a message from a paired Mac. Returns `nil` for anything that must be dropped silently:
-    /// unknown sender, wrong key id, failed authentication, stale clock, duplicate.
-    func openFromMac(topic: String, payload: Data) -> (macId: String, plain: Plain)? {
-        guard let env = try? AHEnvelope.parse(payload), var mac = macs[env.f], env.k == mac.record.kid else { return nil }
-        guard let plain = try? Plain.open(key: mac.record.m2p, scope: .topic(topic), envelope: env) else { return nil }
+    /// Opens a message from a paired Mac, in either wire format. Returns `nil` for anything that must be dropped
+    /// silently: unknown sender, wrong key id, failed authentication, stale clock, duplicate. A blob frame comes back as
+    /// its header message with the raw `blob` bytes (only a chunk of an asset travels that way); any other message has no
+    /// `blob`.
+    func openFromMac(topic: String, payload: Data) -> (macId: String, plain: Plain, blob: Data?)? {
+        guard let frame = try? AHEnvelope.parseFrame(payload), var mac = macs[frame.sender], frame.kid == mac.record.kid else { return nil }
+        guard let opened = try? AHEnvelope.openMessage(key: mac.record.m2p, scope: .topic(topic), frame: frame) else { return nil }
+        let plain: Plain
+        var blob: Data?
+        switch opened {
+        case .message(let message):
+            plain = message
+        case .blob(let head, let bytes):
+            // The bytes ride behind the header: a header that also says them is two messages in one.
+            guard head.t == AssetChunk.type, head.b["data"] == nil else { return nil }
+            plain = head
+            blob = bytes
+        }
         guard abs(plain.ts - clock.nowMs()) <= Wire.clockSkewMs else {
             // Only a reply to the current handshake can distinguish skew from a late message.
             if let ack = try? plain.body(as: HelloAck.self) {
-                markClockSkew(env.f, hello: ack.nonce)
+                markClockSkew(frame.sender, hello: ack.nonce)
             } else if let error = try? plain.body(as: ErrorBody.self), error.code == "clock_skew" {
-                markClockSkew(env.f, hello: error.ref)
+                markClockSkew(frame.sender, hello: error.ref)
             }
             return nil
         }
         guard mac.dedup.insert(plain.i, now: clock.now()) else { return nil }
         mac.lastSeenAt = clock.now()
-        macs[env.f] = mac
-        return (env.f, plain)
+        macs[frame.sender] = mac
+        return (frame.sender, plain, blob)
     }
 
     func onDown(topic: String, payload: Data) async {
         // The message that completes a pairing arrives with keys that are not stored yet.
         if pairingFlow != nil, await onPairAcceptCandidate(topic: topic, payload: payload) { return }
-        guard let (macId, plain) = openFromMac(topic: topic, payload: payload) else { return }
+        guard let (macId, plain, blob) = openFromMac(topic: topic, payload: payload) else { return }
         if plain.t != TrafficSync.type { announcePhoneTraffic() }
-        await dispatch(macId: macId, plain: plain)
+        await dispatch(macId: macId, plain: plain, blob: blob)
     }
 
-    func dispatch(macId: String, plain: Plain) async {
+    func dispatch(macId: String, plain: Plain, blob: Data?) async {
         do {
             switch plain.t {
             case Wire.T.helloAck: try await onHelloAck(macId, plain.body(as: HelloAck.self))
@@ -639,7 +652,7 @@ public actor PhoneEngine: RemoteBackend {
             case TrafficSync.type: onTrafficSync(macId, try plain.body(as: TrafficSync.self))
             case SessionHistory.type: onSessionHistory(macId, try plain.body(as: SessionHistory.self))
             case HistoryExchange.type: onHistoryExchange(macId, try plain.body(as: HistoryExchange.self))
-            case AssetChunk.type: await onAssetChunk(macId, try plain.body(as: AssetChunk.self))
+            case AssetChunk.type: await onAssetChunk(macId, try plain.body(as: AssetChunk.self), blob: blob)
             case AssetError.type: onAssetError(macId, try plain.body(as: AssetError.self))
             case UploadAck.type: onUploadAck(macId, try plain.body(as: UploadAck.self))
             default: break
@@ -661,12 +674,36 @@ public actor PhoneEngine: RemoteBackend {
     func send(_ plain: Plain, to macId: String) async -> Bool {
         guard let mac = macs[macId], let active = activeSettings, case .connected = phase else { return false }
         let topic = Wire.topicUp(user: active.username, macId: macId)
-        guard let bytes = try? plain.sealed(key: mac.record.p2m, scope: .topic(topic), sender: mac.record.phoneId, kid: mac.record.kid),
-              bytes.count <= Wire.maxEnvelopeBytes
+        // The binary envelope only for a Mac that said in this session's `hello.ack` that it opens it.
+        let format: WireFormat = mac.takesBinary ? .binary : .json
+        guard let bytes = try? plain.sealed(
+            key: mac.record.p2m, scope: .topic(topic), sender: mac.record.phoneId, kid: mac.record.kid, format: format
+        ), bytes.count <= Wire.maxEnvelopeBytes
         else { return false }
+        return await publishThrottled(bytes, topic: topic, announce: plain.t != TrafficSync.type)
+    }
+
+    /// Sends one chunk of an upload. A Mac that takes binary gets a blob frame: the message without its `data`, with the
+    /// bytes raw behind it. Any other Mac, or a frame that cannot be built (`AHEnvelope.sealBlob`), gets the JSON message
+    /// with the bytes in base64, which every Mac reads.
+    func sendUploadChunk(_ uploadId: String, index: UInt64, bytes: Data, to macId: String) async -> Bool {
+        if let mac = macs[macId], mac.takesBinary, let active = activeSettings, case .connected = phase,
+           let head = try? Plain(blobHeader: UploadChunk(uploadId: uploadId, index: index, data: ""), nowMs: clock.nowMs()) {
+            let topic = Wire.topicUp(user: active.username, macId: macId)
+            if let frame = AHEnvelope.sealBlob(
+                key: mac.record.p2m, scope: .topic(topic), sender: mac.record.phoneId, kid: mac.record.kid, head: head, bytes: bytes
+            ), frame.count <= Wire.maxEnvelopeBytes {
+                return await publishThrottled(frame, topic: topic, announce: true)
+            }
+        }
+        return await send(UploadChunk(uploadId: uploadId, index: index, data: Bytes.b64u(bytes)), to: macId)
+    }
+
+    /// Publishes sealed bytes once the send-rate bucket has room for them.
+    private func publishThrottled(_ bytes: Data, topic: String, announce: Bool) async -> Bool {
         let wait = bucket.take(now: clock.now().timeIntervalSince1970)
         if wait > 0 { try? await clock.sleep(seconds: wait) }
-        return await publishPayload(topic: topic, payload: bytes, retain: false, announce: plain.t != TrafficSync.type)
+        return await publishPayload(topic: topic, payload: bytes, retain: false, announce: announce)
     }
 
     // MARK: traffic
@@ -791,6 +828,11 @@ struct MacRuntime {
     }
 
     var online: Bool { presence?.o == 1 }
+
+    /// Whether what the phone sends to this Mac may be binary (`WireFormat.binary`): the Mac said it opens binary
+    /// frames in the `hello.ack` of the session that is running. Before that ack, and after the session ends (the
+    /// connection broke, the Mac went offline or restarted), everything goes as JSON, which every Mac reads.
+    var takesBinary: Bool { sync.isHandshaken && caps?.binary == true }
 
     /// Whether `nonce` answers a hello that is still waiting for its ack. Several count, not only the
     /// latest: the Mac answers every hello it receives, and when it is slow the answer to an earlier

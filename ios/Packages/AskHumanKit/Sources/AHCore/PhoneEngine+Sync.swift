@@ -55,9 +55,11 @@ extension PhoneEngine {
         cancelTimer("hello.retry." + macId)
         // `leanAgents`: a working Agent nobody watches is shown without its live tool, step count and activity time
         // (`AppStore.showsLiveActivity`). `compression`: the list streams may arrive compressed (`AHEnvelope.open`).
+        // `binary`: the phone opens binary envelopes and blob frames; the hello itself is JSON, because only its ack tells
+        // whether the Mac does too (`MacRuntime.takesBinary`).
         let hello = Hello(
             nonce: nonce, appVer: config.appVersion, deviceName: config.deviceName, lifecycleResults: true, trafficUsage: true,
-            leanWatch: true, leanAgents: true, compression: true
+            leanWatch: true, leanAgents: true, compression: true, binary: true
         )
         if var plain = try? Plain(hello, nowMs: clock.nowMs()) {
             // The Mac references the envelope ID when it rejects hello for clock skew.
