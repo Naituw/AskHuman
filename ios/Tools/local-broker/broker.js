@@ -3,7 +3,7 @@
 // A local MQTT broker that behaves like the production one as far as the iOS channel cares:
 // username/password login, retained messages, last wills, and the access rule
 //   "everyone may publish and subscribe to ah/<own username>/#, nothing else".
-// Plain TCP on loopback only: this is for tests and demos, never a stand-in for EMQX.
+// Plain TCP on loopback only: this is for tests and demos, never a stand-in for a real broker.
 //
 //   node broker.js [--port 18830] [--host 127.0.0.1] --user alice:secret [--user bob:other] [--verbose]
 //   AH_BROKER_USERS="alice:secret,bob:other" node broker.js

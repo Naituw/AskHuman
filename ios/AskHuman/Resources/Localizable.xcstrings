@@ -612,12 +612,12 @@
         }
       }
     },
-    "Adds each device's own sent and received messages. Earlier usage may be incomplete. Other clients, MQTT control packets and TCP/TLS overhead also consume the broker's 1 GB monthly allowance. Unpairing keeps recorded usage." : {
+    "Adds each device's own sent and received messages. Earlier usage may be incomplete. Other clients, MQTT control packets and TCP/TLS overhead are not counted, so the usage in your broker's console may be higher. Unpairing keeps recorded usage." : {
       "localizations" : {
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "相加各设备自身发送和接收的消息。早期记录可能不完整，其他客户端、MQTT 控制报文和 TCP/TLS 开销也会消耗 Broker 每月 1 GB 的额度。解除配对后，已记录的用量仍会保留。"
+            "value" : "相加各设备自身发送和接收的消息。早期记录可能不完整，不含其他客户端、MQTT 控制报文和 TCP/TLS 开销，所以 Broker 控制台里的用量可能更大。解除配对后，已记录的用量仍会保留。"
           }
         }
       }
@@ -3378,16 +3378,6 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "好"
-          }
-        }
-      }
-    },
-    "Of the free allowance" : {
-      "localizations" : {
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "占免费额度"
           }
         }
       }
@@ -6495,16 +6485,6 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "版本"
-          }
-        }
-      }
-    },
-    "View in EMQX console" : {
-      "localizations" : {
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "前往 EMQX 控制台"
           }
         }
       }

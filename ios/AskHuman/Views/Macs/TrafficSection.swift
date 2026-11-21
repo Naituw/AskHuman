@@ -30,9 +30,7 @@ struct TrafficSection: View {
             if let summary = store.state.brokerTraffic {
                 LabeledContent("Recorded devices", value: "\(summary.records.count)")
                 LabeledContent("Recorded message traffic", value: bytes(summary.stats.brokerEstimateBytes))
-                if summary.hasCompleteHistory {
-                    LabeledContent("Of the free allowance", value: summary.stats.quotaShare.formatted(.percent.precision(.fractionLength(0))))
-                } else {
+                if !summary.hasCompleteHistory {
                     Text("This month's record is incomplete.").foregroundStyle(.secondary)
                 }
                 DisclosureGroup("Usage by device") {
@@ -65,11 +63,10 @@ struct TrafficSection: View {
                 Text("Traffic could not be saved. The estimate may be incomplete after a restart.")
                     .foregroundStyle(.orange)
             }
-            Link("View in EMQX console", destination: URL(string: "https://cloud.emqx.com/console/")!)
         } header: {
             Text("This month")
         } footer: {
-            Text("Adds each device's own sent and received messages. Earlier usage may be incomplete. Other clients, MQTT control packets and TCP/TLS overhead also consume the broker's 1 GB monthly allowance. Unpairing keeps recorded usage.")
+            Text("Adds each device's own sent and received messages. Earlier usage may be incomplete. Other clients, MQTT control packets and TCP/TLS overhead are not counted, so the usage in your broker's console may be higher. Unpairing keeps recorded usage.")
         }
     }
 

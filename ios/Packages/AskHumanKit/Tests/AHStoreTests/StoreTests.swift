@@ -231,13 +231,11 @@ final class LocalStoreTests: XCTestCase {
         XCTAssertEqual(store.traffic(month: "2026-11").receivedBytes, 0, "a new month starts at zero")
     }
 
-    func testTheShareOfTheFreeQuotaIsCountedFromRecordedBytes() {
-        let quota = TrafficStats.freeQuotaBytes
+    func testTheBrokerEstimateIsCountedFromRecordedBytes() {
         func stats(_ bytes: UInt64) -> TrafficStats {
             TrafficStats(month: "2026-10", sentBytes: bytes / 2, receivedBytes: bytes - bytes / 2)
         }
         XCTAssertEqual(stats(1000).brokerEstimateBytes, 1000, "each endpoint contributes its own leg")
-        XCTAssertEqual(stats(quota / 4).quotaShare, 0.25, accuracy: 0.0001)
-        XCTAssertEqual(stats(quota).quotaShare, 1, accuracy: 0.0001)
+        XCTAssertEqual(stats(1001).brokerEstimateBytes, 1001, "an odd total loses no byte to the split")
     }
 }

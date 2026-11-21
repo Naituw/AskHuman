@@ -326,11 +326,6 @@ public struct TrafficStats: Codable, Equatable, Sendable {
         self.receivedMessages = receivedMessages
     }
 
-    /// EMQX Serverless free tier: 1 GiB a month, inbound plus outbound.
-    public static let freeQuotaBytes: UInt64 = 1 << 30
-
     /// Each endpoint records its own broker-facing leg. The device ledger adds those legs.
     public var brokerEstimateBytes: UInt64 { BrokerTraffic.add(sentBytes, receivedBytes) }
-
-    public var quotaShare: Double { Double(brokerEstimateBytes) / Double(Self.freeQuotaBytes) }
 }

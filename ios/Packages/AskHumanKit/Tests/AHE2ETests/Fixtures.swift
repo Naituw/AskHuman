@@ -55,7 +55,7 @@ protocol E2EBroker: AnyObject, Sendable {
     func stop()
 }
 
-/// The real services (EMQX and the push relay). The throwaway Macs take over the settings of a
+/// The real services (the configured MQTT broker and the push relay). The throwaway Macs take over the settings of a
 /// configured Mac through its connection string, exactly as a user's second Mac would. The string
 /// carries the broker password: it lives in this process only, and is never printed or written.
 final class RealBroker: E2EBroker, @unchecked Sendable {
