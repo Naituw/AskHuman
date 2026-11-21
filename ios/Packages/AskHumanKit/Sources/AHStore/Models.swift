@@ -262,13 +262,17 @@ public struct CachedRequest: Codable, Equatable, Sendable, Identifiable {
     public var unread: Bool
     /// `request.ack` was sent.
     public var acked: Bool
+    /// Taken off the lists of the phone with "Remove for now" while its Mac was offline (docs/specs/ios-offline-remove.md).
+    /// Nothing was sent, so the request is still waiting on the Mac; the draft stays in the draft store. The next inbox
+    /// snapshot of its Mac brings the request back if it is still there. Files written before this existed have `false`.
+    public var removedForNow: Bool
 
     public var id: String { Self.key(macId, requestId) }
     public static func key(_ macId: String, _ requestId: String) -> String { "\(macId)/\(requestId)" }
 
     public init(
         macId: String, requestId: String, summary: RequestSummary, view: RequestView? = nil, receivedAt: Date,
-        unread: Bool = true, acked: Bool = false
+        unread: Bool = true, acked: Bool = false, removedForNow: Bool = false
     ) {
         self.macId = macId
         self.requestId = requestId
@@ -277,6 +281,19 @@ public struct CachedRequest: Codable, Equatable, Sendable, Identifiable {
         self.receivedAt = receivedAt
         self.unread = unread
         self.acked = acked
+        self.removedForNow = removedForNow
+    }
+
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        macId = try c.decode(String.self, forKey: .macId)
+        requestId = try c.decode(String.self, forKey: .requestId)
+        summary = try c.decode(RequestSummary.self, forKey: .summary)
+        view = try c.decodeIfPresent(RequestView.self, forKey: .view)
+        receivedAt = try c.decode(Date.self, forKey: .receivedAt)
+        unread = try c.decode(Bool.self, forKey: .unread)
+        acked = try c.decode(Bool.self, forKey: .acked)
+        removedForNow = try c.decodeIfPresent(Bool.self, forKey: .removedForNow) ?? false
     }
 }
 

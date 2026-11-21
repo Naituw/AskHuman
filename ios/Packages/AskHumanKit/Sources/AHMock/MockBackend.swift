@@ -204,6 +204,8 @@ public actor MockBackend: RemoteBackend {
     public private(set) var submissions: [Submission] = []
     public private(set) var uploads: [UploadSource] = []
     public private(set) var seen: [String] = []
+    /// The requests taken off the lists with "Remove for now": out of `state.inbox` until their Mac is back (`setLink`).
+    var removedForNow: [InboxItem] = []
     /// Mac ids the mock treats as unreachable: submissions to them throw `.macOffline`.
     public var unreachable: Set<String> = []
     /// Makes the next submission fail the way an unanswered one does.
@@ -438,6 +440,8 @@ public actor MockBackend: RemoteBackend {
         guard let mac = state.macs.first(where: { $0.id == macId }) else { return }
         state.macs.removeAll { $0.id == macId }
         state.inbox.removeAll { $0.macId == macId }
+        removedForNow.removeAll { $0.macId == macId }
+        state.removedForNowIds = Set(removedForNow.map(\.id))
         dropAgents(of: macId)
         refreshCounts()
         publish()
@@ -452,6 +456,8 @@ public actor MockBackend: RemoteBackend {
         }
         state.macs = []
         state.inbox = []
+        removedForNow = []
+        state.removedForNowIds = []
         state.agents = []
         state.tasks = []
         state.pairing = nil
@@ -590,6 +596,32 @@ public actor MockBackend: RemoteBackend {
             }
         }
         publish()
+    }
+
+    /// As the engine does it: only for a Mac that is offline, nothing is sent, and the request waits off the lists.
+    public func removeRequestForNow(macId: String, requestId: String) async {
+        guard state.macs.first(where: { $0.id == macId })?.link == .macOffline,
+              let index = state.inbox.firstIndex(where: { $0.macId == macId && $0.requestId == requestId })
+        else { return }
+        removedForNow.append(state.inbox.remove(at: index))
+        state.removedForNowIds = Set(removedForNow.map(\.id))
+        refreshCounts()
+        publish()
+    }
+
+    /// The Mac is back: what was removed for now returns, as it does when the engine takes the Mac's next snapshot
+    /// (a request that was only waiting for the user comes with the dot of a new one).
+    func bringBackRemovedRequests(of macId: String) {
+        let back = removedForNow.filter { $0.macId == macId }
+        guard !back.isEmpty else { return }
+        removedForNow.removeAll { $0.macId == macId }
+        for var item in back {
+            if case .pending = item.state { item.unread = true }
+            state.inbox.append(item)
+        }
+        state.inbox.sort { $0.summary.createdAt > $1.summary.createdAt }
+        state.removedForNowIds = Set(removedForNow.map(\.id))
+        refreshCounts()
     }
 
     public func upload(

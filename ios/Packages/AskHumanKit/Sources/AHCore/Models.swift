@@ -229,6 +229,9 @@ public struct EngineState: Sendable, Equatable {
     public var macs: [MacState]
     /// Pending requests of every Mac, newest first.
     public var inbox: [InboxItem]
+    /// Ids of the requests taken off the lists with "Remove for now" (docs/specs/ios-offline-remove.md). They are not in
+    /// `inbox`, but they are still there: their drafts are kept, and the next snapshot of their Mac brings them back.
+    public var removedForNowIds: Set<String>
     public var pairing: PairingState?
     /// A message was dropped because the clocks of the phone and a Mac disagree by too much.
     public var clockSkew: Bool
@@ -253,6 +256,7 @@ public struct EngineState: Sendable, Equatable {
 
     public init(
         phase: ConnectionPhase = .idle, foreground: Bool = false, macs: [MacState] = [], inbox: [InboxItem] = [],
+        removedForNowIds: Set<String> = [],
         pairing: PairingState? = nil, clockSkew: Bool = false, push: PushStatus = .noToken, historyRevision: Int = 0,
         traffic: TrafficStats? = nil, brokerTraffic: BrokerTraffic? = nil, trafficStorageIssue: Bool = false, brokerHost: String? = nil, agents: [AgentItem] = [], watches: [String: WatchState] = [:],
         taskOptions: [String: TaskOptionsState] = [:], taskTodos: [String: [TodoOption]] = [:], tasks: [TaskProgress] = []
@@ -261,6 +265,7 @@ public struct EngineState: Sendable, Equatable {
         self.foreground = foreground
         self.macs = macs
         self.inbox = inbox
+        self.removedForNowIds = removedForNowIds
         self.pairing = pairing
         self.clockSkew = clockSkew
         self.push = push

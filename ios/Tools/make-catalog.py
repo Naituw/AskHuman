@@ -237,6 +237,10 @@ ZH = {
     "Cancel this request?": "取消这个请求？",
     "Keep it": "保留",
     "The Agent is told that you cancelled.": "会告知 Agent 你已取消。",
+    # Taking a request off the lists while its Mac is offline (docs/specs/ios-offline-remove.md)
+    "Remove for now": "暂时移除",
+    "Remove this request for now?": "暂时移除这个请求？",
+    "Your Mac is offline, so the Agent is not told and keeps waiting. If the request is still waiting when your Mac is back, it shows up here again. Your draft is kept.": "Mac 离线，无法通知 Agent，它会继续等。Mac 重新连上后，如果请求还在等你，它会再出现在这里。草稿会保留。",
     "Could not send": "无法发送",
     "OK": "好",
     # Assets

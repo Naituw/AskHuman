@@ -73,6 +73,28 @@ struct RequestScreen: View {
         } message: {
             Text("The Agent receives the default response, usually a refusal.")
         }
+        // The chip on the bar and the menu item only ask for this (`AppStore.removalPrompt`): the page owns the dialog.
+        .confirmationDialog(
+            "Remove this request for now?",
+            isPresented: Binding(
+                get: { store.removalPrompt == id },
+                set: { if !$0, store.removalPrompt == id { store.removalPrompt = nil } }
+            ),
+            titleVisibility: .visible
+        ) {
+            Button("Remove for now") {
+                guard let item = store.displayItem(id: id) else { return }
+                PageEditing.commit()
+                Task { @MainActor in
+                    // Let native editors publish their final composition before the form is saved.
+                    await Task.yield()
+                    await store.removeForNow(item)
+                }
+            }
+            Button("Keep it", role: .cancel) {}
+        } message: {
+            Text("Your Mac is offline, so the Agent is not told and keeps waiting. If the request is still waiting when your Mac is back, it shows up here again. Your draft is kept.")
+        }
         .alert("Could not send", isPresented: Binding(get: { store.requestErrors[id] != nil }, set: { if !$0 { store.clearRequestError(for: id) } })) {
             Button("OK", role: .cancel) {}
         } message: {
@@ -80,10 +102,11 @@ struct RequestScreen: View {
         }
         .overlay(alignment: .top) { if let history { SessionLoadingPill(history: history) } }
         .overlay(alignment: .bottomLeading) { if let history { SessionPullStateProbe(history: history) } }
-        .onChange(of: id) { _, _ in
+        .onChange(of: id) { old, _ in
             switching = false
             confirmCancel = false
             confirmDismiss = false
+            if store.removalPrompt == old { store.removalPrompt = nil }
         }
         .task(id: id) {
             if let item = store.item(id: id) { await store.opened(item) }
@@ -111,7 +134,12 @@ struct RequestScreen: View {
                         .accessibilityIdentifier("request-menu-session-history")
                 }
                 if let item = store.displayItem(id: id) {
-                    if item.view?.ask != nil {
+                    if store.canRemoveForNow(item) {
+                        // Nothing can be sent to an offline Mac, so there is nothing to cancel or dismiss with: all that
+                        // is left is to take the request off the list for now.
+                        Button("Remove for now", systemImage: "minus.circle") { store.removalPrompt = id }
+                            .accessibilityIdentifier("request-menu-remove")
+                    } else if item.view?.ask != nil {
                         Button("Cancel request", systemImage: "xmark.circle", role: .destructive) { confirmCancel = true }
                             .disabled(store.finished[id] != nil || !store.isOnline(macId: item.macId))
                     } else if item.view?.confirm?.dismissIndex != nil {
@@ -396,9 +424,10 @@ private struct LoadingRequest: View {
     private var status: some View {
         let notice = store.state.requestConnection(macId: item.macId).notice(
             offlineText: "The Mac is offline. The request loads when it is back.",
-            updatingText: "Your Mac is updating. The request loads when it is back."
+            updatingText: "Your Mac is updating. The request loads when it is back.",
+            removable: store.canRemoveForNow(item)
         )
-        HStack(spacing: 8) {
+        let row = HStack(spacing: 8) {
             if let notice {
                 if notice.progressing {
                     ProgressView()
@@ -406,12 +435,21 @@ private struct LoadingRequest: View {
                     Image(systemName: "wifi.exclamationmark").foregroundStyle(notice.color).accessibilityHidden(true)
                 }
                 Text(notice.text).foregroundStyle(notice.color).accessibilityIdentifier("request-connection")
+                if let action = notice.action { NoticeActionWords(action: action) }
             } else {
                 ProgressView()
                 Text("Loading the full request…").foregroundStyle(.secondary).accessibilityIdentifier("request-loading")
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
+        if notice?.action != nil {
+            // The row says what to do about it, and is all of it a button (the way out of an offline Mac).
+            Button { store.removalPrompt = item.id } label: { row.contentShape(.rect) }
+                .buttonStyle(.plain)
+                .accessibilityIdentifier("hint-remove")
+        } else {
+            row
+        }
     }
 }
 

@@ -244,10 +244,11 @@ extension MockBackend {
 
     public func isWatchingTodos(macId: String) -> Bool { todoWatchers.contains(macId) }
 
-    /// A Mac comes or goes.
+    /// A Mac comes or goes. One that comes back brings back the requests removed for now.
     public func setLink(_ link: MacLink, for macId: String) {
         guard let index = state.macs.firstIndex(where: { $0.id == macId }) else { return }
         state.macs[index].link = link
+        if link == .online { bringBackRemovedRequests(of: macId) }
         publish()
     }
 }

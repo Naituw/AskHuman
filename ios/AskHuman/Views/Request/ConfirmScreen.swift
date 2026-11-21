@@ -74,12 +74,24 @@ struct ConfirmScreen: View {
             VStack(spacing: BottomBar.floats ? 8 : 6) {
                 if ended {
                     Text("This request has ended.").font(.caption).foregroundStyle(.secondary).barStatusChip(compact: true)
-                } else if let notice = connection.notice(offlineText: "The Mac is offline. Try again when it is back.") {
-                    HStack(spacing: 3) {
+                } else if let notice = connection.notice(
+                    offlineText: "The Mac is offline. Try again when it is back.", removable: store.canRemoveForNow(item)
+                ) {
+                    let line = HStack(spacing: 3) {
                         if notice.progressing { ProgressView().controlSize(.mini) }
                         Text(notice.text).accessibilityIdentifier("request-connection")
+                        if let action = notice.action { NoticeActionWords(action: action) }
                     }
-                    .font(.caption).foregroundStyle(notice.color).barStatusChip(compact: true)
+                    .font(.caption).foregroundStyle(notice.color)
+                    if notice.action != nil {
+                        // The whole chip is the button (its glass is around the button: see `barChipButtonLabel()`).
+                        Button { store.removalPrompt = item.id } label: { line.barChipButtonLabel() }
+                            .buttonStyle(.plain)
+                            .barChipButtonGlass()
+                            .accessibilityIdentifier("hint-remove")
+                    } else {
+                        line.barStatusChip(compact: true)
+                    }
                 } else if sending {
                     Text("Waiting for your Mac to confirm…").font(.caption).foregroundStyle(.secondary).barStatusChip(compact: true)
                 }

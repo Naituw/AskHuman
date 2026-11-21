@@ -121,6 +121,16 @@ private struct InboxList: View {
                     ForEach(section.items) { item in
                         row(item)
                             .accessibilityIdentifier("inbox-row-\(item.requestId)")
+                            .swipeActions(edge: .trailing, allowsFullSwipe: true) {
+                                // Only for a request whose Mac is offline: nothing else can be done with it
+                                // meanwhile (docs/specs/ios-offline-remove.md). It is not a cancellation, so no question.
+                                if store.canRemoveForNow(item) {
+                                    Button { Task { await store.removeForNow(item) } } label: {
+                                        Label("Remove for now", systemImage: "minus.circle")
+                                    }
+                                    .accessibilityIdentifier("swipe-remove-\(item.requestId)")
+                                }
+                            }
                     }
                 } header: {
                     SectionTitle(section: section, showMac: store.macs.count > 1)

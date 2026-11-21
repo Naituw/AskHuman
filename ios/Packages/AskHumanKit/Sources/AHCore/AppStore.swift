@@ -172,6 +172,9 @@ public final class AppStore {
     @ObservationIgnored private var requestNavigationEpoch: UInt64 = 0
     @ObservationIgnored private var submissionNavigationEpochs: [String: UInt64] = [:]
     public private(set) var requestErrors: [String: String] = [:]
+    /// The request whose "Remove for now" waits for the user's confirmation (docs/specs/ios-offline-remove.md). The action on
+    /// the bar of the page and the menu item set it, and the page of that request shows the dialog.
+    public var removalPrompt: String?
     public var banner: Banner?
     /// Ids (`macId|agentKey`) of the Agents pushed on the Agents stack. The live frames of an Agent
     /// are asked for while its page is on the stack.
@@ -372,6 +375,8 @@ public final class AppStore {
         noteDiagnostics(of: next)
         state = next
         hasState = true
+        // The dialog says the Mac is offline: it goes with that (the Mac came back, or the request ended).
+        if let id = removalPrompt, !(item(id: id).map(canRemoveForNow) ?? false) { removalPrompt = nil }
         todos.update(macs: next.macs, foreground: next.foreground)
         todos.update(agents: next.agents)
         developer.update(macs: next.macs)
@@ -381,6 +386,8 @@ public final class AppStore {
         let liveArrivalIds = Set(next.inbox.map(\.id))
         requestArrivals.removeAll { !liveArrivalIds.contains($0.id) }
         for item in next.inbox { retained[item.id] = (item, now) }
+        // A request taken off the lists is not one that just ended: its page has nothing to keep showing.
+        for id in next.removedForNowIds where !inboxPath.contains(id) { retained[id] = nil }
         for (key, entry) in retained where now.timeIntervalSince(entry.at) > 600 && !inboxPath.contains(key) {
             retained[key] = nil
         }
@@ -388,8 +395,9 @@ public final class AppStore {
             lastHistoryRevision = next.historyRevision
             history = await backend.history()
         }
-        // Drop composers of requests that left the inbox and are not open any more.
-        let live = Set(next.inbox.map(\.id))
+        // Drop composers of requests that left the inbox and are not open any more. One that was only taken off the
+        // lists "for now" has not left: its form stays, and with it its draft.
+        let live = Set(next.inbox.map(\.id)).union(next.removedForNowIds)
         if var navigation = requestNavigation {
             let arrivals = inboxItems(filter: navigation.filter).sorted {
                 $0.receivedAt == $1.receivedAt ? $0.id < $1.id : $0.receivedAt < $1.receivedAt
@@ -763,14 +771,21 @@ public final class AppStore {
     /// The form left the screen: save, and forget the in-memory state of finished requests.
     public func closed(id: String) {
         hints[id] = nil
+        if removalPrompt == id { removalPrompt = nil }
         composers[id]?.flush()
         if item(id: id) == nil {
-            composers[id]?.discard()
-            composers[id] = nil
-            confirmComposers[id] = nil
-            todoPickers[id] = nil
-            finished[id] = nil
-            retained[id] = nil
+            if state.removedForNowIds.contains(id) {
+                // Taken off the lists for now, not over: the draft stays (the form with it), and the page has nothing
+                // to keep showing.
+                retained[id] = nil
+            } else {
+                composers[id]?.discard()
+                composers[id] = nil
+                confirmComposers[id] = nil
+                todoPickers[id] = nil
+                finished[id] = nil
+                retained[id] = nil
+            }
         }
     }
 
@@ -830,6 +845,27 @@ public final class AppStore {
         submissionNavigationEpochs[item.id] = requestNavigationEpoch
         clearRequestError(for: item.id)
         _ = try await backend.submitAnswer(macId: item.macId, requestId: item.requestId, action: "cancel", answers: [])
+    }
+
+    /// Whether "Remove for now" is on offer for the request (docs/specs/ios-offline-remove.md): its Mac is offline, so
+    /// nothing can be sent to it, and the request has not ended meanwhile. The other states of the connection mend
+    /// themselves or need the settings of the Mac, and a Mac that can be reached cancels the request properly.
+    public func canRemoveForNow(_ item: InboxItem) -> Bool {
+        finished[item.id] == nil && self.item(id: item.id) != nil
+            && state.requestConnection(macId: item.macId) == .macOffline
+    }
+
+    /// Takes the request off the lists until its Mac is back, and its page (when it is open) gives way to the list.
+    /// Nothing is sent: it is not a cancellation, the Agent keeps waiting, and the draft stays.
+    public func removeForNow(_ item: InboxItem) async {
+        guard canRemoveForNow(item) else { return }
+        removalPrompt = nil
+        // Off the page first: the form is saved while its request is still in the list (`closed(id:)`).
+        if inboxPath.contains(item.id) {
+            cancelAdvance()
+            inboxPath.removeAll { $0 == item.id }
+        }
+        await backend.removeRequestForNow(macId: item.macId, requestId: item.requestId)
     }
 
     public func decide(_ composer: ConfirmComposer, item: InboxItem) async throws {

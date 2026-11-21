@@ -1112,16 +1112,21 @@ private struct SendBar: View {
     }
 
     private var connectionNotice: RequestConnectionNotice? {
-        connection.notice(offlineText: "The Mac is offline. Your draft is kept.")
+        connection.notice(offlineText: "The Mac is offline. Your draft is kept.", removable: store.canRemoveForNow(item))
     }
 
-    /// A line under the count. One that says what "Send" is waiting for also leads to it.
-    private var hint: (text: LocalizedStringKey, color: Color, leads: Bool)? {
-        if ended { return ("This request has ended.", .secondary, false) }
-        if let notice = connectionNotice { return (notice.text, notice.color, false) }
-        if sendingState { return ("Waiting for your Mac to confirm…", .secondary, false) }
+    /// Where a hint that is a button leads.
+    private enum HintAction { case jump, removeForNow }
+    private typealias Hint = (text: LocalizedStringKey, color: Color, action: HintAction?)
+
+    /// A line under the count. One that says what "Send" is waiting for also leads to it, and the one about an
+    /// offline Mac to the way out of that: taking the request off the list for now.
+    private var hint: Hint? {
+        if ended { return ("This request has ended.", .secondary, nil) }
+        if let notice = connectionNotice { return (notice.text, notice.color, notice.action == nil ? nil : .removeForNow) }
+        if sendingState { return ("Waiting for your Mac to confirm…", .secondary, nil) }
         if composer.hasReachedEnd, composer.blockedReason == .needsSelection {
-            return ("Choose an option for every question.", .secondary, composer.firstWithoutSelection != nil)
+            return ("Choose an option for every question.", .secondary, composer.firstWithoutSelection != nil ? .jump : nil)
         }
         return nil
     }
@@ -1130,25 +1135,31 @@ private struct SendBar: View {
     /// whole chip is what is tapped (its glass is around the button, not in the label: see
     /// `barChipButtonLabel()`).
     @ViewBuilder
-    private func hintView(_ hint: (text: LocalizedStringKey, color: Color, leads: Bool), chip: Bool) -> some View {
+    private func hintView(_ hint: Hint, chip: Bool) -> some View {
         let label = HStack(spacing: 3) {
             if !ended, connectionNotice?.progressing == true { ProgressView().controlSize(.mini) }
             Text(hint.text).multilineTextAlignment(.leading)
                 .accessibilityIdentifier(!ended && connectionNotice != nil ? "request-connection" : "request-hint")
-            if hint.leads { Image(systemName: "chevron.right").font(.caption2.weight(.bold)) }
+            if hint.action == .removeForNow, let action = connectionNotice?.action {
+                NoticeActionWords(action: action)
+            } else if hint.action != nil {
+                Image(systemName: "chevron.right").font(.caption2.weight(.bold))
+            }
         }
         .font(.caption)
         .foregroundStyle(hint.color)
-        if hint.leads {
+        if let action = hint.action {
+            let perform: () -> Void = action == .jump ? onJump : { store.removalPrompt = item.id }
+            let identifier = action == .jump ? "hint-jump" : "hint-remove"
             if chip {
-                Button(action: onJump) { label.barChipButtonLabel() }
+                Button(action: perform) { label.barChipButtonLabel() }
                     .buttonStyle(.plain)
                     .barChipButtonGlass()
-                    .accessibilityIdentifier("hint-jump")
+                    .accessibilityIdentifier(identifier)
             } else {
-                Button(action: onJump) { label }
+                Button(action: perform) { label }
                     .buttonStyle(.plain)
-                    .accessibilityIdentifier("hint-jump")
+                    .accessibilityIdentifier(identifier)
             }
         } else if chip {
             label.barStatusChip(compact: true)

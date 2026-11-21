@@ -736,7 +736,9 @@ public actor PhoneEngine: RemoteBackend {
     }
 
     func snapshot() -> EngineState {
-        let pending = Dictionary(grouping: requests.values, by: { $0.cached.macId }).mapValues(\.count)
+        // A request removed for now is off every list, the count of its Mac included.
+        let listed = requests.values.filter { !$0.cached.removedForNow }
+        let pending = Dictionary(grouping: listed, by: { $0.cached.macId }).mapValues(\.count)
         let list = macs.values.sorted { $0.record.pairedAt < $1.record.pairedAt }.map { mac in
             MacState(
                 id: mac.record.macId, name: mac.record.displayName, macName: mac.record.macName, alias: mac.record.alias,
@@ -745,7 +747,7 @@ public actor PhoneEngine: RemoteBackend {
                 away: mac.away, update: mac.recoveringUpdate ? (mac.presence?.u == "updating" ? "updating" : "recovering") : mac.presence?.u
             )
         }
-        let inbox = requests.values.compactMap { runtime -> InboxItem? in
+        let inbox = listed.compactMap { runtime -> InboxItem? in
             guard let mac = macs[runtime.cached.macId] else { return nil }
             let state: RequestState
             switch runtime.state {
@@ -760,7 +762,8 @@ public actor PhoneEngine: RemoteBackend {
             )
         }.sorted { $0.summary.createdAt > $1.summary.createdAt }
         return EngineState(
-            phase: phase, foreground: foreground, macs: list, inbox: inbox, pairing: pairingState(),
+            phase: phase, foreground: foreground, macs: list, inbox: inbox,
+            removedForNowIds: Set(requests.values.filter { $0.cached.removedForNow }.map(\.cached.id)), pairing: pairingState(),
             clockSkew: macs.values.contains(where: \.clockSkew),
             push: pushStatus, historyRevision: historyRevision, traffic: traffic, brokerTraffic: brokerTraffic(), trafficStorageIssue: trafficStorageIssue, brokerHost: activeSettings?.host,
             agents: agentItems(), watches: watches, taskOptions: taskOptions, taskTodos: taskTodos, tasks: tasks

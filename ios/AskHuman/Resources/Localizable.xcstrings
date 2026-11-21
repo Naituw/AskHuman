@@ -4311,12 +4311,32 @@
         }
       }
     },
+    "Remove for now" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "暂时移除"
+          }
+        }
+      }
+    },
     "Remove them" : {
       "localizations" : {
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
             "value" : "移除"
+          }
+        }
+      }
+    },
+    "Remove this request for now?" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "暂时移除这个请求？"
           }
         }
       }
@@ -6775,6 +6795,16 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "连不上你的 Mac"
+          }
+        }
+      }
+    },
+    "Your Mac is offline, so the Agent is not told and keeps waiting. If the request is still waiting when your Mac is back, it shows up here again. Your draft is kept." : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Mac 离线，无法通知 Agent，它会继续等。Mac 重新连上后，如果请求还在等你，它会再出现在这里。草稿会保留。"
           }
         }
       }

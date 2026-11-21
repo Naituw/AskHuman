@@ -104,6 +104,31 @@ final class LocalStoreTests: XCTestCase {
         XCTAssertTrue(store.cachedRequests().isEmpty)
     }
 
+    /// "Remove for now" is a mark on the cached request (docs/specs/ios-offline-remove.md): it has to survive a restart, and a
+    /// file written before the mark existed has to read as a request that is listed.
+    func testTheRemovedForNowMarkSurvivesAndAnOldFileReadsAsListed() throws {
+        let summary = RequestSummary(
+            id: "r1", kind: "ask", project: ProjectRef(key: "k", name: "proj"), agent: AgentRef(kind: "codex", label: "Codex"),
+            createdAt: 1, preview: "hi", contentHash: "h", size: 10
+        )
+        var item = CachedRequest(macId: "m", requestId: "r1", summary: summary, view: view("r1"), receivedAt: Date(timeIntervalSince1970: 5))
+        XCTAssertFalse(item.removedForNow, "a request is listed until the user removes it")
+        item.removedForNow = true
+        store.saveRequest(item)
+        XCTAssertEqual(store.cachedRequests(), [item])
+        XCTAssertEqual(store.cachedRequests().first?.removedForNow, true)
+
+        let current = try AHJSON.encoder.encode(item)
+        var object = try XCTUnwrap(JSONSerialization.jsonObject(with: current) as? [String: Any])
+        XCTAssertNotNil(object["removedForNow"])
+        object["removedForNow"] = nil
+        let old = try JSONSerialization.data(withJSONObject: object)
+        let read = try AHJSON.decoder.decode(CachedRequest.self, from: old)
+        XCTAssertFalse(read.removedForNow)
+        XCTAssertEqual(read.summary, item.summary)
+        XCTAssertEqual(read.view, item.view)
+    }
+
     func testEmptyDraftsAreNotKept() {
         let key = "m/r1"
         store.saveDraft(Draft(answers: [DraftAnswer(selected: [1], text: "x")]), key: key)

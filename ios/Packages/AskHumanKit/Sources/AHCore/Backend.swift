@@ -57,6 +57,10 @@ public protocol RemoteBackend: AnyObject, Sendable {
     func retrySubmission(clientMsgId: String) async throws
     /// Forgets a failed submission and makes the request answerable again.
     func discardSubmission(clientMsgId: String) async
+    /// Takes a request off the lists of the phone until its Mac is back (docs/specs/ios-offline-remove.md). Nothing is
+    /// sent: the Agent keeps waiting, the draft stays, and the Mac's next inbox snapshot brings the request back if it
+    /// still waits. Does nothing unless the Mac is offline.
+    func removeRequestForNow(macId: String, requestId: String) async
     /// Uploads a reply attachment; returns the upload id to put into the answer.
     func upload(macId: String, requestId: String, source: UploadSource, progress: @escaping @Sendable (Double) -> Void) async throws -> String
     /// Downloads an attachment of a request into the cache.

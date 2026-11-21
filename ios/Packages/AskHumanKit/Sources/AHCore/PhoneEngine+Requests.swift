@@ -34,6 +34,14 @@ extension PhoneEngine {
             let key = CachedRequest.key(macId, summary.id)
             if var runtime = requests[key] {
                 runtime.cached.summary = summary
+                if runtime.cached.removedForNow {
+                    // The Mac is back and the request is still waiting on it: it returns, with the dot of a request
+                    // that is new to the list but without an arrival. One that went out meanwhile (a submission is
+                    // being sent again) has no dot: nothing is left for the user to read.
+                    runtime.cached.removedForNow = false
+                    if case .pending = runtime.state { runtime.cached.unread = true }
+                    store.saveRequest(runtime.cached)
+                }
                 if runtime.cached.view?.contentHash != summary.contentHash { fetch.append(summary.id) }
                 requests[key] = runtime
             } else {
@@ -245,6 +253,21 @@ extension PhoneEngine {
     }
 
     // MARK: user actions
+
+    /// Takes a request off the lists of the phone until its Mac is back (docs/specs/ios-offline-remove.md). Nothing is
+    /// sent, so the Agent keeps waiting; the draft stays where it is; the next inbox snapshot of the Mac brings the
+    /// request back if it is still there (`onInboxSnapshot`). Only while the Mac is known to be offline: a request of a
+    /// reachable Mac is not stuck, and one removed then would stay away until a snapshot that may be a long way off.
+    public func removeRequestForNow(macId: String, requestId: String) async {
+        let key = CachedRequest.key(macId, requestId)
+        guard var runtime = requests[key], !runtime.cached.removedForNow,
+              let mac = macs[macId], link(of: mac) == .macOffline
+        else { return }
+        runtime.cached.removedForNow = true
+        requests[key] = runtime
+        persistRequest(key)
+        publish()
+    }
 
     public func markSeen(macId: String, requestId: String) async {
         let key = CachedRequest.key(macId, requestId)
