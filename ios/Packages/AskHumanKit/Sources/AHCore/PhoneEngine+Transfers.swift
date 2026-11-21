@@ -34,6 +34,9 @@ struct Download {
     var waiters: [UUID: CheckedContinuation<ViewableAsset, Error>] = [:]
     var progress: [UUID: @Sendable (Double) -> Void] = [:]
     var retried = false
+    /// The hash the request recorded for this file (`AssetRef.sha256`, when it is usable as a file name): what the bytes
+    /// are kept under, next to the asset id, once they are known to be that file (§7.1, AT19).
+    var contentHash: String?
 }
 
 /// Acknowledgements of one upload, queued until the sender asks for them.
@@ -53,9 +56,7 @@ extension PhoneEngine {
     public func downloadForExport(macId: String, asset: AssetRef, progress: @escaping @Sendable (Double) -> Void) async throws -> URL {
         guard Bytes.isValidId(asset.assetId) else { throw BackendError.invalid("Bad asset id.") }
         if asset.tooLarge { throw BackendError.tooLarge }
-        let cached = cachedAssetURL(asset.assetId)
-        if let attributes = try? FileManager.default.attributesOfItem(atPath: cached.path),
-           (attributes[.size] as? NSNumber)?.uint64Value == asset.size {
+        if cachedFile(of: asset) != nil {
             return try await download(macId: macId, asset: asset, progress: progress)
         }
         guard macs[macId] != nil else { throw BackendError.macOffline }
@@ -112,6 +113,80 @@ extension PhoneEngine {
         config.assetDirectory.appendingPathComponent(assetId + ".preview", isDirectory: false)
     }
 
+    // MARK: the cache by content
+
+    // Every request gives its files new asset ids, so the same screenshot in a later request is a stranger to a cache that
+    // goes by asset id. A request that records the SHA-256 of a file (`AssetRef.sha256`) also lets the phone know it by its
+    // content: the file, and the preview made from it, are kept under that hash as well as under the asset id, and a request
+    // for the same content finds them without asking the Mac (docs/specs/ios-attachment-traffic.md AT4, §7.1).
+    //
+    // The index is the directory itself: `<hash>` is a file of that content and `<hash>.preview` the preview of it. The name
+    // is the whole claim, so only bytes that are known to be what it says are ever given one (`keepByContent`), and the
+    // second name of a file is a hard link, not a second copy. A hash is 64 characters and an asset id 26, so the two kinds
+    // of names do not meet. Files named after an asset id keep working as they did.
+
+    /// The hash a request recorded for a file, in the one form this phone names a file after: 64 lowercase hex digits. It
+    /// came off the wire and becomes part of a path, so anything else is not used.
+    static func contentHash(of asset: AssetRef) -> String? {
+        guard let hash = asset.sha256?.lowercased(), hash.utf8.count == 64,
+              hash.utf8.allSatisfy({ ($0 >= 0x30 && $0 <= 0x39) || ($0 >= 0x61 && $0 <= 0x66) })
+        else { return nil }
+        return hash
+    }
+
+    func cachedContentURL(_ hash: String) -> URL {
+        config.assetDirectory.appendingPathComponent(hash, isDirectory: false)
+    }
+
+    func cachedContentPreviewURL(_ hash: String) -> URL {
+        config.assetDirectory.appendingPathComponent(hash + ".preview", isDirectory: false)
+    }
+
+    private static func isFile(of size: UInt64, at url: URL) -> Bool {
+        guard let attributes = try? FileManager.default.attributesOfItem(atPath: url.path) else { return false }
+        return (attributes[.size] as? NSNumber)?.uint64Value == size
+    }
+
+    /// The file of `asset` when it is on the phone: under its asset id first, then under the hash of its content, where
+    /// another request may have left it. It counts when it is as big as the asset says; what a hash names was checked
+    /// against that hash when it was stored.
+    func cachedFile(of asset: AssetRef) -> URL? {
+        let own = cachedAssetURL(asset.assetId)
+        if Self.isFile(of: asset.size, at: own) { return own }
+        if let hash = Self.contentHash(of: asset) {
+            let shared = cachedContentURL(hash)
+            if Self.isFile(of: asset.size, at: shared) { return shared }
+        }
+        return nil
+    }
+
+    /// The preview of `asset` when it is on the phone, by asset id and then by content.
+    func cachedPreview(of asset: AssetRef) -> URL? {
+        let own = cachedPreviewURL(asset.assetId)
+        if FileManager.default.fileExists(atPath: own.path) { return own }
+        if let hash = Self.contentHash(of: asset) {
+            let shared = cachedContentPreviewURL(hash)
+            if FileManager.default.fileExists(atPath: shared.path) { return shared }
+        }
+        return nil
+    }
+
+    /// Gives the file at `url` its second name, the hash of its content (or, for a preview, of the file it was made from).
+    /// A name that is taken by a file of the same size stays: it names the same content. The index is an optimisation:
+    /// when this fails the download that came first has succeeded and the next request for the content asks the Mac again.
+    private func keepByContent(_ url: URL, as hash: String, preview: Bool, size: Int) {
+        let target = preview ? cachedContentPreviewURL(hash) : cachedContentURL(hash)
+        if Self.isFile(of: UInt64(size), at: target) { return }
+        let manager = FileManager.default
+        try? manager.removeItem(at: target)
+        do {
+            try manager.linkItem(at: url, to: target)
+        } catch {
+            // A file system without hard links gets a copy, which costs space and keeps the saving.
+            try? manager.copyItem(at: url, to: target)
+        }
+    }
+
     /// The file of an attachment, whatever else is on the phone of it.
     public func download(macId: String, asset: AssetRef, progress: @escaping @Sendable (Double) -> Void) async throws -> URL {
         try await fetch(macId: macId, asset: asset, preferPreview: false, progress: progress).url
@@ -124,24 +199,22 @@ extension PhoneEngine {
     }
 
     /// The one path of every download (docs/specs/ios-attachment-traffic.md §7.1). A file that is on the phone serves
-    /// every purpose. Otherwise a preview is what comes when the caller prefers one, the asset offers it, and the Mac
-    /// declared in this session that it makes them; in every other case it is the file.
+    /// every purpose, whether it came under this asset id or, for the same content, under another request's (AT4).
+    /// Otherwise a preview is what comes when the caller prefers one, the asset offers it, and the Mac declared in this
+    /// session that it makes them; in every other case it is the file.
     private func fetch(
         macId: String, asset: AssetRef, preferPreview: Bool, progress: @escaping @Sendable (Double) -> Void
     ) async throws -> ViewableAsset {
         guard Bytes.isValidId(asset.assetId) else { throw BackendError.invalid("Bad asset id.") }
         if asset.tooLarge { throw BackendError.tooLarge }
-        let url = cachedAssetURL(asset.assetId)
-        if let attributes = try? FileManager.default.attributesOfItem(atPath: url.path),
-           (attributes[.size] as? NSNumber)?.uint64Value == asset.size {
+        if let url = cachedFile(of: asset) {
             progress(1)
             return ViewableAsset(url: url, isPreview: false)
         }
         var variant = AssetVariant.original
         if preferPreview, asset.preview {
             // A preview that is here is shown whatever the link to the Mac is doing.
-            let preview = cachedPreviewURL(asset.assetId)
-            if FileManager.default.fileExists(atPath: preview.path) {
+            if let preview = cachedPreview(of: asset) {
                 progress(1)
                 return ViewableAsset(url: preview, isPreview: true)
             }
@@ -154,7 +227,7 @@ extension PhoneEngine {
         return try await withTaskCancellationHandler {
             try await withCheckedThrowingContinuation { (cont: CheckedContinuation<ViewableAsset, Error>) in
                 if downloads[key] == nil {
-                    downloads[key] = Download(macId: macId, assetId: asset.assetId)
+                    downloads[key] = Download(macId: macId, assetId: asset.assetId, contentHash: Self.contentHash(of: asset))
                     // The size of a preview is not known before its first chunk says it; the file's is.
                     if variant == .original { downloads[key]?.size = asset.size }
                     Task { await self.requestWindow(key, from: 0) }
@@ -306,17 +379,29 @@ extension PhoneEngine {
             data.append(part)
         }
         guard UInt64(data.count) == download.size else { return failDownload(key, with: BackendError.invalid("Size mismatch.")) }
-        if let expected = download.sha256 {
-            let actual = SHA256.hash(data: data).map { String(format: "%02x", $0) }.joined()
-            guard actual == expected else { return failDownload(key, with: BackendError.invalid("Checksum mismatch.")) }
-        }
         let isPreview = key.variant == .preview
+        // The hash of what arrived: the Mac's own claim about the bytes it sent is checked against it, and for a file it is
+        // also what decides below whether the bytes are the content the request named.
+        var actual: String?
+        if download.sha256 != nil || (!isPreview && download.contentHash != nil) {
+            actual = SHA256.hash(data: data).map { String(format: "%02x", $0) }.joined()
+        }
+        if let expected = download.sha256, actual != expected {
+            return failDownload(key, with: BackendError.invalid("Checksum mismatch."))
+        }
         let url = isPreview ? cachedPreviewURL(key.assetId) : cachedAssetURL(key.assetId)
         do {
             try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
             try data.write(to: url, options: .atomic)
         } catch {
             return failDownload(key, with: BackendError.unavailable("Could not store the file."))
+        }
+        // AT19: the name of a file by content is what the request said it is, so it is given only to bytes the phone has
+        // seen hash to that. A file that is something else (it changed on the Mac after the request was built) is shown as
+        // usual and stays under its asset id. A preview cannot be checked against the hash of the file it was made from;
+        // the Mac makes one only from a file that still has the hash the request recorded, and says so by naming it.
+        if let hash = download.contentHash, isPreview || actual == hash {
+            keepByContent(url, as: hash, preview: isPreview, size: data.count)
         }
         cancelTimer(timerKey(key))
         downloads[key] = nil

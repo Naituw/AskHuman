@@ -16,14 +16,14 @@ use crate::ios::views::{mime_for, AssetSource};
 use crate::ios::wire::{self, t, ASSET_CHUNK_BYTES};
 
 /// The bytes of a picture file big enough to get a preview.
-fn picture_bytes(seed: u8) -> Vec<u8> {
+pub(super) fn picture_bytes(seed: u8) -> Vec<u8> {
     (0..PREVIEW_MIN_ORIGINAL_BYTES as usize + 1_000)
         .map(|i| (i as u8).wrapping_mul(31).wrapping_add(seed))
         .collect()
 }
 
 /// A file a phone may fetch. `hashed` gives it the hash a request records when it is built.
-fn source_of(dir: &Path, name: &str, data: &[u8], hashed: bool) -> AssetSource {
+pub(super) fn source_of(dir: &Path, name: &str, data: &[u8], hashed: bool) -> AssetSource {
     let path = dir.join(name);
     std::fs::write(&path, data).unwrap();
     AssetSource {
@@ -36,7 +36,7 @@ fn source_of(dir: &Path, name: &str, data: &[u8], hashed: bool) -> AssetSource {
     }
 }
 
-fn deliver(fx: &Fixture, id: &str, assets: Vec<AssetSource>) {
+pub(super) fn deliver(fx: &Fixture, id: &str, assets: Vec<AssetSource>) {
     let (ask, view) = sample_ask(id);
     fx.gateway.deliver(DeliverRequest {
         view,
@@ -47,7 +47,12 @@ fn deliver(fx: &Fixture, id: &str, assets: Vec<AssetSource>) {
     });
 }
 
-fn ask_for(asset_id: &str, from: u64, count: u64, variant: Option<&str>) -> wire::AssetGet {
+pub(super) fn ask_for(
+    asset_id: &str,
+    from: u64,
+    count: u64,
+    variant: Option<&str>,
+) -> wire::AssetGet {
     wire::AssetGet {
         asset_id: asset_id.into(),
         from,
@@ -56,11 +61,11 @@ fn ask_for(asset_id: &str, from: u64, count: u64, variant: Option<&str>) -> wire
     }
 }
 
-fn preview_of(asset_id: &str) -> wire::AssetGet {
+pub(super) fn preview_of(asset_id: &str) -> wire::AssetGet {
     ask_for(asset_id, 0, 8, Some("preview"))
 }
 
-async fn chunks_of(phone: &mut TestPhone, n: usize) -> Vec<wire::AssetChunk> {
+pub(super) async fn chunks_of(phone: &mut TestPhone, n: usize) -> Vec<wire::AssetChunk> {
     let mut chunks = Vec::new();
     for _ in 0..n {
         chunks.push(phone.recv_body(t::ASSET_CHUNK).await);
@@ -83,7 +88,7 @@ fn variants_of(chunks: &[wire::AssetChunk]) -> Vec<Option<&str>> {
 }
 
 /// A phone, with a request that has these pictures pending.
-async fn with_request(fx: &Fixture, assets: &[AssetSource]) -> TestPhone {
+pub(super) async fn with_request(fx: &Fixture, assets: &[AssetSource]) -> TestPhone {
     let mut phone = fx.live_phone().await;
     deliver(fx, "req1", assets.to_vec());
     phone.recv(t::REQUEST_NEW).await;

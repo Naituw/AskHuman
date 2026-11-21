@@ -10,6 +10,7 @@ use sha2::{Digest, Sha256};
 use super::Actor;
 use crate::ios::crypto;
 use crate::ios::preview::{self, Generated, Made, PreviewKey, Waiter};
+use crate::ios::store::AssetPart;
 use crate::ios::views::AssetSource;
 use crate::ios::wire::{
     AssetChunk, AssetError, AssetGet, Msg, UploadAck, UploadBegin, UploadCancel, UploadChunk,
@@ -49,6 +50,85 @@ impl HistoryAssets {
                 }
             }
         }
+    }
+}
+
+/// How many (phone, content, kind) entries [`SentChunks`] remembers. An entry is a hundred bytes or so.
+const SENT_CHUNKS_MAX: usize = 512;
+
+/// One content in one of its two kinds, as sent to one phone.
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub(crate) struct SentKey {
+    phone_id: String,
+    /// What the content is called: the SHA-256 recorded for a file of a request, the asset id for a picture of the
+    /// history, which has none (docs/specs/ios-attachment-traffic.md §6.6). A hash is 64 characters and an id 26, so
+    /// the two never meet.
+    content: String,
+    preview: bool,
+}
+
+impl SentKey {
+    pub fn new(phone_id: &str, source: &AssetSource, preview: bool) -> Self {
+        Self {
+            phone_id: phone_id.to_string(),
+            content: source
+                .sha256
+                .clone()
+                .unwrap_or_else(|| source.asset_id.clone()),
+            preview,
+        }
+    }
+}
+
+/// How much of one content a phone was sent: the chunks before `upto` have gone out at least once, of `total`.
+#[derive(Debug, Clone, Copy)]
+struct SentUpTo {
+    upto: u64,
+    total: u64,
+}
+
+/// What each phone was sent in full lately, so that the local counts can tell a fetch of something the phone already had
+/// from a first one (docs/specs/ios-attachment-traffic.md §6.6). The gateway cannot see whether the chunks arrived, so
+/// "had" means "was sent all of it". Memory only, bounded, forgotten with the daemon; the oldest entry goes first.
+#[derive(Default)]
+pub(crate) struct SentChunks {
+    order: std::collections::VecDeque<SentKey>,
+    by_key: HashMap<SentKey, SentUpTo>,
+}
+
+impl SentChunks {
+    /// Records that chunks `from..end` of `total` are going to the phone, and says whether it was sent all `total` of
+    /// them before: then these bytes are a repeat. A window that is asked for again before the whole content has gone is
+    /// the same fetch, not a repeat of it, and the entry follows only windows that join onto what went before.
+    pub fn window(&mut self, key: SentKey, from: u64, end: u64, total: u64) -> bool {
+        if !self.by_key.contains_key(&key) {
+            self.order.push_back(key.clone());
+            while self.order.len() > SENT_CHUNKS_MAX {
+                if let Some(oldest) = self.order.pop_front() {
+                    self.by_key.remove(&oldest);
+                }
+            }
+        }
+        let sent = self
+            .by_key
+            .entry(key)
+            .and_modify(|sent| {
+                // The content is not what it was (an id the host gave out again): what went before does not count.
+                if sent.total != total {
+                    *sent = SentUpTo { upto: 0, total };
+                }
+            })
+            .or_insert(SentUpTo { upto: 0, total });
+        let repeat = sent.upto >= sent.total;
+        if from <= sent.upto {
+            sent.upto = sent.upto.max(end);
+        }
+        repeat
+    }
+
+    #[cfg(test)]
+    pub fn len(&self) -> usize {
+        self.by_key.len()
     }
 }
 
@@ -181,15 +261,19 @@ fn chunk_count(size: u64) -> u64 {
 impl Actor {
     // ------------------------------------------------------------ downloads
 
-    pub(super) fn on_asset_get(&mut self, phone_id: &str, get: AssetGet) {
+    /// `wire_len` is the size of the envelope the request came in, counted under what it asked for (docs/specs/
+    /// ios-attachment-traffic.md §6.6).
+    pub(super) fn on_asset_get(&mut self, phone_id: &str, get: AssetGet, wire_len: usize) {
         // A file of a pending request first.
         if let Some(source) = self.requests.find_asset(&get.asset_id).cloned() {
+            self.count_asset_part(AssetPart::GetRequest, wire_len);
             self.serve_asset(phone_id, &get, &source);
             return;
         }
         // Then a picture of the history a phone already fetched part of.
         let now = self.now();
         if let Some(source) = self.history_assets.get(&get.asset_id, now).cloned() {
+            self.count_asset_part(AssetPart::GetHistory, wire_len);
             self.serve_asset(phone_id, &get, &source);
             return;
         }
@@ -197,6 +281,7 @@ impl Actor {
         // which slot to look at, and the host finds the file there (docs/specs/ios-history-pictures.md HP7).
         // Only ids of the shape the Mac gives out are worth asking about.
         if !crypto::is_valid_id(&get.asset_id) {
+            self.count_asset_part(AssetPart::GetUnresolved, wire_len);
             self.send_asset_error(phone_id, &get.asset_id, "notFound");
             return;
         }
@@ -209,9 +294,13 @@ impl Actor {
                 Some(source) => {
                     let now = actor.now();
                     actor.history_assets.insert(source.clone(), now);
+                    actor.count_asset_part(AssetPart::GetHistory, wire_len);
                     actor.serve_asset(&phone, &get, &source);
                 }
-                None => actor.send_asset_error(&phone, &get.asset_id, "notFound"),
+                None => {
+                    actor.count_asset_part(AssetPart::GetUnresolved, wire_len);
+                    actor.send_asset_error(&phone, &get.asset_id, "notFound")
+                }
             },
         );
     }
@@ -265,7 +354,7 @@ impl Actor {
             }
         };
         let variant = named.then_some(preview::VARIANT_ORIGINAL);
-        self.send_window(phone_id, get, &data, None, variant);
+        self.send_window(phone_id, get, source, &data, None, variant);
     }
 
     /// Answers a request for the preview of a picture: the preview when there is one, the file itself (and the chunks
@@ -331,6 +420,7 @@ impl Actor {
                 self.send_window(
                     phone_id,
                     get,
+                    source,
                     &preview.avif,
                     Some(&preview.sha256),
                     Some(preview::VARIANT_PREVIEW),
@@ -343,11 +433,12 @@ impl Actor {
     /// Sends the chunks `get` asks for of `data`: `get.from` and the `get.count` after it (at most
     /// [`MAX_ASSET_CHUNKS_PER_GET`]). The first chunk carries the SHA-256 of all of `data`, which the caller may have
     /// at hand already, and every chunk says it is `variant` when that is given. `index`, `total` and `size` are those
-    /// of `data`.
+    /// of `data`, which is `source`'s file or the preview of it.
     fn send_window(
         &mut self,
         phone_id: &str,
         get: &AssetGet,
+        source: &AssetSource,
         data: &[u8],
         sha256: Option<&str>,
         variant: Option<&str>,
@@ -359,6 +450,21 @@ impl Actor {
         }
         let count = get.count.clamp(1, MAX_ASSET_CHUNKS_PER_GET as u64);
         let end = (get.from + count).min(total);
+        // Told apart in the local counts: a preview or the file, and sent for the first time or again (docs/specs/
+        // ios-attachment-traffic.md §6.6).
+        let preview = variant == Some(preview::VARIANT_PREVIEW);
+        let repeat = self.sent_chunks.window(
+            SentKey::new(phone_id, source, preview),
+            get.from,
+            end,
+            total,
+        );
+        let part = match (preview, repeat) {
+            (true, false) => AssetPart::PreviewChunk,
+            (true, true) => AssetPart::PreviewChunkRepeat,
+            (false, false) => AssetPart::OriginalChunk,
+            (false, true) => AssetPart::OriginalChunkRepeat,
+        };
         let sha256 = (get.from == 0).then(|| {
             sha256
                 .map(str::to_string)
@@ -379,6 +485,7 @@ impl Actor {
                     data: String::new(),
                 },
                 &data[start..stop],
+                part,
             );
         }
     }
@@ -386,17 +493,18 @@ impl Actor {
     /// Sends one chunk of a file: a blob frame (the bytes raw behind the header) to a phone that takes binary frames,
     /// a JSON message with the bytes in base64 otherwise, and also when the blob frame cannot be built. `chunk` comes
     /// with an empty `data`: the header of a blob frame is the message without that key, and the JSON message gets the
-    /// bytes in it (an empty file's one chunk keeps an empty `data`, which older phones need to read it).
-    fn send_chunk(&mut self, phone_id: &str, mut chunk: AssetChunk, bytes: &[u8]) {
+    /// bytes in it (an empty file's one chunk keeps an empty `data`, which older phones need to read it). What goes out
+    /// is also counted under `part`.
+    fn send_chunk(&mut self, phone_id: &str, mut chunk: AssetChunk, bytes: &[u8], part: AssetPart) {
         let mut head = chunk.to_value();
         if let Some(object) = head.as_object_mut() {
             object.remove("data");
         }
-        if self.send_blob(phone_id, AssetChunk::TYPE, head, bytes) {
+        if self.send_blob(phone_id, AssetChunk::TYPE, head, bytes, Some(part)) {
             return;
         }
         chunk.data = crypto::b64u(bytes);
-        self.send(phone_id, &chunk);
+        self.send_value_as(phone_id, AssetChunk::TYPE, chunk.to_value(), Some(part));
     }
 
     // ------------------------------------------------------------ uploads

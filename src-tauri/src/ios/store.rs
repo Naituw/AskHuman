@@ -133,6 +133,44 @@ pub struct TrafficBreakdown {
     /// `YYYY-MM` the counters belong to.
     pub month: String,
     pub kinds: BTreeMap<String, KindCount>,
+    /// The attachment traffic told apart by what it was for (docs/specs/ios-attachment-traffic.md §6.6), under the keys of
+    /// [`AssetPart`]. It is a second view of messages `kinds` already counts, not more traffic: the `chunk.*` keys add up
+    /// to `kinds["out:asset.chunk"]`, every byte in exactly one of them, and the `get.*` keys count the `asset.get`
+    /// messages the gateway acted on. A state file written before this was counted loads with it empty.
+    pub assets: BTreeMap<String, KindCount>,
+}
+
+/// What a chunk of an attachment or a request for one was for, as `TrafficBreakdown::assets` tells them apart. The set is
+/// fixed: nothing a phone sends becomes a key.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AssetPart {
+    /// A chunk of a preview, the first time this phone is sent that content's preview.
+    PreviewChunk,
+    /// A chunk of a preview that this phone was already sent in full: the same content, fetched again.
+    PreviewChunkRepeat,
+    OriginalChunk,
+    OriginalChunkRepeat,
+    /// An `asset.get` for a file of a pending request.
+    GetRequest,
+    /// An `asset.get` for a picture of the history.
+    GetHistory,
+    /// An `asset.get` for an id that is neither (it is gone, or never was).
+    GetUnresolved,
+}
+
+impl AssetPart {
+    /// The key the part is counted under.
+    pub fn key(self) -> &'static str {
+        match self {
+            Self::PreviewChunk => "chunk.preview",
+            Self::PreviewChunkRepeat => "chunk.preview.repeat",
+            Self::OriginalChunk => "chunk.original",
+            Self::OriginalChunkRepeat => "chunk.original.repeat",
+            Self::GetRequest => "get.request",
+            Self::GetHistory => "get.history",
+            Self::GetUnresolved => "get.unresolved",
+        }
+    }
 }
 
 impl TrafficBreakdown {
@@ -198,20 +236,37 @@ impl IosState {
         }
     }
 
-    /// Adds one message to the breakdown by type, rolling over when the month changed.
-    pub fn count_message(&mut self, month: &str, inbound: bool, msg_type: &str, bytes: usize) {
+    /// The breakdown of `month`: this month's, or a new one when the month changed.
+    fn breakdown_of(&mut self, month: &str) -> &mut TrafficBreakdown {
         if self.traffic_breakdown.month != month {
             self.traffic_breakdown = TrafficBreakdown {
                 month: month.to_string(),
                 ..TrafficBreakdown::default()
             };
         }
+        &mut self.traffic_breakdown
+    }
+
+    /// Adds one message to the breakdown by type, rolling over when the month changed.
+    pub fn count_message(&mut self, month: &str, inbound: bool, msg_type: &str, bytes: usize) {
         let key = format!(
             "{}:{}",
             if inbound { "in" } else { "out" },
             TrafficBreakdown::kind_of(msg_type)
         );
-        let kind = self.traffic_breakdown.kinds.entry(key).or_default();
+        let kind = self.breakdown_of(month).kinds.entry(key).or_default();
+        kind.msgs = kind.msgs.saturating_add(1);
+        kind.bytes = kind.bytes.saturating_add(bytes as u64);
+    }
+
+    /// Adds one message to the part of the attachment traffic it was for. The message is counted by type as well (with
+    /// [`Self::count_message`]); this tells the same bytes apart.
+    pub fn count_asset_part(&mut self, month: &str, part: AssetPart, bytes: usize) {
+        let kind = self
+            .breakdown_of(month)
+            .assets
+            .entry(part.key().to_string())
+            .or_default();
         kind.msgs = kind.msgs.saturating_add(1);
         kind.bytes = kind.bytes.saturating_add(bytes as u64);
     }
@@ -785,5 +840,70 @@ mod tests {
         let again: IosState =
             serde_json::from_str(&serde_json::to_string(&state).unwrap()).unwrap();
         assert_eq!(again, state);
+    }
+
+    #[test]
+    fn the_asset_parts_are_counted_apart_from_the_types_and_roll_over_with_the_month() {
+        let mut state = IosState::default();
+        state.count_message("2026-10", false, "asset.chunk", 700);
+        state.count_asset_part("2026-10", AssetPart::PreviewChunk, 300);
+        state.count_asset_part("2026-10", AssetPart::OriginalChunk, 400);
+        state.count_asset_part("2026-10", AssetPart::OriginalChunk, 100);
+        let breakdown = &state.traffic_breakdown;
+        assert_eq!(
+            breakdown.kinds["out:asset.chunk"],
+            KindCount {
+                msgs: 1,
+                bytes: 700
+            },
+            "the type is counted as it always was"
+        );
+        assert_eq!(
+            breakdown.assets["chunk.original"],
+            KindCount {
+                msgs: 2,
+                bytes: 500
+            }
+        );
+        assert_eq!(
+            breakdown.assets["chunk.preview"],
+            KindCount {
+                msgs: 1,
+                bytes: 300
+            }
+        );
+
+        state.count_asset_part("2026-11", AssetPart::GetHistory, 90);
+        assert_eq!(state.traffic_breakdown.month, "2026-11");
+        assert_eq!(state.traffic_breakdown.assets.len(), 1);
+        assert!(
+            state.traffic_breakdown.kinds.is_empty(),
+            "a new month starts both views over"
+        );
+    }
+
+    #[test]
+    fn every_asset_part_has_a_key_of_its_own() {
+        let parts = [
+            AssetPart::PreviewChunk,
+            AssetPart::PreviewChunkRepeat,
+            AssetPart::OriginalChunk,
+            AssetPart::OriginalChunkRepeat,
+            AssetPart::GetRequest,
+            AssetPart::GetHistory,
+            AssetPart::GetUnresolved,
+        ];
+        let keys: std::collections::BTreeSet<_> = parts.iter().map(|part| part.key()).collect();
+        assert_eq!(keys.len(), parts.len());
+    }
+
+    #[test]
+    fn a_state_file_from_before_the_asset_parts_loads_with_none() {
+        let state: IosState = serde_json::from_str(
+            r#"{"version":1,"macId":"m","trafficBreakdown":{"month":"2026-11","kinds":{"out:asset.chunk":{"msgs":3,"bytes":9}}}}"#,
+        )
+        .unwrap();
+        assert!(state.traffic_breakdown.assets.is_empty());
+        assert_eq!(state.traffic_breakdown.kinds["out:asset.chunk"].bytes, 9);
     }
 }

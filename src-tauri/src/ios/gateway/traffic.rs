@@ -35,6 +35,16 @@ impl Actor {
         self.dirty = true;
     }
 
+    /// Counts one `asset.get` or `asset.chunk` under the part of the attachment traffic it was for (docs/specs/
+    /// ios-attachment-traffic.md §6.6). The message is counted by type as well, by [`Self::count_message`]; this is the
+    /// same traffic told apart, for the same local diagnostic.
+    pub(super) fn count_asset_part(&mut self, part: AssetPart, bytes: usize) {
+        self.store
+            .state
+            .count_asset_part(&month_of(self.now()), part, bytes);
+        self.dirty = true;
+    }
+
     pub(super) fn traffic_records(&self) -> Vec<TrafficRecord> {
         let broker = broker_id(&self.cfg.host);
         let month = month_of(self.now());

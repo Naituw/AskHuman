@@ -26,6 +26,8 @@ mod tests_away;
 #[cfg(test)]
 mod tests_binary;
 #[cfg(test)]
+mod tests_counts;
+#[cfg(test)]
 mod tests_history;
 #[cfg(test)]
 mod tests_preview;
@@ -58,7 +60,7 @@ use super::crypto;
 use super::envelope::{self, Format, Opened, Plain, Scope};
 use super::preview;
 use super::push::{PushClient, PushOutcome};
-use super::store::{PhoneState, Store, Traffic, TrafficBreakdown};
+use super::store::{AssetPart, PhoneState, Store, Traffic, TrafficBreakdown};
 use super::transport::{BrokerTransport, TransportEvent};
 use super::wire::{self, t, AgentView, Caps, Msg, Presence, SlotInfo, CLOCK_SKEW_MS, PROTO};
 use crate::config::IosChannelConfig;
@@ -708,6 +710,9 @@ pub(crate) struct Actor {
     pub uploads: Uploads,
     /// Pictures of the history phones asked for lately (docs/specs/ios-history-pictures.md HP7).
     pub history_assets: assets::HistoryAssets,
+    /// What each phone was sent in full lately, to tell a repeated fetch from a first one in the local counts
+    /// (docs/specs/ios-attachment-traffic.md §6.6). Memory only, and bounded.
+    pub sent_chunks: assets::SentChunks,
     /// The previews of picture files: the cache, the requests waiting for one, and the cap on previews made at once
     /// (docs/specs/ios-attachment-traffic.md §6.5).
     pub previews: preview::Previews,
@@ -842,6 +847,7 @@ impl Actor {
             requests: requests::Requests::default(),
             uploads: Uploads::default(),
             history_assets: assets::HistoryAssets::default(),
+            sent_chunks: assets::SentChunks::default(),
             previews,
             live: agents::Live::default(),
             todos: todos::TodoLive::default(),
@@ -1255,7 +1261,7 @@ impl Actor {
             return;
         }
         self.touch_phone(&phone_id, now);
-        self.dispatch(&phone_id, plain, blob).await;
+        self.dispatch(&phone_id, plain, blob, payload.len()).await;
     }
 
     fn touch_phone(&mut self, phone_id: &str, now: i64) {
@@ -1265,8 +1271,15 @@ impl Actor {
         }
     }
 
-    /// Acts on one message of a phone. `blob` is the raw bytes of a blob frame, whose header is `plain`.
-    async fn dispatch(&mut self, phone_id: &str, plain: Plain, blob: Option<Vec<u8>>) {
+    /// Acts on one message of a phone. `blob` is the raw bytes of a blob frame, whose header is `plain`. `wire_len` is the
+    /// size of the envelope it came in, for the messages that are counted by what they ask for.
+    async fn dispatch(
+        &mut self,
+        phone_id: &str,
+        plain: Plain,
+        blob: Option<Vec<u8>>,
+        wire_len: usize,
+    ) {
         macro_rules! body {
             ($ty:ty) => {
                 match serde_json::from_value::<$ty>(plain.b.clone()) {
@@ -1326,10 +1339,13 @@ impl Actor {
                 let decide = body!(wire::ConfirmDecide);
                 self.on_confirm_decide(phone_id, decide).await;
             }
-            t::ASSET_GET => {
-                let get = body!(wire::AssetGet);
-                self.on_asset_get(phone_id, get);
-            }
+            t::ASSET_GET => match serde_json::from_value::<wire::AssetGet>(plain.b.clone()) {
+                Ok(get) => self.on_asset_get(phone_id, get, wire_len),
+                Err(_) => {
+                    self.count_asset_part(AssetPart::GetUnresolved, wire_len);
+                    self.send_error(phone_id, &plain.i, "bad_request", None);
+                }
+            },
             t::UPLOAD_BEGIN => {
                 let begin = body!(wire::UploadBegin);
                 self.on_upload_begin(phone_id, begin);
@@ -1420,6 +1436,17 @@ impl Actor {
     }
 
     pub(crate) fn send_value(&mut self, phone_id: &str, msg_type: &str, body: Value) -> bool {
+        self.send_value_as(phone_id, msg_type, body, None)
+    }
+
+    /// Like [`Self::send_value`]; the sealed bytes are also counted under `part` of the attachment traffic.
+    pub(crate) fn send_value_as(
+        &mut self,
+        phone_id: &str,
+        msg_type: &str,
+        body: Value,
+        part: Option<AssetPart>,
+    ) -> bool {
         let Some(keys) = self.store.keys(phone_id).cloned() else {
             return false;
         };
@@ -1443,7 +1470,7 @@ impl Actor {
             compress,
             format,
         );
-        self.queue_down(topic, msg_type, bytes)
+        self.queue_down(topic, msg_type, bytes, part)
     }
 
     /// Whether what goes to this phone is sealed in the binary envelope: it said in its last `hello` that it opens it, this
@@ -1456,13 +1483,15 @@ impl Actor {
 
     /// Seals a blob frame (the message `head` without the bytes it carries, then `bytes`) for a phone and queues it.
     /// `false` when it was not sent: the phone does not take binary frames, the sender or key id does not fit the binary
-    /// header, or the result is over the broker's limit. The caller then sends the same message as JSON.
+    /// header, or the result is over the broker's limit. The caller then sends the same message as JSON. The sealed bytes
+    /// are also counted under `part` of the attachment traffic.
     pub(crate) fn send_blob(
         &mut self,
         phone_id: &str,
         msg_type: &str,
         head: Value,
         bytes: &[u8],
+        part: Option<AssetPart>,
     ) -> bool {
         if !self.phone_takes_binary(phone_id) {
             return false;
@@ -1483,15 +1512,24 @@ impl Actor {
         ) else {
             return false;
         };
-        self.queue_down(topic, msg_type, frame)
+        self.queue_down(topic, msg_type, frame, part)
     }
 
     /// Counts sealed wire bytes in the traffic ledger and hands them to the outbox; `false` for one over the broker's limit.
-    fn queue_down(&mut self, topic: String, msg_type: &str, bytes: Vec<u8>) -> bool {
+    fn queue_down(
+        &mut self,
+        topic: String,
+        msg_type: &str,
+        bytes: Vec<u8>,
+        part: Option<AssetPart>,
+    ) -> bool {
         if bytes.len() > wire::MAX_ENVELOPE_BYTES {
             return false;
         }
         self.count_message(false, msg_type, bytes.len());
+        if let Some(part) = part {
+            self.count_asset_part(part, bytes.len());
+        }
         self.outbox
             .send_with_traffic(topic, bytes, false, msg_type != "traffic.usage");
         true
