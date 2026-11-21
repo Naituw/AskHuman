@@ -39,13 +39,18 @@ public struct Caps: Codable, Equatable, Sendable {
     /// out of the Agents list for a phone that asked for it (`Hello.leanAgents`; docs/specs/ios-traffic-reduction.md
     /// §3.2). A phone reads it to know that the Mac understood. Left out of the wire when false.
     @OmitFalse public var leanAgents: Bool
+    /// The Mac opens binary envelopes and blob frames from a phone that said `Hello.binary`, and sends them to it
+    /// (docs/specs/ios-attachment-traffic.md §5.3). A phone sends binary only after it has read this in `hello.ack`;
+    /// a Mac that does not send it gets the JSON envelope, which every Mac reads. Left out of the wire when false.
+    @OmitFalse public var binary: Bool
 
     public init(
         newTask: Bool, interject: Bool, watch: Bool, todos: Bool = false, answerTodos: Bool = false,
         away: Bool = false, annotations: Bool = false, liveUpdate: Bool = false, sessionHistory: Bool = false,
         historyPictures: Bool = false, trafficSync: Bool = false, trafficUsage: Bool = false,
-        leanAgents: Bool = false
+        leanAgents: Bool = false, binary: Bool = false
     ) {
+        self.binary = binary
         self.leanAgents = leanAgents
         self.trafficUsage = trafficUsage
         self.trafficSync = trafficSync
@@ -76,6 +81,7 @@ public struct Caps: Codable, Equatable, Sendable {
         sessionHistory = try c.decodeIfPresent(Bool.self, forKey: .sessionHistory) ?? false
         historyPictures = try c.decodeIfPresent(Bool.self, forKey: .historyPictures) ?? false
         leanAgents = try c.decodeIfPresent(Bool.self, forKey: .leanAgents) ?? false
+        binary = try c.decodeIfPresent(Bool.self, forKey: .binary) ?? false
     }
 }
 
@@ -187,12 +193,17 @@ public struct Hello: WireMessage {
     /// The phone opens compressed envelopes (`"z":1`, raw DEFLATE; docs/specs/ios-traffic-reduction.md §3.3). The Mac
     /// compresses only the list streams, and only for a phone that said so in its latest `hello`.
     @OmitFalse public var compression: Bool
+    /// The phone opens binary envelopes (the `0xA1` format) and blob frames. The Mac then sends it every message after
+    /// `hello` in the binary envelope and `asset.chunk` as a blob frame, and takes `upload.chunk` as a blob frame from
+    /// it (docs/specs/ios-attachment-traffic.md §5). The `hello` itself is always JSON.
+    @OmitFalse public var binary: Bool
 
     public init(
         nonce: String, proto: Int = Wire.proto, appVer: String, deviceName: String, lifecycleResults: Bool = false,
         trafficSync: Bool = false, trafficUsage: Bool = false, leanWatch: Bool = false, leanAgents: Bool = false,
-        compression: Bool = false
+        compression: Bool = false, binary: Bool = false
     ) {
+        self.binary = binary
         self.nonce = nonce
         self.proto = proto
         self.appVer = appVer
@@ -1710,8 +1721,9 @@ public struct AssetChunk: WireMessage {
     public var size: UInt64
     /// SHA-256 (hex) of the whole file, present on the first chunk only.
     public var sha256: String?
-    /// base64url chunk data.
-    public var data: String
+    /// base64url chunk data. A blob frame carries the bytes after its header instead, so its header has no `data`: left
+    /// out of the wire when empty (a chunk is never empty), and empty when the key is absent.
+    @OmitEmptyString public var data: String
 }
 
 public struct AssetError: WireMessage {
@@ -1758,10 +1770,11 @@ public struct UploadChunk: WireMessage {
     public static let type = "upload.chunk"
     public var uploadId: String
     public var index: UInt64
-    /// base64url chunk data.
-    public var data: String
+    /// base64url chunk data. A blob frame carries the bytes after its header instead, so its header has no `data`: left
+    /// out of the wire when empty (a chunk is never empty), and empty when the key is absent.
+    @OmitEmptyString public var data: String
 
-    public init(uploadId: String, index: UInt64, data: String) {
+    public init(uploadId: String, index: UInt64, data: String = "") {
         self.uploadId = uploadId
         self.index = index
         self.data = data

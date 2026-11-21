@@ -12,6 +12,15 @@ import Foundation
 /// DEFLATE (RFC 1951, no zlib header or trailer), compressed before it was encrypted, and its AAD ends in `|z1`, so
 /// the marker is authenticated. Only the Mac sends them, only on a topic and only to a phone that asked for them in
 /// `hello`; a push is never compressed. The phone only opens them: what it sends is small.
+///
+/// Binary envelope (docs/specs/ios-attachment-traffic.md §5.1): the same message without the JSON text and the two
+/// base64 layers, `0xA1 | flags | kid (u16 BE) | sender (16 raw bytes) | nonce (12) | ciphertext ‖ tag`. The
+/// authenticated data is the same text as for a JSON envelope (the sender is written out as its 26 base32 characters),
+/// so the format changes nothing a ciphertext is bound to. It goes only on a topic and only to a peer that declared
+/// `binary` in `hello` / `hello.ack`; pairing messages and pushes stay JSON, and both formats are always accepted.
+///
+/// Blob frame (§5.2): a message whose plaintext is `0x01 | header_len (u32 BE) | header | bytes`, where the header is
+/// the JSON of a `Plain` without the bytes it carries (`asset.chunk`, `upload.chunk`). Blobs are never compressed.
 public struct Envelope: Codable, Equatable, Sendable {
     public var v: Int
     public var f: String
@@ -45,7 +54,99 @@ public enum EnvelopeScope: Equatable, Sendable {
     case push
 }
 
+/// The wire format a message is sealed in.
+public enum WireFormat: Sendable {
+    /// The JSON envelope, which every peer reads.
+    case json
+    /// The binary envelope, for a peer that said it opens it. A sender or `kid` its header cannot hold goes as JSON
+    /// (`EnvelopeFrame.encodeBinary`), and so does anything in the push scope.
+    case binary
+}
+
+/// An envelope after parsing, whichever wire format it came in: every field as it is, with nothing left to decode.
+public struct EnvelopeFrame: Equatable, Sendable {
+    /// The sender's id as the 26 characters it is written with in the authenticated data.
+    public var sender: String
+    public var kid: Int
+    public var nonce: Data
+    /// The ciphertext followed by its 16-byte authentication tag.
+    public var ciphertext: Data
+    /// The plaintext was compressed (raw DEFLATE) before it was encrypted.
+    public var compressed: Bool
+    /// It came in the binary format.
+    public var binary: Bool
+
+    public init(sender: String, kid: Int, nonce: Data, ciphertext: Data, compressed: Bool = false, binary: Bool = false) {
+        self.sender = sender
+        self.kid = kid
+        self.nonce = nonce
+        self.ciphertext = ciphertext
+        self.compressed = compressed
+        self.binary = binary
+    }
+
+    /// The fields of a parsed JSON envelope, decoded. A `z` other than 1, or a nonce or ciphertext that is not base64url
+    /// of the right shape, is malformed.
+    public init(_ envelope: Envelope) throws {
+        let compressed: Bool
+        switch envelope.z {
+        case nil: compressed = false
+        case .some(1): compressed = true
+        default: throw EnvelopeError.malformed
+        }
+        guard let nonce = Bytes.b64uDecode(envelope.n), nonce.count == AHCrypto.nonceLength,
+              let ciphertext = Bytes.b64uDecode(envelope.c)
+        else { throw EnvelopeError.malformed }
+        self.init(sender: envelope.f, kid: envelope.k, nonce: nonce, ciphertext: ciphertext, compressed: compressed)
+    }
+
+    /// The JSON envelope with these fields.
+    public var envelope: Envelope {
+        Envelope(f: sender, k: kid, n: Bytes.b64u(nonce), c: Bytes.b64u(ciphertext), z: compressed ? 1 : nil)
+    }
+
+    /// The binary envelope with these fields, or `nil` when the sender or the `kid` does not fit its header: the sender
+    /// must be an id in the exact form `Bytes.newId` gives out (it is carried as 16 raw bytes) and the `kid` must fit 16
+    /// bits. A message that cannot go in it is sent in the JSON envelope, which any peer reads.
+    public func encodeBinary() -> Data? {
+        guard let senderBytes = Bytes.idToBytes(sender), kid >= 0, kid <= Int(UInt16.max),
+              nonce.count == AHCrypto.nonceLength
+        else { return nil }
+        var out = Data(capacity: AHEnvelope.binaryHeaderLength + ciphertext.count)
+        out.append(AHEnvelope.binaryMagic)
+        out.append(compressed ? AHEnvelope.binaryCompressedFlag : 0)
+        out.append(UInt8(kid >> 8))
+        out.append(UInt8(kid & 0xff))
+        out.append(senderBytes)
+        out.append(nonce)
+        out.append(ciphertext)
+        return out
+    }
+}
+
+/// What an envelope of either format holds once it is opened: a message, or a blob frame (a message header and the
+/// raw bytes it carries).
+public enum OpenedMessage: Equatable, Sendable {
+    case message(Plain)
+    case blob(head: Plain, bytes: Data)
+}
+
 public enum AHEnvelope {
+    /// First byte of a binary envelope. A JSON envelope starts with `{`, so the two cannot be mistaken for each other.
+    public static let binaryMagic: UInt8 = 0xA1
+    /// First byte of the plaintext of a blob frame. A JSON message starts with `{`, so the two cannot be mistaken for
+    /// each other.
+    public static let blobMarker: UInt8 = 0x01
+    /// Bit 0 of the flags byte of a binary envelope: the plaintext was compressed before it was encrypted. The other
+    /// bits are reserved and must be zero.
+    static let binaryCompressedFlag: UInt8 = 0b0000_0001
+    /// Magic, flags, `kid` (u16), the sender id (16 raw bytes) and the nonce.
+    static let binaryHeaderLength = 1 + 1 + 2 + 16 + AHCrypto.nonceLength
+    /// Length of the ChaCha20-Poly1305 authentication tag at the end of every ciphertext.
+    static let tagLength = 16
+    /// The shortest binary envelope: the header and the tag of an empty plaintext.
+    static let binaryMinLength = binaryHeaderLength + tagLength
+
     static func aad(_ scope: EnvelopeScope, sender: String, kid: Int, compressed: Bool = false) -> Data {
         let base: String
         switch scope {
@@ -85,36 +186,152 @@ public enum AHEnvelope {
         try! AHJSON.encoder.encode(env)
     }
 
+    /// An envelope in the wire format of the caller's choice. The binary one is used only on a topic and only when the
+    /// sender and `kid` fit its header (`EnvelopeFrame.encodeBinary`); anything else goes as JSON.
+    public static func encode(_ frame: EnvelopeFrame, scope: EnvelopeScope, format: WireFormat) -> Data {
+        if format == .binary, scope != .push, let bytes = frame.encodeBinary() { return bytes }
+        return encode(frame.envelope)
+    }
+
+    /// Parses and size-checks an envelope of either wire format. A binary one is recognised by its first byte;
+    /// everything else is read as JSON (`parse`).
+    public static func parseFrame(_ bytes: Data) throws -> EnvelopeFrame {
+        if bytes.first == binaryMagic { return try parseBinary(bytes) }
+        return try EnvelopeFrame(parse(bytes))
+    }
+
+    private static func parseBinary(_ received: Data) throws -> EnvelopeFrame {
+        if received.count > Wire.maxEnvelopeBytes { throw EnvelopeError.tooLarge }
+        if received.count < binaryMinLength { throw EnvelopeError.malformed }
+        let bytes = rebased(received)
+        let flags = bytes[1]
+        // A reserved bit: a later format must not be mistaken for this one.
+        if flags & ~binaryCompressedFlag != 0 { throw EnvelopeError.malformed }
+        return EnvelopeFrame(
+            sender: Bytes.base32Lower(bytes.subdata(in: 4..<20)),
+            kid: Int(bytes[2]) << 8 | Int(bytes[3]),
+            nonce: bytes.subdata(in: 20..<binaryHeaderLength),
+            ciphertext: bytes.subdata(in: binaryHeaderLength..<bytes.count),
+            compressed: flags & binaryCompressedFlag != 0,
+            binary: true
+        )
+    }
+
+    /// The same bytes indexed from zero, whatever slice of a larger buffer they were.
+    private static func rebased(_ data: Data) -> Data {
+        data.startIndex == 0 ? data : Data(data)
+    }
+
     /// Seals with an explicit nonce (fixtures and tests); production code uses `seal`.
     public static func seal(
         key: Data, scope: EnvelopeScope, sender: String, kid: Int, nonce: Data, plaintext: Data
     ) -> Envelope {
-        let ct = try! AHCrypto.seal(
-            key: key, nonce: nonce, aad: aad(scope, sender: sender, kid: kid), plaintext: plaintext
-        )
-        return Envelope(f: sender, k: kid, n: Bytes.b64u(nonce), c: Bytes.b64u(ct))
+        sealFrame(key: key, scope: scope, sender: sender, kid: kid, nonce: nonce, plaintext: plaintext).envelope
     }
 
     public static func seal(key: Data, scope: EnvelopeScope, sender: String, kid: Int, plaintext: Data) -> Envelope {
         seal(key: key, scope: scope, sender: sender, kid: kid, nonce: Bytes.random(AHCrypto.nonceLength), plaintext: plaintext)
     }
 
+    /// Encrypts `plaintext` as it is (`compressed` only says whether it already is raw DEFLATE, and is authenticated
+    /// with it) into the fields of an envelope, whichever format they are written in afterwards.
+    static func sealFrame(
+        key: Data, scope: EnvelopeScope, sender: String, kid: Int, nonce: Data, plaintext: Data, compressed: Bool = false
+    ) -> EnvelopeFrame {
+        let ct = try! AHCrypto.seal(
+            key: key, nonce: nonce, aad: aad(scope, sender: sender, kid: kid, compressed: compressed), plaintext: plaintext
+        )
+        return EnvelopeFrame(sender: sender, kid: kid, nonce: nonce, ciphertext: ct, compressed: compressed)
+    }
+
     /// Decrypts an envelope and, when it carries `z`, inflates the result (at most `Wire.maxPlainBytes`). A push is
     /// never compressed, so `z` there is malformed.
     public static func open(key: Data, scope: EnvelopeScope, envelope env: Envelope) throws -> Data {
-        let compressed: Bool
-        switch env.z {
-        case nil: compressed = false
-        case .some(1) where scope != .push: compressed = true
-        default: throw EnvelopeError.malformed
-        }
-        guard let nonce = Bytes.b64uDecode(env.n), nonce.count == AHCrypto.nonceLength,
-              let ct = Bytes.b64uDecode(env.c)
-        else { throw EnvelopeError.malformed }
+        try openFrame(key: key, scope: scope, frame: EnvelopeFrame(env))
+    }
+
+    /// `open` for an envelope of either wire format.
+    public static func openFrame(key: Data, scope: EnvelopeScope, frame: EnvelopeFrame) throws -> Data {
+        if frame.compressed && scope == .push { throw EnvelopeError.malformed }
         guard let plain = AHCrypto.open(
-            key: key, nonce: nonce, aad: aad(scope, sender: env.f, kid: env.k, compressed: compressed), ciphertext: ct
+            key: key, nonce: frame.nonce,
+            aad: aad(scope, sender: frame.sender, kid: frame.kid, compressed: frame.compressed),
+            ciphertext: frame.ciphertext
         ) else { throw EnvelopeError.auth }
-        return compressed ? try inflate(plain, limit: Wire.maxPlainBytes) : plain
+        return frame.compressed ? try inflate(plain, limit: Wire.maxPlainBytes) : plain
+    }
+
+    /// Opens an envelope of either format and reads the message in it. The first byte of the plaintext tells a blob
+    /// frame (`0x01`) from a JSON message (`{`). A blob is never compressed, so a compressed envelope that inflates to
+    /// one is refused, and a push never carries one.
+    public static func openMessage(key: Data, scope: EnvelopeScope, frame: EnvelopeFrame) throws -> OpenedMessage {
+        let plaintext = try openFrame(key: key, scope: scope, frame: frame)
+        guard plaintext.first == blobMarker else {
+            guard let plain = try? AHJSON.decoder.decode(Plain.self, from: plaintext) else {
+                throw EnvelopeError.malformed
+            }
+            return .message(plain)
+        }
+        if frame.compressed || scope == .push { throw EnvelopeError.malformed }
+        let (head, bytes) = try decodeBlob(plaintext)
+        return .blob(head: head, bytes: bytes)
+    }
+
+    /// The plaintext of a blob frame: the marker, the length of the header (u32, big endian), the header, then the
+    /// bytes. `head` is a `Plain` whose body leaves out the bytes (`data`). Fails when the header is longer than
+    /// `Wire.blobHeaderMaxBytes` or the bytes are more than one chunk (`Wire.assetChunkBytes`).
+    public static func encodeBlob(head: Plain, bytes: Data) throws -> Data {
+        let header = try AHJSON.encoder.encode(head)
+        guard header.count <= Wire.blobHeaderMaxBytes, bytes.count <= Wire.assetChunkBytes else {
+            throw EnvelopeError.tooLarge
+        }
+        var out = Data(capacity: 1 + 4 + header.count + bytes.count)
+        out.append(blobMarker)
+        withUnsafeBytes(of: UInt32(header.count).bigEndian) { out.append(contentsOf: $0) }
+        out.append(header)
+        out.append(bytes)
+        return out
+    }
+
+    /// The inverse of `encodeBlob`: the header message and the bytes after it. A plaintext over `Wire.maxPlainBytes`, a
+    /// length that is over `Wire.blobHeaderMaxBytes` or past the end of the plaintext, a header that is not a message,
+    /// or more bytes than one chunk (`Wire.assetChunkBytes`) is malformed.
+    public static func decodeBlob(_ received: Data) throws -> (head: Plain, bytes: Data) {
+        guard received.first == blobMarker, received.count <= Wire.maxPlainBytes, received.count >= 5 else {
+            throw EnvelopeError.malformed
+        }
+        let plaintext = rebased(received)
+        let headerLength = (0..<4).reduce(0) { $0 << 8 | Int(plaintext[1 + $1]) }
+        guard headerLength <= Wire.blobHeaderMaxBytes, plaintext.count >= 5 + headerLength else {
+            throw EnvelopeError.malformed
+        }
+        guard let head = try? AHJSON.decoder.decode(Plain.self, from: plaintext.subdata(in: 5..<5 + headerLength)) else {
+            throw EnvelopeError.malformed
+        }
+        let bytes = plaintext.subdata(in: 5 + headerLength..<plaintext.count)
+        guard bytes.count <= Wire.assetChunkBytes else { throw EnvelopeError.malformed }
+        return (head, bytes)
+    }
+
+    /// Builds the wire bytes of a blob frame: a binary envelope around `encodeBlob`, never compressed. `nil` when the
+    /// sender or `kid` does not fit the binary header (`EnvelopeFrame.encodeBinary`), when the header or the bytes are
+    /// too long, or for a push; the caller then sends the same message as JSON.
+    public static func sealBlob(
+        key: Data, scope: EnvelopeScope, sender: String, kid: Int, head: Plain, bytes: Data
+    ) -> Data? {
+        sealBlob(
+            key: key, scope: scope, sender: sender, kid: kid, nonce: Bytes.random(AHCrypto.nonceLength), head: head,
+            bytes: bytes
+        )
+    }
+
+    /// `sealBlob` with an explicit nonce (fixtures and tests).
+    public static func sealBlob(
+        key: Data, scope: EnvelopeScope, sender: String, kid: Int, nonce: Data, head: Plain, bytes: Data
+    ) -> Data? {
+        guard scope != .push, let plaintext = try? encodeBlob(head: head, bytes: bytes) else { return nil }
+        return sealFrame(key: key, scope: scope, sender: sender, kid: kid, nonce: nonce, plaintext: plaintext)
+            .encodeBinary()
     }
 
     /// Inflates raw DEFLATE (`COMPRESSION_ZLIB` of the Compression framework is the raw stream, without the zlib
@@ -204,10 +421,17 @@ public struct Plain: Codable, Equatable, Sendable {
         return try AHJSON.value(M.self, from: b)
     }
 
-    /// Builds the wire bytes for one message.
-    public func sealed(key: Data, scope: EnvelopeScope, sender: String, kid: Int) throws -> Data {
+    /// Builds the wire bytes for one message, in the JSON envelope unless the caller says the peer opens the binary one
+    /// (and the sender and `kid` fit its header, and the message does not go in the push scope).
+    public func sealed(
+        key: Data, scope: EnvelopeScope, sender: String, kid: Int, format: WireFormat = .json
+    ) throws -> Data {
         let plaintext = try AHJSON.encoder.encode(self)
-        return AHEnvelope.encode(AHEnvelope.seal(key: key, scope: scope, sender: sender, kid: kid, plaintext: plaintext))
+        let frame = AHEnvelope.sealFrame(
+            key: key, scope: scope, sender: sender, kid: kid, nonce: Bytes.random(AHCrypto.nonceLength),
+            plaintext: plaintext
+        )
+        return AHEnvelope.encode(frame, scope: scope, format: format)
     }
 
     public static func open(key: Data, scope: EnvelopeScope, envelope: Envelope) throws -> Plain {

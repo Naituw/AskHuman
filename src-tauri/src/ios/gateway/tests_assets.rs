@@ -843,3 +843,237 @@ fn the_gateway_remembers_at_most_a_few_hundred_pictures_and_drops_the_oldest() {
     assert!(memory.get("id299", 2_000 + 10 * 60 * 1000).is_some());
     assert!(memory.get("id299", 2_000 + 10 * 60 * 1000 + 1).is_none());
 }
+
+// ---------------------------------------------------------------- blob frames (docs/specs/ios-attachment-traffic.md §5.2)
+
+/// Puts the chunks together after checking what the first one says.
+fn joined(chunks: &[wire::AssetChunk], data: &[u8]) -> Vec<u8> {
+    assert_eq!(chunks[0].sha256.as_deref(), Some(sha_hex(data).as_str()));
+    let mut out = Vec::new();
+    for chunk in chunks {
+        out.extend(crypto::b64u_decode(&chunk.data).unwrap());
+    }
+    out
+}
+
+/// The wire bytes of what the phone was sent after `mark`.
+fn wire_bytes_since(phone: &TestPhone, mark: usize) -> usize {
+    phone.received[mark..].iter().map(|r| r.bytes).sum()
+}
+
+#[tokio::test(start_paused = true)]
+async fn a_phone_that_takes_binary_is_sent_the_chunks_as_blob_frames() {
+    let fx = Fixture::new().await;
+    let mut phone = fx.live_phone_with(|p| p.binary = true).await;
+    let data = bytes(ASSET_CHUNK_BYTES * 2 + 5_000, 1);
+    let asset = asset_file(fx.dir.path(), "report.bin", &data);
+    deliver_with_assets(&fx, "req1", vec![asset.clone()]);
+    phone.recv(t::REQUEST_NEW).await;
+
+    let mark = phone.received.len();
+    phone.send(&get(&asset.asset_id, 0, 8)).await;
+    let chunks = recv_chunks(&mut phone, 3).await;
+    assert_eq!(
+        chunks.iter().map(|c| c.index).collect::<Vec<_>>(),
+        [0, 1, 2]
+    );
+    assert!(chunks
+        .iter()
+        .all(|c| c.total == 3 && c.size == data.len() as u64));
+    assert_eq!(joined(&chunks, &data), data);
+
+    let frames = &phone.received[mark..];
+    assert_eq!(frames.len(), 3, "{frames:?}");
+    assert!(
+        frames
+            .iter()
+            .all(|r| r.ty == t::ASSET_CHUNK && r.binary && r.blob && !r.compressed),
+        "{frames:?}"
+    );
+    // The bytes of the file and a few hundred more for each chunk: no base64 on top of the base64.
+    let on_the_wire = wire_bytes_since(&phone, mark);
+    assert!(on_the_wire > data.len());
+    assert!(on_the_wire < data.len() + 3 * 700, "{on_the_wire} bytes");
+}
+
+#[tokio::test(start_paused = true)]
+async fn a_phone_that_does_not_take_binary_is_sent_json_chunks_that_take_far_more_bytes() {
+    let fx = Fixture::new().await;
+    let mut phone = fx.live_phone().await;
+    let data = bytes(ASSET_CHUNK_BYTES * 2 + 5_000, 1);
+    let asset = asset_file(fx.dir.path(), "report.bin", &data);
+    deliver_with_assets(&fx, "req1", vec![asset.clone()]);
+    phone.recv(t::REQUEST_NEW).await;
+
+    let mark = phone.received.len();
+    phone.send(&get(&asset.asset_id, 0, 8)).await;
+    let chunks = recv_chunks(&mut phone, 3).await;
+    assert_eq!(joined(&chunks, &data), data);
+    let frames = &phone.received[mark..];
+    assert!(
+        frames.iter().all(|r| !r.binary && !r.blob),
+        "an older phone gets what it always got: {frames:?}"
+    );
+    // The bytes were base64 and then the whole message was base64 again.
+    assert!(wire_bytes_since(&phone, mark) > data.len() * 17 / 10);
+}
+
+#[tokio::test(start_paused = true)]
+async fn the_chunks_of_a_picture_of_the_history_come_as_blob_frames_too() {
+    let fx = Fixture::new().await;
+    let mut phone = fx.live_phone_with(|p| p.binary = true).await;
+    let data = bytes(ASSET_CHUNK_BYTES + 1_000, 3);
+    let picture = history_picture(&fx, "shot.png", &data);
+
+    let mark = phone.received.len();
+    phone.send(&get(&picture.asset_id, 0, 8)).await;
+    let chunks = recv_chunks(&mut phone, 2).await;
+    assert_eq!(joined(&chunks, &data), data);
+    assert!(phone.received[mark..].iter().all(|r| r.blob));
+}
+
+#[tokio::test(start_paused = true)]
+async fn the_attachment_errors_stay_ordinary_messages() {
+    let fx = Fixture::new().await;
+    let mut phone = fx.live_phone_with(|p| p.binary = true).await;
+    let missing = crypto::new_id();
+    phone.send(&get(&missing, 0, 1)).await;
+    let error: wire::AssetError = phone.recv_body(t::ASSET_ERROR).await;
+    assert_eq!(error.reason, "notFound");
+    let last = phone.received.last().unwrap();
+    assert!(last.binary && !last.blob, "{last:?}");
+}
+
+#[tokio::test(start_paused = true)]
+async fn a_phone_uploads_in_blob_frames_and_the_file_arrives_intact() {
+    let fx = Fixture::new().await;
+    let mut phone = fx.live_phone_with(|p| p.binary = true).await;
+    let sink = deliver_with_assets(&fx, "req1", Vec::new());
+    phone.recv(t::REQUEST_NEW).await;
+
+    let data = bytes(ASSET_CHUNK_BYTES * 2 + 123, 4);
+    let id = crypto::new_id();
+    let done = upload(
+        &mut phone,
+        &id,
+        "photo.bin",
+        "application/octet-stream",
+        &data,
+        "req1",
+    )
+    .await;
+    assert_eq!(done.status, "complete");
+    assert_eq!(phone.blobs_sent, 3, "every chunk went as a blob frame");
+
+    phone
+        .send(&submit(
+            "c1",
+            "req1",
+            vec![with_attachments(0, &[], &[&id])],
+        ))
+        .await;
+    let reply: wire::AnswerAck = phone.recv_body(t::ANSWER_ACK).await;
+    assert_eq!(reply.status, "accepted", "{:?}", reply.reason);
+    let results = sink.results.lock().unwrap();
+    let answer = &results[0].answers[0];
+    assert_eq!(std::fs::read(&answer.files[0]).unwrap(), data);
+}
+
+#[tokio::test(start_paused = true)]
+async fn blob_chunks_and_json_chunks_can_be_mixed_in_one_upload() {
+    let fx = Fixture::new().await;
+    let mut phone = fx.live_phone_with(|p| p.binary = true).await;
+    deliver_with_assets(&fx, "req1", Vec::new());
+    phone.recv(t::REQUEST_NEW).await;
+
+    let data = bytes(ASSET_CHUNK_BYTES * 2 + 10, 5);
+    let id = crypto::new_id();
+    phone
+        .send(&begin(
+            &id,
+            "mixed.bin",
+            "application/octet-stream",
+            &data,
+            Some("req1"),
+        ))
+        .await;
+    assert_eq!(ack(&mut phone).await.status, "ok");
+    let pieces: Vec<&[u8]> = data.chunks(ASSET_CHUNK_BYTES).collect();
+    // The first chunk as a blob frame, the second as the JSON message (a phone that lost the Mac's binary promise
+    // part-way through), the third as a blob frame again.
+    phone.send(&chunk(&id, 0, pieces[0])).await;
+    phone.binary = false;
+    phone.send(&chunk(&id, 1, pieces[1])).await;
+    phone.binary = true;
+    phone.send(&chunk(&id, 2, pieces[2])).await;
+    let done = loop {
+        let reply = ack(&mut phone).await;
+        if reply.status != "ok" {
+            break reply;
+        }
+    };
+    assert_eq!((done.status.as_str(), done.next_index), ("complete", 3));
+    assert_eq!(phone.blobs_sent, 2);
+}
+
+#[tokio::test(start_paused = true)]
+async fn a_blob_chunk_of_the_wrong_size_fails_the_upload_like_a_json_one() {
+    let fx = Fixture::new().await;
+    let mut phone = fx.live_phone_with(|p| p.binary = true).await;
+    deliver_with_assets(&fx, "req1", Vec::new());
+    phone.recv(t::REQUEST_NEW).await;
+
+    let data = bytes(ASSET_CHUNK_BYTES * 2, 6);
+    let id = crypto::new_id();
+    phone
+        .send(&begin(
+            &id,
+            "short.bin",
+            "application/octet-stream",
+            &data,
+            Some("req1"),
+        ))
+        .await;
+    assert_eq!(ack(&mut phone).await.status, "ok");
+    // The first of two chunks must be a full chunk.
+    phone.send(&chunk(&id, 0, &data[..100])).await;
+    let failure = ack(&mut phone).await;
+    assert_eq!(
+        (failure.status.as_str(), failure.reason.as_deref()),
+        ("error", Some("invalid"))
+    );
+    assert!(!fx.dir.path().join("uploads").join(&id).exists());
+}
+
+#[tokio::test(start_paused = true)]
+async fn a_mac_whose_id_does_not_fit_the_binary_header_keeps_to_json_chunks() {
+    // An id the binary header cannot carry (the padding bits of its last character are set) is still a valid id.
+    let odd_id = format!("{}b", "a".repeat(25));
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(
+        dir.path().join("state.json"),
+        format!(r#"{{"macId":"{odd_id}"}}"#),
+    )
+    .unwrap();
+    let fx = Fixture::build(
+        dir,
+        crate::ios::transport::LoopbackBroker::new(),
+        TestHost::new(),
+    )
+    .await;
+    assert_eq!(fx.mac_id, odd_id);
+
+    let mut phone = fx.live_phone_with(|p| p.binary = true).await;
+    let data = bytes(ASSET_CHUNK_BYTES + 77, 7);
+    let asset = asset_file(fx.dir.path(), "odd.bin", &data);
+    deliver_with_assets(&fx, "req1", vec![asset.clone()]);
+    phone.recv(t::REQUEST_NEW).await;
+    phone.send(&get(&asset.asset_id, 0, 8)).await;
+    let chunks = recv_chunks(&mut phone, 2).await;
+    assert_eq!(joined(&chunks, &data), data);
+    assert!(
+        phone.received.iter().all(|r| !r.binary && !r.blob),
+        "everything the Mac sent was JSON: {:?}",
+        phone.received
+    );
+}

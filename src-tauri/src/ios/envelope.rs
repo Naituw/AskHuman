@@ -9,6 +9,16 @@
 //! DEFLATE (RFC 1951, no zlib header or trailer), compressed before it was encrypted, and its AAD ends in `|z1`, so
 //! the marker is authenticated. Only the Mac sends them, only on a topic and only to a phone that asked for them in
 //! `hello`; a push is never compressed.
+//!
+//! Binary envelope (docs/specs/ios-attachment-traffic.md §5.1): the same message without the JSON text and the
+//! two base64 layers, `0xA1 | flags | kid (u16 BE) | sender (16 raw bytes) | nonce (12) | ciphertext || tag`. The
+//! authenticated data is the same text as for a JSON envelope (the sender is written out as its 26 base32
+//! characters), so the format does not change what a ciphertext is bound to. It goes only on a topic and only to a
+//! peer that declared `binary` in `hello`/`hello.ack`; pairing messages and pushes stay JSON, and both formats are
+//! always accepted.
+//!
+//! Blob frame (§5.2): a message whose plaintext is `0x01 | header_len (u32 BE) | header | bytes`, where the header is
+//! the JSON of a [`Plain`] without the bytes it carries (`asset.chunk`, `upload.chunk`). Blobs are never compressed.
 
 use std::io::Write;
 
@@ -18,7 +28,25 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 use super::crypto::{self, KEY_LEN, NONCE_LEN};
-use super::wire::{MAX_ENVELOPE_BYTES, MAX_PLAIN_BYTES, MIN_COMPRESS_BYTES, PROTO};
+use super::wire::{
+    ASSET_CHUNK_BYTES, BLOB_HEADER_MAX_BYTES, MAX_ENVELOPE_BYTES, MAX_PLAIN_BYTES,
+    MIN_COMPRESS_BYTES, PROTO,
+};
+
+/// First byte of a binary envelope. A JSON envelope starts with `{`, so the two cannot be mistaken for each other.
+pub const BINARY_MAGIC: u8 = 0xA1;
+/// Bit 0 of the flags byte of a binary envelope: the plaintext was compressed (raw DEFLATE) before it was encrypted.
+/// The other bits are reserved and must be zero.
+const BINARY_COMPRESSED: u8 = 0b0000_0001;
+/// Magic, flags, `kid` (u16), the sender id (16 raw bytes) and the nonce.
+const BINARY_HEADER_LEN: usize = 1 + 1 + 2 + 16 + NONCE_LEN;
+/// Length of the ChaCha20-Poly1305 authentication tag at the end of every ciphertext.
+const TAG_LEN: usize = 16;
+/// The shortest binary envelope: the header and the tag of an empty plaintext.
+const BINARY_MIN_LEN: usize = BINARY_HEADER_LEN + TAG_LEN;
+/// First byte of the plaintext of a blob frame. A JSON message starts with `{`, so the two cannot be mistaken for each
+/// other.
+pub const BLOB_MARKER: u8 = 0x01;
 
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub enum EnvelopeError {
@@ -95,6 +123,129 @@ pub fn encode(env: &Envelope) -> Vec<u8> {
     serde_json::to_vec(env).expect("envelope serializes")
 }
 
+/// An envelope after parsing, whichever wire format it came in: every field as it is, with nothing left to decode.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Frame {
+    /// The sender's id as the 26 characters it is written with in the authenticated data.
+    pub sender: String,
+    pub kid: u32,
+    pub nonce: [u8; NONCE_LEN],
+    /// The ciphertext followed by its authentication tag.
+    pub ciphertext: Vec<u8>,
+    /// The plaintext was compressed (raw DEFLATE) before it was encrypted.
+    pub compressed: bool,
+    /// It came in the binary format.
+    pub binary: bool,
+}
+
+impl Frame {
+    /// The fields of a parsed JSON envelope, decoded. A `z` other than 1, or a nonce or ciphertext that is not base64url
+    /// of the right shape, is malformed.
+    pub fn from_envelope(env: &Envelope) -> Result<Self, EnvelopeError> {
+        let compressed = match env.z {
+            None => false,
+            Some(1) => true,
+            Some(_) => return Err(EnvelopeError::Malformed),
+        };
+        let nonce: [u8; NONCE_LEN] = crypto::b64u_decode(&env.n)
+            .and_then(|v| v.try_into().ok())
+            .ok_or(EnvelopeError::Malformed)?;
+        let ciphertext = crypto::b64u_decode(&env.c).ok_or(EnvelopeError::Malformed)?;
+        Ok(Self {
+            sender: env.f.clone(),
+            kid: env.k,
+            nonce,
+            ciphertext,
+            compressed,
+            binary: false,
+        })
+    }
+
+    /// The JSON envelope with these fields.
+    pub fn to_envelope(&self) -> Envelope {
+        Envelope {
+            v: PROTO,
+            f: self.sender.clone(),
+            k: self.kid,
+            n: crypto::b64u(&self.nonce),
+            c: crypto::b64u(&self.ciphertext),
+            z: self.compressed.then_some(1),
+        }
+    }
+
+    /// The binary envelope with these fields, or `None` when the sender or the `kid` does not fit its header: the
+    /// sender must be an id in the exact form [`crypto::new_id`] gives out (it is carried as 16 raw bytes) and the `kid`
+    /// must fit 16 bits. A message that cannot go in it is sent in the JSON envelope, which any peer reads.
+    pub fn encode_binary(&self) -> Option<Vec<u8>> {
+        let sender = crypto::id_to_bytes(&self.sender)?;
+        let kid = u16::try_from(self.kid).ok()?;
+        let mut out = Vec::with_capacity(BINARY_HEADER_LEN + self.ciphertext.len());
+        out.push(BINARY_MAGIC);
+        out.push(if self.compressed {
+            BINARY_COMPRESSED
+        } else {
+            0
+        });
+        out.extend_from_slice(&kid.to_be_bytes());
+        out.extend_from_slice(&sender);
+        out.extend_from_slice(&self.nonce);
+        out.extend_from_slice(&self.ciphertext);
+        Some(out)
+    }
+}
+
+/// The wire format a message is sealed in.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Format {
+    /// The JSON envelope, which every peer reads.
+    Json,
+    /// The binary envelope, for a peer that said it opens it. A sender or `kid` the header cannot hold goes as JSON
+    /// ([`Frame::encode_binary`]), and so does anything in the push scope.
+    Binary,
+}
+
+/// Parses and size-checks an envelope of either wire format. A binary one is recognised by its first byte; everything
+/// else is read as JSON ([`parse`]).
+pub fn parse_frame(bytes: &[u8]) -> Result<Frame, EnvelopeError> {
+    if bytes.first() == Some(&BINARY_MAGIC) {
+        return parse_binary(bytes);
+    }
+    Frame::from_envelope(&parse(bytes)?)
+}
+
+/// Like [`parse_frame`] for an envelope a phone sent: it must not be compressed, exactly as for [`parse_from_phone`].
+pub fn parse_frame_from_phone(bytes: &[u8]) -> Result<Frame, EnvelopeError> {
+    let frame = parse_frame(bytes)?;
+    if frame.compressed {
+        return Err(EnvelopeError::Malformed);
+    }
+    Ok(frame)
+}
+
+fn parse_binary(bytes: &[u8]) -> Result<Frame, EnvelopeError> {
+    if bytes.len() > MAX_ENVELOPE_BYTES {
+        return Err(EnvelopeError::TooLarge);
+    }
+    if bytes.len() < BINARY_MIN_LEN {
+        return Err(EnvelopeError::Malformed);
+    }
+    let flags = bytes[1];
+    if flags & !BINARY_COMPRESSED != 0 {
+        // A reserved bit: a later format must not be mistaken for this one.
+        return Err(EnvelopeError::Malformed);
+    }
+    Ok(Frame {
+        sender: crypto::base32_lower(&bytes[4..20]),
+        kid: u32::from(u16::from_be_bytes([bytes[2], bytes[3]])),
+        nonce: bytes[20..BINARY_HEADER_LEN]
+            .try_into()
+            .expect("the slice has the nonce's length"),
+        ciphertext: bytes[BINARY_HEADER_LEN..].to_vec(),
+        compressed: flags & BINARY_COMPRESSED != 0,
+        binary: true,
+    })
+}
+
 /// Compresses `data` as raw DEFLATE (RFC 1951): what a `z: 1` envelope carries before it is encrypted.
 pub fn compress(data: &[u8]) -> Vec<u8> {
     let mut encoder =
@@ -147,6 +298,25 @@ fn inflate(data: &[u8], limit: usize) -> Result<Vec<u8>, EnvelopeError> {
     }
 }
 
+fn seal_frame(
+    key: &[u8; KEY_LEN],
+    scope: Scope<'_>,
+    sender: &str,
+    kid: u32,
+    nonce: &[u8; NONCE_LEN],
+    plaintext: &[u8],
+    compressed: bool,
+) -> Frame {
+    Frame {
+        sender: sender.to_string(),
+        kid,
+        nonce: *nonce,
+        ciphertext: crypto::aead_seal(key, nonce, &aad(scope, sender, kid, compressed), plaintext),
+        compressed,
+        binary: false,
+    }
+}
+
 fn seal_inner(
     key: &[u8; KEY_LEN],
     scope: Scope<'_>,
@@ -156,15 +326,7 @@ fn seal_inner(
     plaintext: &[u8],
     compressed: bool,
 ) -> Envelope {
-    let ct = crypto::aead_seal(key, nonce, &aad(scope, sender, kid, compressed), plaintext);
-    Envelope {
-        v: PROTO,
-        f: sender.to_string(),
-        k: kid,
-        n: crypto::b64u(nonce),
-        c: crypto::b64u(&ct),
-        z: compressed.then_some(1),
-    }
+    seal_frame(key, scope, sender, kid, nonce, plaintext, compressed).to_envelope()
 }
 
 /// Seals with an explicit nonce (fixtures and tests); production code uses [`seal`].
@@ -192,6 +354,34 @@ pub fn seal_compressed_with_nonce(
     seal_inner(key, scope, sender, kid, nonce, &compress(plaintext), true)
 }
 
+/// Seals `plaintext` as is into a binary envelope with an explicit nonce (fixtures and tests); `None` when the sender or
+/// the `kid` does not fit the header.
+#[cfg(test)]
+pub fn seal_binary_with_nonce(
+    key: &[u8; KEY_LEN],
+    scope: Scope<'_>,
+    sender: &str,
+    kid: u32,
+    nonce: &[u8; NONCE_LEN],
+    plaintext: &[u8],
+) -> Option<Vec<u8>> {
+    seal_frame(key, scope, sender, kid, nonce, plaintext, false).encode_binary()
+}
+
+/// Compresses `plaintext` and seals it into a binary envelope with its compression bit set, with an explicit nonce
+/// (fixtures and tests).
+#[cfg(test)]
+pub fn seal_compressed_binary_with_nonce(
+    key: &[u8; KEY_LEN],
+    scope: Scope<'_>,
+    sender: &str,
+    kid: u32,
+    nonce: &[u8; NONCE_LEN],
+    plaintext: &[u8],
+) -> Option<Vec<u8>> {
+    seal_frame(key, scope, sender, kid, nonce, &compress(plaintext), true).encode_binary()
+}
+
 pub fn seal(
     key: &[u8; KEY_LEN],
     scope: Scope<'_>,
@@ -216,18 +406,26 @@ pub fn open(
     scope: Scope<'_>,
     env: &Envelope,
 ) -> Result<Vec<u8>, EnvelopeError> {
-    let compressed = match env.z {
-        None => false,
-        Some(1) if scope != Scope::Push => true,
-        Some(_) => return Err(EnvelopeError::Malformed),
-    };
-    let nonce: [u8; NONCE_LEN] = crypto::b64u_decode(&env.n)
-        .and_then(|v| v.try_into().ok())
-        .ok_or(EnvelopeError::Malformed)?;
-    let ct = crypto::b64u_decode(&env.c).ok_or(EnvelopeError::Malformed)?;
-    let plain = crypto::aead_open(key, &nonce, &aad(scope, &env.f, env.k, compressed), &ct)
-        .ok_or(EnvelopeError::Auth)?;
-    if compressed {
+    open_frame(key, scope, &Frame::from_envelope(env)?)
+}
+
+/// [`open`] for an envelope of either wire format.
+pub fn open_frame(
+    key: &[u8; KEY_LEN],
+    scope: Scope<'_>,
+    frame: &Frame,
+) -> Result<Vec<u8>, EnvelopeError> {
+    if frame.compressed && scope == Scope::Push {
+        return Err(EnvelopeError::Malformed);
+    }
+    let plain = crypto::aead_open(
+        key,
+        &frame.nonce,
+        &aad(scope, &frame.sender, frame.kid, frame.compressed),
+        &frame.ciphertext,
+    )
+    .ok_or(EnvelopeError::Auth)?;
+    if frame.compressed {
         inflate(&plain, MAX_PLAIN_BYTES)
     } else {
         Ok(plain)
@@ -279,14 +477,41 @@ pub fn seal_plain_with(
     plain: &Plain,
     compress_it: bool,
 ) -> Vec<u8> {
+    seal_plain_as(key, scope, sender, kid, plain, compress_it, Format::Json)
+}
+
+/// [`seal_plain_with`] in the wire format of the caller's choice. The compression and its conditions are the same in
+/// both formats; the binary one only drops the JSON text and the base64 around the same ciphertext.
+pub fn seal_plain_as(
+    key: &[u8; KEY_LEN],
+    scope: Scope<'_>,
+    sender: &str,
+    kid: u32,
+    plain: &Plain,
+    compress_it: bool,
+    format: Format,
+) -> Vec<u8> {
     let pt = serde_json::to_vec(plain).expect("plain message serializes");
-    if compress_it && scope != Scope::Push {
-        if let Some(packed) = pack_if_worth_it(&pt) {
-            let nonce = crypto::random_bytes::<NONCE_LEN>();
-            return encode(&seal_inner(key, scope, sender, kid, &nonce, &packed, true));
+    let nonce = crypto::random_bytes::<NONCE_LEN>();
+    let packed = if compress_it && scope != Scope::Push {
+        pack_if_worth_it(&pt)
+    } else {
+        None
+    };
+    let frame = match &packed {
+        Some(packed) => seal_frame(key, scope, sender, kid, &nonce, packed, true),
+        None => seal_frame(key, scope, sender, kid, &nonce, &pt, false),
+    };
+    encode_frame(&frame, scope, format)
+}
+
+fn encode_frame(frame: &Frame, scope: Scope<'_>, format: Format) -> Vec<u8> {
+    if format == Format::Binary && scope != Scope::Push {
+        if let Some(bytes) = frame.encode_binary() {
+            return bytes;
         }
     }
-    encode(&seal(key, scope, sender, kid, &pt))
+    encode(&frame.to_envelope())
 }
 
 pub fn open_plain(
@@ -296,6 +521,116 @@ pub fn open_plain(
 ) -> Result<Plain, EnvelopeError> {
     let pt = open(key, scope, env)?;
     serde_json::from_slice(&pt).map_err(|_| EnvelopeError::Malformed)
+}
+
+/// What an envelope of either format holds once it is opened: a message, or a blob frame (a message header and the raw
+/// bytes it carries).
+#[derive(Debug, Clone, PartialEq)]
+pub enum Opened {
+    Message(Plain),
+    Blob { head: Plain, bytes: Vec<u8> },
+}
+
+/// Opens an envelope of either format and reads the message in it. The first byte of the plaintext tells a blob frame
+/// (`0x01`) from a JSON message (`{`). A blob is never compressed, so a compressed envelope that inflates to one is
+/// refused, and a push never carries one.
+pub fn open_message(
+    key: &[u8; KEY_LEN],
+    scope: Scope<'_>,
+    frame: &Frame,
+) -> Result<Opened, EnvelopeError> {
+    let pt = open_frame(key, scope, frame)?;
+    if pt.first() != Some(&BLOB_MARKER) {
+        return serde_json::from_slice(&pt)
+            .map(Opened::Message)
+            .map_err(|_| EnvelopeError::Malformed);
+    }
+    if frame.compressed || scope == Scope::Push {
+        return Err(EnvelopeError::Malformed);
+    }
+    let (head, bytes) = decode_blob(&pt)?;
+    Ok(Opened::Blob { head, bytes })
+}
+
+/// The plaintext of a blob frame: the marker, the length of the header (u32, big endian), the header, then the bytes.
+/// `head` is a [`Plain`] whose body leaves out the bytes (`data`). Fails when the header is longer than
+/// [`BLOB_HEADER_MAX_BYTES`] or the bytes are more than one chunk ([`ASSET_CHUNK_BYTES`]).
+pub fn encode_blob(head: &Plain, bytes: &[u8]) -> Result<Vec<u8>, EnvelopeError> {
+    let header = serde_json::to_vec(head).expect("plain message serializes");
+    if header.len() > BLOB_HEADER_MAX_BYTES || bytes.len() > ASSET_CHUNK_BYTES {
+        return Err(EnvelopeError::TooLarge);
+    }
+    let mut out = Vec::with_capacity(1 + 4 + header.len() + bytes.len());
+    out.push(BLOB_MARKER);
+    out.extend_from_slice(&(header.len() as u32).to_be_bytes());
+    out.extend_from_slice(&header);
+    out.extend_from_slice(bytes);
+    Ok(out)
+}
+
+/// The inverse of [`encode_blob`]: the header message and the bytes after it. A plaintext over [`MAX_PLAIN_BYTES`], a
+/// length that is over [`BLOB_HEADER_MAX_BYTES`] or past the end of the plaintext, a header that is not a message, or
+/// more bytes than one chunk ([`ASSET_CHUNK_BYTES`]) is malformed.
+pub fn decode_blob(plaintext: &[u8]) -> Result<(Plain, Vec<u8>), EnvelopeError> {
+    if plaintext.first() != Some(&BLOB_MARKER) || plaintext.len() > MAX_PLAIN_BYTES {
+        return Err(EnvelopeError::Malformed);
+    }
+    let len_bytes: [u8; 4] = plaintext
+        .get(1..5)
+        .and_then(|b| b.try_into().ok())
+        .ok_or(EnvelopeError::Malformed)?;
+    let header_len = u32::from_be_bytes(len_bytes) as usize;
+    if header_len > BLOB_HEADER_MAX_BYTES {
+        return Err(EnvelopeError::Malformed);
+    }
+    let header = plaintext
+        .get(5..5 + header_len)
+        .ok_or(EnvelopeError::Malformed)?;
+    let head: Plain = serde_json::from_slice(header).map_err(|_| EnvelopeError::Malformed)?;
+    let bytes = &plaintext[5 + header_len..];
+    if bytes.len() > ASSET_CHUNK_BYTES {
+        return Err(EnvelopeError::Malformed);
+    }
+    Ok((head, bytes.to_vec()))
+}
+
+/// Builds the wire bytes of a blob frame: a binary envelope around [`encode_blob`], never compressed. `None` when the
+/// sender or `kid` does not fit the binary header ([`Frame::encode_binary`]), when the header or the bytes are too long,
+/// or for a push; the caller then sends the same message as JSON.
+pub fn seal_blob(
+    key: &[u8; KEY_LEN],
+    scope: Scope<'_>,
+    sender: &str,
+    kid: u32,
+    head: &Plain,
+    bytes: &[u8],
+) -> Option<Vec<u8>> {
+    seal_blob_with_nonce(
+        key,
+        scope,
+        sender,
+        kid,
+        &crypto::random_bytes::<NONCE_LEN>(),
+        head,
+        bytes,
+    )
+}
+
+/// [`seal_blob`] with an explicit nonce (fixtures and tests).
+pub fn seal_blob_with_nonce(
+    key: &[u8; KEY_LEN],
+    scope: Scope<'_>,
+    sender: &str,
+    kid: u32,
+    nonce: &[u8; NONCE_LEN],
+    head: &Plain,
+    bytes: &[u8],
+) -> Option<Vec<u8>> {
+    if scope == Scope::Push {
+        return None;
+    }
+    let plaintext = encode_blob(head, bytes).ok()?;
+    seal_frame(key, scope, sender, kid, nonce, &plaintext, false).encode_binary()
 }
 
 #[cfg(test)]
@@ -578,5 +913,462 @@ mod tests {
         assert_eq!(parse_from_phone(&packed), Err(EnvelopeError::Malformed));
         let plain = seal_plain(&key(), Scope::Topic(TOPIC), "phone", 1, &list_plain());
         assert!(parse_from_phone(&plain).is_ok());
+    }
+
+    // ------------------------------------------------------------ binary envelope
+
+    /// Ids in the exact form `new_id` gives out (the ones the wire fixtures use).
+    const MAC: &str = "mfx2c3rhs6kq7tw4dnb5vypa2e";
+    const PHONE: &str = "3qjxfkln6hdpmcvbtzaswe4r5y";
+
+    fn binary_of(plain: &Plain, compress_it: bool) -> Vec<u8> {
+        seal_plain_as(
+            &key(),
+            Scope::Topic(TOPIC),
+            MAC,
+            1,
+            plain,
+            compress_it,
+            Format::Binary,
+        )
+    }
+
+    /// Opens wire bytes of either format the way a receiver does.
+    fn open_bytes(bytes: &[u8]) -> Result<Opened, EnvelopeError> {
+        open_message(&key(), Scope::Topic(TOPIC), &parse_frame(bytes)?)
+    }
+
+    /// A binary envelope around an arbitrary plaintext, for the cases a sender would never produce.
+    fn binary_around(plaintext: &[u8], compressed: bool) -> Vec<u8> {
+        seal_frame(
+            &key(),
+            Scope::Topic(TOPIC),
+            MAC,
+            1,
+            &[9u8; NONCE_LEN],
+            plaintext,
+            compressed,
+        )
+        .encode_binary()
+        .expect("the sender fits the header")
+    }
+
+    #[test]
+    fn neither_marker_can_be_a_json_message() {
+        const _: () = assert!(BINARY_MAGIC != b'{' && BLOB_MARKER != b'{');
+        // A binary envelope starts with a byte that is not valid UTF-8 at all.
+        assert!(std::str::from_utf8(&[BINARY_MAGIC]).is_err());
+        let plain = Plain::new("ping", json!({"t": 1}), 1);
+        assert_eq!(serde_json::to_vec(&plain).unwrap()[0], b'{');
+    }
+
+    #[test]
+    fn a_binary_envelope_has_the_documented_layout() {
+        let nonce = [5u8; NONCE_LEN];
+        let plaintext = b"{\"i\":\"x\"}";
+        let frame = seal_frame(
+            &key(),
+            Scope::Topic(TOPIC),
+            MAC,
+            7,
+            &nonce,
+            plaintext,
+            false,
+        );
+        let bytes = frame.encode_binary().unwrap();
+        assert_eq!(bytes.len(), 32 + plaintext.len() + 16);
+        assert_eq!(bytes[0], 0xA1);
+        assert_eq!(bytes[1], 0, "no flags");
+        assert_eq!(bytes[2..4], 7u16.to_be_bytes());
+        assert_eq!(bytes[4..20], crypto::id_to_bytes(MAC).unwrap());
+        assert_eq!(bytes[20..32], nonce);
+        assert_eq!(bytes[32..], frame.ciphertext[..]);
+
+        let compressed = seal_frame(&key(), Scope::Topic(TOPIC), MAC, 7, &nonce, plaintext, true);
+        assert_eq!(compressed.encode_binary().unwrap()[1], 1, "bit 0: DEFLATE");
+    }
+
+    #[test]
+    fn a_binary_envelope_is_the_same_ciphertext_as_the_json_one() {
+        let nonce = [6u8; NONCE_LEN];
+        let frame = seal_frame(
+            &key(),
+            Scope::Topic(TOPIC),
+            PHONE,
+            1,
+            &nonce,
+            b"{\"hello\":1}",
+            false,
+        );
+        let json_form = encode(&frame.to_envelope());
+        let binary_form = frame.encode_binary().unwrap();
+        let from_json = parse_frame(&json_form).unwrap();
+        let from_binary = parse_frame(&binary_form).unwrap();
+        assert!(!from_json.binary && from_binary.binary);
+        assert_eq!(
+            Frame {
+                binary: false,
+                ..from_binary.clone()
+            },
+            from_json
+        );
+        // So both open under the same key and the same authenticated data.
+        assert_eq!(
+            open_frame(&key(), Scope::Topic(TOPIC), &from_json),
+            open_frame(&key(), Scope::Topic(TOPIC), &from_binary)
+        );
+        assert_eq!(
+            open_frame(&key(), Scope::Topic(TOPIC), &from_binary).unwrap(),
+            b"{\"hello\":1}"
+        );
+    }
+
+    #[test]
+    fn a_binary_message_opens_to_the_message_that_was_sealed() {
+        let plain = Plain::new("answer.submit", json!({"text": "ok", "n": [1, 2, 3]}), 99);
+        let bytes = binary_of(&plain, false);
+        assert_eq!(bytes[0], BINARY_MAGIC);
+        assert_eq!(open_bytes(&bytes), Ok(Opened::Message(plain.clone())));
+        let frame = parse_frame(&bytes).unwrap();
+        assert_eq!((frame.sender.as_str(), frame.kid), (MAC, 1));
+        // The JSON form of the same message opens to the same thing.
+        let json_bytes = seal_plain(&key(), Scope::Topic(TOPIC), MAC, 1, &plain);
+        assert_eq!(open_bytes(&json_bytes), Ok(Opened::Message(plain)));
+    }
+
+    #[test]
+    fn the_binary_form_saves_the_json_text_and_the_base64() {
+        let plain = Plain::new("request.new", json!({"text": "x".repeat(3000)}), 1);
+        let plaintext = serde_json::to_vec(&plain).unwrap().len();
+        let binary = binary_of(&plain, false);
+        let json_form = seal_plain(&key(), Scope::Topic(TOPIC), MAC, 1, &plain);
+        assert_eq!(binary.len(), 32 + plaintext + 16);
+        assert!(
+            binary.len() * 4 < json_form.len() * 3,
+            "{} bytes against {}",
+            binary.len(),
+            json_form.len()
+        );
+        // The shortest message still saves the fixed part of the JSON envelope.
+        let ping = Plain::new("pong", json!({"t": 1}), 1);
+        assert!(
+            binary_of(&ping, false).len() + 40
+                < seal_plain(&key(), Scope::Topic(TOPIC), MAC, 1, &ping).len()
+        );
+    }
+
+    #[test]
+    fn compression_works_the_same_in_a_binary_envelope() {
+        let plain = list_plain();
+        let packed = binary_of(&plain, true);
+        let frame = parse_frame(&packed).unwrap();
+        assert!(frame.binary && frame.compressed);
+        assert_eq!(packed[1] & 1, 1);
+        assert_eq!(open_bytes(&packed), Ok(Opened::Message(plain.clone())));
+        assert!(packed.len() * 2 < binary_of(&plain, false).len());
+
+        // A short message and a push are not compressed, as in the JSON form.
+        let short = Plain::new("agents.delta", json!({"rev": 2}), 1);
+        assert!(!parse_frame(&binary_of(&short, true)).unwrap().compressed);
+
+        // The flag is part of the authenticated data: clearing it, or setting it on a plain one, fails to open.
+        let mut cleared = packed.clone();
+        cleared[1] = 0;
+        assert_eq!(open_bytes(&cleared), Err(EnvelopeError::Auth));
+        let mut set = binary_of(&short, false);
+        set[1] = 1;
+        assert_eq!(open_bytes(&set), Err(EnvelopeError::Auth));
+    }
+
+    #[test]
+    fn the_binary_header_is_bound_to_the_ciphertext() {
+        let plain = Plain::new("ping", json!({"t": 1}), 1);
+        let bytes = binary_of(&plain, false);
+        assert!(open_bytes(&bytes).is_ok());
+        // kid, sender and nonce (offsets 2..4, 4..20, 20..32) are authenticated, byte by byte.
+        for index in 2..32 {
+            let mut bad = bytes.clone();
+            bad[index] ^= 0x01;
+            assert_eq!(open_bytes(&bad), Err(EnvelopeError::Auth), "byte {index}");
+        }
+        // So is every byte of the ciphertext and the tag.
+        for index in 32..bytes.len() {
+            let mut bad = bytes.clone();
+            bad[index] ^= 0x80;
+            assert_eq!(open_bytes(&bad), Err(EnvelopeError::Auth), "byte {index}");
+        }
+        // And the topic and the domain, exactly as for the JSON form.
+        let frame = parse_frame(&bytes).unwrap();
+        assert_eq!(
+            open_frame(&key(), Scope::Topic("ah/u/d/other"), &frame),
+            Err(EnvelopeError::Auth)
+        );
+        assert_eq!(
+            open_frame(&key(), Scope::Push, &frame),
+            Err(EnvelopeError::Auth)
+        );
+    }
+
+    #[test]
+    fn a_binary_envelope_is_parsed_strictly() {
+        let good = binary_of(&Plain::new("ping", json!({"t": 1}), 1), false);
+        assert!(parse_frame(&good).is_ok());
+        // Shorter than the header and the tag.
+        for len in [1, 2, 31, 32, 47] {
+            assert_eq!(
+                parse_frame(&good[..len]),
+                Err(EnvelopeError::Malformed),
+                "{len} bytes"
+            );
+        }
+        // The shortest valid one is an empty plaintext: it parses, and fails to authenticate or to read.
+        let empty = binary_around(b"", false);
+        assert_eq!(empty.len(), 48);
+        assert!(parse_frame(&empty).is_ok());
+        assert_eq!(open_bytes(&empty), Err(EnvelopeError::Malformed));
+        // Reserved flag bits.
+        for flags in [0x02u8, 0x04, 0x80, 0xfe, 0xff] {
+            let mut bad = good.clone();
+            bad[1] = flags;
+            assert_eq!(
+                parse_frame(&bad),
+                Err(EnvelopeError::Malformed),
+                "flags {flags:#x}"
+            );
+        }
+        // Over the broker's limit, whichever format it is in.
+        let mut huge = vec![BINARY_MAGIC];
+        huge.resize(MAX_ENVELOPE_BYTES + 1, 0);
+        assert_eq!(parse_frame(&huge), Err(EnvelopeError::TooLarge));
+        // Anything that does not start with the magic is read as JSON.
+        assert_eq!(parse_frame(b"\x01\x02"), Err(EnvelopeError::Malformed));
+        assert_eq!(parse_frame(b""), Err(EnvelopeError::Malformed));
+        let json_form = seal_plain(
+            &key(),
+            Scope::Topic(TOPIC),
+            MAC,
+            1,
+            &Plain::new("ping", json!({}), 1),
+        );
+        assert!(!parse_frame(&json_form).unwrap().binary);
+    }
+
+    #[test]
+    fn the_mac_refuses_a_compressed_binary_envelope_from_a_phone() {
+        let packed = binary_of(&list_plain(), true);
+        assert!(parse_frame(&packed).is_ok());
+        assert_eq!(
+            parse_frame_from_phone(&packed),
+            Err(EnvelopeError::Malformed)
+        );
+        let plain = binary_of(&list_plain(), false);
+        assert!(parse_frame_from_phone(&plain).is_ok());
+        // The same rule for the JSON form.
+        let json_packed =
+            seal_plain_with(&key(), Scope::Topic(TOPIC), PHONE, 1, &list_plain(), true);
+        assert_eq!(
+            parse_frame_from_phone(&json_packed),
+            Err(EnvelopeError::Malformed)
+        );
+    }
+
+    #[test]
+    fn a_sender_that_does_not_fit_the_binary_header_is_sent_as_json() {
+        let plain = Plain::new("ping", json!({"t": 1}), 1);
+        let seal = |sender: &str, kid: u32, scope: Scope<'_>| {
+            seal_plain_as(&key(), scope, sender, kid, &plain, false, Format::Binary)
+        };
+        let topic = Scope::Topic(TOPIC);
+        assert_eq!(seal(MAC, 1, topic)[0], BINARY_MAGIC);
+        assert_eq!(seal(MAC, 65_535, topic)[0], BINARY_MAGIC);
+        // A key id over 16 bits, a sender that is not an id, and an id whose padding bits are set.
+        let tampered = format!("{}b", "a".repeat(25));
+        for (sender, kid) in [(MAC, 65_536), ("macid", 1), (tampered.as_str(), 1)] {
+            let bytes = seal(sender, kid, topic);
+            assert_eq!(bytes[0], b'{', "{sender} / {kid}");
+            let env = parse(&bytes).unwrap();
+            assert_eq!(open_plain(&key(), topic, &env).unwrap(), plain);
+        }
+        // A push is JSON whatever was asked for.
+        assert_eq!(seal(MAC, 1, Scope::Push)[0], b'{');
+    }
+
+    // ------------------------------------------------------------ blob frames
+
+    fn chunk_head() -> Plain {
+        Plain {
+            i: "msg-1".into(),
+            t: "asset.chunk".into(),
+            ts: 1_700_000_000_000,
+            b: json!({"assetId": "a1", "index": 2, "total": 3, "size": 12345}),
+        }
+    }
+
+    fn raw_bytes(len: usize) -> Vec<u8> {
+        (0..len).map(|i| (i % 251) as u8).collect()
+    }
+
+    #[test]
+    fn a_blob_frame_carries_the_header_and_the_raw_bytes() {
+        let bytes = raw_bytes(1000);
+        let wire = seal_blob(&key(), Scope::Topic(TOPIC), MAC, 1, &chunk_head(), &bytes).unwrap();
+        let frame = parse_frame(&wire).unwrap();
+        assert!(frame.binary && !frame.compressed);
+        assert_eq!(
+            open_message(&key(), Scope::Topic(TOPIC), &frame),
+            Ok(Opened::Blob {
+                head: chunk_head(),
+                bytes: bytes.clone()
+            })
+        );
+        // The plaintext is the marker, the length of the header, the header, then the bytes: no base64 anywhere.
+        let plaintext = open_frame(&key(), Scope::Topic(TOPIC), &frame).unwrap();
+        let header = serde_json::to_vec(&chunk_head()).unwrap();
+        assert_eq!(plaintext[0], 0x01);
+        assert_eq!(plaintext[1..5], (header.len() as u32).to_be_bytes());
+        assert_eq!(plaintext[5..5 + header.len()], header[..]);
+        assert_eq!(plaintext[5 + header.len()..], bytes[..]);
+        assert_eq!(wire.len(), 32 + plaintext.len() + 16);
+    }
+
+    #[test]
+    fn a_full_chunk_takes_far_fewer_bytes_as_a_blob_frame_than_as_json() {
+        let bytes = raw_bytes(ASSET_CHUNK_BYTES);
+        let wire = seal_blob(&key(), Scope::Topic(TOPIC), MAC, 1, &chunk_head(), &bytes).unwrap();
+        // The bytes and a few hundred more: the header, the length, the marker and the envelope.
+        assert!(wire.len() < ASSET_CHUNK_BYTES + 700, "{} bytes", wire.len());
+        // The JSON form encodes the bytes in base64 and then the whole message in base64 again.
+        let mut json_head = chunk_head();
+        json_head.b["data"] = json!(crypto::b64u(&bytes));
+        let json_form = seal_plain(&key(), Scope::Topic(TOPIC), MAC, 1, &json_head);
+        assert!(json_form.len() < MAX_ENVELOPE_BYTES);
+        assert!(
+            wire.len() * 100 < json_form.len() * 60,
+            "{} against {}",
+            wire.len(),
+            json_form.len()
+        );
+    }
+
+    #[test]
+    fn a_blob_frame_is_bound_to_its_topic_and_cannot_be_a_push() {
+        let wire = seal_blob(&key(), Scope::Topic(TOPIC), MAC, 1, &chunk_head(), b"abc").unwrap();
+        let frame = parse_frame(&wire).unwrap();
+        assert_eq!(
+            open_message(&key(), Scope::Topic("ah/u/d/other"), &frame),
+            Err(EnvelopeError::Auth)
+        );
+        // A push never carries a blob: it is not built, and one built by hand is refused.
+        assert!(seal_blob(&key(), Scope::Push, MAC, 1, &chunk_head(), b"abc").is_none());
+        let plaintext = encode_blob(&chunk_head(), b"abc").unwrap();
+        let forged = seal_frame(
+            &key(),
+            Scope::Push,
+            MAC,
+            1,
+            &[1u8; NONCE_LEN],
+            &plaintext,
+            false,
+        );
+        assert_eq!(
+            open_message(&key(), Scope::Push, &forged),
+            Err(EnvelopeError::Malformed)
+        );
+    }
+
+    #[test]
+    fn a_blob_is_never_read_out_of_a_compressed_envelope() {
+        // A blob has exactly one form: raw behind its header, never compressed. A plaintext that inflates to one is
+        // refused, whatever the sender claims.
+        let plaintext = encode_blob(&chunk_head(), &raw_bytes(100)).unwrap();
+        let wire = binary_around(&compress(&plaintext), true);
+        assert_eq!(open_bytes(&wire), Err(EnvelopeError::Malformed));
+    }
+
+    #[test]
+    fn malformed_blob_plaintexts_are_refused() {
+        let header = serde_json::to_vec(&chunk_head()).unwrap();
+        let blob = |declared: u32, header: &[u8], tail: &[u8]| {
+            let mut out = vec![BLOB_MARKER];
+            out.extend_from_slice(&declared.to_be_bytes());
+            out.extend_from_slice(header);
+            out.extend_from_slice(tail);
+            out
+        };
+        let good_len = header.len() as u32;
+        let cases: Vec<(&str, Vec<u8>)> = vec![
+            ("only the marker", vec![BLOB_MARKER]),
+            ("a cut length", vec![BLOB_MARKER, 0, 0, 0]),
+            ("a length past the end", blob(good_len + 1, &header, b"")),
+            ("a length way past the end", blob(u32::MAX, &header, b"abc")),
+            (
+                "a header over the limit",
+                blob(
+                    BLOB_HEADER_MAX_BYTES as u32 + 1,
+                    &vec![b' '; BLOB_HEADER_MAX_BYTES + 1],
+                    b"",
+                ),
+            ),
+            ("a header that is not JSON", blob(5, b"nope!", b"abc")),
+            ("a header that is not a message", blob(2, b"{}", b"abc")),
+            ("a header that is an array", blob(2, b"[]", b"abc")),
+            (
+                "more bytes than a chunk",
+                blob(good_len, &header, &raw_bytes(ASSET_CHUNK_BYTES + 1)),
+            ),
+            (
+                "a plaintext over the limit",
+                blob(good_len, &header, &vec![0u8; MAX_PLAIN_BYTES]),
+            ),
+            ("a plaintext that is neither", b"\x02{}".to_vec()),
+            ("a plaintext that is not JSON", b"[1,2]".to_vec()),
+        ];
+        for (name, plaintext) in cases {
+            let wire = binary_around(&plaintext, false);
+            assert_eq!(open_bytes(&wire), Err(EnvelopeError::Malformed), "{name}");
+        }
+        // The same bytes with a header that is right are fine, with and without bytes behind it.
+        for tail in [&b""[..], b"x", &raw_bytes(ASSET_CHUNK_BYTES)] {
+            let wire = binary_around(&blob(good_len, &header, tail), false);
+            assert!(matches!(
+                open_bytes(&wire),
+                Ok(Opened::Blob { bytes, .. }) if bytes == tail
+            ));
+        }
+    }
+
+    #[test]
+    fn a_blob_cannot_be_built_with_an_oversized_header_or_chunk() {
+        let mut long_head = chunk_head();
+        long_head.b["pad"] = json!("x".repeat(BLOB_HEADER_MAX_BYTES));
+        assert_eq!(
+            encode_blob(&long_head, b"abc"),
+            Err(EnvelopeError::TooLarge)
+        );
+        assert!(seal_blob(&key(), Scope::Topic(TOPIC), MAC, 1, &long_head, b"abc").is_none());
+        assert_eq!(
+            encode_blob(&chunk_head(), &raw_bytes(ASSET_CHUNK_BYTES + 1)),
+            Err(EnvelopeError::TooLarge)
+        );
+        assert!(encode_blob(&chunk_head(), &raw_bytes(ASSET_CHUNK_BYTES)).is_ok());
+        // A sender the binary header cannot hold has no blob form: the caller sends the JSON message.
+        assert!(seal_blob(
+            &key(),
+            Scope::Topic(TOPIC),
+            "macid",
+            1,
+            &chunk_head(),
+            b"abc"
+        )
+        .is_none());
+        assert!(seal_blob(
+            &key(),
+            Scope::Topic(TOPIC),
+            MAC,
+            70_000,
+            &chunk_head(),
+            b"abc"
+        )
+        .is_none());
     }
 }

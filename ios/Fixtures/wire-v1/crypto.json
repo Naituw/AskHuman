@@ -39,6 +39,80 @@
       "text": "AQIDBAU"
     }
   ],
+  "binaryEnvelopes": [
+    {
+      "envelope": "a1000001616fa16e2797950fcedc1b43dae1e0d10708090a0b0c0d0e0f1011128f755373c2ed725457d73303a40dfb786090fe2103ca390aa9c73d2673ca4aadc6151352f3784b38142579130d027713922556a6fce186ba7ca0dc547a190abc5b36ad9aa55180ba12b90fb56613c97ac4a7967443a67d61f557f09889bd5be96bc5a81927efacfa2ec7bf170e55bf91832f1a2a2d809fed12629e435719b2eb232bd53355f2c6117a65",
+      "from": "mfx2c3rhs6kq7tw4dnb5vypa2e",
+      "key": "52264c43b0f152ab1f4bc644510d8a38bc6a0229ba17cc25e14584b730463446",
+      "kid": 1,
+      "name": "mac to phone message (binary)",
+      "nonce": "0708090a0b0c0d0e0f101112",
+      "plaintext": "{\"i\":\"AwMDAwMDAwMDAwMDAwMDAw\",\"t\":\"request.new\",\"ts\":1792900000000,\"b\":{\"full\":true,\"note\":\"unicode 你好 😀\",\"rev\":8}}",
+      "scope": "topic",
+      "topic": "ah/askhuman01/d/3qjxfkln6hdpmcvbtzaswe4r5y"
+    },
+    {
+      "envelope": "a1000001dc1372a96df1c6f60aa19e412b1391ee08090a0b0c0d0e0f1011121343a03bae145c21208c0775181e3fdef4e664a296ea43feec2b91596194a4e7de44385e9822ea28b4916fce3034b831fa466a221bc58bc84106555668f574879bb608103270e4eb91fa1e9024b9c70bb9520d3e4dd290183df87437e97d95557e4670d7bda53357690d66b3d2ec17c4366e46f4",
+      "from": "3qjxfkln6hdpmcvbtzaswe4r5y",
+      "key": "ea5263c27a84baf8d3994fbc3e7e1a07d2638b0e025d85f882e4a6706c4b6c6a",
+      "kid": 1,
+      "name": "phone to mac message (binary)",
+      "nonce": "08090a0b0c0d0e0f10111213",
+      "plaintext": "{\"i\":\"BAQEBAQEBAQEBAQEBAQEBA\",\"t\":\"hello\",\"ts\":1792900000500,\"b\":{\"nonce\":\"q3ZkL1m0Xw4\",\"proto\":1}}",
+      "scope": "topic",
+      "topic": "ah/askhuman01/u/mfx2c3rhs6kq7tw4dnb5vypa2e"
+    },
+    {
+      "envelope": "a1000102616fa16e2797950fcedc1b43dae1e0d1090a0b0c0d0e0f10111213149075c830d0b0fba4f27efe60fe5a8bc6241feb1893acc7e26f75326233865636a4a0f8a5ad72f0bf4d725192e0cf2157cc8ad2ae2c34cee1a642ea988c78901166a646aa7e350bdc5bbf8e6148de8a849c09b62e6faa5de3fdf40d7e90228ee53d286be6a780b9d077010cec08778eaf92c3d6c13e5243b18a69dba7adcfc51faa58de8bad5baffec28f",
+      "from": "mfx2c3rhs6kq7tw4dnb5vypa2e",
+      "key": "52264c43b0f152ab1f4bc644510d8a38bc6a0229ba17cc25e14584b730463446",
+      "kid": 258,
+      "name": "key id above 255",
+      "nonce": "090a0b0c0d0e0f1011121314",
+      "plaintext": "{\"i\":\"AwMDAwMDAwMDAwMDAwMDAw\",\"t\":\"request.new\",\"ts\":1792900000000,\"b\":{\"full\":true,\"note\":\"unicode 你好 😀\",\"rev\":8}}",
+      "scope": "topic",
+      "topic": "ah/askhuman01/d/3qjxfkln6hdpmcvbtzaswe4r5y"
+    }
+  ],
+  "blobFrames": [
+    {
+      "bytes": "030a11181f262d343b424950575e656c737a81888f969da4abb2b9c0c7ced5dce3eaf1f8ff060d141b222930373e454c535a61686f767d848b9299a0a7aeb5bcc3cad1d8dfe6edf4fb020910171e252c333a41484f565d646b727980878e959ca3aab1b8bfc6cdd4dbe2e9f0f7fe050c131a21282f363d444b525960676e757c838a91989fa6adb4bbc2c9d0d7dee5ecf3fa01080f161d242b323940474e555c636a71787f868d949ba2a9b0b7bec5ccd3dae1e8eff6fd040b121920272e353c434a51585f666d747b828990979ea5acb3bac1c8cfd6dde4ebf2f900070e151c232a31383f464d545b626970777e858c939aa1a8afb6bdc4cbd2d9e0e7eef5fc030a11181f262d343b424950575e656c737a81888f969da4abb2b9c0c7ced5dce3eaf1f8ff060d141b222930",
+      "frame": "a1000001616fa16e2797950fcedc1b43dae1e0d1131415161718191a1b1c1d1e7200beee4f26256755aab96b6dfd2862ee65781afa75aed61b3ad27a587e54a9e62c37add6e3adf088ad0835dbcf04bfc3c51f08efc92b1b5ce2f2a145bf5aa2ce64a298a3e8560dcab55d84b65b91add6abd258cafde2a40f8b43f14a50e3b1a4f22020b4268489f5fecfff3438fb4d8388db80f4f00c1152cb967cefebbdf5c1421109878243c67098555b8331aaeca41a2d5c55be3fa71e8508ce10606a5f991ed987b680b8c9b953c11fade0a309ccd49d64fe9957193be1cdba2f335311707f046570823f168916855cbe536bc8a06eb82352c520d062ed42287cb8f201788b1de9afed62ad63ebcbaa9e246ca6817ae282b094723b06d0557fdbceaf5a16c46a733ef8dc8971a139bc1f24d217d1c041cbebbc0382bfdc6fb9ed9cecd9f825fade425e1ed81006f5d3bdfa48a91b552de56bf43f9bc8ded4e66bcc5005add421d01a1d51229fc7818b9ddf4996bcf3a77a8de0cd2cc5c74037bd3fb8362605e5996533b8087264ef5aa29a4ad1aa07bf5b418e4d589f94d403e8cb7ed826af8c2776ba98673841d9918cf72ff8cb21bb6e698906a77f4d70609a711e1d12eb964b4a6bd7f96a1264f041623d8d416a1857ed789c7483f55b19a65d0bf4f6da8b5eabc2b57219abe0d21033ef9ad771c509ed4637cb31d01b0563ad57b2b0d00758f59af4ed0acc95af9d0391573a8eb165bfcd380e958495f57319254149cf9ea4f4d6f2a17034b47f86267603e3d444ba84cfd287db992d26f5f1a1",
+      "from": "mfx2c3rhs6kq7tw4dnb5vypa2e",
+      "head": "{\"i\":\"CAgICAgICAgICAgICAgICA\",\"t\":\"asset.chunk\",\"ts\":1792900003000,\"b\":{\"assetId\":\"ab2cdef3ghijk4lmnopq5rstuv\",\"index\":1,\"sha256\":\"e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855\",\"size\":500000,\"total\":3}}",
+      "key": "52264c43b0f152ab1f4bc644510d8a38bc6a0229ba17cc25e14584b730463446",
+      "kid": 1,
+      "name": "asset chunk (mac to phone)",
+      "nonce": "131415161718191a1b1c1d1e",
+      "scope": "topic",
+      "topic": "ah/askhuman01/d/3qjxfkln6hdpmcvbtzaswe4r5y"
+    },
+    {
+      "bytes": "007b01ff80000d1a2734414e5b6875828f9ca9b6c3d0ddeaf704111e2b3845525f6c798693a0adbac7d4e1eefb0815222f3c495663707d8a97a4b1becbd8e5f2",
+      "frame": "a1000001dc1372a96df1c6f60aa19e412b1391ee1415161718191a1b1c1d1e1f5753752b14874eff5d2999ae5ebe1f64bba0a9f9e92ae29afbb9a8b8170a5d59b12000336cfeb7c5282505057b49a3717372dc4f4fbd192c30bdeb5101e8f13dd533be5b55f80300432d7103ed6e11382a5e61ee86e1ca2cb6126cf13198fa2133fa36c6dcc8e8c6530a8d15ae7708f6fd16d77299a811bf552e6d1b223d4a00f8fce7be13b38a9b592dbce7051f3530b8c46cd4c7ce93bf6a308c629cd24e952905394ec4c6fba7c372916243614f844bca1b3e51650328fc2ce56b23424cd833bf352ea90d0f9d65183f3849948a14f8",
+      "from": "3qjxfkln6hdpmcvbtzaswe4r5y",
+      "head": "{\"i\":\"CQkJCQkJCQkJCQkJCQkJCQ\",\"t\":\"upload.chunk\",\"ts\":1792900004000,\"b\":{\"index\":0,\"uploadId\":\"bc3defg4hijkl5mnopqr6stuvw\"}}",
+      "key": "ea5263c27a84baf8d3994fbc3e7e1a07d2638b0e025d85f882e4a6706c4b6c6a",
+      "kid": 1,
+      "name": "upload chunk (phone to mac)",
+      "nonce": "1415161718191a1b1c1d1e1f",
+      "scope": "topic",
+      "topic": "ah/askhuman01/u/mfx2c3rhs6kq7tw4dnb5vypa2e"
+    }
+  ],
+  "compressedBinaryEnvelopes": [
+    {
+      "envelope": "a1010001616fa16e2797950fcedc1b43dae1e0d10a0b0c0d0e0f1011121314154b1189898b42d65beaa37769c27cc9019468b140e54b6bcc1df2580db66233db3c77ab1a117cd3c7034d2a15237e4041e2a41979c17dfad7f312522a258adba1cbaf3cdd7640933ed70768f3e3732d798ad272db699e07b4397ff112ae1db0cc8b9303b8a8759d13df613d2833fcee7ead8c0e0de2907d820a915e3e36e045b748012906a7058c3afe2dab8438e6489926143c34d6ac63708f0fb4abeb364f653590aa61d67fdd29e4d97b3b6f9db2e4ed358b478c2d6e2132b84ea36c88495f862bd1efa97ae00be930d0fab23b589c2b9f9d4e2220001ed0f3484cf9a9a3ae84385a4c21f0b0789f6a98d2d7d2018c33db256a9686955d1f06db1ac7348397292daade17db4fc3b75c67d66da900e9da6add58f6a1bc756a873a9bd9e2faee033248a50b6dad94fd7dcc1562daba199f5dd1353c9e109119882e8f46fff03de07865bb7b8934975f4dc2dd221ed600bf4dd7be980cf004a83e7772a13e51dac4900a858552db3b9ed081039b8efc68b4c362ebfe6fc70bd649d12f92edb9c37506422c317d7af8a6a24e509a9820ba146633dd75859c6e696d754cf3a97f859b090c304da095567c161738b1f2c6c209bc4c7d8b6e8d",
+      "from": "mfx2c3rhs6kq7tw4dnb5vypa2e",
+      "key": "52264c43b0f152ab1f4bc644510d8a38bc6a0229ba17cc25e14584b730463446",
+      "kid": 1,
+      "name": "compressed list stream (mac to phone, binary)",
+      "nonce": "0a0b0c0d0e0f101112131415",
+      "plaintext": "{\"i\":\"BwcHBwcHBwcHBwcHBwcHBw\",\"t\":\"agents.snapshot\",\"ts\":1792900002000,\"b\":{\"agents\":[{\"activeElapsedSecs\":120,\"canInterject\":{\"ok\":true},\"currentTool\":\"Shell: cargo test\",\"followed\":false,\"key\":\"claude:session-0\",\"kind\":\"claude\",\"kindLabel\":\"Claude Code\",\"lastActivityAt\":1792900000000,\"project\":{\"key\":\"/Users/me/project\",\"name\":\"project\"},\"sessionId\":\"session-0\",\"startedAt\":1792899000000,\"state\":\"working\",\"title\":\"Refactor module 0\",\"turnSteps\":7},{\"activeElapsedSecs\":120,\"canInterject\":{\"ok\":true},\"currentTool\":\"Shell: cargo test\",\"followed\":false,\"key\":\"claude:session-1\",\"kind\":\"claude\",\"kindLabel\":\"Claude Code\",\"lastActivityAt\":1792900000001,\"project\":{\"key\":\"/Users/me/project\",\"name\":\"project\"},\"sessionId\":\"session-1\",\"startedAt\":1792899000001,\"state\":\"working\",\"title\":\"Refactor module 1\",\"turnSteps\":7},{\"activeElapsedSecs\":120,\"canInterject\":{\"ok\":true},\"currentTool\":\"Shell: cargo test\",\"followed\":false,\"key\":\"claude:session-2\",\"kind\":\"claude\",\"kindLabel\":\"Claude Code\",\"lastActivityAt\":1792900000002,\"project\":{\"key\":\"/Users/me/project\",\"name\":\"project\"},\"sessionId\":\"session-2\",\"startedAt\":1792899000002,\"state\":\"working\",\"title\":\"Refactor module 2\",\"turnSteps\":7},{\"activeElapsedSecs\":120,\"canInterject\":{\"ok\":true},\"currentTool\":\"Shell: cargo test\",\"followed\":false,\"key\":\"claude:session-3\",\"kind\":\"claude\",\"kindLabel\":\"Claude Code\",\"lastActivityAt\":1792900000003,\"project\":{\"key\":\"/Users/me/project\",\"name\":\"project\"},\"sessionId\":\"session-3\",\"startedAt\":1792899000003,\"state\":\"working\",\"title\":\"重构模块 3\",\"turnSteps\":7},{\"activeElapsedSecs\":120,\"canInterject\":{\"ok\":true},\"currentTool\":\"Shell: cargo test\",\"followed\":false,\"key\":\"claude:session-4\",\"kind\":\"claude\",\"kindLabel\":\"Claude Code\",\"lastActivityAt\":1792900000004,\"project\":{\"key\":\"/Users/me/project\",\"name\":\"project\"},\"sessionId\":\"session-4\",\"startedAt\":1792899000004,\"state\":\"working\",\"title\":\"Refactor module 4\",\"turnSteps\":7},{\"activeElapsedSecs\":120,\"canInterject\":{\"ok\":true},\"currentTool\":\"Shell: cargo test\",\"followed\":false,\"key\":\"claude:session-5\",\"kind\":\"claude\",\"kindLabel\":\"Claude Code\",\"lastActivityAt\":1792900000005,\"project\":{\"key\":\"/Users/me/project\",\"name\":\"project\"},\"sessionId\":\"session-5\",\"startedAt\":1792899000005,\"state\":\"working\",\"title\":\"Refactor module 5\",\"turnSteps\":7}],\"epoch\":\"fixtureepoch0001\",\"rev\":3}}",
+      "scope": "topic",
+      "topic": "ah/askhuman01/d/3qjxfkln6hdpmcvbtzaswe4r5y"
+    }
+  ],
   "compressedEnvelopes": [
     {
       "envelope": "{\"v\":1,\"f\":\"mfx2c3rhs6kq7tw4dnb5vypa2e\",\"k\":1,\"n\":\"BQYHCAkKCwwNDg8Q\",\"c\":\"efK12XL6DLAL2wVlb6QWDQi_JzctkiRcBAjImTNL7rgjcn87EyzrhV0zutn5n7vLjCWdXuBLRR32YzM76fBuSIsWIKiXWkKqw7pYCRGQC9mCy1F8djcI6SrqPI96xjup4B6CgQVXySVZACYK7hfQc6GU2sVoOy34LC6RSX39xT43NV0XVzAhZgK5QVTk9Vmd9SChGBX52qXqNRjnpfOLoKs54dTDIIU05OHrvzYvFp6Epq08U4aRRl5tPkm3uM0xpPaf2RQ4zdEGzqY7fxAh_bXOQfjgoTCfzXAgp_ZjM-qCJLPjCDZzb7glcptQs9sBONcHE8aCVHDa85gAfizTJoTHkQC9ZmrRvX3ojp-F4GahSQRBSRnci10bUHmz6HVNwqSq5XNmcQodBTekmGWOCKYTI4i25-oiuC29zXphjmPvAvqtwRUEbEiZLkNAMGyhE4caiweazYi6dFatSqhAnS-cL9UdM74Xwn4A2lECvXICutEb_KGlF6DKecdmPJpI4Ht2lLRuwZBEzOnpP903GAmazIqAaVhNxrdHeq6JZDqNLSlnAecLHaOwFMXeBK4mSGAst_rq_Q\",\"z\":1}",
@@ -96,6 +170,169 @@
       "plaintext": "{\"i\":\"BgYGBgYGBgYGBgYGBgYGBg\",\"t\":\"push\",\"ts\":1792900001000,\"b\":{\"k\":\"ask\",\"mac\":\"Home Mac\",\"text\":\"Which approach?\"}}",
       "scope": "push",
       "topic": null
+    }
+  ],
+  "malformedFrames": [
+    {
+      "frame": "",
+      "key": "52264c43b0f152ab1f4bc644510d8a38bc6a0229ba17cc25e14584b730463446",
+      "name": "empty",
+      "scope": "topic",
+      "topic": "ah/askhuman01/d/3qjxfkln6hdpmcvbtzaswe4r5y"
+    },
+    {
+      "frame": "a1",
+      "key": "52264c43b0f152ab1f4bc644510d8a38bc6a0229ba17cc25e14584b730463446",
+      "name": "the magic alone",
+      "scope": "topic",
+      "topic": "ah/askhuman01/d/3qjxfkln6hdpmcvbtzaswe4r5y"
+    },
+    {
+      "frame": "a1000001616fa16e2797950fcedc1b43dae1e0d10b0c0d0e0f",
+      "key": "52264c43b0f152ab1f4bc644510d8a38bc6a0229ba17cc25e14584b730463446",
+      "name": "cut inside the nonce",
+      "scope": "topic",
+      "topic": "ah/askhuman01/d/3qjxfkln6hdpmcvbtzaswe4r5y"
+    },
+    {
+      "frame": "a1000001616fa16e2797950fcedc1b43dae1e0d10b0c0d0e0f101112131415165de27d264d739428279a75b1fdf1c7",
+      "key": "52264c43b0f152ab1f4bc644510d8a38bc6a0229ba17cc25e14584b730463446",
+      "name": "the header without a tag",
+      "scope": "topic",
+      "topic": "ah/askhuman01/d/3qjxfkln6hdpmcvbtzaswe4r5y"
+    },
+    {
+      "frame": "a2000001616fa16e2797950fcedc1b43dae1e0d10b0c0d0e0f101112131415165de27d264d739428279a75b1fdf1c7ff65dcd8d6bcf0883510a2156f210ea82143d91166ca1fe47e6ce903cd4204c5013ed0930226d88f07c4fe4190a75078e11ff6a802f8b2891732bbfc50814a6a74447044191ebbc6392e77b274777dadd6168652ca3964f12b5cf8a45784b7831b6a00584184e9e9dbb4989a5bc73049602d8e6b2d47151929be33",
+      "key": "52264c43b0f152ab1f4bc644510d8a38bc6a0229ba17cc25e14584b730463446",
+      "name": "another magic",
+      "scope": "topic",
+      "topic": "ah/askhuman01/d/3qjxfkln6hdpmcvbtzaswe4r5y"
+    },
+    {
+      "frame": "a1020001616fa16e2797950fcedc1b43dae1e0d10b0c0d0e0f101112131415165de27d264d739428279a75b1fdf1c7ff65dcd8d6bcf0883510a2156f210ea82143d91166ca1fe47e6ce903cd4204c5013ed0930226d88f07c4fe4190a75078e11ff6a802f8b2891732bbfc50814a6a74447044191ebbc6392e77b274777dadd6168652ca3964f12b5cf8a45784b7831b6a00584184e9e9dbb4989a5bc73049602d8e6b2d47151929be33",
+      "key": "52264c43b0f152ab1f4bc644510d8a38bc6a0229ba17cc25e14584b730463446",
+      "name": "a reserved flag (bit 1)",
+      "scope": "topic",
+      "topic": "ah/askhuman01/d/3qjxfkln6hdpmcvbtzaswe4r5y"
+    },
+    {
+      "frame": "a1800001616fa16e2797950fcedc1b43dae1e0d10b0c0d0e0f101112131415165de27d264d739428279a75b1fdf1c7ff65dcd8d6bcf0883510a2156f210ea82143d91166ca1fe47e6ce903cd4204c5013ed0930226d88f07c4fe4190a75078e11ff6a802f8b2891732bbfc50814a6a74447044191ebbc6392e77b274777dadd6168652ca3964f12b5cf8a45784b7831b6a00584184e9e9dbb4989a5bc73049602d8e6b2d47151929be33",
+      "key": "52264c43b0f152ab1f4bc644510d8a38bc6a0229ba17cc25e14584b730463446",
+      "name": "a reserved flag (bit 7)",
+      "scope": "topic",
+      "topic": "ah/askhuman01/d/3qjxfkln6hdpmcvbtzaswe4r5y"
+    },
+    {
+      "frame": "a1fe0001616fa16e2797950fcedc1b43dae1e0d10b0c0d0e0f101112131415165de27d264d739428279a75b1fdf1c7ff65dcd8d6bcf0883510a2156f210ea82143d91166ca1fe47e6ce903cd4204c5013ed0930226d88f07c4fe4190a75078e11ff6a802f8b2891732bbfc50814a6a74447044191ebbc6392e77b274777dadd6168652ca3964f12b5cf8a45784b7831b6a00584184e9e9dbb4989a5bc73049602d8e6b2d47151929be33",
+      "key": "52264c43b0f152ab1f4bc644510d8a38bc6a0229ba17cc25e14584b730463446",
+      "name": "every reserved flag",
+      "scope": "topic",
+      "topic": "ah/askhuman01/d/3qjxfkln6hdpmcvbtzaswe4r5y"
+    },
+    {
+      "frame": "a1030001616fa16e2797950fcedc1b43dae1e0d10b0c0d0e0f101112131415165de27d264d739428279a75b1fdf1c7ff65dcd8d6bcf0883510a2156f210ea82143d91166ca1fe47e6ce903cd4204c5013ed0930226d88f07c4fe4190a75078e11ff6a802f8b2891732bbfc50814a6a74447044191ebbc6392e77b274777dadd6168652ca3964f12b5cf8a45784b7831b6a00584184e9e9dbb4989a5bc73049602d8e6b2d47151929be33",
+      "key": "52264c43b0f152ab1f4bc644510d8a38bc6a0229ba17cc25e14584b730463446",
+      "name": "the compression bit with a reserved one",
+      "scope": "topic",
+      "topic": "ah/askhuman01/d/3qjxfkln6hdpmcvbtzaswe4r5y"
+    },
+    {
+      "frame": "a1010001616fa16e2797950fcedc1b43dae1e0d10b0c0d0e0f101112131415165de27d264d739428279a75b1fdf1c7ff65dcd8d6bcf0883510a2156f210ea82143d91166ca1fe47e6ce903cd4204c5013ed0930226d88f07c4fe4190a75078e11ff6a802f8b2891732bbfc50814a6a74447044191ebbc6392e77b274777dadd6168652ca3964f12b5cf8a45784b7831b6a00584184e9e9dbb4989a5bc73049602d8e6b2d47151929be33",
+      "key": "52264c43b0f152ab1f4bc644510d8a38bc6a0229ba17cc25e14584b730463446",
+      "name": "the compression bit on a plain ciphertext",
+      "scope": "topic",
+      "topic": "ah/askhuman01/d/3qjxfkln6hdpmcvbtzaswe4r5y"
+    },
+    {
+      "frame": "a1000000616fa16e2797950fcedc1b43dae1e0d10b0c0d0e0f101112131415165de27d264d739428279a75b1fdf1c7ff65dcd8d6bcf0883510a2156f210ea82143d91166ca1fe47e6ce903cd4204c5013ed0930226d88f07c4fe4190a75078e11ff6a802f8b2891732bbfc50814a6a74447044191ebbc6392e77b274777dadd6168652ca3964f12b5cf8a45784b7831b6a00584184e9e9dbb4989a5bc73049602d8e6b2d47151929be33",
+      "key": "52264c43b0f152ab1f4bc644510d8a38bc6a0229ba17cc25e14584b730463446",
+      "name": "a changed key id",
+      "scope": "topic",
+      "topic": "ah/askhuman01/d/3qjxfkln6hdpmcvbtzaswe4r5y"
+    },
+    {
+      "frame": "a1000001616fa16e2797940fcedc1b43dae1e0d10b0c0d0e0f101112131415165de27d264d739428279a75b1fdf1c7ff65dcd8d6bcf0883510a2156f210ea82143d91166ca1fe47e6ce903cd4204c5013ed0930226d88f07c4fe4190a75078e11ff6a802f8b2891732bbfc50814a6a74447044191ebbc6392e77b274777dadd6168652ca3964f12b5cf8a45784b7831b6a00584184e9e9dbb4989a5bc73049602d8e6b2d47151929be33",
+      "key": "52264c43b0f152ab1f4bc644510d8a38bc6a0229ba17cc25e14584b730463446",
+      "name": "a changed sender",
+      "scope": "topic",
+      "topic": "ah/askhuman01/d/3qjxfkln6hdpmcvbtzaswe4r5y"
+    },
+    {
+      "frame": "a1000001616fa16e2797950fcedc1b43dae1e0d10b0c0d0e0f111112131415165de27d264d739428279a75b1fdf1c7ff65dcd8d6bcf0883510a2156f210ea82143d91166ca1fe47e6ce903cd4204c5013ed0930226d88f07c4fe4190a75078e11ff6a802f8b2891732bbfc50814a6a74447044191ebbc6392e77b274777dadd6168652ca3964f12b5cf8a45784b7831b6a00584184e9e9dbb4989a5bc73049602d8e6b2d47151929be33",
+      "key": "52264c43b0f152ab1f4bc644510d8a38bc6a0229ba17cc25e14584b730463446",
+      "name": "a changed nonce",
+      "scope": "topic",
+      "topic": "ah/askhuman01/d/3qjxfkln6hdpmcvbtzaswe4r5y"
+    },
+    {
+      "frame": "a1000001616fa16e2797950fcedc1b43dae1e0d10b0c0d0e0f101112131415165de27d264d739428269a75b1fdf1c7ff65dcd8d6bcf0883510a2156f210ea82143d91166ca1fe47e6ce903cd4204c5013ed0930226d88f07c4fe4190a75078e11ff6a802f8b2891732bbfc50814a6a74447044191ebbc6392e77b274777dadd6168652ca3964f12b5cf8a45784b7831b6a00584184e9e9dbb4989a5bc73049602d8e6b2d47151929be33",
+      "key": "52264c43b0f152ab1f4bc644510d8a38bc6a0229ba17cc25e14584b730463446",
+      "name": "a changed ciphertext",
+      "scope": "topic",
+      "topic": "ah/askhuman01/d/3qjxfkln6hdpmcvbtzaswe4r5y"
+    },
+    {
+      "frame": "a1000001616fa16e2797950fcedc1b43dae1e0d10b0c0d0e0f101112131415165de27d264d739428279a75b1fdf1c7ff65dcd8d6bcf0883510a2156f210ea82143d91166ca1fe47e6ce903cd4204c5013ed0930226d88f07c4fe4190a75078e11ff6a802f8b2891732bbfc50814a6a74447044191ebbc6392e77b274777dadd6168652ca3964f12b5cf8a45784b7831b6a00584184e9e9dbb4989a5bc73049602d8e6b2d47151929be32",
+      "key": "52264c43b0f152ab1f4bc644510d8a38bc6a0229ba17cc25e14584b730463446",
+      "name": "a changed tag",
+      "scope": "topic",
+      "topic": "ah/askhuman01/d/3qjxfkln6hdpmcvbtzaswe4r5y"
+    },
+    {
+      "frame": "a1000001616fa16e2797950fcedc1b43dae1e0d10b0c0d0e0f101112131415165de27d264d739428279a75b1fdf1c7ff65dcd8d6bcf0883510a2156f210ea82143d91166ca1fe47e6ce903cd4204c5013ed0930226d88f07c4fe4190a75078e11ff6a802f8b2891732bbfc50814a6a74447044191ebbc6392e77b274777dadd6168652ca3964f12b5cf8a45784b7831b6a00584184e9e9dbb4989a5bc73049602d8e6b2d47151929be33",
+      "key": "52264c43b0f152ab1f4bc644510d8a38bc6a0229ba17cc25e14584b730463446",
+      "name": "opened on another topic",
+      "scope": "topic",
+      "topic": "ah/askhuman01/d/other"
+    },
+    {
+      "frame": "a1000001616fa16e2797950fcedc1b43dae1e0d10c0d0e0f1011121314151617c8b3c8b26f65202efb0279b8cf35023e20",
+      "key": "52264c43b0f152ab1f4bc644510d8a38bc6a0229ba17cc25e14584b730463446",
+      "name": "a blob with only the marker",
+      "scope": "topic",
+      "topic": "ah/askhuman01/d/3qjxfkln6hdpmcvbtzaswe4r5y"
+    },
+    {
+      "frame": "a1000001616fa16e2797950fcedc1b43dae1e0d10d0e0f1011121314151617185173ee8e313ee0ca7ee4f43b9d2ca1bfa2552f89",
+      "key": "52264c43b0f152ab1f4bc644510d8a38bc6a0229ba17cc25e14584b730463446",
+      "name": "a blob with a cut length",
+      "scope": "topic",
+      "topic": "ah/askhuman01/d/3qjxfkln6hdpmcvbtzaswe4r5y"
+    },
+    {
+      "frame": "a1000001616fa16e2797950fcedc1b43dae1e0d10e0f10111213141516171819a84d8edae6f077afec35c26e50074d7f65e9988cd776dd87899ca2e2d964bc0e7eab01820d37270ec35a6749865f0d3c81867f2ae6c5bf9d98a919bd62ceed3e05b92b4d3cffa670de273b7db284f648a34b72ffd9a41eb894b0006308697cfa5803114d2fca60ca73a66ece9d68448d4fec1a0447358846e33b8eabc89c520434fc849f4c22dddf8048b672e314fc350c6826d049e35e1ed9aae2adca6e37fa627e0e2757e9d04ae8f9e8bcbb3b41790c8109557e9ae54dcff41862d61a495888b8d319957f3ce227ec46e78124bb4801602b5752d6ae4b377e2885f0669c80e354c45abfb204b2e55be92290c602296d7497",
+      "key": "52264c43b0f152ab1f4bc644510d8a38bc6a0229ba17cc25e14584b730463446",
+      "name": "a blob whose header length is past the end",
+      "scope": "topic",
+      "topic": "ah/askhuman01/d/3qjxfkln6hdpmcvbtzaswe4r5y"
+    },
+    {
+      "frame": "a1000001616fa16e2797950fcedc1b43dae1e0d10f101112131415161718191a53328f26b456a98c330bf4b9dd3fe47ea72f3baf32d92f5bb36dd6050ed2a10383dbc0885f8e116bdcc7aa",
+      "key": "52264c43b0f152ab1f4bc644510d8a38bc6a0229ba17cc25e14584b730463446",
+      "name": "a blob whose header length is over the limit",
+      "scope": "topic",
+      "topic": "ah/askhuman01/d/3qjxfkln6hdpmcvbtzaswe4r5y"
+    },
+    {
+      "frame": "a1000001616fa16e2797950fcedc1b43dae1e0d1101112131415161718191a1b24ecb2b36a012ffaf2c18a7b199841079eb36cf436016fdc18a59f64d6",
+      "key": "52264c43b0f152ab1f4bc644510d8a38bc6a0229ba17cc25e14584b730463446",
+      "name": "a blob whose header is not JSON",
+      "scope": "topic",
+      "topic": "ah/askhuman01/d/3qjxfkln6hdpmcvbtzaswe4r5y"
+    },
+    {
+      "frame": "a1000001616fa16e2797950fcedc1b43dae1e0d11112131415161718191a1b1cd3d668ea1c0aa208f2b55e95a8ae2221f16f1bc6f56a5be6f8b4",
+      "key": "52264c43b0f152ab1f4bc644510d8a38bc6a0229ba17cc25e14584b730463446",
+      "name": "a blob whose header is not a message",
+      "scope": "topic",
+      "topic": "ah/askhuman01/d/3qjxfkln6hdpmcvbtzaswe4r5y"
+    },
+    {
+      "frame": "a1000001616fa16e2797950fcedc1b43dae1e0d112131415161718191a1b1c1dbfd28036222556522136de4f4a55dafef4f436",
+      "key": "52264c43b0f152ab1f4bc644510d8a38bc6a0229ba17cc25e14584b730463446",
+      "name": "a plaintext that is neither JSON nor a blob",
+      "scope": "topic",
+      "topic": "ah/askhuman01/d/3qjxfkln6hdpmcvbtzaswe4r5y"
     }
   ],
   "pair": {

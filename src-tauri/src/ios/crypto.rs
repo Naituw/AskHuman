@@ -52,9 +52,43 @@ pub fn base32_lower(data: &[u8]) -> String {
     out
 }
 
+/// Inverse of [`base32_lower`]. Strict: lowercase alphabet only, and the bits that pad the last character must be zero,
+/// so that exactly one string decodes to a given byte string (`base32_lower(decode(s)) == s`).
+pub fn base32_decode_lower(text: &str) -> Option<Vec<u8>> {
+    let mut out = Vec::with_capacity(text.len() * 5 / 8);
+    let mut acc: u32 = 0;
+    let mut bits = 0u32;
+    for byte in text.bytes() {
+        let value = match byte {
+            b'a'..=b'z' => byte - b'a',
+            b'2'..=b'7' => byte - b'2' + 26,
+            _ => return None,
+        };
+        acc = (acc << 5) | value as u32;
+        bits += 5;
+        if bits >= 8 {
+            bits -= 8;
+            out.push((acc >> bits) as u8);
+            acc &= (1 << bits) - 1;
+        }
+    }
+    // What is left are padding bits: they must be zero, and fewer than a whole character's worth.
+    (bits < 5 && acc == 0).then_some(out)
+}
+
 /// A random 16-byte identifier rendered as 26 base32 characters (`macId`, `phoneId`, `ticketId`).
 pub fn new_id() -> String {
     base32_lower(&random_bytes::<16>())
+}
+
+/// The 16 bytes behind an id, when `id` is in the exact form [`new_id`] gives out. [`is_valid_id`] only checks the
+/// alphabet and the length, which leaves the two padding bits of the last character free; the binary envelope carries
+/// the raw bytes, so only an id that survives the round trip can be sent in it.
+pub fn id_to_bytes(id: &str) -> Option<[u8; 16]> {
+    if !is_valid_id(id) {
+        return None;
+    }
+    base32_decode_lower(id)?.try_into().ok()
 }
 
 /// A random 16-byte message identifier rendered as base64url (`msgId`).
@@ -229,6 +263,54 @@ mod tests {
         assert!(!is_valid_id("short"));
         assert!(!is_valid_id(&"A".repeat(26)));
         assert_ne!(new_id(), new_id());
+    }
+
+    #[test]
+    fn base32_decodes_what_it_encodes_and_nothing_else() {
+        for data in [
+            &b""[..],
+            b"f",
+            b"fo",
+            b"foo",
+            b"foob",
+            b"fooba",
+            b"foobar",
+            &[0xff; 16],
+        ] {
+            assert_eq!(
+                base32_decode_lower(&base32_lower(data)).as_deref(),
+                Some(data)
+            );
+        }
+        // Not a whole number of bytes (1, 3 and 6 characters), outside the lowercase alphabet, and a well-formed
+        // length with the padding bits set ("mz").
+        for bad in [
+            "m", "mzx", "mzxw6y", "MY", "m=", "m1", "m8", "mz", "my ", "m\u{e9}",
+        ] {
+            assert_eq!(base32_decode_lower(bad), None, "{bad:?}");
+        }
+        assert_eq!(base32_decode_lower("my"), Some(b"f".to_vec()));
+    }
+
+    #[test]
+    fn only_the_exact_form_of_an_id_converts_to_bytes() {
+        for _ in 0..50 {
+            let bytes = random_bytes::<16>();
+            let id = base32_lower(&bytes);
+            assert_eq!(id_to_bytes(&id), Some(bytes));
+        }
+        // The ids of the wire fixtures are in the exact form.
+        assert!(id_to_bytes("mfx2c3rhs6kq7tw4dnb5vypa2e").is_some());
+        assert!(id_to_bytes("3qjxfkln6hdpmcvbtzaswe4r5y").is_some());
+        // 26 characters of the right alphabet, but the padding bits of the last one are set: `is_valid_id` accepts
+        // it, a byte form cannot hold it.
+        let canonical = base32_lower(&[0u8; 16]);
+        assert_eq!(canonical, "a".repeat(26));
+        let tampered = format!("{}b", "a".repeat(25));
+        assert!(is_valid_id(&tampered));
+        assert_eq!(id_to_bytes(&tampered), None);
+        assert_eq!(id_to_bytes("short"), None);
+        assert_eq!(id_to_bytes(&"A".repeat(26)), None);
     }
 
     #[test]

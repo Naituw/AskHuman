@@ -25,6 +25,9 @@ pub const MAX_PLAIN_BYTES: usize = 512 * 1024;
 /// The smallest plaintext (JSON of `{"i","t","ts","b"}`) the Mac compresses for a phone that said
 /// `Hello::compression`; anything shorter gains too little to be worth the CPU and the extra field.
 pub const MIN_COMPRESS_BYTES: usize = 512;
+/// The longest JSON header of a blob frame (docs/specs/ios-attachment-traffic.md §5.2): the message without the bytes
+/// it carries. The headers of `asset.chunk` and `upload.chunk` are a few hundred bytes.
+pub const BLOB_HEADER_MAX_BYTES: usize = 4096;
 /// Requests up to this size are sent in full; larger ones as summaries fetched with `request.get`.
 pub const INLINE_REQUEST_BYTES: usize = 128 * 1024;
 pub const THUMB_MAX_BYTES: usize = 24 * 1024;
@@ -302,6 +305,11 @@ pub struct Caps {
     /// not send it, and the phone then shows them as before. Left out when false, like `history_pictures`.
     #[serde(default, skip_serializing_if = "is_false")]
     pub lean_agents: bool,
+    /// The Mac opens binary envelopes and blob frames from a phone that said `Hello::binary`, and sends them to it
+    /// (docs/specs/ios-attachment-traffic.md §5.3). Older Macs do not send it, and the phone then keeps to the JSON
+    /// envelope. Left out when false, like `lean_agents`.
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub binary: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -405,6 +413,11 @@ pub struct Hello {
     /// messages it sends (`is_compressible`) when that makes them smaller (docs/specs/ios-traffic-reduction.md §3.3).
     #[serde(default, skip_serializing_if = "is_false")]
     pub compression: bool,
+    /// The phone opens binary envelopes (the `0xA1` format) and blob frames. The Mac then sends it every message after
+    /// `hello` in the binary envelope and `asset.chunk` as a blob frame, and takes `upload.chunk` as a blob frame from
+    /// it (docs/specs/ios-attachment-traffic.md §5). The `hello` itself is always JSON.
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub binary: bool,
 }
 msg!(Hello, t::HELLO);
 
@@ -1713,7 +1726,9 @@ pub struct AssetChunk {
     /// SHA-256 (hex) of the whole file, present on the first chunk only.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub sha256: Option<String>,
-    /// Base64 chunk data.
+    /// Base64 chunk data. A blob frame carries the bytes after its header instead, so its header has no `data`: left out
+    /// when empty (a chunk is never empty), and the default applies when it is read.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
     pub data: String,
 }
 msg!(AssetChunk, t::ASSET_CHUNK);
@@ -1756,7 +1771,9 @@ msg!(UploadBegin, t::UPLOAD_BEGIN);
 pub struct UploadChunk {
     pub upload_id: String,
     pub index: u64,
-    /// Base64 chunk data.
+    /// Base64 chunk data. A blob frame carries the bytes after its header instead, so its header has no `data`: left out
+    /// when empty (a chunk is never empty), and the default applies when it is read.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
     pub data: String,
 }
 msg!(UploadChunk, t::UPLOAD_CHUNK);
@@ -2038,6 +2055,7 @@ mod tests {
             lean_watch,
             lean_agents: false,
             compression: false,
+            binary: false,
         };
         assert!(serde_json::to_value(hello(false))
             .unwrap()
@@ -2073,6 +2091,7 @@ mod tests {
             lean_watch: false,
             lean_agents,
             compression,
+            binary: false,
         };
         let plain = serde_json::to_value(hello(false, false)).unwrap();
         assert!(plain.get("leanAgents").is_none() && plain.get("compression").is_none());
@@ -2103,6 +2122,7 @@ mod tests {
             session_history: false,
             history_pictures: false,
             lean_agents,
+            binary: false,
         };
         assert!(serde_json::to_value(caps(false))
             .unwrap()
@@ -2152,6 +2172,7 @@ mod tests {
             session_history: false,
             history_pictures: false,
             lean_agents: false,
+            binary: false,
         };
         assert!(serde_json::to_value(caps(false))
             .unwrap()
@@ -2260,6 +2281,7 @@ mod tests {
             session_history,
             history_pictures: false,
             lean_agents: false,
+            binary: false,
         };
         assert!(serde_json::to_value(caps(false))
             .unwrap()
@@ -2467,6 +2489,7 @@ mod tests {
             session_history: true,
             history_pictures,
             lean_agents: false,
+            binary: false,
         };
         assert!(serde_json::to_value(caps(false))
             .unwrap()

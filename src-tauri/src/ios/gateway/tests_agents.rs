@@ -1250,6 +1250,7 @@ async fn an_old_phone_never_receives_an_unknown_incomplete_push_key() {
             lean_watch: false,
             lean_agents: false,
             compression: false,
+            binary: false,
         })
         .await;
     let _: wire::HelloAck = phone.recv_body(t::HELLO_ACK).await;

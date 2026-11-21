@@ -18,7 +18,7 @@ use super::{
 };
 use crate::config::IosChannelConfig;
 use crate::ios::crypto::{self, KeyPair, PairContext};
-use crate::ios::envelope::{self, Plain, Scope};
+use crate::ios::envelope::{self, Format, Opened, Plain, Scope};
 use crate::ios::push::{PushClient, PushOutcome};
 use crate::ios::store::{PhoneKeys, Store};
 use crate::ios::transport::{
@@ -96,6 +96,8 @@ pub struct TestHost {
     pub escalated_waiting: std::sync::atomic::AtomicU32,
     /// Every away operation a phone asked for.
     pub away_ops: Mutex<Vec<crate::daemon::away::AwayOp>>,
+    /// Whether the host declares `Caps::binary`; false makes it act like a Mac that predates the binary format.
+    pub binary_supported: std::sync::atomic::AtomicBool,
 }
 
 impl TestHost {
@@ -143,6 +145,7 @@ impl TestHost {
             away_supported: std::sync::atomic::AtomicBool::new(true),
             escalated_waiting: std::sync::atomic::AtomicU32::new(0),
             away_ops: Mutex::new(Vec::new()),
+            binary_supported: std::sync::atomic::AtomicBool::new(true),
         })
     }
 
@@ -253,6 +256,7 @@ impl Host for TestHost {
             session_history: true,
             history_pictures: true,
             lean_agents: true,
+            binary: self.binary_supported.load(Ordering::SeqCst),
         }
     }
 
@@ -888,7 +892,13 @@ impl Fixture {
 
     /// A paired phone that is online, in the foreground and has said hello.
     pub async fn live_phone(&self) -> TestPhone {
+        self.live_phone_with(|_| {}).await
+    }
+
+    /// Like [`Self::live_phone`], with `configure` run before the hello (what the hello declares).
+    pub async fn live_phone_with(&self, configure: impl FnOnce(&mut TestPhone)) -> TestPhone {
         let mut phone = self.pair_phone().await;
+        configure(&mut phone);
         phone.set_presence(true, true).await;
         phone.hello().await;
         phone
@@ -902,6 +912,11 @@ impl Fixture {
 pub struct Received {
     pub ty: String,
     pub compressed: bool,
+    /// It came in the binary envelope.
+    pub binary: bool,
+    /// It was a blob frame: the bytes came raw behind the header. The message in the phone's queue then has them
+    /// as base64 in `data`, the way the JSON form of the same message has them.
+    pub blob: bool,
     pub bytes: usize,
 }
 
@@ -920,6 +935,16 @@ pub struct TestPhone {
     pub lean_agents: bool,
     /// Whether its `hello` says that it opens compressed envelopes.
     pub compression: bool,
+    /// Whether its `hello` says that it opens binary envelopes and blob frames. Once the Mac's `hello.ack` declares
+    /// the same, the phone sends in binary too (`upload.chunk` as a blob frame), like the app does.
+    pub binary: bool,
+    /// The Mac's `hello.ack` said it opens binary frames.
+    mac_binary: bool,
+    /// How many messages the phone sent as blob frames.
+    pub blobs_sent: usize,
+    /// What it sends on the pairing channel goes in the binary envelope, which the Mac must not take there (the
+    /// pairing channel is JSON only).
+    pub pair_in_binary: bool,
     /// Every message that came in on its topic, in order: what it was, whether the envelope was compressed and how
     /// many bytes it took on the wire.
     pub received: Vec<Received>,
@@ -968,6 +993,10 @@ impl TestPhone {
             lean_watch: false,
             lean_agents: false,
             compression: false,
+            binary: false,
+            mac_binary: false,
+            blobs_sent: 0,
+            pair_in_binary: false,
             received: Vec::new(),
             ticket_key: None,
             pair_topic: None,
@@ -1045,8 +1074,20 @@ impl TestPhone {
 
     async fn send_on_pair_topic<M: Msg>(&self, k_t: &[u8; 32], topic: &str, body: &M) {
         let plain = Plain::new(M::TYPE, body.to_value(), BASE_MS);
-        let bytes =
-            envelope::seal_plain(k_t, Scope::Topic(topic), &self.phone_id, KID_TICKET, &plain);
+        let format = if self.pair_in_binary {
+            Format::Binary
+        } else {
+            Format::Json
+        };
+        let bytes = envelope::seal_plain_as(
+            k_t,
+            Scope::Topic(topic),
+            &self.phone_id,
+            KID_TICKET,
+            &plain,
+            false,
+            format,
+        );
         self.transport.publish(topic, bytes, false).await.unwrap();
     }
 
@@ -1093,15 +1134,43 @@ impl TestPhone {
     pub async fn send_plain(&mut self, plain: Plain) {
         let keys = self.keys.clone().expect("paired");
         let topic = wire::topic_up(USER, &self.mac_id);
-        let bytes = envelope::seal_plain(
-            &keys.p2m,
-            Scope::Topic(&topic),
-            &self.phone_id,
-            keys.kid,
-            &plain,
-        );
+        let bytes = self.seal_up(&keys, &topic, &plain);
         self.transport.publish(&topic, bytes, false).await.unwrap();
         tokio::time::sleep(Duration::from_millis(20)).await;
+    }
+
+    /// The wire bytes of one message to the Mac, in the format the two agreed on: binary once both declared it (never
+    /// for `hello`, which starts the handshake), and `upload.chunk` as a blob frame, as the app sends it.
+    fn seal_up(&mut self, keys: &PhoneKeys, topic: &str, plain: &Plain) -> Vec<u8> {
+        let scope = Scope::Topic(topic);
+        if !(self.binary && self.mac_binary) || plain.t == t::HELLO {
+            return envelope::seal_plain(&keys.p2m, scope, &self.phone_id, keys.kid, plain);
+        }
+        if plain.t == t::UPLOAD_CHUNK {
+            let mut head = plain.clone();
+            let raw = head
+                .b
+                .as_object_mut()
+                .and_then(|body| body.remove("data"))
+                .and_then(|data| crypto::b64u_decode(data.as_str()?));
+            if let Some(raw) = raw {
+                if let Some(frame) =
+                    envelope::seal_blob(&keys.p2m, scope, &self.phone_id, keys.kid, &head, &raw)
+                {
+                    self.blobs_sent += 1;
+                    return frame;
+                }
+            }
+        }
+        envelope::seal_plain_as(
+            &keys.p2m,
+            scope,
+            &self.phone_id,
+            keys.kid,
+            plain,
+            false,
+            Format::Binary,
+        )
     }
 
     /// Publishes raw bytes on the Mac's up topic (garbage, replays, foreign senders).
@@ -1115,24 +1184,45 @@ impl TestPhone {
         let TransportEvent::Message { topic, payload, .. } = event else {
             return;
         };
-        let Ok(env) = envelope::parse(&payload) else {
-            return;
-        };
-        if env.f != self.mac_id {
-            return;
-        }
         if topic == wire::topic_down(USER, &self.phone_id) {
-            if let Some(keys) = &self.keys {
-                if let Ok(plain) = envelope::open_plain(&keys.m2p, Scope::Topic(&topic), &env) {
-                    self.received.push(Received {
-                        ty: plain.t.clone(),
-                        compressed: env.z.is_some(),
-                        bytes: payload.len(),
-                    });
-                    self.queue.push_back(plain);
-                }
+            // The phone's own topic takes both wire formats.
+            let Ok(frame) = envelope::parse_frame(&payload) else {
+                return;
+            };
+            if frame.sender != self.mac_id {
+                return;
             }
+            let Some(keys) = &self.keys else {
+                return;
+            };
+            let Ok(opened) = envelope::open_message(&keys.m2p, Scope::Topic(&topic), &frame) else {
+                return;
+            };
+            let (plain, blob) = match opened {
+                Opened::Message(plain) => (plain, false),
+                // Put the bytes back where the JSON form has them, so that a test reads a chunk the same way
+                // whichever format it came in.
+                Opened::Blob { mut head, bytes } => {
+                    head.b["data"] = Value::from(crypto::b64u(&bytes));
+                    (head, true)
+                }
+            };
+            self.received.push(Received {
+                ty: plain.t.clone(),
+                compressed: frame.compressed,
+                binary: frame.binary,
+                blob,
+                bytes: payload.len(),
+            });
+            self.queue.push_back(plain);
         } else if Some(&topic) == self.pair_topic.as_ref() {
+            // The pairing channel is JSON only.
+            let Ok(env) = envelope::parse(&payload) else {
+                return;
+            };
+            if env.f != self.mac_id {
+                return;
+            }
             if let Some(k_t) = &self.ticket_key {
                 if let Ok(plain) = envelope::open_plain(k_t, Scope::Topic(&topic), &env) {
                     self.pair_queue.push_back(plain);
@@ -1208,6 +1298,8 @@ impl TestPhone {
     /// Hello handshake; the four snapshots stay in the queue for the test to inspect.
     pub async fn hello(&mut self) -> wire::HelloAck {
         let nonce = crypto::new_msg_id();
+        // A handshake starts from "the Mac does not take binary", whatever the last one said.
+        self.mac_binary = false;
         self.send(&wire::Hello {
             traffic_usage: false,
             traffic_sync: false,
@@ -1219,10 +1311,12 @@ impl TestPhone {
             lean_watch: self.lean_watch,
             lean_agents: self.lean_agents,
             compression: self.compression,
+            binary: self.binary,
         })
         .await;
         let ack: wire::HelloAck = self.recv_body(t::HELLO_ACK).await;
         assert_eq!(ack.nonce, nonce);
+        self.mac_binary = ack.caps.binary;
         ack
     }
 }

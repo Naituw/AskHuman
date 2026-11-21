@@ -1,6 +1,6 @@
 # 计划：iOS 附件流量收敛（预览优先、二进制传输、内容去重）
 
-> 需求：`docs/specs/ios-attachment-traffic.md`（决策编号 AT1–AT20 均指其 §3）。状态：**2026-11-21 起草，未开工**。规格里写规格时补的 AT14–AT20（AT20 动到 `Cargo.toml` 的编译配置）已由 Owner 确认；规格与本计划一并发给他看过，没有提出修改。下文各阶段的文件名与函数名是起草时按现有代码读出来的设想，**开工后实际以文末「实施记录」为准**。
+> 需求：`docs/specs/ios-attachment-traffic.md`（决策编号 AT1–AT20 均指其 §3）。状态：**2026-11-21 起草并开工，进度见文末「实施记录」**。规格里写规格时补的 AT14–AT20（AT20 动到 `Cargo.toml` 的编译配置）已由 Owner 确认；规格与本计划一并发给他看过，没有提出修改。下文各阶段的文件名与函数名是起草时按现有代码读出来的设想，**开工后实际以文末「实施记录」为准**。
 > 工作方式：**开工前**按 `AGENTS.md` 问一次工作位置（主工作树与单独的 Dev Worktree 同列、一轮问完）。那一问里要说清：本功能会改 `Cargo.toml` 的依赖与编译配置，在主工作树里装机会替换 Owner 日常用的二进制。写计划时主工作树里有别的会话**未提交**的改动（「弹窗文件链接」一类：`src-tauri/src/app/*`、`commands.rs`、`attachment_markdown.rs`、`src/` 下的前端文件与几份弹窗规格）：本功能只提交自己的文件与自己的段落，不碰它们；要改同一份文档时只用精确替换，提交前逐个 hunk 核对。
 
 ## 阶段
@@ -145,4 +145,22 @@
 
 ## 实施记录
 
-（尚未开工。）
+### 工作位置
+
+2026-11-21 Owner 选了**主工作树**开发（不开 Dev Instance）。主工作树里别的会话的未提交改动（弹窗文件链接）原样留着，本功能只提交自己的文件。
+
+### P1a 线协议（已完成）
+
+按计划做完，与计划设想不同的地方（以实现为准）：
+
+- **名字**：Rust 是 `Frame`（解码后的字段）、`Format`（`Json` / `Binary`）、`Opened`（`Message` / `Blob { head, bytes }`）、`parse_frame`、`parse_frame_from_phone`、`open_frame`、`open_message`、`seal_plain_as`、`seal_blob`；没有单独的 `can_use_binary`——「发送方是不是规范 id、`kid` 是否放得下」就是 `Frame::encode_binary()` 返回 `None`，调用方据此回退 JSON（AT16）。Swift 是 `EnvelopeFrame`、`WireFormat`、`OpenedMessage`、`AHEnvelope.parseFrame` / `openFrame` / `openMessage` / `sealBlob`、`Plain.sealed(…, format:)`（缺省 `.json`，旧调用点不变）、`Bytes.base32LowerDecode` / `idToBytes`、`Wire.blobHeaderMaxBytes`。
+- **`AssetChunk.data`、`UploadChunk.data` 的序列化规则动了一点**：计划写「序列化规则不动」，实现里加了 `skip_serializing_if = "String::is_empty"`（Swift 是新的 `@OmitEmptyString`），这样 blob 的头部直接由结构体序列化得到、没有 `data`；一块数据从来不为空，所以 JSON 旧路径上的字节与以前逐字节相同，旧夹具样本原样通过。
+- **协商**：Mac 向手机发二进制的条件是 `rt.binary && rt.hello_at.is_some()`（`hello.binary && caps.binary`，以最近一次 `hello` 为准，随下线的 presence 一起清掉）；手机向 Mac 发二进制只在本次握手的 `hello.ack` 带 `caps.binary` 之后（Swift 一侧在 P1b）。`hello`、配对主题、presence、push 恒为 JSON；配对主题上的二进制帧不收。
+- **夹具（只追加）**：`crypto.json` 加 `binaryEnvelopes`（3 条，含 `kid` 大于 255）、`compressedBinaryEnvelopes`（1 条，只开不比，同 `compressedEnvelopes`）、`blobFrames`（2 条，字节里有 0、`{`、大于 0x7f 的值）、`malformedFrames`（23 条：解析层、认证层、blob 读取层各一批）；`messages.json` 加 5 条样本（带 `binary` 的 `hello` 与 `hello.ack`、无 `data` 的两种 `asset.chunk` 头与 `upload.chunk` 头）。两边对同一份文件通过：Rust 字节对字节比对，Swift 打开 Rust 封的帧并用同样的 nonce 封出同样的字节。
+- **节省**：一块满的 192 KiB 分块，blob 帧实测约为 JSON 信封的 56%（JSON 里是 base64 套两层；测试断言 < 60%）；一条小消息的二进制信封测试断言 < JSON 信封的 75%。
+- **验证**：`cargo clippy --all-targets -- -D warnings` 干净；全量 `cargo test` 3560 通过 / 0 失败 / 12 忽略；`swift test --filter AHProtocolTests` 78 通过；`./scripts/install.sh` 装好（`local-install` 档）。
+- **一次格式化的副作用**：开发中跑过一次整包的 `cargo fmt`，顺带重排了另一个会话的两个未提交文件（`src-tauri/src/attachment_markdown.rs`、`src-tauri/src/app/linked_files.rs`），只改了排版、没有改逻辑。之后只对自己的文件用 `rustfmt`，整包只用 `cargo fmt -- --check`。
+
+### P1b 手机引擎
+
+（未开工。）

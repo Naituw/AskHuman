@@ -11,6 +11,9 @@ public enum Wire {
 
     public static let maxEnvelopeBytes = 900_000
     public static let maxPlainBytes = 512 * 1024
+    /// The longest JSON header of a blob frame (docs/specs/ios-attachment-traffic.md §5.2): the message without the
+    /// bytes it carries. Mirrors `BLOB_HEADER_MAX_BYTES` in `ios/wire.rs`.
+    public static let blobHeaderMaxBytes = 4096
     public static let inlineRequestBytes = 128 * 1024
     public static let thumbMaxBytes = 24 * 1024
     public static let assetChunkBytes = 192 * 1024

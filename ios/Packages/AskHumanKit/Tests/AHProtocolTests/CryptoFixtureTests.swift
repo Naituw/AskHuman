@@ -210,6 +210,129 @@ final class CryptoFixtureTests: XCTestCase {
         }
     }
 
+    // MARK: binary envelopes and blob frames (docs/specs/ios-attachment-traffic.md §5)
+
+    private func scope(of item: [String: Any]) -> EnvelopeScope {
+        (item["scope"] as! String) == "push" ? .push : .topic(item["topic"] as! String)
+    }
+
+    /// What Rust sealed into the binary envelope opens to the same plaintext, carries the documented header, and is
+    /// byte for byte what the phone builds from the same fields.
+    func testBinaryEnvelopesFromTheFixtureOpenAndReseal() throws {
+        let samples = try XCTUnwrap(fx["binaryEnvelopes"] as? [[String: Any]], "run UPDATE_WIRE_FIXTURES=1 cargo test ios::fixtures")
+        XCTAssertGreaterThanOrEqual(samples.count, 3)
+        for item in samples {
+            let name = item["name"] as! String
+            let key = hex(item["key"])
+            let scope = scope(of: item)
+            let wire = hex(item["envelope"])
+            XCTAssertEqual(wire.first, 0xA1, name)
+            let frame = try AHEnvelope.parseFrame(wire)
+            XCTAssertTrue(frame.binary && !frame.compressed, name)
+            XCTAssertEqual(frame.sender, item["from"] as? String, name)
+            XCTAssertEqual(frame.kid, item["kid"] as? Int, name)
+            XCTAssertEqual(frame.nonce, hex(item["nonce"]), name)
+
+            let opened = try AHEnvelope.openFrame(key: key, scope: scope, frame: frame)
+            XCTAssertEqual(String(decoding: opened, as: UTF8.self), item["plaintext"] as? String, name)
+
+            // Sealing the same plaintext with the same nonce gives the same bytes.
+            let resealed = AHEnvelope.sealFrame(
+                key: key, scope: scope, sender: frame.sender, kid: frame.kid, nonce: frame.nonce, plaintext: opened
+            )
+            XCTAssertEqual(resealed.encodeBinary(), wire, name)
+
+            // The same fields in a JSON envelope open to the same plaintext: the format changes nothing that is signed.
+            let asJSON = try AHEnvelope.parseFrame(AHEnvelope.encode(frame.envelope))
+            XCTAssertFalse(asJSON.binary, name)
+            XCTAssertEqual(try AHEnvelope.openFrame(key: key, scope: scope, frame: asJSON), opened, name)
+
+            // The topic and the domain still bind.
+            XCTAssertThrowsError(try AHEnvelope.openFrame(key: key, scope: .topic("ah/askhuman01/d/other"), frame: frame), name)
+            XCTAssertThrowsError(try AHEnvelope.openFrame(key: key, scope: .push, frame: frame), name)
+        }
+    }
+
+    func testCompressedBinaryEnvelopesFromTheFixtureOpenAndTheBitIsAuthenticated() throws {
+        let samples = try XCTUnwrap(
+            fx["compressedBinaryEnvelopes"] as? [[String: Any]], "run UPDATE_WIRE_FIXTURES=1 cargo test ios::fixtures"
+        )
+        XCTAssertFalse(samples.isEmpty)
+        for item in samples {
+            let name = item["name"] as! String
+            let key = hex(item["key"])
+            let scope = scope(of: item)
+            let wire = hex(item["envelope"])
+            let frame = try AHEnvelope.parseFrame(wire)
+            XCTAssertTrue(frame.binary && frame.compressed, name)
+
+            let opened = try AHEnvelope.openFrame(key: key, scope: scope, frame: frame)
+            let plaintext = try XCTUnwrap(item["plaintext"] as? String)
+            XCTAssertEqual(String(decoding: opened, as: UTF8.self), plaintext, name)
+            XCTAssertTrue(plaintext.contains("\u{91cd}\u{6784}\u{6a21}\u{5757}"), "the sample carries a title that is not ASCII")
+            XCTAssertLessThan(wire.count * 2, plaintext.utf8.count, "it is worth compressing")
+            XCTAssertEqual(try AHEnvelope.openMessage(key: key, scope: scope, frame: frame).messageType, "agents.snapshot", name)
+
+            var cleared = wire
+            cleared[1] = 0
+            XCTAssertThrowsError(
+                try AHEnvelope.openFrame(key: key, scope: scope, frame: AHEnvelope.parseFrame(cleared)), name
+            )
+        }
+    }
+
+    /// A blob frame: the message header and the raw bytes after it, without a text layer around either. The bytes of the
+    /// samples include every value a text layer could mangle.
+    func testBlobFramesFromTheFixtureOpenToTheirHeaderAndBytes() throws {
+        let samples = try XCTUnwrap(fx["blobFrames"] as? [[String: Any]], "run UPDATE_WIRE_FIXTURES=1 cargo test ios::fixtures")
+        XCTAssertGreaterThanOrEqual(samples.count, 2)
+        for item in samples {
+            let name = item["name"] as! String
+            let key = hex(item["key"])
+            let scope = scope(of: item)
+            let wire = hex(item["frame"])
+            let frame = try AHEnvelope.parseFrame(wire)
+            XCTAssertTrue(frame.binary && !frame.compressed, name)
+
+            let headText = Data((item["head"] as! String).utf8)
+            let head = try AHJSON.decoder.decode(Plain.self, from: headText)
+            let bytes = hex(item["bytes"])
+            XCTAssertEqual(try AHEnvelope.openMessage(key: key, scope: scope, frame: frame), .blob(head: head, bytes: bytes), name)
+
+            // The plaintext is the marker, the length of the header, the header and the bytes, as they are.
+            let plaintext = try AHEnvelope.openFrame(key: key, scope: scope, frame: frame)
+            var expected = Data([0x01])
+            expected.append(contentsOf: withUnsafeBytes(of: UInt32(headText.count).bigEndian) { Array($0) })
+            expected.append(headText)
+            expected.append(bytes)
+            XCTAssertEqual(plaintext, expected, name)
+            XCTAssertTrue(plaintext.suffix(bytes.count).elementsEqual(bytes), name)
+
+            let resealed = AHEnvelope.sealFrame(
+                key: key, scope: scope, sender: frame.sender, kid: frame.kid, nonce: frame.nonce, plaintext: plaintext
+            )
+            XCTAssertEqual(resealed.encodeBinary(), wire, name)
+
+            XCTAssertThrowsError(try AHEnvelope.openMessage(key: key, scope: .topic("ah/askhuman01/d/other"), frame: frame), name)
+            XCTAssertThrowsError(try AHEnvelope.openMessage(key: key, scope: .push, frame: frame), name)
+        }
+    }
+
+    /// Every one of these is refused: by the parser, by the authentication, or by the reading of the blob.
+    func testMalformedFramesFromTheFixtureAreRefused() throws {
+        let cases = try XCTUnwrap(fx["malformedFrames"] as? [[String: Any]], "run UPDATE_WIRE_FIXTURES=1 cargo test ios::fixtures")
+        XCTAssertGreaterThanOrEqual(cases.count, 20)
+        for item in cases {
+            let name = item["name"] as! String
+            let key = hex(item["key"])
+            let scope = scope(of: item)
+            let wire = hex(item["frame"])
+            XCTAssertThrowsError(
+                try AHEnvelope.openMessage(key: key, scope: scope, frame: AHEnvelope.parseFrame(wire)), name
+            )
+        }
+    }
+
     func testADamagedOrTruncatedStreamIsRefused() throws {
         let text = Data(String(repeating: "a stable title of one agent, ", count: 200).utf8)
         let packed = AHEnvelope.compress(text)
@@ -217,5 +340,13 @@ final class CryptoFixtureTests: XCTestCase {
         XCTAssertThrowsError(try AHEnvelope.inflate(packed.prefix(packed.count - 1), limit: 1 << 20), "the last byte missing")
         XCTAssertThrowsError(try AHEnvelope.inflate(Data(repeating: 0xFF, count: 64), limit: 1 << 20), "not a stream")
         XCTAssertThrowsError(try AHEnvelope.inflate(Data(), limit: 1 << 20), "nothing")
+    }
+}
+
+extension OpenedMessage {
+    /// The type of a message, `nil` for a blob frame.
+    var messageType: String? {
+        if case .message(let plain) = self { return plain.t }
+        return nil
     }
 }

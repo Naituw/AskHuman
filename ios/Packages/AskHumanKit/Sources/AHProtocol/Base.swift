@@ -24,6 +24,39 @@ public enum Bytes {
         return String(decoding: out, as: UTF8.self)
     }
 
+    /// The inverse of `base32Lower`: `nil` for a character outside its alphabet, and for text whose unused trailing bits
+    /// are not zero, so that every byte string has exactly one text and a text that `base32Lower` could not have made
+    /// does not convert.
+    public static func base32LowerDecode(_ text: String) -> Data? {
+        var out = Data()
+        var acc: UInt32 = 0
+        var bits: UInt32 = 0
+        for byte in text.utf8 {
+            let value: UInt32
+            switch byte {
+            case 0x61...0x7a: value = UInt32(byte - 0x61)
+            case 0x32...0x37: value = UInt32(byte - 0x32) + 26
+            default: return nil
+            }
+            acc = (acc << 5) | value
+            bits += 5
+            if bits >= 8 {
+                bits -= 8
+                out.append(UInt8((acc >> bits) & 0xff))
+                acc &= (1 << bits) - 1
+            }
+        }
+        // What is left must be part of a character (fewer than five bits) and zero.
+        return (bits < 5 && acc == 0) ? out : nil
+    }
+
+    /// The 16 bytes behind an id, when it is written exactly as `newId` writes one (the binary envelope carries a
+    /// sender as these bytes, so one that does not convert cannot be sent in it).
+    public static func idToBytes(_ id: String) -> Data? {
+        guard isValidId(id), let bytes = base32LowerDecode(id), bytes.count == 16 else { return nil }
+        return bytes
+    }
+
     /// Base64url without padding.
     public static func b64u(_ data: Data) -> String {
         data.base64EncodedString()

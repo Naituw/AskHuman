@@ -11,7 +11,7 @@ use super::Actor;
 use crate::ios::crypto;
 use crate::ios::views::AssetSource;
 use crate::ios::wire::{
-    AssetChunk, AssetError, AssetGet, UploadAck, UploadBegin, UploadCancel, UploadChunk,
+    AssetChunk, AssetError, AssetGet, Msg, UploadAck, UploadBegin, UploadCancel, UploadChunk,
     ASSET_CHUNK_BYTES, MAX_ASSET_BYTES, MAX_ASSET_CHUNKS_PER_GET, MAX_REPLY_ATTACHMENTS,
 };
 
@@ -259,18 +259,30 @@ impl Actor {
         for index in get.from..end {
             let start = index as usize * ASSET_CHUNK_BYTES;
             let stop = (start + ASSET_CHUNK_BYTES).min(data.len());
-            self.send(
+            self.send_chunk(
                 phone_id,
-                &AssetChunk {
+                AssetChunk {
                     asset_id: get.asset_id.clone(),
                     index,
                     total,
                     size: data.len() as u64,
                     sha256: if index == 0 { sha256.clone() } else { None },
-                    data: crypto::b64u(&data[start..stop]),
+                    data: String::new(),
                 },
+                &data[start..stop],
             );
         }
+    }
+
+    /// Sends one chunk of a file: a blob frame (the bytes raw behind the header) to a phone that takes binary frames,
+    /// a JSON message with the bytes in base64 otherwise, and also when the blob frame cannot be built. `chunk` comes
+    /// with an empty `data`, which is how the blob header leaves it out.
+    fn send_chunk(&mut self, phone_id: &str, mut chunk: AssetChunk, bytes: &[u8]) {
+        if self.send_blob(phone_id, AssetChunk::TYPE, chunk.to_value(), bytes) {
+            return;
+        }
+        chunk.data = crypto::b64u(bytes);
+        self.send(phone_id, &chunk);
     }
 
     // ------------------------------------------------------------ uploads
@@ -405,7 +417,14 @@ impl Actor {
         self.upload_ack(phone_id, &id, 0, "ok", None);
     }
 
-    pub(super) fn on_upload_chunk(&mut self, phone_id: &str, chunk: UploadChunk) {
+    /// One chunk of an upload. `blob` holds its bytes when it came as a blob frame, otherwise they are `chunk.data` in
+    /// base64.
+    pub(super) fn on_upload_chunk(
+        &mut self,
+        phone_id: &str,
+        chunk: UploadChunk,
+        blob: Option<Vec<u8>>,
+    ) {
         if !self.inbox_ready() {
             return;
         }
@@ -427,7 +446,11 @@ impl Actor {
             let next = upload.next;
             return self.upload_ack(phone_id, &id, next, "ok", None);
         }
-        let data = match crypto::b64u_decode(&chunk.data) {
+        let decoded = match blob {
+            Some(raw) => Some(raw),
+            None => crypto::b64u_decode(&chunk.data),
+        };
+        let data = match decoded {
             Some(data) if data.len() <= ASSET_CHUNK_BYTES => data,
             _ => return self.fail_upload(phone_id, &id, "invalid"),
         };

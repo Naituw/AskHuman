@@ -24,6 +24,8 @@ mod tests_assets;
 #[cfg(test)]
 mod tests_away;
 #[cfg(test)]
+mod tests_binary;
+#[cfg(test)]
 mod tests_history;
 #[cfg(test)]
 mod tests_reduction;
@@ -51,7 +53,7 @@ use tokio::sync::mpsc::{unbounded_channel, UnboundedReceiver, UnboundedSender};
 use tokio::sync::oneshot;
 
 use super::crypto;
-use super::envelope::{self, Plain, Scope};
+use super::envelope::{self, Format, Opened, Plain, Scope};
 use super::push::{PushClient, PushOutcome};
 use super::store::{PhoneState, Store, Traffic, TrafficBreakdown};
 use super::transport::{BrokerTransport, TransportEvent};
@@ -609,6 +611,11 @@ pub(crate) struct PhoneRt {
     pub lean_agents: bool,
     /// The phone said in its last `hello` that it opens compressed envelopes (`wire::Hello::compression`).
     pub compression: bool,
+    /// The phone said in its last `hello` that it opens binary envelopes and blob frames (`wire::Hello::binary`), and
+    /// this Mac agreed (`Caps::binary`): from then on, while the phone stays online, everything for it is sealed in the
+    /// binary envelope and `asset.chunk` goes as a blob frame (docs/specs/ios-attachment-traffic.md §5.3). Like
+    /// `hello_at`, it only counts for the current online session.
+    pub binary: bool,
     pub device_name: String,
     pub dedup: Dedup,
     /// Revision of this phone's `agents` stream (the stream differs per phone: `followed`).
@@ -1169,24 +1176,40 @@ impl Actor {
         PhoneRt::with_presence(self.presence_cache.get(phone_id))
     }
 
-    /// Opens one message of the up topic: the phone it came from, that phone's pairing state and the message. `None`
-    /// when it is not from a phone this Mac is paired with, or does not authenticate.
-    fn open_up(&self, topic: &str, payload: &[u8]) -> Option<(String, PhoneState, Plain)> {
-        let env = envelope::parse_from_phone(payload).ok()?;
-        if env.f == self.mac_id {
+    /// Opens one message of the up topic, in either wire format: the phone it came from, that phone's pairing state, the
+    /// message (the header, for a blob frame) and the raw bytes a blob frame carries. `None` when it is not from a phone
+    /// this Mac is paired with, or does not authenticate, or is a blob frame of anything but `upload.chunk` (the one
+    /// message that carries file bytes from a phone).
+    fn open_up(
+        &self,
+        topic: &str,
+        payload: &[u8],
+    ) -> Option<(String, PhoneState, Plain, Option<Vec<u8>>)> {
+        let frame = envelope::parse_frame_from_phone(payload).ok()?;
+        if frame.sender == self.mac_id {
             return None;
         }
-        let state = self.store.state.phone(&env.f)?.state;
-        let keys = self.store.keys(&env.f)?;
-        if env.k != keys.kid {
+        let state = self.store.state.phone(&frame.sender)?.state;
+        let keys = self.store.keys(&frame.sender)?;
+        if frame.kid != keys.kid {
             return None;
         }
-        let plain = envelope::open_plain(&keys.p2m, Scope::Topic(topic), &env).ok()?;
-        Some((env.f, state, plain))
+        let opened = envelope::open_message(&keys.p2m, Scope::Topic(topic), &frame).ok()?;
+        let (plain, blob) = match opened {
+            Opened::Message(plain) => (plain, None),
+            // The bytes ride behind the header: a header that also says them is two messages in one.
+            Opened::Blob { head, bytes } => {
+                if head.t != t::UPLOAD_CHUNK || head.b.get("data").is_some() {
+                    return None;
+                }
+                (head, Some(bytes))
+            }
+        };
+        Some((frame.sender, state, plain, blob))
     }
 
     async fn on_up(&mut self, topic: &str, payload: &[u8]) {
-        let Some((phone_id, state, plain)) = self.open_up(topic, payload) else {
+        let Some((phone_id, state, plain, blob)) = self.open_up(topic, payload) else {
             self.count_message(true, "rejected", payload.len());
             return;
         };
@@ -1218,7 +1241,7 @@ impl Actor {
             return;
         }
         self.touch_phone(&phone_id, now);
-        self.dispatch(&phone_id, plain).await;
+        self.dispatch(&phone_id, plain, blob).await;
     }
 
     fn touch_phone(&mut self, phone_id: &str, now: i64) {
@@ -1228,7 +1251,8 @@ impl Actor {
         }
     }
 
-    async fn dispatch(&mut self, phone_id: &str, plain: Plain) {
+    /// Acts on one message of a phone. `blob` is the raw bytes of a blob frame, whose header is `plain`.
+    async fn dispatch(&mut self, phone_id: &str, plain: Plain, blob: Option<Vec<u8>>) {
         macro_rules! body {
             ($ty:ty) => {
                 match serde_json::from_value::<$ty>(plain.b.clone()) {
@@ -1298,7 +1322,7 @@ impl Actor {
             }
             t::UPLOAD_CHUNK => {
                 let chunk = body!(wire::UploadChunk);
-                self.on_upload_chunk(phone_id, chunk);
+                self.on_upload_chunk(phone_id, chunk, blob);
             }
             t::UPLOAD_CANCEL => {
                 let cancel = body!(wire::UploadCancel);
@@ -1388,17 +1412,68 @@ impl Actor {
         // The list streams go compressed to a phone that said it opens them (docs/specs/ios-traffic-reduction.md §3.3).
         let compress = wire::is_compressible(msg_type)
             && self.rt.get(phone_id).is_some_and(|rt| rt.compression);
+        let format = if self.phone_takes_binary(phone_id) {
+            Format::Binary
+        } else {
+            Format::Json
+        };
         let now = self.now();
         let plain = Plain::new(msg_type, body, now);
         let topic = wire::topic_down(&self.user, phone_id);
-        let bytes = envelope::seal_plain_with(
+        let bytes = envelope::seal_plain_as(
             &keys.m2p,
             Scope::Topic(&topic),
             &self.mac_id,
             keys.kid,
             &plain,
             compress,
+            format,
         );
+        self.queue_down(topic, msg_type, bytes)
+    }
+
+    /// Whether what goes to this phone is sealed in the binary envelope: it said in its last `hello` that it opens it, this
+    /// Mac agreed, and it is still online past that `hello` (docs/specs/ios-attachment-traffic.md §5.3).
+    pub(crate) fn phone_takes_binary(&self, phone_id: &str) -> bool {
+        self.rt
+            .get(phone_id)
+            .is_some_and(|rt| rt.binary && rt.hello_at.is_some())
+    }
+
+    /// Seals a blob frame (the message `head` without the bytes it carries, then `bytes`) for a phone and queues it.
+    /// `false` when it was not sent: the phone does not take binary frames, the sender or key id does not fit the binary
+    /// header, or the result is over the broker's limit. The caller then sends the same message as JSON.
+    pub(crate) fn send_blob(
+        &mut self,
+        phone_id: &str,
+        msg_type: &str,
+        head: Value,
+        bytes: &[u8],
+    ) -> bool {
+        if !self.phone_takes_binary(phone_id) {
+            return false;
+        }
+        let Some(keys) = self.store.keys(phone_id).cloned() else {
+            return false;
+        };
+        let now = self.now();
+        let head = Plain::new(msg_type, head, now);
+        let topic = wire::topic_down(&self.user, phone_id);
+        let Some(frame) = envelope::seal_blob(
+            &keys.m2p,
+            Scope::Topic(&topic),
+            &self.mac_id,
+            keys.kid,
+            &head,
+            bytes,
+        ) else {
+            return false;
+        };
+        self.queue_down(topic, msg_type, frame)
+    }
+
+    /// Counts sealed wire bytes in the traffic ledger and hands them to the outbox; `false` for one over the broker's limit.
+    fn queue_down(&mut self, topic: String, msg_type: &str, bytes: Vec<u8>) -> bool {
         if bytes.len() > wire::MAX_ENVELOPE_BYTES {
             return false;
         }
@@ -1459,6 +1534,7 @@ impl Actor {
             rt.lean_watch = hello.lean_watch;
             rt.lean_agents = hello.lean_agents && caps.lean_agents;
             rt.compression = hello.compression;
+            rt.binary = hello.binary && caps.binary;
             rt.device_name = sanitize_name(&hello.device_name);
             // A hello starts a session: the phone dropped what it held and what it had open. It asks for its live
             // views again after the snapshot it is sent now, and the snapshots below become the baseline that
