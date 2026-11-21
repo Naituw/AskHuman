@@ -119,6 +119,9 @@ hmac = "0.12"
 subtle = "2"
 getrandom = "0.2"
 qrcode = { version = "0.14", default-features = false, features = ["svg"] }
+# Downscaled AVIF previews of image attachments for the iOS channel (docs/specs/ios-attachment-traffic.md). A crate of
+# its own so that the per-package `opt-level = 3` overrides below can apply to it; see the profiles at the end.
+ah-preview = { path = "crates/ah-preview" }
 
 [dev-dependencies]
 tokio = { version = "1", features = ["test-util"] }
@@ -192,6 +195,68 @@ codegen-units = 16
 incremental = true
 strip = true
 panic = "abort"
+
+# The image preview pipeline (decode, Lanczos resize, AV1 encode) must be built with `opt-level = 3`. Generic and
+# inlined code is compiled in the crate that instantiates it, at that crate's optimization level, so the crate that
+# calls the encoder and every codec crate underneath it have to be optimized, and the rest of the application does
+# not. Measured on the same images (docs/specs/ios-attachment-traffic.md §10.3): a preview takes about 0.31 s with
+# these overrides in either profile, about 1.2 s with the plain `z` build and about 5.4 s with the plain
+# `local-install` (opt-level 0) build. Overriding only `ah-preview` is not enough (0.8 s and 2.5 s): its dependencies
+# stay slow. The profile `local-install` inherits `release`, package overrides included, so this one list serves both.
+# The list is `cargo tree -p ah-preview --edges normal` without the procedural macros, which only run at build time.
+# When an update adds a crate to that tree, add it here too.
+[profile.release.package]
+adler2 = { opt-level = 3 }
+ah-preview = { opt-level = 3 }
+aligned-vec = { opt-level = 3 }
+anyhow = { opt-level = 3 }
+arrayvec = { opt-level = 3 }
+av1-grain = { opt-level = 3 }
+avif-serialize = { opt-level = 3 }
+bitflags = { opt-level = 3 }
+bitstream-io = { opt-level = 3 }
+bytemuck = { opt-level = 3 }
+byteorder-lite = { opt-level = 3 }
+cfg-if = { opt-level = 3 }
+crc32fast = { opt-level = 3 }
+crossbeam-deque = { opt-level = 3 }
+crossbeam-epoch = { opt-level = 3 }
+crossbeam-utils = { opt-level = 3 }
+either = { opt-level = 3 }
+equator = { opt-level = 3 }
+fdeflate = { opt-level = 3 }
+flate2 = { opt-level = 3 }
+image = { opt-level = 3 }
+image-webp = { opt-level = 3 }
+imgref = { opt-level = 3 }
+itertools = { opt-level = 3 }
+libc = { opt-level = 3 }
+log = { opt-level = 3 }
+loop9 = { opt-level = 3 }
+maybe-rayon = { opt-level = 3 }
+memchr = { opt-level = 3 }
+miniz_oxide = { opt-level = 3 }
+moxcms = { opt-level = 3 }
+nom = { opt-level = 3 }
+num-bigint = { opt-level = 3 }
+num-integer = { opt-level = 3 }
+num-rational = { opt-level = 3 }
+num-traits = { opt-level = 3 }
+once_cell = { opt-level = 3 }
+png = { opt-level = 3 }
+profiling = { opt-level = 3 }
+pxfm = { opt-level = 3 }
+quick-error = { opt-level = 3 }
+rav1e = { opt-level = 3 }
+ravif = { opt-level = 3 }
+rayon = { opt-level = 3 }
+rayon-core = { opt-level = 3 }
+rgb = { opt-level = 3 }
+simd-adler32 = { opt-level = 3 }
+thiserror = { opt-level = 3 }
+v_frame = { opt-level = 3 }
+zune-core = { opt-level = 3 }
+zune-jpeg = { opt-level = 3 }
 
 # Fast local installation profile. Published artifacts and CI release builds continue to use
 # `profile.release`; this profile trades runtime optimization for much faster edit-build-install

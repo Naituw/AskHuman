@@ -1,0 +1,21 @@
+[package]
+name = "ah-preview"
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.89"
+license = "MIT"
+publish = false
+description = "Downscaled AVIF previews of image attachments for the iOS channel"
+
+# This crate is a path dependency of `humaninloop` and is not a workspace member, so it takes the profiles of the
+# root manifest (`src-tauri/Cargo.toml`). Read the `opt-level = 3` overrides there before changing anything here:
+# the preview pipeline is only fast when this crate and the codecs it uses are compiled with them.
+[dependencies]
+# The same `image` (and so the same compiled copy) the main crate already uses; only the formats an attachment preview
+# reads are listed, the main crate's own features are unioned in by Cargo.
+image = { version = "0.25", default-features = false, features = ["png", "jpeg", "webp"] }
+# AVIF encoder (rav1e). `asm` is off on purpose: it needs nasm on every build machine, and the pure Rust path is fast
+# enough (docs/specs/ios-attachment-traffic.md §10.3). `threading` spreads one encode over the cores.
+ravif = { version = "0.11", default-features = false, features = ["threading"] }
+rgb = "0.8"
+imgref = "1"
