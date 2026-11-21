@@ -43,6 +43,7 @@
 
 - 域名 `askhuman-relay.maipo.me`（中继留在香港；Owner 已有的 `api.maipo.me` 是按地域分流的，不动）：DNSPod 的 CNAME 指向 SCF 的自定义域名入口，免费 TrustAsia 证书托管并打开自动续期，强制 HTTPS；映射 `/*` 目前指向预发函数 `askhuman-relay-verify` 的别名 `live`。
 - 告警两条与月预算 ¥30（规格 4.3）。
+- 上传包的本机预检（2026-11-22）：`relay/dist/askhuman-relay.zip`（8,579 字节）与当前 `relay/src` 逐文件一致；用 zip 解出来的 `scf_bootstrap` 在本机起服务（一次性密钥），验过 health、注册与推送的错误路径、同一客户端第 31 次注册 → 429、伪造的 `X-Forwarded-For` 前缀绕不过、日志只有方法 / 状态 / 耗时。这只证明包与代码本身；真实 SCF 上的 `X-Forwarded-For` 层数、端口与运行时仍靠下面第 5 步的外部验证。
 
 待做（切换生产，蓝绿、随时可回滚）：
 
