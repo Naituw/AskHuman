@@ -3,7 +3,6 @@
 // docs/specs/ios-channel.md §3 / §7. The app's "New task" needs the Agent-task switch, which sits
 // in the card as a row of its own (AgentTasksSwitchRow).
 import { computed } from "vue";
-import { openPath } from "../../lib/ipc";
 import { useI18n } from "vue-i18n";
 import AgentTasksSwitchRow from "./AgentTasksSwitchRow.vue";
 import { useSettingsContext } from "./context";
@@ -16,7 +15,7 @@ import {
   splitDuration,
   type SplitDuration,
 } from "./iosAlertTiming";
-import { aggregateTraffic, brokerEstimate, hasCompleteTrafficHistory, formatBytes, quotaShare, trafficReminder } from "./iosTraffic";
+import { aggregateTraffic, brokerEstimate, hasCompleteTrafficHistory, formatBytes, trafficReminder } from "./iosTraffic";
 
 const { t } = useI18n();
 const { persist, secretsPresent, SECRET_PLACEHOLDER, clearSecret } = useSettingsContext();
@@ -77,13 +76,11 @@ const completeTrafficHistory = computed(() => {
 const trafficText = computed(() => {
   const tr = traffic.value;
   if (!tr) return "";
-  const share = quotaShare(tr);
   return t(completeTrafficHistory.value ? "settings.experimental.ios.trafficAggregate" : "settings.experimental.ios.trafficPartial", {
     total: formatBytes(brokerEstimate(tr)),
     count: state.value?.usageRecords?.length ?? 1,
     out: formatBytes(tr.bytesOut),
     in: formatBytes(tr.bytesIn),
-    percent: share < 0.01 ? "<1%" : `${Math.round(share * 100)}%`,
   });
 });
 // Only counts, and says nothing of the broker's plan: close to each GB, or past it (same rule as the phone's Inbox).
@@ -173,7 +170,6 @@ function pushWarning(phone: IosPhone): string {
         </p>
         <p v-if="!completeTrafficHistory">{{ t("settings.experimental.ios.trafficIncomplete") }}</p>
         <p>{{ t("settings.experimental.ios.trafficCoverage") }}</p>
-        <a href="https://cloud.emqx.com/console/" @click.prevent="openPath('https://cloud.emqx.com/console/')">{{ t("settings.experimental.ios.trafficConsole") }}</a>
       </details>
       <p v-if="state?.trafficStorageIssue" class="card-desc warn">{{ t("settings.experimental.ios.trafficStorageIssue") }}</p>
       <p v-if="trafficNote" class="card-desc ios-traffic-note">{{ trafficNote }}</p>

@@ -39,7 +39,7 @@ mod tests {
     fn a_pairing_code_fits_into_a_qr_code() {
         let code = PairCode {
             v: 1,
-            h: "abcdef.ala.us-east-1.emqxsl.com".into(),
+            h: "abcdef.ala.us-east-1.broker.example.com".into(),
             p: 8883,
             w: 8084,
             u: "user1234".into(),

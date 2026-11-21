@@ -1,9 +1,7 @@
 // Monthly broker-facing message traffic replicated across known devices (docs/specs/ios-traffic.md).
 import type { IosTraffic, IosTrafficRecord } from "../../lib/types";
 
-/** EMQX Serverless free tier: 1 GiB per month, inbound plus outbound. */
-export const FREE_QUOTA_BYTES = 1024 ** 3;
-/** A GB as the broker counts it: 1024³ bytes. */
+/** A GB in the reminder step: 1024³ bytes. */
 export const GIGABYTE = 1024 ** 3;
 
 /**
@@ -11,10 +9,6 @@ export const GIGABYTE = 1024 ** 3;
  */
 export function brokerEstimate(traffic: IosTraffic): number {
   return traffic.bytesIn + traffic.bytesOut;
-}
-
-export function quotaShare(traffic: IosTraffic): number {
-  return brokerEstimate(traffic) / FREE_QUOTA_BYTES;
 }
 
 /** What the card says about this month's data use: close to a multiple of the step, or past it. */

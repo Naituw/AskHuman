@@ -4,7 +4,6 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { i18n } from "../../i18n";
 import IosChannelCard from "./IosChannelCard.vue";
 
-const openPath = vi.hoisted(() => vi.fn());
 const iosOp = vi.hoisted(() => vi.fn());
 const iosPairQr = vi.hoisted(() => vi.fn());
 const iosTest = vi.hoisted(() => vi.fn());
@@ -13,7 +12,6 @@ const iosConnectionExport = vi.hoisted(() => vi.fn());
 const useSettingsContext = vi.hoisted(() => vi.fn());
 
 vi.mock("../../lib/ipc", () => ({
-  openPath,
   iosOp,
   iosPairQr,
   iosTest,
@@ -186,8 +184,11 @@ describe("IosChannelCard", () => {
     expect(wrapper.get(".ios-traffic").text()).toContain("History is incomplete");
     expect(wrapper.get(".ios-traffic-details").text()).toContain("Office Mac");
     expect(wrapper.text()).toContain("Traffic could not be saved");
-    await wrapper.get('a[href="https://cloud.emqx.com/console/"]').trigger("click");
-    expect(openPath).toHaveBeenCalledWith("https://cloud.emqx.com/console/");
+    // The card does not know which service the broker is, so it does not name one or link to its console, and
+    // it does not measure the use against a plan: the usage is the broker's to show.
+    expect(wrapper.get(".ios-traffic-details").text()).toContain("broker's console");
+    expect(wrapper.find(".ios-traffic-details a").exists()).toBe(false);
+    expect(wrapper.text()).not.toMatch(/EMQX|%|allowance|quota/i);
     wrapper.unmount();
   });
 

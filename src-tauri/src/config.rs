@@ -481,12 +481,13 @@ pub struct SlackChannelConfig {
 }
 
 /// iOS 渠道配置（docs/specs/ios-channel.md）。
-/// 形态：自备 MQTT broker（EMQX）+ 推送中继；手机与 Mac 之间端到端加密，broker 只见密文。
+/// Shape: a bring-your-own MQTT broker (requirements: docs/wiki/ios-broker.md) plus a push relay; the phone and the
+/// Mac encrypt end to end, so the broker only sees ciphertext.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", default)]
 pub struct IosChannelConfig {
     pub enabled: bool,
-    /// Broker 主机名（EMQX 实例域名）。
+    /// Broker host name.
     pub host: String,
     /// MQTT over TLS 端口。
     pub port: u16,
@@ -962,7 +963,7 @@ mod tests {
         assert!(c.channels.slack.bot_token.is_empty());
         assert!(c.channels.slack.app_token.is_empty());
         assert!(c.channels.slack.user_id.is_empty());
-        // iOS 默认未启用，端口为 EMQX 标准的 TLS / WSS 端口。
+        // iOS is off by default; the ports are the usual MQTT-over-TLS and WSS ones.
         assert!(!c.channels.ios.enabled);
         assert_eq!((c.channels.ios.port, c.channels.ios.ws_port), (8883, 8084));
         assert!(c.channels.ios.host.is_empty() && c.channels.ios.password.is_empty());

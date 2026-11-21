@@ -19,7 +19,7 @@ pub const KID_TICKET: u32 = 0;
 /// Key id of the long-lived pair keys.
 pub const KID_PAIR: u32 = 1;
 
-/// EMQX caps a single message at 1 MB.
+/// A broker has to accept messages of at least about 1 MB (docs/wiki/ios-broker.md); an envelope stays below that.
 pub const MAX_ENVELOPE_BYTES: usize = 900_000;
 pub const MAX_PLAIN_BYTES: usize = 512 * 1024;
 /// The smallest plaintext (JSON of `{"i","t","ts","b"}`) the Mac compresses for a phone that said

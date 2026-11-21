@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { IosTraffic } from "../../lib/types";
-import { FREE_QUOTA_BYTES, GIGABYTE, aggregateTraffic, hasCompleteTrafficHistory, brokerEstimate, formatBytes, quotaShare, trafficReminder } from "./iosTraffic";
+import { GIGABYTE, aggregateTraffic, hasCompleteTrafficHistory, brokerEstimate, formatBytes, trafficReminder } from "./iosTraffic";
 
 function traffic(bytes: number): IosTraffic {
   return { month: "2026-10", bytesIn: bytes / 2, bytesOut: bytes / 2, msgsIn: 1, msgsOut: 1 };
@@ -9,7 +9,6 @@ function traffic(bytes: number): IosTraffic {
 describe("iosTraffic", () => {
   it("adds each recorded broker-facing leg once", () => {
     expect(brokerEstimate(traffic(1000))).toBe(1000);
-    expect(quotaShare(traffic(FREE_QUOTA_BYTES / 4))).toBeCloseTo(0.25);
   });
 
   // The same cases as the phone's TrafficReminderTests: one rule on both screens.
