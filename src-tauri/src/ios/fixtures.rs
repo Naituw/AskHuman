@@ -654,6 +654,20 @@ fn blob_fixture_frames_open_to_their_header_and_bytes_and_bind_their_topic() {
         let scope = scope_of(item);
         let head: Plain = serde_json::from_str(item["head"].as_str().unwrap()).unwrap();
         let bytes = decode_hex(item["bytes"].as_str().unwrap());
+        // The header is a message of the catalog without its `data`: the typed model reads it with the default.
+        match head.t.as_str() {
+            "asset.chunk" => {
+                let chunk: crate::ios::wire::AssetChunk =
+                    serde_json::from_value(head.b.clone()).unwrap();
+                assert!(chunk.data.is_empty(), "{name}");
+            }
+            "upload.chunk" => {
+                let chunk: crate::ios::wire::UploadChunk =
+                    serde_json::from_value(head.b.clone()).unwrap();
+                assert!(chunk.data.is_empty(), "{name}");
+            }
+            other => panic!("{name}: a blob frame of `{other}`"),
+        }
         assert_eq!(
             envelope::open_message(&key, scope, &frame),
             Ok(envelope::Opened::Blob {

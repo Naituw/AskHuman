@@ -14,10 +14,12 @@ final class BinaryFrameTests: XCTestCase {
     }
 
     private func chunkHead(index: UInt64 = 1) throws -> Plain {
-        Plain(
-            i: "BBBBBBBBBBBBBBBBBBBBBB", t: AssetChunk.type, ts: 1_792_900_000_000,
-            b: try AHJSON.tree(AssetChunk(assetId: "a1", index: index, total: 3, size: 500_000, sha256: nil, data: ""))
+        var head = try Plain(
+            blobHeader: AssetChunk(assetId: "a1", index: index, total: 3, size: 500_000, sha256: nil, data: ""),
+            nowMs: 1_792_900_000_000
         )
+        head.i = "BBBBBBBBBBBBBBBBBBBBBB"
+        return head
     }
 
     private func sealed(_ plain: Plain, kid: Int = Wire.kidPair, sender: String? = nil, format: WireFormat = .binary) throws -> Data {
@@ -326,18 +328,28 @@ final class BinaryFrameTests: XCTestCase {
         XCTAssertFalse(old.binary)
     }
 
-    func testAChunkHeaderHasNoDataAndAChunkWithDataKeepsIt() throws {
-        let head = try AHJSON.tree(AssetChunk(assetId: "a1", index: 0, total: 1, size: 3, sha256: nil, data: ""))
-        XCTAssertNil(head["data"], "left out when empty")
-        let decoded = try AHJSON.value(AssetChunk.self, from: head)
-        XCTAssertEqual(decoded.data, "")
+    /// The header of a blob frame is the message without its `data`; the message itself always has the key, an empty
+    /// file's one chunk included, because older peers do not read a chunk that lacks it.
+    func testAChunkHeaderHasNoDataAndTheMessageAlwaysKeepsIt() throws {
+        let chunk = AssetChunk(assetId: "a1", index: 0, total: 1, size: 0, sha256: nil, data: "")
+        XCTAssertEqual(try AHJSON.tree(chunk)["data"], .string(""), "an empty file's chunk keeps an empty key")
+        let head = try Plain(blobHeader: chunk, nowMs: 5)
+        XCTAssertEqual(head.t, AssetChunk.type)
+        XCTAssertNil(head.b["data"], "the header leaves it out")
+        XCTAssertEqual(head.b["assetId"], .string("a1"))
+        let decoded = try head.body(as: AssetChunk.self)
+        XCTAssertEqual(decoded, chunk, "and it reads as empty")
+
         let full = try AHJSON.tree(AssetChunk(assetId: "a1", index: 0, total: 1, size: 3, sha256: nil, data: "AQID"))
         XCTAssertEqual(full["data"], .string("AQID"))
         XCTAssertEqual(try AHJSON.value(AssetChunk.self, from: full).data, "AQID")
+        XCTAssertNil(try Plain(blobHeader: AssetChunk(assetId: "a1", index: 0, total: 1, size: 3, sha256: nil, data: "AQID"), nowMs: 5).b["data"])
 
-        let upload = try AHJSON.tree(UploadChunk(uploadId: "u1", index: 0))
-        XCTAssertNil(upload["data"])
-        XCTAssertEqual(try AHJSON.value(UploadChunk.self, from: upload).data, "")
+        let upload = UploadChunk(uploadId: "u1", index: 0, data: "")
+        XCTAssertEqual(try AHJSON.tree(upload)["data"], .string(""))
+        let uploadHead = try Plain(blobHeader: upload, nowMs: 5)
+        XCTAssertNil(uploadHead.b["data"])
+        XCTAssertEqual(try uploadHead.body(as: UploadChunk.self), upload)
         XCTAssertEqual(try AHJSON.tree(UploadChunk(uploadId: "u1", index: 0, data: "AQID"))["data"], .string("AQID"))
     }
 }

@@ -1077,3 +1077,44 @@ async fn a_mac_whose_id_does_not_fit_the_binary_header_keeps_to_json_chunks() {
         phone.received
     );
 }
+
+/// An empty file is one chunk with no bytes. Older phones read a chunk only when it has a `data` key, so the JSON
+/// message keeps it, empty; only the header of a blob frame leaves it out.
+#[tokio::test(start_paused = true)]
+async fn an_empty_file_keeps_an_empty_data_key_in_the_json_chunk() {
+    let fx = Fixture::new().await;
+    let mut phone = fx.live_phone().await;
+    let asset = asset_file(fx.dir.path(), "empty.txt", b"");
+    deliver_with_assets(&fx, "req1", vec![asset.clone()]);
+    phone.recv(t::REQUEST_NEW).await;
+
+    phone.send(&get(&asset.asset_id, 0, 8)).await;
+    let chunk = phone.recv(t::ASSET_CHUNK).await;
+    assert_eq!(
+        chunk.b["data"], "",
+        "the key is there, and empty: {chunk:?}"
+    );
+    assert_eq!(
+        (chunk.b["total"].as_u64(), chunk.b["size"].as_u64()),
+        (Some(1), Some(0))
+    );
+    assert_eq!(chunk.b["sha256"], sha_hex(b"").as_str());
+    assert!(!phone.received.last().unwrap().blob);
+}
+
+#[tokio::test(start_paused = true)]
+async fn an_empty_file_is_a_blob_frame_with_no_bytes_for_a_phone_that_takes_binary() {
+    let fx = Fixture::new().await;
+    let mut phone = fx.live_phone_with(|p| p.binary = true).await;
+    let asset = asset_file(fx.dir.path(), "empty.txt", b"");
+    deliver_with_assets(&fx, "req1", vec![asset.clone()]);
+    phone.recv(t::REQUEST_NEW).await;
+
+    phone.send(&get(&asset.asset_id, 0, 8)).await;
+    let chunk: wire::AssetChunk = phone.recv_body(t::ASSET_CHUNK).await;
+    assert_eq!((chunk.index, chunk.total, chunk.size), (0, 1, 0));
+    assert_eq!(chunk.sha256.as_deref(), Some(sha_hex(b"").as_str()));
+    assert!(chunk.data.is_empty());
+    let last = phone.received.last().unwrap();
+    assert!(last.binary && last.blob, "{last:?}");
+}

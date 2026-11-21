@@ -1726,9 +1726,10 @@ pub struct AssetChunk {
     /// SHA-256 (hex) of the whole file, present on the first chunk only.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub sha256: Option<String>,
-    /// Base64 chunk data. A blob frame carries the bytes after its header instead, so its header has no `data`: left out
-    /// when empty (a chunk is never empty), and the default applies when it is read.
-    #[serde(default, skip_serializing_if = "String::is_empty")]
+    /// Base64 chunk data. A blob frame carries the bytes after its header instead, so its header has no `data`: the sender
+    /// takes the key out of the header (`gateway::assets::send_chunk`), and the default applies when it is read. The
+    /// message itself always has the key, an empty file's one empty chunk included, as older peers require it.
+    #[serde(default)]
     pub data: String,
 }
 msg!(AssetChunk, t::ASSET_CHUNK);
@@ -1771,9 +1772,9 @@ msg!(UploadBegin, t::UPLOAD_BEGIN);
 pub struct UploadChunk {
     pub upload_id: String,
     pub index: u64,
-    /// Base64 chunk data. A blob frame carries the bytes after its header instead, so its header has no `data`: left out
-    /// when empty (a chunk is never empty), and the default applies when it is read.
-    #[serde(default, skip_serializing_if = "String::is_empty")]
+    /// Base64 chunk data. A blob frame carries the bytes after its header instead, so its header has no `data`, and the
+    /// default applies when it is read. The message itself always has the key, as older peers require it.
+    #[serde(default)]
     pub data: String,
 }
 msg!(UploadChunk, t::UPLOAD_CHUNK);

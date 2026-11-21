@@ -32,10 +32,9 @@ public struct OmitZero: Codable, Hashable, Sendable {
     }
 }
 
-/// A string that is absent from the wire when empty (`#[serde(default, skip_serializing_if = "String::is_empty")]`) and
-/// decodes to the empty string when the key is absent.
+/// A string that decodes to the empty string when the key is absent (`#[serde(default)]`) and is always encoded.
 @propertyWrapper
-public struct OmitEmptyString: Codable, Hashable, Sendable {
+public struct DefaultEmptyString: Codable, Hashable, Sendable {
     public var wrappedValue: String
     public init(wrappedValue: String) { self.wrappedValue = wrappedValue }
     public init(from decoder: Decoder) throws {
@@ -89,9 +88,6 @@ extension KeyedEncodingContainer {
         if value.wrappedValue != 0 { try encode(value.wrappedValue, forKey: key) }
     }
 
-    public mutating func encode(_ value: OmitEmptyString, forKey key: Key) throws {
-        if !value.wrappedValue.isEmpty { try encode(value.wrappedValue, forKey: key) }
-    }
 }
 
 extension KeyedDecodingContainer {
@@ -103,8 +99,8 @@ extension KeyedDecodingContainer {
         OmitZero(wrappedValue: try decodeIfPresent(UInt64.self, forKey: key) ?? 0)
     }
 
-    public func decode(_ type: OmitEmptyString.Type, forKey key: Key) throws -> OmitEmptyString {
-        OmitEmptyString(wrappedValue: try decodeIfPresent(String.self, forKey: key) ?? "")
+    public func decode(_ type: DefaultEmptyString.Type, forKey key: Key) throws -> DefaultEmptyString {
+        DefaultEmptyString(wrappedValue: try decodeIfPresent(String.self, forKey: key) ?? "")
     }
 
     public func decode<E>(_ type: DefaultEmpty<E>.Type, forKey key: Key) throws -> DefaultEmpty<E> {

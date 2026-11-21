@@ -1721,9 +1721,10 @@ public struct AssetChunk: WireMessage {
     public var size: UInt64
     /// SHA-256 (hex) of the whole file, present on the first chunk only.
     public var sha256: String?
-    /// base64url chunk data. A blob frame carries the bytes after its header instead, so its header has no `data`: left
-    /// out of the wire when empty (a chunk is never empty), and empty when the key is absent.
-    @OmitEmptyString public var data: String
+    /// base64url chunk data. A blob frame carries the bytes after its header instead, so its header has no `data` and
+    /// it reads as empty. The message itself always has the key, an empty file's one chunk included, as older peers
+    /// require it.
+    @DefaultEmptyString public var data: String
 }
 
 public struct AssetError: WireMessage {
@@ -1770,11 +1771,12 @@ public struct UploadChunk: WireMessage {
     public static let type = "upload.chunk"
     public var uploadId: String
     public var index: UInt64
-    /// base64url chunk data. A blob frame carries the bytes after its header instead, so its header has no `data`: left
-    /// out of the wire when empty (a chunk is never empty), and empty when the key is absent.
-    @OmitEmptyString public var data: String
+    /// base64url chunk data. A blob frame carries the bytes after its header instead, so its header has no `data` and
+    /// it reads as empty (`Plain(blobHeader:nowMs:)` builds such a header). The message itself always has the key, as
+    /// older peers require it.
+    @DefaultEmptyString public var data: String
 
-    public init(uploadId: String, index: UInt64, data: String = "") {
+    public init(uploadId: String, index: UInt64, data: String) {
         self.uploadId = uploadId
         self.index = index
         self.data = data

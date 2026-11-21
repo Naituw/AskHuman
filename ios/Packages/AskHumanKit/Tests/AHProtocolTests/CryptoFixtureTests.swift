@@ -298,6 +298,13 @@ final class CryptoFixtureTests: XCTestCase {
             let head = try AHJSON.decoder.decode(Plain.self, from: headText)
             let bytes = hex(item["bytes"])
             XCTAssertEqual(try AHEnvelope.openMessage(key: key, scope: scope, frame: frame), .blob(head: head, bytes: bytes), name)
+            // The header is a message of the catalog without its `data`: the typed model reads it with the default.
+            XCTAssertNil(head.b["data"], name)
+            switch head.t {
+            case AssetChunk.type: XCTAssertEqual(try head.body(as: AssetChunk.self).data, "", name)
+            case UploadChunk.type: XCTAssertEqual(try head.body(as: UploadChunk.self).data, "", name)
+            default: XCTFail("\(name): a blob frame of \(head.t)")
+            }
 
             // The plaintext is the marker, the length of the header, the header and the bytes, as they are.
             let plaintext = try AHEnvelope.openFrame(key: key, scope: scope, frame: frame)

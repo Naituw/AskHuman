@@ -415,6 +415,17 @@ public struct Plain: Codable, Equatable, Sendable {
         self.init(t: M.type, ts: nowMs, b: try AHJSON.tree(body))
     }
 
+    /// The header of a blob frame (`AHEnvelope.sealBlob`): the message as it goes in JSON, without its `data`, because
+    /// the bytes follow the header instead. Pass the body with an empty `data`.
+    public init<M: WireMessage>(blobHeader body: M, nowMs: Int64) throws {
+        var tree = try AHJSON.tree(body)
+        if case .object(var object) = tree {
+            object["data"] = nil
+            tree = .object(object)
+        }
+        self.init(t: M.type, ts: nowMs, b: tree)
+    }
+
     /// Decodes the body as `M`; fails when the type string or the shape does not match.
     public func body<M: WireMessage>(as type: M.Type) throws -> M {
         guard t == M.type else { throw EnvelopeError.malformed }

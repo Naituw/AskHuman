@@ -276,9 +276,14 @@ impl Actor {
 
     /// Sends one chunk of a file: a blob frame (the bytes raw behind the header) to a phone that takes binary frames,
     /// a JSON message with the bytes in base64 otherwise, and also when the blob frame cannot be built. `chunk` comes
-    /// with an empty `data`, which is how the blob header leaves it out.
+    /// with an empty `data`: the header of a blob frame is the message without that key, and the JSON message gets the
+    /// bytes in it (an empty file's one chunk keeps an empty `data`, which older phones need to read it).
     fn send_chunk(&mut self, phone_id: &str, mut chunk: AssetChunk, bytes: &[u8]) {
-        if self.send_blob(phone_id, AssetChunk::TYPE, chunk.to_value(), bytes) {
+        let mut head = chunk.to_value();
+        if let Some(object) = head.as_object_mut() {
+            object.remove("data");
+        }
+        if self.send_blob(phone_id, AssetChunk::TYPE, head, bytes) {
             return;
         }
         chunk.data = crypto::b64u(bytes);

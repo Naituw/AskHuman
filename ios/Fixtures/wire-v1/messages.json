@@ -325,9 +325,6 @@
     {"type": "history.exchange", "name": "missing", "body": {"reqId": "x2", "id": "req-gone"}},
 
     {"type": "hello", "name": "binary", "body": {"nonce": "q3ZkL1m0Xw4", "proto": 1, "appVer": "1.0 (1)", "deviceName": "Wutian iPhone", "lifecycleResults": true, "trafficUsage": true, "leanWatch": true, "leanAgents": true, "compression": true, "binary": true}},
-    {"type": "hello.ack", "name": "binary", "body": {"nonce": "q3ZkL1m0Xw4", "epoch": "0123456789abcdef", "macName": "Home Mac", "caps": {"newTask": true, "interject": true, "watch": true, "todos": true, "answerTodos": true, "away": true, "leanAgents": true, "binary": true}, "slot": {"active": true, "autoActivation": true}}},
-    {"type": "asset.chunk", "name": "blob-header-first", "body": {"assetId": "a1", "index": 0, "total": 3, "size": 196608, "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"}},
-    {"type": "asset.chunk", "name": "blob-header-next", "body": {"assetId": "a1", "index": 1, "total": 3, "size": 100}},
-    {"type": "upload.chunk", "name": "blob-header", "body": {"uploadId": "u1", "index": 0}}
+    {"type": "hello.ack", "name": "binary", "body": {"nonce": "q3ZkL1m0Xw4", "epoch": "0123456789abcdef", "macName": "Home Mac", "caps": {"newTask": true, "interject": true, "watch": true, "todos": true, "answerTodos": true, "away": true, "leanAgents": true, "binary": true}, "slot": {"active": true, "autoActivation": true}}}
   ]
 }
