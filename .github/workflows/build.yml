@@ -1,7 +1,7 @@
 name: ci
 
 # 持续集成校验：PR / push / 手动触发时编译并跑测试，确保 4 平台可构建；
-# 另外单独跑 iOS 渠道的推送中继（Node.js）与 Swift 包的单元测试。
+# 另外单独跑 iOS 渠道的推送中继（Node.js）、broker 兼容性套件（Node.js）与 Swift 包的单元测试。
 # 不负责发布；正式发布（npm 主包+子包 + GitHub Release）见 release.yml（由 tag 触发）。
 
 on:
@@ -39,6 +39,23 @@ jobs:
           node-version: 24
       - run: npm test
         working-directory: relay
+
+  # ios/Tools/broker-probe 的兼容性套件自测：在回环地址上起真实的（Aedes）broker，断言每项检查对合规与
+  # 不合规的 broker 都给出对的结论。不连任何外部 broker，不需要凭据。
+  broker-probe:
+    name: broker-probe (node --test)
+    if: github.event_name != 'schedule'
+    runs-on: ubuntu-22.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 24
+      - run: npm ci
+        working-directory: ios/Tools/broker-probe
+      - run: npm test
+        working-directory: ios/Tools/broker-probe
 
   ios-kit:
     name: iOS Swift package (swift test)

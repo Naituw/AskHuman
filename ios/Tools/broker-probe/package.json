@@ -2,9 +2,18 @@
   "name": "askhuman-broker-probe",
   "version": "0.0.0",
   "private": true,
-  "description": "Reachability and access-rule probes for the MQTT broker behind the iOS channel (manual checks, not part of any build).",
+  "description": "Reachability and compatibility probes for the MQTT broker behind the iOS channel (run by hand against a broker; the offline self-tests run in CI).",
   "type": "commonjs",
+  "engines": {
+    "node": ">=22.12"
+  },
+  "scripts": {
+    "test": "node --test \"test/*.test.cjs\""
+  },
   "dependencies": {
     "mqtt-packet": "9.0.2"
+  },
+  "devDependencies": {
+    "aedes": "1.2.0"
   }
 }

@@ -1,0 +1,6 @@
+# Every account may read and write ah/<its own user name>/ and nothing else.
+#
+# This is the whole access rule the channel needs. It is enforced when a message would be delivered:
+# Mosquitto accepts a publish or a subscription outside the account's topics and then never delivers it,
+# which is what compat.cjs (and acl-check.cjs) judge.
+pattern readwrite ah/%u/#
