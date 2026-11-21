@@ -171,6 +171,8 @@ AskHuman --instance dev --worktree /absolute/path/to/worktree daemon status
   （`daemon stop` 或空闲退出）且无窗口后，宿主在启动宽限（约 12 秒）内自行退出，换新二进制也不会续命，
   所以不再靠人手收尾。测试仍应在实例 config 写 `menuBarIcon: "off"`，避免图标闪现、也不依赖这条兜底。
   这条退出逻辑只在新构建里：旧构建遗留的隔离宿主不会自己退出，见故障简表。
+  macOS 上带 `ASKHUMAN_HOME` 的 CLI 自动起 daemon 时，还会向 launchd 注册一个 `daemon.instance.<目录哈希>` 任务；
+  daemon 退出、测试目录被删都不会注销它，收尾时按故障简表注销。
   测试 System 选路、远程转送或同步时，使用 [受保护的 fixture v2 入口](specs/system-instance-home-routing.md#4-fixture-v2-的入口与继承)，
   它固定私有账户、使用私有 launchd 身份，并要求跨程序与 endpoint 的 fixture 能力。
   显式 Isolated 的 Agent 集成测试仍需一次性假 `HOME` 或独立 profile，收尾核对真实 hook 文件与登录项。
@@ -186,6 +188,9 @@ AskHuman dev disable           # 停实例 daemon、释 preset 租约、清理�
 AskHuman dev disable --purge   # 连 .askhuman-dev 目录一起删
 ```
 
+`dev disable` 不注销该树 daemon 在 launchd 里的任务（同一棵树再启动会复用同一个标签）；`--purge` 或
+`git worktree remove` 之后会残留一条，按故障简表里的 `daemon.instance` 一行注销。
+
 不再需要的 worktree 请尽早 `git worktree remove`：每棵树自带一份 `src-tauri/target/`（实测几 GiB 到近
 10 GiB 的逻辑大小），`install.sh` 的预算清理只管 profile 目录，不会替你删整棵树。
 
@@ -197,4 +202,5 @@ AskHuman dev disable --purge   # 连 .askhuman-dev 目录一起删
 | 普通提问仍进正式端 | 新项目的预期行为；验收请用项目 `dev_ask` 或 `node scripts/dev.mjs ask` |
 | preset 占用冲突 | 对方 `dev disable` 或本树 `--force` |
 | 要打开 Dev 设置 | `node scripts/dev.mjs ui`，再打开 Dev 渠道；普通 `--settings` 仍属日常入口 |
-| 菜单栏出现多个 AskHuman 图标 | `pgrep -fl -- --gui-host` 列出宿主，再用 `ps eww -o command= -p <pid>` 看各自的 `ASKHUMAN_HOME`：没有该变量的是日常宿主，指向 `/tmp` 或 `.askhuman-dev` 的是隔离实例遗留的宿主；确认其 daemon 已不在后 `kill <pid>`。新构建的隔离宿主随 daemon 退出，只有旧构建会遗留；同时核对 `launchctl list \| grep humaninloop.daemon.instance` 里没有已删目录的残留任务 |
+| 菜单栏出现多个 AskHuman 图标 | `pgrep -fl -- --gui-host` 列出宿主，再用 `ps eww -o command= -p <pid>` 看各自的 `ASKHUMAN_HOME`：没有该变量的是日常宿主，指向 `/tmp` 或 `.askhuman-dev` 的是隔离实例遗留的宿主；确认其 daemon 已不在后 `kill <pid>`。新构建的隔离宿主随 daemon 退出，只有旧构建会遗留；同时按下一行核对 launchd 里有没有残留任务 |
+| `launchctl list` 里有 `com.naituw.humaninloop.daemon.instance.<哈希>` 残留任务 | 来源：macOS 上带 `ASKHUMAN_HOME`（或 Dev 工作树）的 CLI 自动起 daemon 时，会向 `gui/<uid>` 注册一个以配置目录哈希命名的任务，plist 写在该目录的 `daemon-launchd.plist`。daemon 退出或目录被删都不会注销它，只有下次用同一目录再起 daemon 才会替换。它是惰性的（没有进程、没有 KeepAlive、不会被重启），只占 `launchctl list` 的一行，注销或重启后通常也会消失。收尾：`launchctl list \| grep humaninloop.daemon.instance` 找标签，`launchctl print gui/$(id -u)/<标签>` 看 `path =`、`state =` 与 `ASKHUMAN_HOME`；确认 `state = not running` 且该实例不再需要后，`launchctl bootout gui/$(id -u)/<标签>`（任务没在运行，不会杀任何进程）。只处理带 `.instance.` 的标签，不带的 `com.naituw.humaninloop.daemon` 是日常 daemon，不要动 |
