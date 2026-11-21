@@ -2089,33 +2089,59 @@ where
     });
 }
 
-/// 宿主退出判定（spec D4/D5/§5.4）。可在任意线程调用。
+/// The menu-bar mode whose idle policy this Host actually follows (spec D16).
+///
+/// `always` means the Host outlives its daemon: it stays resident and shows the stopped state.
+/// That is only sound where something owns the residency. The formal instance has a login item
+/// that restarts the Host, and its icon is the user's own to see and quit. A Dev, isolated or
+/// fixture instance (`is_dev_instance_context`) has neither, so a resident Host there is an
+/// orphan nobody can restart or stop: `daemon stop` leaves it behind, every install re-execs it,
+/// and each throw-away home leaves one more icon in the menu bar. Those instances therefore run
+/// `always` as `active`: the Host lives only while its daemon or one of its windows does.
+fn effective_mode(configured: MenuBarIconMode) -> MenuBarIconMode {
+    effective_mode_for(configured, crate::dev_instance::is_dev_instance_context())
+}
+
+fn effective_mode_for(configured: MenuBarIconMode, instance_context: bool) -> MenuBarIconMode {
+    match configured {
+        MenuBarIconMode::Always if instance_context => MenuBarIconMode::Active,
+        other => other,
+    }
+}
+
+/// Whether a Host with no window and no background job exits (spec D4/D5/§5.4). `settled` means
+/// it has shown a window or outlived its start-up grace, so an early evaluation cannot end a Host
+/// before its first `OpenWindow` request arrives.
+fn exits_when_idle(mode: MenuBarIconMode, settled: bool, daemon_up: bool) -> bool {
+    match mode {
+        // off: the Host exists only for its windows, so it exits once they are all closed.
+        MenuBarIconMode::Off => settled,
+        // active: daemon gone and no window -> the icon disappears and the Host exits.
+        MenuBarIconMode::Active => settled && !daemon_up,
+        // always: resident; the icon shows the stopped state instead of the Host exiting.
+        MenuBarIconMode::Always => false,
+    }
+}
+
+/// Whether nothing keeps this Host alive and its idle policy says to exit: no window, no held
+/// background job, and `exits_when_idle` for the mode it effectively runs in.
+fn idle_exit_due(state: &HostState) -> bool {
+    state.windows_open.load(Ordering::SeqCst) == 0
+        && state.holds.load(Ordering::SeqCst) == 0
+        && exits_when_idle(
+            effective_mode(state.mode()),
+            state.ever_open.load(Ordering::SeqCst) || state.grace_over.load(Ordering::SeqCst),
+            state.daemon_up.load(Ordering::SeqCst),
+        )
+}
+
+/// 宿主退出判定（spec D4/D5/D16/§5.4）。可在任意线程调用。
 fn evaluate_exit(app: &AppHandle) {
     let Some(state) = app.try_state::<HostState>() else {
         return;
     };
-    if state.windows_open.load(Ordering::SeqCst) > 0 {
-        return; // 有窗口绝不退出。
-    }
-    if state.holds.load(Ordering::SeqCst) > 0 {
-        return; // A background job that outlives its window is still running.
-    }
-    let settled = state.ever_open.load(Ordering::SeqCst) || state.grace_over.load(Ordering::SeqCst);
-    match state.mode() {
-        // off：宿主仅为窗口而生，窗口都关了即退出。
-        MenuBarIconMode::Off => {
-            if settled {
-                app.exit(0);
-            }
-        }
-        // active：daemon 断连且无窗口 → 图标消失、宿主退出。
-        MenuBarIconMode::Active => {
-            if settled && !state.daemon_up.load(Ordering::SeqCst) {
-                app.exit(0);
-            }
-        }
-        // always：常驻（图标转停止态，不退出）。
-        MenuBarIconMode::Always => {}
+    if idle_exit_due(&state) {
+        app.exit(0);
     }
 }
 
@@ -2515,6 +2541,11 @@ fn maybe_refresh_binary(app: &AppHandle) {
     if !host_disk_fingerprint(&state).differs_from(&state.startup_fp) {
         return;
     }
+    // A Host that is about to exit has no life to extend: re-exec'ing it would only spawn a
+    // successor that finds the same idle state and exits too (spec D16).
+    if idle_exit_due(&state) {
+        return;
+    }
     restart_host(app);
 }
 
@@ -2611,6 +2642,73 @@ mod tests {
                 );
             }
         }
+    }
+
+    #[test]
+    fn only_the_formal_instance_keeps_an_always_host_resident() {
+        for configured in [
+            MenuBarIconMode::Off,
+            MenuBarIconMode::Active,
+            MenuBarIconMode::Always,
+        ] {
+            // The formal instance follows its configured mode as written.
+            assert_eq!(effective_mode_for(configured, false), configured);
+            // A Dev / isolated / fixture instance has nothing to own a resident Host, so only
+            // `always` changes meaning: it runs as `active`.
+            let expected = if configured == MenuBarIconMode::Always {
+                MenuBarIconMode::Active
+            } else {
+                configured
+            };
+            assert_eq!(
+                effective_mode_for(configured, true),
+                expected,
+                "configured {configured:?} in an instance context"
+            );
+        }
+    }
+
+    #[test]
+    fn idle_host_exit_policy_follows_the_mode() {
+        use MenuBarIconMode::{Active, Always, Off};
+        // (mode, settled, daemon_up, exits)
+        let cases = [
+            (Off, false, false, false),
+            (Off, false, true, false),
+            (Off, true, false, true),
+            (Off, true, true, true),
+            (Active, false, false, false),
+            (Active, false, true, false),
+            (Active, true, false, true),
+            (Active, true, true, false),
+            (Always, false, false, false),
+            (Always, false, true, false),
+            (Always, true, false, false),
+            (Always, true, true, false),
+        ];
+        for (mode, settled, daemon_up, exits) in cases {
+            assert_eq!(
+                exits_when_idle(mode, settled, daemon_up),
+                exits,
+                "mode {mode:?}, settled {settled}, daemon up {daemon_up}"
+            );
+        }
+    }
+
+    #[test]
+    fn an_instance_host_leaves_with_its_daemon_but_the_formal_one_stays() {
+        // The leak this guards: a throw-away test home defaults to `always`, its daemon is
+        // stopped, and the Host used to stay forever, re-exec'd by every install.
+        let instance = effective_mode_for(MenuBarIconMode::Always, true);
+        assert!(exits_when_idle(instance, true, false));
+        // While the instance's daemon is up, its Host (and icon) is still served.
+        assert!(!exits_when_idle(instance, true, true));
+        // Before the start-up grace is over, an early evaluation must not end it.
+        assert!(!exits_when_idle(instance, false, false));
+
+        // The formal instance keeps its resident Host with the daemon gone.
+        let formal = effective_mode_for(MenuBarIconMode::Always, false);
+        assert!(!exits_when_idle(formal, true, false));
     }
 
     fn item<'a>(nodes: &'a [Node], key: &str) -> (&'a str, bool) {

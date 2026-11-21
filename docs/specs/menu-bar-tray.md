@@ -66,7 +66,7 @@ daemon 是**刻意「无 GUI」**的：不初始化 AppKit/GTK/Win32 WebView、�
 | D1 | 平台范围 | **macOS + Linux + Windows 桌面**（Tauri 跨平台托盘）。Linux 为 **best-effort**：需图形会话（DISPLAY/Wayland）+ 托盘宿主（StatusNotifierItem/appindicator）；headless 服务器无图标、不报错、不影响 daemon。Windows 正式范围为单个交互式桌面会话；RDS 多会话 broker 不在本期。 |
 | D2 | 统一 GUI 宿主进程 | 新增**单实例**宿主进程（隐藏角色 `AskHuman --gui-host`），全局承载**设置 / 历史 / Agent 状态 / Interject**窗口（每类或每 session 唯一）+ 菜单栏状态项。daemon 保持无 GUI、不承载任何窗口。用 **Tauri 2 tray-icon**（原生菜单）。macOS 设 **accessory**（不占 Dock/Cmd-Tab）。 |
 | D3 | 彻底路由（全局单窗，Q2=彻底） | 所有打开窗口的入口都路由到宿主：CLI `AskHuman --settings`/`--history`/`agents monitor`、**弹窗导航栏「设置/历史」按钮**、托盘菜单项。宿主在则聚焦/新建对应窗口，不再各开进程。 |
-| D4 | 三态开关 | `general.menuBarIcon` ∈ `off` \| `active` \| `always`（默认）。设置「通用」Tab，三平台均显示。配置缺字段时采用 `always`，已有显式值保持不变。<br>• **off**：无图标（宿主仍按需承载窗口，保证单窗）。<br>• **active（活动时显示）**：daemon 运行时显示图标；无窗口且 daemon 空闲退出后图标消失、宿主退出；不装登录项。<br>• **always（一直显示）**：图标常驻（宿主开机自启 + 常驻）。**图标本身不给 daemon 保活**，daemon 仍按空闲规则退出；退出后图标仍在但显示「停止」态，宿主被动重连，daemon 再次运行即恢复实时态。新用户在做出选择前，默认的 always 不会静默写登录项，见 [`onboarding.md`](onboarding.md) D13。 |
+| D4 | 三态开关 | `general.menuBarIcon` ∈ `off` \| `active` \| `always`（默认）。设置「通用」Tab，三平台均显示。配置缺字段时采用 `always`，已有显式值保持不变。<br>• **off**：无图标（宿主仍按需承载窗口，保证单窗）。<br>• **active（活动时显示）**：daemon 运行时显示图标；无窗口且 daemon 空闲退出后图标消失、宿主退出；不装登录项。<br>• **always（一直显示）**：图标常驻（宿主开机自启 + 常驻；**仅正式实例**，Dev / 隔离实例按 active 运行，见 D16）。**图标本身不给 daemon 保活**，daemon 仍按空闲规则退出；退出后图标仍在但显示「停止」态，宿主被动重连，daemon 再次运行即恢复实时态。新用户在做出选择前，默认的 always 不会静默写登录项，见 [`onboarding.md`](onboarding.md) D13。 |
 | D5 | 窗口续命 daemon（统一规则） | **任意 GUI 窗口打开期间**给（**正在运行的**）daemon 续命；**最后一个窗口关闭后** daemon 重新计时、到点空闲退出。**图标本身从不续命**。打开窗口**不会主动启动** daemon（Agent 状态窗口除外——它需要 daemon 数据，会 `ensure_running` 拉起）。该规则与 tray 模式、与是否显示图标无关。 |
 | D6 | 图标三态（视觉，Q5 扩展） | ① **运行·空闲**：单色模板图（macOS 随菜单栏明暗自动着色；Windows 按系统任务栏主题 `HKCU\Software\Microsoft\Windows\CurrentVersion\Themes\Personalize\SystemUsesLightTheme`、Linux 按 GNOME 默认深色顶栏或 XDG Desktop Portal `color-scheme` 在深色面板上反相为白色墨水，无 Portal / `NoPreference` 的环境回退黑色墨水；托盘墨水仅跟随系统面板外观，不随应用窗口主题 `general.theme` 翻转）。② **运行·有待答**：带小圆点/高亮变体。③ **（仅 always）daemon 已停止**：可区分的「停止」态（暗淡/空心变体）。**待答数量在菜单内显示**（不在图标上叠数字）。 |
 | D7 | 菜单内容 | **状态区（只读）**：daemon 运行中/未运行 + 版本 + 运行时长；N 个待答；Agent 工作/空闲数（有数据时）；已连接 IM（有时）；有可用更新（有时）。**操作区**：打开设置 / 打开历史 / 打开 Agent 状态；**检查更新**，有更新时「更新到 vX.Y（答完后生效）」点击即换新；daemon 运行时「重启 daemon」「停止 daemon」，daemon 停止时（always 态）显示「启动 daemon」。 |
@@ -78,6 +78,7 @@ daemon 是**刻意「无 GUI」**的：不初始化 AppKit/GTK/Win32 WebView、�
 | D13 | 单实例 + 宿主自有 IPC | 宿主用跨进程 `gui-host.lock` 单实例。宿主自带 IPC（Unix `gui-host.sock` / Windows named pipe，复用 NDJSON 编解码）接收「打开窗口/关闭/刷新」请求——**与 daemon 解耦**，使 daemon 未运行时也能打开设置/历史。Windows endpoint 继承与 daemon 相同的 SID/会话/配置目录隔离和受保护 DACL。宿主另作为 daemon 客户端：一条**非保活**状态订阅 + 「有窗口时」一条**计活**保活连接（实现 D5）。 |
 | D14 | daemon 集成 | `menuBarIcon != off` 时，daemon 启动 / 配置变更尝试拉起宿主（单实例去重，作兜底；always 主要靠登录项）。新增 `ClientMsg::TraySubscribe` / `ServerMsg::TrayState`（非保活）。`PROTOCOL_VERSION` 保持 1（增量、旧端忽略未知变体）。 |
 | D15 | Agent 集成更新提醒 | GUI Host 启动与 daemon 停→运行时按 Agents 设置页同一口径复查；待更新时显示可点击单行灯泡提示，单项列 Agent 名、多项只显示数量。无待答时 template 图标右上显示带挖空的小实心圆，有待答时问号优先。点击打开 Agents tab；设置内更新成功后即时清除。状态由 Host 本地缓存，不扩展 `TrayState`。 |
+| D16 | 非正式实例不常驻（2026-11-21） | `always` 的「宿主常驻」只属于**正式实例**：它有登录项（KeepAlive）能把宿主拉回来，图标也归用户自己看管。`is_dev_instance_context()` 为真的实例（Dev、`ASKHUMAN_HOME` 隔离、System fixture / legacy System）里，宿主把 `always` 当 `active` 运行：daemon 不在且无窗口即退出，`daemon stop` 或空闲退出不再留下孤儿宿主。宿主换新二进制时，已处于「该退出」状态（无窗口、无后台任务、按有效模式要退出）的宿主不再 re-exec 出继任者；daemon 还在时的换新不变。**只改宿主的退出策略**：配置值与设置页显示不变，托盘显示、登录项写入（本就对实例 no-op）、daemon 启动 / 配置变更时拉起宿主的兜底（D14）都不变。起因：测试用隔离 home 默认 `always`，daemon 起来就拉起宿主，`daemon stop` 不关它，每次 install 的 `restart_host` 又给它换个 PID 续命，累积成菜单栏里多个图标。测试脚本仍应在 config 写 `menuBarIcon: "off"` 避免图标闪现，不依赖这条兜底。 |
 
 ## 4. 约束与既有规则（不可破坏）
 
@@ -104,6 +105,7 @@ daemon 是**刻意「无 GUI」**的：不初始化 AppKit/GTK/Win32 WebView、�
 10. **Windows**：三态设置、托盘菜单、窗口单例、named-pipe 路由与 HKCU Run 登录项行为与 D1–D15 一致；注销后后台角色不跨交互会话残留。Win11 自动重登实测中 Explorer 从 Session 2 重建为 Session 1，GUI Host、daemon 与 warm popup 均在新 session 恢复；登录前 6 秒的 60 帧桌面截图和逐帧可见窗口审计没有出现 conhost/PowerShell/cmd/AskHuman 控制台窗口。RDS 多会话不在本验收范围。
 11. **回归**：提问/抢答/drain/自更新/IM 自动激活/历史/Agent 订阅等既有功能不受影响；daemon 空闲退出/指纹换新/排空语义不变。
 12. **Agent 集成提醒（D15）**：制造任一当前模式产物过期后，换新 GUI Host 或启动 daemon，菜单出现灯泡提示（单项列名、多项计数）；无待答时图标显示右上实心圆，有待答时仍显示问号；点击定位 Agents tab；在设置中更新后提示与圆点立即消失。
+13. **非正式实例不常驻（D16）**：用默认 `always` 配置的隔离 `ASKHUMAN_HOME` 起 daemon，宿主随之出现；`daemon stop` 后宿主在启动宽限（12s）内自行退出，不留进程与图标；daemon 在线时换新二进制，宿主仍可换到新版，daemon 停止后继任宿主同样退出。正式实例的 `always` 行为（第 5 条）不变。`scripts/gui-host-instance-lifecycle-smoke.mjs` 在有图形会话的机器上覆盖这一条（CI 无显示，不跑）。
 
 ## 6. 访谈反馈记录（按时间，供追溯）
 

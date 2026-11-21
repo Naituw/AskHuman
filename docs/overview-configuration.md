@@ -27,7 +27,7 @@
   - `theme`、`language`、`alwaysOnTop`、`appearAnimation`、`windowEffect`（`solid|blur|glass`；配置默认 `blur`，显式 `glass` 在 macOS 26 以下有效值自动解析为 `blur`）
   - `speechLanguage`、`speechShortcut`
   - `historyLimit`（默认 200）与 `popupSound`
-  - `menuBarIcon`（`off|active|always`，默认 `always`，macOS/Linux/Windows 桌面；已有显式值保持不变）
+  - `menuBarIcon`（`off|active|always`，默认 `always`，macOS/Linux/Windows 桌面；已有显式值保持不变；Dev / 隔离实例把 `always` 当 `active` 运行，见 [菜单栏 D16](specs/menu-bar-tray.md)）
   - `popupPrewarm`（默认 `true`，macOS/Linux/Windows 桌面）
   - `daemonLifecycle`（`activity|keepalive`，默认 `activity`，macOS/Linux/Windows）
   - `quickReplies`（`null` 或字符串数组，默认缺省 = `null`）：弹窗与手机「快捷回复」菜单里的预设。`null` = 从没编辑过，Daemon 在建请求时取出厂 5 条并跟随界面语言（`i18n.rs::quick_reply_factory`）；一旦在设置里编辑就存成用户自己的列表（可以是空数组 = 不要预设）。读取一律经 `sanitize_quick_replies`：去首尾空白、丢空行、每条最多 200 个字符、最多 10 条（`QUICK_REPLIES_MAX` / `QUICK_REPLY_MAX_CHARS`，前端 `settings/quickReplies.ts` 有同样的常量，改要两边一起改）；`save_settings` 落盘前也会再过一遍。每个请求在创建时把解出的列表放进 `AskRequest.quick_replies`（What's next、严格选择与没有菜单的卡片为空），手机从 `AskView.quickReplies` 读到的就是同一份，所以每台 Mac 各用各的配置、手机不编辑。设计见 `docs/specs/special-replies.md` D27

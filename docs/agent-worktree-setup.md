@@ -166,6 +166,11 @@ AskHuman --instance dev --worktree /absolute/path/to/worktree daemon status
   项目 Dev 和独立测试窗口会拒绝这种全局修改；旧兼容流程仍需遵守此约束。
 - daemon / GUI Host 的隔离测试使用本树 Dev、独立 profile 或单次非空 `ASKHUMAN_HOME`。
   普通 System 从操作系统账户选择正式根，单独更换 `HOME` 仍连接日常实例。
+  只要 daemon 起得来（有图形会话、`menuBarIcon` 不是 `off`），它就会拉起本实例自己的 GUI Host，
+  菜单栏里多出一个图标。实例里的 GUI Host 把默认的 `always` 当 `active` 运行：daemon 停止
+  （`daemon stop` 或空闲退出）且无窗口后，宿主在启动宽限（约 12 秒）内自行退出，换新二进制也不会续命，
+  所以不再靠人手收尾。测试仍应在实例 config 写 `menuBarIcon: "off"`，避免图标闪现、也不依赖这条兜底。
+  这条退出逻辑只在新构建里：旧构建遗留的隔离宿主不会自己退出，见故障简表。
   测试 System 选路、远程转送或同步时，使用 [受保护的 fixture v2 入口](specs/system-instance-home-routing.md#4-fixture-v2-的入口与继承)，
   它固定私有账户、使用私有 launchd 身份，并要求跨程序与 endpoint 的 fixture 能力。
   显式 Isolated 的 Agent 集成测试仍需一次性假 `HOME` 或独立 profile，收尾核对真实 hook 文件与登录项。
@@ -192,3 +197,4 @@ AskHuman dev disable --purge   # 连 .askhuman-dev 目录一起删
 | 普通提问仍进正式端 | 新项目的预期行为；验收请用项目 `dev_ask` 或 `node scripts/dev.mjs ask` |
 | preset 占用冲突 | 对方 `dev disable` 或本树 `--force` |
 | 要打开 Dev 设置 | `node scripts/dev.mjs ui`，再打开 Dev 渠道；普通 `--settings` 仍属日常入口 |
+| 菜单栏出现多个 AskHuman 图标 | `pgrep -fl -- --gui-host` 列出宿主，再用 `ps eww -o command= -p <pid>` 看各自的 `ASKHUMAN_HOME`：没有该变量的是日常宿主，指向 `/tmp` 或 `.askhuman-dev` 的是隔离实例遗留的宿主；确认其 daemon 已不在后 `kill <pid>`。新构建的隔离宿主随 daemon 退出，只有旧构建会遗留；同时核对 `launchctl list \| grep humaninloop.daemon.instance` 里没有已删目录的残留任务 |

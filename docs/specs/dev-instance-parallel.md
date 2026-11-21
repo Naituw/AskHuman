@@ -174,6 +174,13 @@ PowerShell 5.1 兼容脚本）。两者共享以下语义：
   今后新增任何会改写共享文件的启动迁移，必须放进同一个分支。
   **范围仅限自动行为**：显式的 `AskHuman agents …` 与设置页的 Agent 集成开关是用户动作，不受守卫，
   在实例里运行它们仍会写**真实**用户配置。
+- **实例不留下常驻 GUI Host**（2026-11-21 补，用户实证：菜单栏攒出 6 个图标，其中 5 个是测试遗留）：
+  `general.menuBarIcon` 默认 `always`，而实例没有登录项、也没有人看管它的图标，常驻宿主在这里是
+  没有所有者的孤儿——`daemon stop` 不关它，每次 install 的二进制换新（`restart_host`）还会给它换个
+  PID 续命。`is_dev_instance_context()` 为真时，GUI Host 把 `always` 当 `active` 运行
+  （`app/gui_host.rs::effective_mode`）：daemon 不在且无窗口即退出，已处于该状态的宿主换新二进制时
+  也不再 re-exec。需求见 [menu-bar-tray D16](menu-bar-tray.md)。测试脚本仍应在实例 config 写
+  `menuBarIcon: "off"` 避免图标闪现，不依赖这条兜底。
 - 隔离验证使用本树 Dev、私有 profile 或单次非空 `ASKHUMAN_HOME`。
   普通 System 与显式 `--instance system` 从操作系统账户选择正式根，单独更换 `HOME` 仍访问日常实例。
   测试 System 路由和同步使用 [受保护的 fixture v2 入口](system-instance-home-routing.md#4-fixture-v2-的入口与继承)，

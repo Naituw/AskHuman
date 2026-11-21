@@ -26,7 +26,7 @@
 - **Codex App 适配器**（macOS）：由 Daemon 独占原生 IPC，将桌面会话状态、控制与新建任务接入现有 registry / Watch / 问答协调；随 Codex 整体集成启停，新任务默认优先 App、可改为优先 CLI。详见 `docs/specs/codex-desktop-session-integration.md`。
 - **Popup Host**（默认合并模式，每 Daemon / Dev Instance 至多 1 个）：独立 Tauri 进程，通过一次认证连接承载统一作答窗口；普通提问、权限和 Stop 按请求 ID 路由。答完本轮隐藏，按 popupPrewarm 决定保留空闲宿主或退出；故障由 Daemon 有界重建。见 `docs/specs/popup-request-inbox.md`、`docs/specs/popup-prewarm.md`。
 - **独立 Popup Helper**（可选 `channels.popup.windowMode=independent`）：每请求一个窗口，沿用旧冷热池及焦点仲裁；模式切换只影响新请求，保留在途窗口和草稿。
-- **GUI Host**（macOS/Linux/Windows 每用户至多 1 个、长命）：承载菜单栏/托盘，以及全局唯一的设置、历史、待办、Agent、Interject、新建任务与 Fork 窗口；各打开入口通过自有 IPC 路由到宿主。
+- **GUI Host**（macOS/Linux/Windows 每个实例 home 至多 1 个，正式实例即每用户 1 个；只有正式实例的宿主长命，Dev / 隔离实例的宿主随 Daemon 与窗口退出）：承载菜单栏/托盘，以及全局唯一的设置、历史、待办、Agent、Interject、新建任务与 Fork 窗口；各打开入口通过自有 IPC 路由到宿主。
 
 **关键约定**：每种 IM 渠道全局只保留一条连接；每个请求仅首个终态回答生效；IPC 和运行状态均为用户私有；既有 stdout、结果区块、退出码和配置兼容契约保持不变。Daemon 排空换新见 `docs/specs/daemon-graceful-drain.md`。自身盘上更新在全部在途调用与窗口具备恢复能力时保存原题并即时交接，CLI/窗口重连，IM 接管原卡，iOS 保留草稿与提交；能力不足时保留旧服务并继续受理兼容新题，旧调用结束后接班。macOS/Linux exec 稳定安装入口，不依赖托盘或新 CLI；显式停止、信号和闲退不自启，崩溃自愈仍未提供。恢复身份、可靠首答、交接屏障及首次上线边界见 [即时换新](specs/daemon-live-update.md)。Daemon 不得因某个渠道卡在建连而不应答：渠道连接放在连接槽里，`Status`、托盘与关停从不等待建连；客户端对 Hello / Status / Stop 各有 5 秒上限，沉默的 Daemon 在 macOS 上会被替换，测不出的二进制指纹不当作「已变化」（[排空 D15–D17、§9](specs/daemon-graceful-drain.md#9-渠道建连卡住时-daemon-仍然应答2026-11-15-事故补充)）。
 
@@ -499,7 +499,7 @@ Daemon 里的又一个渠道：手机上的 AskHuman App 回答问题、看 / �
 
 - 每个交互式桌面会话使用单实例 GUI Host；Daemon 保持无 GUI。Host 承载设置、设置向导、历史、待办、Agent、Interject、新建任务、Fork 与托盘，所有入口路由到它以保证每类窗口唯一。
 - Host 使用独立的用户私有 `gui-host.sock` 或 Windows named pipe，加跨进程锁做单实例；即使 Daemon 未运行，设置和历史仍能打开。
-- `general.menuBarIcon` 支持 `off|active|always`；Windows 使用原生托盘，Linux 桌面 best-effort。
+- `general.menuBarIcon` 支持 `off|active|always`；Windows 使用原生托盘，Linux 桌面 best-effort。`always` 的宿主常驻只属于正式实例：`is_dev_instance_context()` 为真的实例（Dev、隔离 `ASKHUMAN_HOME`、System fixture）把它当 `active` 运行，Daemon 不在且无窗口即退出，换新二进制也不续命，不会留下孤儿图标（需求 `docs/specs/menu-bar-tray.md` D16）。
 - 托盘状态订阅不保活；只有打开窗口的独立连接给 Daemon 续命。`general.daemonLifecycle=keepalive` 是正交的常驻策略。
 - `TrayState` 汇总待答、IM、Agent、更新与 drain；菜单可聚焦待答 Popup、打开 Agent/插话、控制 Daemon 和应用更新。
 - GUI Host 启动与 daemon 停→运行时复用 Agents 设置页口径检查集成更新；待更新时菜单显示可点击警告，无待答时 template 图标显示右上实心圆，设置内更新成功后即时清除。

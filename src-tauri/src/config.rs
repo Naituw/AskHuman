@@ -84,6 +84,8 @@ pub enum MenuBarIconMode {
     /// Show the icon while the daemon is active and exit the host after the daemon becomes idle.
     Active,
     /// Keep the icon resident and launch it at login; show the stopped state when the daemon exits.
+    /// Only the formal instance keeps a resident host; a Dev or isolated instance runs this as
+    /// `Active` (spec D16, `app::gui_host::effective_mode`).
     #[default]
     Always,
 }
