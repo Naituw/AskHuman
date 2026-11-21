@@ -22,7 +22,8 @@ extension MockData {
     /// shape of the original (the Mac's does too). `gone` is a file the Mac no longer has: no thumbnail, nothing to fetch.
     /// The id carries what the mock draws (`hpic-{number}-{width}x{height}-{hue %}`), so that a download needs no table.
     public static func historyPicture(
-        _ number: Int, name: String? = nil, width: Int = 1200, height: Int = 800, hue: Double = 0.58, gone: Bool = false
+        _ number: Int, name: String? = nil, width: Int = 1200, height: Int = 800, hue: Double = 0.58, gone: Bool = false,
+        preview: Bool = false
     ) -> AssetRef {
         let step = Int((hue * 100).rounded())
         let id = "hpic-\(number)-\(width)x\(height)-\(step)"
@@ -35,7 +36,7 @@ extension MockData {
         )
         return AssetRef(
             assetId: id, name: name, size: UInt64(120_000 + number * 40_000), mime: "image/png", isImage: true,
-            thumb: thumb.map(Bytes.b64u)
+            thumb: thumb.map(Bytes.b64u), preview: preview
         )
     }
 
@@ -63,7 +64,8 @@ extension MockData {
             historyPicture(4, name: "onboarding-4.png", width: 2400, height: 600, hue: 0.80),
             historyPicture(5, name: "onboarding-5.png", width: 1200, height: 800, hue: 0.15),
             historyPicture(6, name: "onboarding-6.png", width: 800, height: 1200, hue: 0.45),
-            historyPicture(7, name: "onboarding-7.png", width: 1000, height: 1000, hue: 0.70),
+            // The one picture of the session whose Mac sends a preview first (the viewer of the history is the one of a request).
+            historyPicture(7, name: "onboarding-7.png", width: 1000, height: 1000, hue: 0.70, preview: true),
         ]
         return [
             SessionExchange(

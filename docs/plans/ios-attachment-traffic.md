@@ -225,3 +225,21 @@
 - **验证**：整包 `swift test`（不含需要 `AH_E2E_BIN` 的 E2E 用例）566 条通过、0 失败（其中包含另一个会话未提交改动带来的用例）；`PhoneEngine`、`AppStore`、`Backend` 是和另一个会话共改的文件，只暂存了我的几处。
 
 **没有处理（留给 P2c / 之后）**：预览解不开自动取原图（AT18）在界面一侧；相邻页「只取预览」时 Mac 若回的是原图，引擎仍会把它收完（与改动前每页都取原图的行为相同，只在 Mac 做不了预览的少数情形发生，P2c 决定相邻页要不要因此跳过）；原图下载在途时同一资产再来一次查看（预览请求被 Mac 回成原图的那种图）会让 Mac 把第一个窗口再发一遍，并成一次下载，只多一个窗口的流量，没有处理。
+
+### P2c 查看器界面（已完成）
+
+按计划做完，与计划设想不同的地方（以实现为准）：
+
+- **每张图一个模型对象**（`Views/Attachments/AssetViewing.swift`，新）：`AssetViewing`（`@Observable @MainActor`）存「这页现在显示什么、怎么来的」：`phase`（加载中 / 就绪 / 失败）、原图下载的状态（`original`）、原图文件（`file`，带真实文件名的临时拷贝）、失败说明（`problem`）；页面（`AssetPage`）画它，画廊顶栏的「原图」「分享」读它，所以不能放在 `AssetPage` 的 `@State` 里。只存 URL，远页仍不留图。`AssetViewings` 是一个查看器里所有模型的集合（第一次用到时才建）。`AssetViewer`（单个非图片文件）用同一套，仍是 `ShareLink`。
+- **预览不拷贝**：预览直接从引擎的缓存文件 `<assetId>.preview` 读（`UIImage(contentsOfFile:)` 按内容识别格式，不看扩展名），所以计划里「预览用 `.avif` 扩展名的临时拷贝」不需要；原图沿用原来的做法，拷成 `ah-preview/<assetId>/<name>`（分享要真实文件名）。
+- **`ZoomableImage` 一行没改**：它本来就只在图片对象变了时才换 `imageView.image`、不重置缩放与位置；`PictureContent` 在 URL 变化时（预览 → 原图）重新解码并换图（`onChange(of: url)`），页面在 `.ready` 的两种状态之间保持同一个视图身份，所以缩放保持。计划里「`ZoomableImage` 按内容重绘」就此取消。
+- **顶栏**：「原图 · <大小>」与「分享」在同一个 `ToolbarItemGroup(.primaryAction)`（iOS 26 上是一个玻璃胶囊）里，只有当前页显示的是预览时才有前者；下载时按钮换成一个小进度环（`ProgressRing`，不用 `ProgressView`：iOS 上环形的 `ProgressView` 不画确定进度），分享按钮此时不可点。不放底栏：`ImageGallery.swift` 里的注释写明过，别的窗口弹出的键盘会让容器反复变尺寸、分页停不下来、应用卡死，所以页面的尺寸刻意不依赖底部安全区；底栏会重新引入这个依赖。无障碍标识：`gallery-original`、`gallery-original-progress`（带百分比的 `accessibilityValue`）、`gallery-share`。
+- **辅助功能字号**：一开始按钮在最大字号下也写完整的「原图 · 3.4 MB」，结果顶栏放不下标题，标题（名字与「1 / 5」）被整个丢掉；最大字号的 UI 测试逮到。现在辅助功能字号下只写「原图」，大小留给 VoiceOver（`accessibilityLabel` 始终带大小）；测试里断言标题在、各部件不重叠。
+- **分享**：原图已在手机上时仍是 `ShareLink`（行为与以前完全一样）；只有预览时是一个按钮：点了先取原图（顶栏显示进度环），取到后用 `SharePanel`（`Views/Attachments/SharePanel.swift`，新）从最上面的已呈现控制器打开 `UIActivityViewController`（iPad 上是挂在右上角分享键下面的 popover；已经有一个分享面板在最上面就不再开）。「取到后再开」放在画廊的 `.task(id: sharing)` 里：画廊关闭则取消等待，用户在等的时候滑到别的页，面板就**不开**（文件仍会留在手机上，回到那一页时分享键已是 `ShareLink`）。原图下载本身是模型里一个独立的 `Task`，等待它的取消不会取消下载；画廊消失时（`onDisappear`）才取消所有在途的原图下载。
+- **失败**：规格写「沿用查看器现有的错误提示与重试」。现有的提示是整页换成「无法打开文件」，这里页面上已经有可看的预览，整页换成错误会把一件好用的东西丢掉，所以用 `.alert`（标题「无法下载原图」、正文是 `error.userMessage`、按钮「重试」「取消」），预览与「原图」按钮都留着；「重试」对分享触发的失败会接着去开分享面板。这是对规格这句话的**一种读法**（提示 + 重试都有，形式不是整页），汇报里会说明。预览解不开则完全静默（AT18）：`AssetViewing.load` 里 `UIImage` 打不开预览就改取原图，没有提示。
+- **相邻页「只取预览」**：相邻页只走 `downloadForViewing`，从不碰原图下载。Mac 对相邻页回的是原图时（图太小、做不了预览等）引擎照收，页面照显示、没有按钮——无法事先判断，流量与改动前相同。P2b 记下的第二个遗留（原图在途时同一资产再来一次查看让 Mac 重发第一个窗口）在界面上走不到：`load` 在页面已就绪时直接返回，`fetchOriginal` 在已有下载时直接返回。
+- **Mock**（`AHMock`）：`-AHScenario previews`（请求 `req-previews`：两张有预览的大图、一张小图、一张预览打不开的、一张原图第一次取不到的）；`historyPictures` 里的 `onboarding-7.png` 也带 `preview`（AT17）；Mock Mac 声明 `assetPreview`；`MockBackend.downloadForViewing` 返回缩小一半的 JPEG（`<assetId>.preview`）；`-AHOriginalGate <路径>` 让测试决定原图什么时候「到」（文件存在才放行，而不是拿定时器去赛一个可能晚几秒的测试进程）。
+- **本地化**：新增 5 条英文源文案（`Original`、`Original · %@`、`Downloading the original`、`Could not download the original`、`Share`），`make-catalog.py` 补了中文；新增两个 Swift 文件后 `xcodegen generate`。
+- **UI 测试**（新文件 `AskHumanAttachmentPreviewUITests.swift`，14 条）：预览先行并带「原图 · 3.4 MB」且标题仍在；原图原位替换、缩放保持（图的 frame 位置与大小与替换前一致，误差 1 pt）、进度环显示 0%、分享键下载期间不可点；相邻页也是预览；小图没有按钮；分享先取原图（取到前分享面板不存在，放行后才出现，关掉后不再有按钮、再点立刻出面板）；无预览的图分享立刻出面板；下载中滑到别的页就不开面板；预览打不开静默回退；原图失败 → 提示 →「取消」后按钮还在、再点成功；「重试」成功；分享触发的失败「重试」后接着开面板；历史里的图同样有按钮（AT17）；最大字号；深色。
+- **验证**：新 14 条在 iPhone 17 / iOS 26.2（英文、简体中文）、iPad Pro 11 寸（M5）/ iOS 26.2（英文）、iPhone 16 / iOS 18.5（英文）全部通过；看过的截图：顶栏（含预览与原图两种状态、进度环、相邻页）、失败提示（英文与中文）、分享面板（iPhone 两个系统版本与 iPad）、最大字号（英文与中文）、深色、预览解不开的回退；既有的 `AskHumanHistoryPicturesUITests`（14 条）与三条画廊用例仍通过；`AskHumanAttachmentDragUITests` 4 条需要宿主侧接收器，照常跳过（拖出路径没改，始终 `downloadForExport`，P2b 有单元覆盖）；整包 `swift test` 566 条通过。过程中逮到并改掉的：最大字号标题被丢（见上）；iPad 分享 popover 第一版盖住了分享键，锚点下移；测试里 `app.buttons["Close"]` 会匹配到画廊自己的关闭键，改按分享面板的导航栏找，找不到就点面板外。
+- **共享文件**：`AppEnvironment.swift`（`-AHOriginalGate`）、`MockBackend.swift`、`MockData.swift`、`MockData+HistoryPictures.swift`、`make-catalog.py`、`Localizable.xcstrings` 只动了我的几处，暂存时按路径；其余另一个会话的未提交改动不在这个提交里。

@@ -128,12 +128,12 @@ struct AssetViewer: View {
     let asset: AssetRef
 
     @Environment(\.dismiss) private var dismiss
-    /// The file once it is on the phone, for sharing.
-    @State private var ready: URL?
+    @State private var viewings = AssetViewings()
 
     var body: some View {
+        let viewing = viewings.viewing(macId: macId, asset: asset)
         NavigationStack {
-            AssetPage(macId: macId, asset: asset) { ready = $0 }
+            AssetPage(viewing: viewing)
                 .navigationTitle(asset.name)
                 .navigationBarTitleDisplayMode(.inline)
                 .toolbar {
@@ -141,8 +141,9 @@ struct AssetViewer: View {
                         CloseToolbarButton { dismiss() }
                             .accessibilityIdentifier("asset-close")
                     }
-                    if let ready {
-                        ToolbarItem(placement: .primaryAction) { ShareLink(item: ready) }
+                    // The file once it is on the phone.
+                    if let file = viewing.file {
+                        ToolbarItem(placement: .primaryAction) { ShareLink(item: file) }
                     }
                 }
         }
@@ -150,27 +151,20 @@ struct AssetViewer: View {
 }
 
 /// What a viewer shows of one attachment: it is downloaded from the Mac once it is on screen, then
-/// previewed by type. `onReady` says where the file is when it has arrived.
+/// previewed by type. A picture a Mac makes a preview of comes as that first (`AssetViewing`).
 struct AssetPage: View {
-    let macId: String
-    let asset: AssetRef
+    let viewing: AssetViewing
     /// Whether the page is on show or beside the one that is. Only such a page is fetched and drawn; a
     /// page further off is a placeholder (and lets go of its picture), as a gallery may hold many.
     var near = true
     /// How far the page keeps clear of the top and the sides: the bar of a viewer lies over those edges. A picture rests
     /// inside this area and, once zoomed, can be dragged out under the bar; the other states of the page stay inside it.
     var clear = EdgeInsets()
-    var onReady: (URL) -> Void = { _ in }
 
     @Environment(AppStore.self) private var store
-    @State private var phase: Phase = .loading(0)
     @State private var attempt = 0
 
-    private enum Phase {
-        case loading(Double)
-        case ready(URL)
-        case failed(String)
-    }
+    private var asset: AssetRef { viewing.asset }
 
     /// What starts a download: the first time the page is near, and every "Try again".
     private struct Fetch: Equatable {
@@ -180,11 +174,15 @@ struct AssetPage: View {
 
     var body: some View {
         Group {
-            switch phase {
+            switch viewing.phase {
             case .loading(let fraction):
                 waiting(fraction).padding(clear)
-            case .ready(let url):
-                if near { AssetContent(macId: macId, url: url, asset: asset, clear: clear) } else { waiting(nil).padding(clear) }
+            case .ready(let shown):
+                if near {
+                    AssetContent(macId: viewing.macId, url: shown.url, asset: asset, clear: clear)
+                } else {
+                    waiting(nil).padding(clear)
+                }
             case .failed(let message):
                 ContentUnavailableView {
                     Label("Could not open the file", systemImage: "exclamationmark.triangle")
@@ -198,8 +196,7 @@ struct AssetPage: View {
         }
         .task(id: Fetch(attempt: attempt, near: near)) {
             guard near else { return }
-            if case .ready = phase { return }
-            await load()
+            await viewing.load(store: store)
         }
     }
 
@@ -215,41 +212,6 @@ struct AssetPage: View {
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
-    }
-
-    private func load() async {
-        phase = .loading(0)
-        do {
-            let cached = try await store.download(macId: macId, asset: asset) { fraction in
-                Task { @MainActor in
-                    if case .loading = phase { phase = .loading(fraction) }
-                }
-            }
-            let url = try Self.named(cached, as: asset)
-            phase = .ready(url)
-            onReady(url)
-        } catch is CancellationError {
-            return
-        } catch BackendError.cancelled {
-            // The engine reports a cancelled download this way (a page that is no longer near).
-            return
-        } catch {
-            phase = .failed(error.userMessage)
-        }
-    }
-
-    /// The cache stores files by id; previews and sharing want the real name and extension.
-    private static func named(_ cached: URL, as asset: AssetRef) throws -> URL {
-        let directory = FileManager.default.temporaryDirectory
-            .appendingPathComponent("ah-preview", isDirectory: true)
-            .appendingPathComponent(asset.assetId, isDirectory: true)
-        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
-        let name = asset.name.replacingOccurrences(of: "/", with: "_")
-        let target = directory.appendingPathComponent(name.isEmpty ? "file" : name)
-        if !FileManager.default.fileExists(atPath: target.path) {
-            try FileManager.default.copyItem(at: cached, to: target)
-        }
-        return target
     }
 }
 
@@ -301,9 +263,11 @@ private struct AssetContent: View {
 }
 
 /// A picture that has arrived. It is opened once and then kept, so a gallery that re-evaluates its pages
-/// while it scrolls does not hand the image view a new (and so newly decoded) image each time.
+/// while it scrolls does not hand the image view a new (and so newly decoded) image each time. When the file at `url` is
+/// replaced by another (a preview by the original), the picture is swapped in the same view, which keeps its zoom.
 private struct PictureContent: View {
     @State private var picture: UIImage?
+    let url: URL
     let name: String
     let identifier: String
     let clear: EdgeInsets
@@ -311,6 +275,7 @@ private struct PictureContent: View {
 
     init(url: URL, name: String, identifier: String, clear: EdgeInsets, dragProvider: @escaping () -> NSItemProvider) {
         _picture = State(initialValue: UIImage(contentsOfFile: url.path))
+        self.url = url
         self.name = name
         self.identifier = identifier
         self.clear = clear
@@ -318,15 +283,20 @@ private struct PictureContent: View {
     }
 
     var body: some View {
-        if let picture {
-            ZoomableImage(
-                image: picture,
-                clear: NSDirectionalEdgeInsets(top: clear.top, leading: clear.leading, bottom: clear.bottom, trailing: clear.trailing),
-                label: name, identifier: identifier, dragProvider: dragProvider
-            )
-            .ignoresSafeArea(edges: .bottom)
-        } else {
-            ContentUnavailableView("Not a readable image", systemImage: "photo.badge.exclamationmark")
+        Group {
+            if let picture {
+                ZoomableImage(
+                    image: picture,
+                    clear: NSDirectionalEdgeInsets(top: clear.top, leading: clear.leading, bottom: clear.bottom, trailing: clear.trailing),
+                    label: name, identifier: identifier, dragProvider: dragProvider
+                )
+                .ignoresSafeArea(edges: .bottom)
+            } else {
+                ContentUnavailableView("Not a readable image", systemImage: "photo.badge.exclamationmark")
+            }
+        }
+        .onChange(of: url) { _, changed in
+            picture = UIImage(contentsOfFile: changed.path)
         }
     }
 }

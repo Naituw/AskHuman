@@ -106,6 +106,9 @@ struct LaunchOptions {
     var historyDelay: Double?
     /// `-AHHistoryGate <path>`: a read of a session's history is held back until that file exists.
     var historyGate: String?
+    /// `-AHOriginalGate <path>`: the download of the original of a picture that has a preview is held back until that file
+    /// exists (the original button's progress, and sharing before the original is on the phone).
+    var originalGate: String?
     /// `-AHWatchText thinking|answer|long|short`: the working Agent's live view has a latest text of that kind (the page's
     /// expand and collapse need one that does not fit the preview, and one that does).
     var watchText: String?
@@ -181,6 +184,7 @@ struct LaunchOptions {
         historyFail = max(0, defaults.integer(forKey: "AHHistoryFail"))
         if defaults.object(forKey: "AHHistoryDelay") != nil { historyDelay = max(0, defaults.double(forKey: "AHHistoryDelay")) }
         historyGate = defaults.string(forKey: "AHHistoryGate")
+        originalGate = defaults.string(forKey: "AHOriginalGate")
         watchText = defaults.string(forKey: "AHWatchText")
         watchTextNext = defaults.string(forKey: "AHWatchTextNext")
         if defaults.object(forKey: "AHWatchTick") != nil { watchTick = max(0.05, defaults.double(forKey: "AHWatchTick")) }
@@ -219,6 +223,7 @@ final class AppEnvironment {
             if launch.historyFail > 0 { Task { await backend.setFailNextSessionHistory(launch.historyFail) } }
             if let delay = launch.historyDelay { Task { await backend.setSessionHistoryDelay(realSeconds: delay) } }
             if let gate = launch.historyGate { Task { await backend.setSessionHistoryGate(path: gate) } }
+            if let gate = launch.originalGate { Task { await backend.setOriginalGate(path: gate) } }
             if let kind = launch.watchText { Task { await backend.setWatchText(kind) } }
             if let kind = launch.watchTextNext { Task { await backend.setWatchTextNext(kind) } }
             if let seconds = launch.watchTick { Task { await backend.setWatchTick(seconds) } }

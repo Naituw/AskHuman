@@ -244,6 +244,11 @@ ZH = {
     "OK": "好",
     # Assets
     "Downloading from your Mac…": "正在从 Mac 下载…",
+    "Original": "原图",
+    "Original · %@": "原图 · %@",
+    "Downloading the original": "正在下载原图",
+    "Could not download the original": "无法下载原图",
+    "Share": "分享",
     "Could not open the file": "无法打开文件",
     "Image %lld of %lld": "第 %lld 张，共 %lld 张",
     "Try again": "重试",

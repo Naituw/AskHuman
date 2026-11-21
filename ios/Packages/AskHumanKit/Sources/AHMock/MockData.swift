@@ -22,7 +22,8 @@ public enum MockData {
     /// message (`caps.annotations`), as only the newest Macs do.
     public static func macs(
         now: Date = Date(), link: MacLink = .online, knowTodos: Bool = true, pickTodos: Bool = false, awayMode: Bool = false,
-        annotations: Bool = false, sessionHistoryMacs: Set<String> = [], historyPictureMacs: Set<String> = []
+        annotations: Bool = false, sessionHistoryMacs: Set<String> = [], historyPictureMacs: Set<String> = [],
+        assetPreviewMacs: Set<String> = []
     ) -> [MacState] {
         [
             MacState(
@@ -30,7 +31,7 @@ public enum MockData {
                 caps: Caps(
                     newTask: true, interject: true, watch: true, todos: knowTodos, answerTodos: knowTodos && pickTodos,
                     away: awayMode, annotations: annotations, sessionHistory: sessionHistoryMacs.contains(homeMacId),
-                    historyPictures: historyPictureMacs.contains(homeMacId)
+                    historyPictures: historyPictureMacs.contains(homeMacId), assetPreview: assetPreviewMacs.contains(homeMacId)
                 ),
                 slot: SlotInfo(active: false, autoActivation: true),
                 pairedAt: now.addingTimeInterval(-86_400 * 12), lastSeenAt: now, pendingCount: 0, pushStatus: "ok"
@@ -582,6 +583,7 @@ public enum MockData {
 
     /// Bytes for a mock attachment: a chart for images, text for the rest.
     public static func contents(of asset: AssetRef) -> Data {
+        if let data = previewPictureContents(of: asset.assetId) { return data }
         if let index = galleryPictures.firstIndex(where: { $0.id == asset.assetId }) {
             let shape = galleryPictures[index]
             return picture(number: index + 1, width: shape.width, height: shape.height, hue: shape.hue, type: .png) ?? Data()

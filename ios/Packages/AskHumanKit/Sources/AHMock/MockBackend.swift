@@ -65,6 +65,10 @@ public actor MockBackend: RemoteBackend {
         /// (`caps.historyPictures`), a session whose exchanges carry pictures of every kind (docs/specs/
         /// ios-history-pictures.md), and a finished request of the History tab whose pictures the Mac still has.
         case historyPictures
+        /// The demo with one request left, from a Mac that makes previews of pictures (`caps.assetPreview`;
+        /// docs/specs/ios-attachment-traffic.md): five pictures, two with a preview, one too small for one, one whose preview
+        /// cannot be opened, and one whose file fails at the first try.
+        case previews
     }
 
     /// A submission as the mock received it (for tests).
@@ -211,6 +215,15 @@ public actor MockBackend: RemoteBackend {
     /// Makes the next submission fail the way an unanswered one does.
     public var failNextSubmission = false
 
+    // Previews (`MockBackend+Previews.swift`).
+    /// The pictures whose file has been downloaded: a viewer shows that, whatever the Mac offers of a preview.
+    var originalsOnPhone: Set<String> = []
+    /// The pictures whose file the Mac fails to send at the next try (each fails once).
+    public var failingOriginals: Set<String> = []
+    /// A file a UI test makes to let the file of a picture that has a preview arrive: until it exists, that download waits
+    /// (at most a minute), so that a test can look at the progress and at what is on the screen meanwhile.
+    var originalGate: String?
+
     /// `syncDelay` (real seconds) ends the `syncing` scenario that long after the start; `cachedInbox`
     /// lets that scenario begin with the requests the phone kept from the last run. `summariesOnly` strips the full
     /// request from every inbox item, as a Mac's snapshot has them before the phone asks for the text (the mock never
@@ -232,7 +245,7 @@ public actor MockBackend: RemoteBackend {
         var initial: EngineState
         switch scenario {
         case .demo, .agentResults, .quota, .single, .longs, .markdown, .strict, .tall, .links, .gallery, .outdated, .bothSync, .todoPick,
-             .away, .awayOn, .annotations, .direct, .sessionHistory, .historyPictures:
+             .away, .awayOn, .annotations, .direct, .sessionHistory, .historyPictures, .previews:
             let inbox: [InboxItem]
             switch scenario {
             case .single: inbox = MockData.inbox(now: date).filter { $0.requestId == "req-select" }
@@ -246,6 +259,7 @@ public actor MockBackend: RemoteBackend {
             case .direct: inbox = MockData.directInbox(now: date)
             case .sessionHistory: inbox = MockData.sessionHistoryInbox(now: date)
             case .historyPictures: inbox = MockData.historyPicturesInbox(now: date)
+            case .previews: inbox = MockData.previewsOnly(now: date)
             case .todoPick: inbox = MockData.todoPickInbox(now: date)
             default: inbox = MockData.inbox(now: date)
             }
@@ -258,7 +272,8 @@ public actor MockBackend: RemoteBackend {
                     now: date, knowTodos: scenario != .outdated, pickTodos: scenario == .todoPick,
                     awayMode: scenario == .away || scenario == .awayOn, annotations: scenario == .annotations || scenario == .direct,
                     sessionHistoryMacs: scenario == .sessionHistory || scenario == .historyPictures ? [MockData.homeMacId] : [],
-                    historyPictureMacs: scenario == .historyPictures ? [MockData.homeMacId] : []
+                    historyPictureMacs: scenario == .historyPictures ? [MockData.homeMacId] : [],
+                    assetPreviewMacs: scenario == .previews || scenario == .historyPictures ? [MockData.homeMacId] : []
                 ), inbox: inbox,
                 push: .registered(expiresAt: date.addingTimeInterval(86_400 * 80)), historyRevision: 1,
                 traffic: traffic,
@@ -316,6 +331,7 @@ public actor MockBackend: RemoteBackend {
         state = initial
         if scenario == .sessionHistory { sessionHistories = MockData.sessionHistories(now: date) }
         if scenario == .historyPictures { sessionHistories = MockData.sessionHistories(now: date, withPictures: true) }
+        if scenario == .previews { failingOriginals = [MockData.flakyOriginalAssetId] }
         let sample = MockData.todoSample(now: date)
         todoRows = sample.rows
         todoSyncedRows = sample.syncedRows
@@ -638,14 +654,24 @@ public actor MockBackend: RemoteBackend {
     }
 
     public func download(macId: String, asset: AssetRef, progress: @escaping @Sendable (Double) -> Void) async throws -> URL {
+        // The file of a picture that has a preview is what a test may hold back, and make fail once (`MockBackend+Previews`).
+        if asset.preview { await waitForOriginalGate() }
         for step in 1...3 {
             await pause(0.15)
             progress(Double(step) / 3)
         }
+        if failingOriginals.remove(asset.assetId) != nil { throw BackendError.timedOut }
+        let url = try mockFile(named: asset.assetId + "-" + asset.name, data: MockData.contents(of: asset))
+        originalsOnPhone.insert(asset.assetId)
+        return url
+    }
+
+    /// Where the mock keeps what it "downloads".
+    func mockFile(named name: String, data: Data) throws -> URL {
         let directory = FileManager.default.temporaryDirectory.appendingPathComponent("ah-mock-assets", isDirectory: true)
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
-        let url = directory.appendingPathComponent(asset.assetId + "-" + asset.name)
-        try MockData.contents(of: asset).write(to: url)
+        let url = directory.appendingPathComponent(name)
+        try data.write(to: url)
         return url
     }
 

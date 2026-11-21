@@ -1592,6 +1592,16 @@
         }
       }
     },
+    "Could not download the original" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "无法下载原图"
+          }
+        }
+      }
+    },
     "Could not end away mode" : {
       "localizations" : {
         "zh-Hans" : {
@@ -1918,6 +1928,16 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "正在从 Mac 下载…"
+          }
+        }
+      }
+    },
+    "Downloading the original" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "正在下载原图"
           }
         }
       }
@@ -3672,12 +3692,32 @@
         }
       }
     },
+    "Original" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "原图"
+          }
+        }
+      }
+    },
     "Original text not found" : {
       "localizations" : {
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
             "value" : "找不到原文位置"
+          }
+        }
+      }
+    },
+    "Original · %@" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "原图 · %@"
           }
         }
       }
@@ -4727,6 +4767,16 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "找不到会话"
+          }
+        }
+      }
+    },
+    "Share" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "分享"
           }
         }
       }
