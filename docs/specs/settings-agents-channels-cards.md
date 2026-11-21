@@ -6,6 +6,7 @@
 > 「详情」入口（§3.2，D7）、就绪列表（§8.1，D8）与两张 Agent 专属卡的徽标位置（§8.2，D9），三处均经用户确认。
 > 随后用户选了一个跟进：不支持从 IM 启动的 Agent（Antigravity）在矩阵里显示灰色「暂不支持」（§8.1，D10）。
 > 2026-11-08 又一轮（用户在新设备上被向导先邀请「开启」、再告知「没有可以开启的 Agent」，见 `docs/specs/onboarding.md` D25 第 11 轮）：就绪矩阵改读全局统一的「能不能启动」判定（§8.5，D11），渠道卡片（Telegram / 钉钉 / 飞书 / Slack / iOS App）底部多一个「允许从手机 / IM 创建 Agent 任务」开关（§4.4，D12）。第 12 轮把这项设置统一叫「允许…」（原「从手机 / IM 创建 Agent 任务」，向导里也只问「允不允许」），只改措辞，行为不变。
+> 2026-11-21：Antigravity 卡上有一段别家没有的常驻说明（插件怎么装、为什么推荐 MCP），漏在折叠之外、也不分状态，没用 Antigravity 的人要为它多看一行；收进「详情」（§3.2，D13）。
 > 依赖 / 复用：`docs/specs/onboarding.md`（徽标 `BrandBadge`、状态标签、渠道状态判定 `channelState`、渠道注册表 `channelDefs`）。
 > 平台：macOS / Windows / Linux（纯前端，三端同一份）。
 > 影响面：`src/views/settings/`（`IntegrationTab.vue`、`ChannelsTab.vue`、`ChannelCardHead.vue`、`agentCard.ts`、
@@ -41,6 +42,7 @@
 | D10 | 不支持的 Agent 一行（2026-11-08，用户选的跟进） | `launchSupported = false` 的 Agent（目前只有 Antigravity：没有新任务 / Fork 路径，也没有生命周期追踪）在矩阵里不是「未就绪」加三个修不好的橙色 ×，而是**灰色「暂不支持」标签 + 三格灰色短横**，没有任何可点的东西；表格下提示一句说明。**否决**从矩阵里隐藏它：后端注释写明 `all_readiness` 有意把这类 family 也报出来，让设置页与 doctor 去解释它们（选择器才过滤）。**2026-11-16 更新**：Antigravity 有了新任务路径与生命周期追踪（[深度集成](antigravity-deep-integration.md)），`launch_supported` 对所有家族都是真，现在矩阵里没有这样的一行；呈现保留，供将来再有不支持启动的家族。 |
 | D11 | 矩阵读统一判定（2026-11-08，用户在新设备上反馈） | 总状态标签不再等于 `binary ∧ lifecycle ∧ integration`，而是后端 `agent_task_readiness` 返回的 `startable`（`integrations/agent_start.rs`；手机、IM、向导、文字版用同一个）：Codex 的桌面 App 或终端任一可用、Cursor 的 Agents 窗口或终端任一可用（偏好只决定谁优先）、其余 Agent 的 CLI 就绪。标签随路线变化（§8.5）。**否决**让矩阵继续用 CLI 就绪：那会在 Codex / Cursor 能用桌面路线时仍写「未就绪」，正是用户看到的前后矛盾。 |
 | D12 | 开关进渠道卡片（2026-11-08，用户让我设计） | 「允许从手机 / IM 创建 Agent 任务」是全局开关，不属于任何一个渠道，配渠道时又没人提醒它，容易漏。在每个**已启用**的远程渠道卡片展开内容的最底部放同一个开关（同一个设置、同一个确认弹窗，§4.4）。**否决**：在向导或设置里到处加提醒条；把它放进卡片标题行（标题行已有状态标签与启用开关，且渠道没启用时谈不上从它新建任务）。 |
+| D13 | Antigravity 的范围说明进详情（2026-11-21，用户反馈「我根本不用 Antigravity，这行字在这占空间干嘛」） | Antigravity 卡的标题行下方原有一段常驻文字（`antigravityScope`：AskHuman 以一个插件安装，App 与 `agy` 共用，可在 Antigravity 里整体停用；App 的沙箱里 CLI 变体连不上，所以推荐 MCP），别家的卡没有。它是「怎么装」的提示，没有任何要动手的地方，却放在折叠之外、不分状态：没集成时整张卡只有标题行，这一行反倒成了最显眼的东西。改成详情里的一行（`<hr>` 之后的第一行），与 §3.1「仅属于提示的内容留在详情里」一致；**没集成的卡没有详情，所以看不到它**。要在选 CLI / MCP 之前就读到这些，见 `docs/wiki/antigravity-setup.md`（插件、停用、沙箱与 MCP 推荐都在）。**不动**两条按条件出现的提示（插件在 Antigravity 里被停用、MCP 首次要选「始终允许」）：它们要用户动手，只在已集成且条件成立时才出现，不占没用它的人的位置，也不会被折叠藏起来。**否决**：整段删掉（CLI 与 MCP 怎么选的依据，放在详情里没有代价）；没集成时保留这一行（正是被反馈的问题）。 |
 
 ## 3. Agents 卡
 
@@ -67,6 +69,7 @@
 
 - 详情 = 原来标题行以下的所有行（规则 / Skill / 协议、委托运行、CLI 的 Hook、MCP 配置、停止确认、AskUserQuestion、权限、生命周期，
   以及 Codex / Cursor Desktop 子块），逐字保留。未集成或读不出状态的卡没有详情，也没有「详情」入口。
+  Antigravity 卡的范围说明是详情里的第一行（D13）；它那两条按条件出现、要用户动手的提示（插件在 Antigravity 里被停用、MCP 首次授权）仍在标题行下方，折叠时看得见。
 - 折叠用 `v-show`，**不**用 `v-if`：深链与设置搜索都靠 DOM 里能找到目标行；折叠的行仍在 DOM 里，跳转时先展开再滚动。
 - **入口是整行条**（D7，`.agent-disclosure`）：标题行（`.agent-head`）下方、卡片整宽、34px 高，用与按钮相同的底色 / 描边 / 悬停色；
   左边粗体「详情」，中间一句说明里面有什么（`settings.integration.detailsHint`：规则、Hook、权限、生命周期等设置，过窄时省略号截断），

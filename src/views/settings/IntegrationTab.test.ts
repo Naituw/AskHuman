@@ -682,7 +682,38 @@ describe("IntegrationTab", () => {
     const buttons = wrapper.findAll("#integration-antigravity .seg").map((button) => button.text());
     expect(buttons.some((text) => text.includes(i18n.global.t("settings.integration.modeCli")))).toBe(true);
     expect(buttons.some((text) => text.includes(i18n.global.t("settings.integration.modeMcp")))).toBe(true);
-    expect(wrapper.text()).toContain(i18n.global.t("settings.integration.antigravityScope"));
+  });
+
+  // docs/specs/settings-agents-channels-cards.md D13: how the plugin is installed is a hint of the details, not of the card.
+  describe("Antigravity's note on how it is installed", () => {
+    const scope = () => i18n.global.t("settings.integration.antigravityScope");
+    const note = (wrapper: VueWrapper) => wrapper.findAll("p").find((p) => p.text() === scope());
+
+    it("is a row of the details: folded away with the others, in view with them", async () => {
+      const { wrapper, context } = mountAgent(agentDefinition("antigravity", false), modeStatus({ mode: "mcp", mcpSupported: true }));
+      const found = note(wrapper);
+      expect(found, "the note is in the card").toBeDefined();
+      expect(found!.element.closest(".agent-details"), "and in its details").not.toBeNull();
+      expect(wrapper.get("#agent-details-antigravity").attributes("style") ?? "", "folded").toContain("display: none");
+      await wrapper.get('[data-testid="agent-details-toggle-antigravity"]').trigger("click");
+      expect(context.agentExpanded.value.antigravity).toBe(true);
+      expect(wrapper.get("#agent-details-antigravity").attributes("style") ?? "", "opened").not.toContain("display: none");
+      wrapper.unmount();
+    });
+
+    it("is not on the card of someone who has not integrated Antigravity", () => {
+      const { wrapper } = mountAgent(agentDefinition("antigravity", false), modeStatus({ mode: "none", mcpSupported: true }));
+      expect(wrapper.text()).not.toContain(scope());
+      wrapper.unmount();
+    });
+
+    it("is on no other Agent's card", () => {
+      for (const id of ["cursor", "claude", "codex", "grok", "pi"] as AgentId[]) {
+        const { wrapper } = mountAgent(agentDefinition(id, true), modeStatus());
+        expect(wrapper.text(), id).not.toContain(scope());
+        wrapper.unmount();
+      }
+    });
   });
 
   it("does not report unreadable integration state as an uninstalled mode", () => {

@@ -335,7 +335,6 @@ const messageUnderHeader = (id: AgentId) =>
       </svg>
     </button>
 
-    <p v-if="a.id === 'antigravity'" class="card-desc">{{ t("settings.integration.antigravityScope") }}</p>
     <p
       v-if="a.id === 'antigravity' && !modeReadError?.[a.id] && modes[a.id].hostPluginDisabled"
       class="result err"
@@ -388,6 +387,11 @@ const messageUnderHeader = (id: AgentId) =>
     >
       <template v-if="detailsOf(a.id)">
       <hr class="divider" />
+
+      <!-- How the integration is installed is a hint, not something to act on: it lives in the details with the other
+           rows, so a card of someone who does not use Antigravity is as short as any other
+           (docs/specs/settings-agents-channels-cards.md D13). -->
+      <p v-if="a.id === 'antigravity'" class="card-desc">{{ t("settings.integration.antigravityScope") }}</p>
 
       <p
         v-if="a.id === 'pi' && piVersionLoading"
