@@ -58,7 +58,7 @@ struct ExternalStatus {
             "fields[betaAppReviewDetails]": "contactFirstName,contactLastName,contactPhone,contactEmail,demoAccountRequired,notes"
         ]))
         let groups = try await list(root + "/betaGroups", [
-            "fields[betaGroups]": "name,isInternalGroup,hasAccessToAllBuilds,publicLinkEnabled"
+            "fields[betaGroups]": "name,isInternalGroup,hasAccessToAllBuilds,publicLinkEnabled,publicLink,publicLinkLimitEnabled,publicLinkLimit"
         ])
         let builds = Self.resources(try await get("builds", [
             "filter[app]": Self.appID, "sort": "-uploadedDate", "limit": "10",

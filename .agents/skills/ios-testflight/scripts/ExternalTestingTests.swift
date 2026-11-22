@@ -7,6 +7,9 @@ private final class FakeApple {
     var review: [String: Any] = [:]
     var group: [String: Any]?
     var assigned = false
+    var publicGroup: [String: Any]?
+    var publicAssigned = false
+    var duplicatePublicGroup = false
     var audience = "APP_STORE_ELIGIBLE"
     var state = "READY_FOR_BETA_SUBMISSION"
     var testers = [[String: Any]]()
@@ -47,17 +50,39 @@ private final class FakeApple {
         case ("PATCH", "buildBetaDetails/detail"):
             precondition(attrs["autoNotifyEnabled"] as? Bool == false)
             if !dropWrites { autoNotify = false }; return [:]
-        case ("GET", "apps/6828712684/betaGroups"): return ["data": group.map { [$0] } ?? []]
+        case ("GET", "apps/6828712684/betaGroups"):
+            var groups = [group, publicGroup].compactMap { $0 }
+            if duplicatePublicGroup, let publicGroup { groups.append(publicGroup) }
+            return ["data": groups]
         case ("GET", "betaGroups"):
             precondition(query["filter[builds]"] == "build")
             var groups = [group!, ["id": "internal", "attributes": ["isInternalGroup": true, "name": "AskHuman Internal"]]]
             if extraGroup { groups.append(["id": "other", "attributes": ["isInternalGroup": false]]) }
+            if publicAssigned, let publicGroup { groups.append(publicGroup) }
             return ["data": groups]
         case ("GET", "betaGroups/internal/betaTesters"): return ["data": internalTesters]
         case ("GET", "builds/build/individualTesters"): return ["data": individuals]
         case ("POST", "betaGroups"):
             precondition(attrs["isInternalGroup"] as? Bool == false && attrs["publicLinkEnabled"] as? Bool == false)
+            precondition(attrs["hasAccessToAllBuilds"] as? Bool == false)
+            if attrs["name"] as? String == ExternalTesting.publicGroupName {
+                publicGroup = ["id": "public", "attributes": attrs]; return ["data": publicGroup!]
+            }
             group = ["id": "friends", "attributes": attrs]; return ["data": group!]
+        case ("GET", "betaGroups/public"): return ["data": publicGroup!]
+        case ("PATCH", "betaGroups/public"):
+            precondition(publicAssigned || attrs["publicLinkEnabled"] as? Bool != true, "the link went on before a build was in the group")
+            if !dropWrites {
+                var merged = ExternalStatus.attributes(publicGroup!).merging(attrs) { _, new in new }
+                if merged["publicLinkEnabled"] as? Bool == true { merged["publicLink"] = "https://testflight.apple.com/join/AbCdEf12" }
+                publicGroup!["attributes"] = merged
+            }
+            return [:]
+        case ("GET", "betaGroups/public/builds"): return ["data": publicAssigned ? [["id": "build"]] : []]
+        case ("POST", "betaGroups/public/relationships/builds"):
+            precondition(!autoNotify)
+            precondition(body?["data"] as? [[String: String]] == [["type": "builds", "id": "build"]])
+            if !dropWrites { publicAssigned = true }; return [:]
         case ("GET", "betaGroups/friends/builds"): return ["data": assigned ? [["id": "build"]] : []]
         case ("GET", "betaGroups/friends/betaTesters"): return ["data": testers]
         case ("GET", "betaTesters"):
@@ -214,6 +239,84 @@ enum ExternalTestingTests {
         routine.autoNotify = true; routine.dropWrites = true
         await refuses { _ = try await routineAPI.run(update) }
         precondition(!routine.assigned)
+
+        // The public link: a closed vocabulary, nothing written before approval, one explicit order, the same result twice.
+        for raw: [String: Any] in [
+            ["mode": "public", "build": "10"],
+            ["mode": "public", "build": "10", "limit": 0],
+            ["mode": "public", "build": "10", "limit": 1001],
+            ["mode": "public", "build": "10", "limit": 10.5],
+            ["mode": "public", "build": "10", "limit": true],
+            ["mode": "public", "limit": 100],
+            ["mode": "public", "build": "10", "limit": 100, "name": "Another group"],
+            ["mode": "public", "build": "10", "limit": 100, "dryRun": "yes"],
+            ["mode": "public-off", "build": "10"],
+            ["mode": "public-off", "limit": 100],
+        ] {
+            await refuses { _ = try ExternalRequest(raw) }
+        }
+        let open = try ExternalRequest(["mode": "public", "build": "10", "limit": 1000])
+        let plan = try ExternalRequest(["mode": "public", "build": "10", "limit": 1000, "dryRun": true])
+        let closing = try ExternalRequest(["mode": "public-off"])
+        let link = FakeApple(), linkAPI = ExternalTesting(send: link.send)
+        let nothingToClose = try await linkAPI.run(closing)
+        precondition(nothingToClose["unchanged"] as? Bool == true && link.mutations.isEmpty)
+        link.state = "WAITING_FOR_BETA_REVIEW"
+        await refuses { _ = try await linkAPI.run(open) }
+        precondition(link.mutations.isEmpty)
+        link.state = "IN_BETA_TESTING"
+        let planned = try await linkAPI.run(plan)
+        precondition(planned["wouldChange"] as? [String] == ["create group", "assign build", "enable link", "set limit"])
+        precondition(link.mutations.isEmpty)
+        let opened = try await linkAPI.run(open)
+        precondition(link.mutations == ["POST betaGroups", "PATCH buildBetaDetails/detail",
+                                        "POST betaGroups/public/relationships/builds", "PATCH betaGroups/public"])
+        precondition(opened["publicLink"] as? String == "https://testflight.apple.com/join/AbCdEf12")
+        precondition(opened["verified"] as? Bool == true && !link.autoNotify)
+        precondition(link.group == nil, "the Friends group was touched")
+        let afterOpen = link.mutations.count
+        let again = try await linkAPI.run(open)
+        precondition(link.mutations.count == afterOpen && (again["changed"] as? [String]) == [])
+        let nothingToChange = try await linkAPI.run(plan)
+        precondition(nothingToChange["wouldChange"] as? [String] == [])
+        _ = try await linkAPI.run(try ExternalRequest(["mode": "public", "build": "10", "limit": 500]))
+        precondition(link.mutations.dropFirst(afterOpen) == ["PATCH betaGroups/public"])
+        precondition(ExternalStatus.attributes(link.publicGroup!)["publicLinkLimit"] as? Int == 500)
+        let afterLimit = link.mutations.count
+        let preview = try await linkAPI.run(try ExternalRequest(["mode": "public-off", "dryRun": true]))
+        precondition(preview["wouldChange"] as? [String] == ["disable link"] && link.mutations.count == afterLimit)
+        _ = try await linkAPI.run(closing)
+        precondition(link.mutations.dropFirst(afterLimit) == ["PATCH betaGroups/public"])
+        precondition(ExternalStatus.attributes(link.publicGroup!)["publicLinkEnabled"] as? Bool == false)
+        precondition(link.publicAssigned, "closing the link must leave the group and its build alone")
+        let afterClose = link.mutations.count
+        let alreadyClosed = try await linkAPI.run(closing)
+        precondition(alreadyClosed["unchanged"] as? Bool == true && link.mutations.count == afterClose)
+        // Turning it on again changes the link only; the build is already there.
+        _ = try await linkAPI.run(open)
+        precondition(link.mutations.dropFirst(afterClose) == ["PATCH betaGroups/public"])
+
+        // What it refuses, and that a write that did not take is not reported as done.
+        let shaped = FakeApple(); shaped.state = "IN_BETA_TESTING"
+        shaped.publicGroup = ["id": "public", "attributes": ["name": ExternalTesting.publicGroupName, "isInternalGroup": false,
+                                                              "hasAccessToAllBuilds": true]]
+        await refuses { _ = try await ExternalTesting(send: shaped.send).run(open) }
+        shaped.publicGroup = ["id": "public", "attributes": ["name": ExternalTesting.publicGroupName, "isInternalGroup": true]]
+        await refuses { _ = try await ExternalTesting(send: shaped.send).run(open) }
+        shaped.publicGroup = ["id": "public", "attributes": ["name": ExternalTesting.publicGroupName, "isInternalGroup": false]]
+        shaped.duplicatePublicGroup = true
+        await refuses { _ = try await ExternalTesting(send: shaped.send).run(open) }
+        await refuses { _ = try await ExternalTesting(send: shaped.send).run(closing) }
+        precondition(shaped.mutations.isEmpty)
+        let unread = FakeApple(); unread.state = "IN_BETA_TESTING"; unread.dropWrites = true
+        await refuses { _ = try await ExternalTesting(send: unread.send).run(open) }
+        precondition(!unread.mutations.contains("PATCH betaGroups/public"), "the link went on without the build in the group")
+        let unlinked = FakeApple(); unlinked.state = "IN_BETA_TESTING"
+        let unlinkedAPI = ExternalTesting(send: unlinked.send)
+        _ = try await unlinkedAPI.run(open)
+        unlinked.dropWrites = true
+        await refuses { _ = try await unlinkedAPI.run(try ExternalRequest(["mode": "public", "build": "10", "limit": 200])) }
+
         print("External mutation scope, approval gates, read-back and retry checks passed")
     }
 }

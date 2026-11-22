@@ -3,9 +3,16 @@ import CoreFoundation
 
 /// A closed request vocabulary for this app's beta delivery. No arbitrary endpoints or app IDs.
 struct ExternalRequest {
-    enum Mode: String { case metadata, group, update, submit, start, invite }
+    enum Mode: String { case metadata, group, update, submit, start, invite, publicLink = "public", publicOff = "public-off" }
+    /// The most testers a public link may admit. The owner chose 1,000 (spec ios-setup-experience D19); raising it
+    /// is a reviewed change to this helper, not a field in a request.
+    static let publicLimitMax = 1000
     let mode: Mode
     let build: String?
+    /// `public` only: how many testers the link admits.
+    let limit: Int?
+    /// `public` and `public-off`: read the current state and report what would change, writing nothing.
+    let dryRun: Bool
     let localizations: [String: [String: String]]
     let review: [String: Any]
     let emails: [String]
@@ -16,10 +23,29 @@ struct ExternalRequest {
         }
         self.mode = mode
         let allowed: Set<String> = mode == .metadata ? ["mode", "localizations", "review"]
-            : mode == .invite ? ["mode", "build", "emails"] : ["mode", "build"]
+            : mode == .invite ? ["mode", "build", "emails"]
+            : mode == .publicLink ? ["mode", "build", "limit", "dryRun"]
+            : mode == .publicOff ? ["mode", "dryRun"] : ["mode", "build"]
         guard Set(value.keys).isSubset(of: allowed) else { throw ExternalStatusError("Unexpected external testing fields.") }
         build = value["build"] as? String
-        if mode != .metadata {
+        if mode == .publicLink {
+            guard let number = value["limit"] as? NSNumber, CFGetTypeID(number) != CFBooleanGetTypeID(),
+                  number.doubleValue == Double(number.intValue), (1...Self.publicLimitMax).contains(number.intValue) else {
+                throw ExternalStatusError("A public link needs a whole-number limit from 1 to \(Self.publicLimitMax).")
+            }
+            limit = number.intValue
+        } else {
+            limit = nil
+        }
+        if let flag = value["dryRun"] {
+            guard let number = flag as? NSNumber, CFGetTypeID(number) == CFBooleanGetTypeID() else {
+                throw ExternalStatusError("dryRun must be true or false.")
+            }
+            dryRun = number.boolValue
+        } else {
+            dryRun = false
+        }
+        if mode != .metadata && mode != .publicOff {
             guard let build, build.range(of: "^[1-9][0-9]{0,8}$", options: .regularExpression) != nil else {
                 throw ExternalStatusError("A valid build number is required.")
             }
@@ -79,6 +105,7 @@ struct ExternalRequest {
 
 struct ExternalTesting {
     static let groupName = "AskHuman Friends"
+    static let publicGroupName = "AskHuman Public"
     static let appID = ExternalStatus.appID
     typealias Send = (String, String, [String: String], [String: Any]?) async throws -> [String: Any]
     let send: Send
@@ -108,6 +135,7 @@ struct ExternalTesting {
 
     func run(_ request: ExternalRequest) async throws -> [String: Any] {
         if request.mode == .metadata { return try await metadata(request) }
+        if request.mode == .publicOff { return try await publicOff(dryRun: request.dryRun) }
         let matches = try await list("builds", ["filter[app]": Self.appID, "filter[version]": request.build!])
         guard matches.count == 1 else { throw ExternalStatusError("The requested build must resolve uniquely in AskHuman Mobile.") }
         let build = matches[0], id = try ExternalStatus.id(build), attrs = ExternalStatus.attributes(build)
@@ -120,6 +148,9 @@ struct ExternalTesting {
         let state = ExternalStatus.attributes(detail)["externalBuildState"] as? String ?? "UNKNOWN"
         if request.mode == .group { return try await group(buildID: id, detail: detail) }
         if request.mode == .update { return try await updateGroup(buildID: id, detail: detail) }
+        if request.mode == .publicLink {
+            return try await publicLink(buildID: id, detail: detail, state: state, limit: request.limit!, dryRun: request.dryRun)
+        }
         let groups = try await friendsGroups()
         guard groups.count == 1 else { throw ExternalStatusError("Prepare the AskHuman Friends external group first.") }
         let group = groups[0], groupID = try ExternalStatus.id(group)
@@ -244,6 +275,109 @@ struct ExternalTesting {
         let after = try await list("betaGroups/\(id)/builds", ["fields[builds]": "version"])
         guard after.contains(where: { $0["id"] as? String == buildID }) else { throw ExternalStatusError("Build assignment did not read back.") }
         return ["action": "group", "groupId": id, "buildId": buildID, "verified": true]
+    }
+
+    private func publicGroups() async throws -> [[String: Any]] {
+        try await list("apps/\(Self.appID)/betaGroups").filter { ExternalStatus.attributes($0)["name"] as? String == Self.publicGroupName }
+    }
+    private func checkPublicGroup(_ group: [String: Any]) throws {
+        let attrs = ExternalStatus.attributes(group)
+        guard attrs["isInternalGroup"] as? Bool == false, attrs["hasAccessToAllBuilds"] as? Bool != true else {
+            throw ExternalStatusError("The public group must be external and use explicitly assigned builds.")
+        }
+    }
+
+    /// Opens the one public link of this app: the group `AskHuman Public` (created when missing), one approved build in it,
+    /// the link on, the limit set. It reads the group first and writes only what differs, and the link goes on only after
+    /// the build is in the group, so it never points at an empty group. The Friends group is not touched.
+    private func publicLink(buildID: String, detail: [String: Any], state: String, limit: Int, dryRun: Bool) async throws -> [String: Any] {
+        guard ["BETA_APPROVED", "READY_FOR_BETA_TESTING", "IN_BETA_TESTING"].contains(state) else {
+            throw ExternalStatusError("The public group takes a build only after Beta App Review approval.")
+        }
+        let groups = try await publicGroups()
+        guard groups.count <= 1 else { throw ExternalStatusError("Ambiguous public group.") }
+        var groupID: String?
+        var attrs = [String: Any]()
+        var assigned = false
+        if let existing = groups.first {
+            try checkPublicGroup(existing)
+            groupID = try ExternalStatus.id(existing)
+            attrs = ExternalStatus.attributes(existing)
+            assigned = try await list("betaGroups/\(groupID!)/builds", ["fields[builds]": "version"])
+                .contains { $0["id"] as? String == buildID }
+        }
+        var changes = [String]()
+        if groupID == nil { changes.append("create group") }
+        if !assigned { changes.append("assign build") }
+        if attrs["publicLinkEnabled"] as? Bool != true { changes.append("enable link") }
+        if attrs["publicLinkLimitEnabled"] as? Bool != true || attrs["publicLinkLimit"] as? Int != limit { changes.append("set limit") }
+        if dryRun {
+            var plan: [String: Any] = ["action": "public", "dryRun": true, "wouldChange": changes, "limit": limit]
+            if let link = attrs["publicLink"] as? String { plan["publicLink"] = link }
+            return plan
+        }
+        if groupID == nil {
+            // Created private and empty: the link goes on only after a build is in the group.
+            let created = ExternalStatus.resource(try await write("POST", "betaGroups", type: "betaGroups",
+                attributes: ["name": Self.publicGroupName, "isInternalGroup": false, "publicLinkEnabled": false,
+                             "hasAccessToAllBuilds": false],
+                relationships: ["app": relation("apps", Self.appID)]))
+            try checkPublicGroup(created)
+            groupID = try ExternalStatus.id(created)
+        }
+        let id = groupID!
+        if !assigned {
+            // The same notification policy as every other assignment: no tester hears of a build until approved testing starts.
+            let detailID = try ExternalStatus.id(detail)
+            if ExternalStatus.attributes(detail)["autoNotifyEnabled"] as? Bool != false {
+                _ = try await write("PATCH", "buildBetaDetails/" + detailID, type: "buildBetaDetails", id: detailID,
+                                    attributes: ["autoNotifyEnabled": false])
+            }
+            let ready = ExternalStatus.resource(try await get("builds/\(buildID)/buildBetaDetail"))
+            guard ExternalStatus.attributes(ready)["autoNotifyEnabled"] as? Bool == false else {
+                throw ExternalStatusError("Automatic notification setting did not read back; build was not assigned.")
+            }
+            _ = try await send("POST", "betaGroups/\(id)/relationships/builds", [:], ["data": [["type": "builds", "id": buildID]]])
+            guard try await list("betaGroups/\(id)/builds", ["fields[builds]": "version"])
+                .contains(where: { $0["id"] as? String == buildID }) else {
+                throw ExternalStatusError("Build assignment did not read back; the link was not turned on.")
+            }
+        }
+        var patch = [String: Any]()
+        if attrs["publicLinkEnabled"] as? Bool != true { patch["publicLinkEnabled"] = true }
+        if attrs["publicLinkLimitEnabled"] as? Bool != true { patch["publicLinkLimitEnabled"] = true }
+        if attrs["publicLinkLimit"] as? Int != limit { patch["publicLinkLimit"] = limit }
+        if !patch.isEmpty {
+            _ = try await write("PATCH", "betaGroups/" + id, type: "betaGroups", id: id, attributes: patch)
+        }
+        let after = ExternalStatus.attributes(ExternalStatus.resource(try await get("betaGroups/" + id)))
+        guard after["publicLinkEnabled"] as? Bool == true, after["publicLinkLimitEnabled"] as? Bool == true,
+              after["publicLinkLimit"] as? Int == limit,
+              let link = after["publicLink"] as? String,
+              link.range(of: "^https://testflight\\.apple\\.com/join/[A-Za-z0-9_-]+$", options: .regularExpression) != nil else {
+            throw ExternalStatusError("The public link did not read back as on with the requested limit; inspect status.")
+        }
+        return ["action": "public", "groupId": id, "buildId": buildID, "changed": changes, "limit": limit,
+                "publicLink": link, "verified": true]
+    }
+
+    /// Turns the public link off. The group, its builds and the people who already joined stay as they are.
+    private func publicOff(dryRun: Bool) async throws -> [String: Any] {
+        let groups = try await publicGroups()
+        guard groups.count <= 1 else { throw ExternalStatusError("Ambiguous public group.") }
+        guard let group = groups.first else { return ["action": "public-off", "unchanged": true, "note": "There is no public group."] }
+        try checkPublicGroup(group)
+        let id = try ExternalStatus.id(group)
+        guard ExternalStatus.attributes(group)["publicLinkEnabled"] as? Bool == true else {
+            return ["action": "public-off", "unchanged": true, "groupId": id]
+        }
+        if dryRun { return ["action": "public-off", "dryRun": true, "wouldChange": ["disable link"]] }
+        _ = try await write("PATCH", "betaGroups/" + id, type: "betaGroups", id: id, attributes: ["publicLinkEnabled": false])
+        let after = ExternalStatus.attributes(ExternalStatus.resource(try await get("betaGroups/" + id)))
+        guard after["publicLinkEnabled"] as? Bool == false else {
+            throw ExternalStatusError("The public link did not read back as off; inspect status.")
+        }
+        return ["action": "public-off", "groupId": id, "verified": true]
     }
 
     private func invitedMembers(_ groupID: String) async throws -> Set<String> {
