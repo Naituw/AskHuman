@@ -106,9 +106,39 @@ Friends 与 Internal 读回没变。`docs/public/ios/testflight.json` 已加（�
 4. 装机验证后发 Mac 新版（发布流程另行取得用户指示）；
 5. 把「每 80 天出一次 TestFlight 包」「公共链接与上限的现状」「一周后复核中继与链接的用量」记进 `docs/PROGRESS.md`。
 
-**状态（2026-11-22）**：第 3 项已做成一个提交（`e9c565b6`），`Release-Note` 措辞经用户确认。随后用户同意推送并发布 Pages：23 个本地提交已推送，工作流成功，线上五个页面与本地构建逐字节相同，落地页上的公共链接可打开——第 1 项的发布与读回完成；其中「用一台没加过测试的手机从落地页走到 TestFlight 安装成功」还没做，要用户的手机。第 2 项早已满足（公共组里是 Build 29，带新路径文案）。第 5 项的记录已写进 `docs/PROGRESS.md`。**第 4 项（Mac 新版）还没做**，要用户另行授权；卡片对用户可见要等它。
+**状态（2026-11-22）**：第 3 项已做成一个提交（`e9c565b6`），`Release-Note` 措辞经用户确认。随后用户同意推送并发布 Pages：23 个本地提交已推送，工作流成功，线上五个页面与本地构建逐字节相同，落地页上的公共链接可打开——第 1 项的发布与读回完成；其中「用一台没加过测试的手机从落地页走到 TestFlight 安装成功」还没做，要用户的手机。第 2 项早已满足（公共组里是 Build 29，带新路径文案）。第 5 项的记录已写进 `docs/PROGRESS.md`。**第 4 项（Mac 新版）已做**：v0.18.0 于同日发布，卡片对用户可见，见下面的「发布记录」。
 
 验证：`node scripts/machine-health.mjs` → `./scripts/install.sh`；真实窗口里 设置 → 通信渠道 看卡片三种形态、深链、搜索；`AskHuman channel list` 与 `channel ios --agent-guide` 对没打开隐蔽开关的环境可用；**用户在真机上从零走完整条链路**（新 Broker 账号 → 落地页 → TestFlight → 配对 → 测试问题）并让一个 Agent 按提示词配一遍（密码由 Agent 生成并保存，用户只做 D24 里只有人能做的事）。
+
+### 发布记录（2026-11-22：Mac v0.18.0）
+
+用户选了「开始 Mac 新版的发布流程」，版本号与发布说明由用户定（规格 §12 第 11 轮）：**v0.18.0**，发布说明选手写，英文，
+随版本提交为 `docs/release-notes/v0.18.0.md`，用户看过全文（特别是「没填中继地址就走公共中继」那一句，它是行为变化）；Release 页的正文与该文件逐字一致。
+发布顺序（规格 §10.4）的前两步早已完成，这是第三步。
+
+- **先修 CI**：`cargo audit` 的红灯（`url` 2.5.8，RUSTSEC-2026-0592）升到 2.5.9，`99ee7957`，只改 `Cargo.lock`（连带 `form_urlencoded` 1.2.3）。
+  本地 `cargo audit` 对旧锁文件退出码 1、新锁文件 0；`clippy -D warnings` 干净；`cargo test --bin AskHuman` 3649 通过、0 失败、12 忽略。
+- **流程**：主工作树（干净）里 `bump-version` 到 0.18.0；`cargo update --workspace --locked --offline` 确认 `Cargo.lock` 与清单一致；
+  十二处版本（含 npm 主包对四个子包的依赖）核对一致；提交 `30e56ec7 chore(release): prepare v0.18.0`（连同发布说明），与 `99ee7957` 一起推送。
+  该提交的 [CI 45013844912](https://github.com/Naituw/AskHuman/actions/runs/45013844912) 8 项全绿（约 22 分钟，含 `cargo audit`）。
+  用户在 CI 全绿后点头；注解 tag `v0.18.0` 指向 `30e56ec7`，只推了这一个 tag：没有用 `--tags`（本地的 `ios-testflight-*` 标签没有出去），
+  也没有用 `scripts/publish.sh`（它是裸 `git push`）。推送前确认过远端没有 `v0.18*` 标签、npm 上最新是 0.17.3、GitHub 上签名与 npm 所需的 Secrets 都在（只看名字）。
+- **发布结果**：[Release 45015764037](https://github.com/Naituw/AskHuman/actions/runs/45015764037) 全部成功，从打 tag 到结束约 12 分钟（没有排队），
+  2026-11-22 19:19（北京时间）发布；Release 为非草稿、非预发布，四个二进制归档和 `SHA256SUMS` 都在。辅助组件的公证与四个平台的构建、两个 macOS 的 Developer ID 签名一次通过。
+- **核验**：四个归档都通过 `SHA256SUMS`。Mac ARM64：严格签名验证通过（Developer ID Application，TeamID `DMJXDB9H6Q`，hardened runtime，带时间戳），
+  `--version` 为 v0.18.0，`todo-sync resource-info --require-bundled` 给出内嵌组件版本 0.18.0、协议 1，`todo-sync resource-verify` 通过（都在隔离的 `ASKHUMAN_HOME` 里运行，没有留下任何状态）。
+  Mac Intel：签名验证通过、TeamID 相同，没有运行（本机没有 Rosetta）。Linux 与 Windows：只用 `file` 认出是 ELF / PE，没有运行。
+  ARM64 二进制 24.2 MB，v0.17.3 是 22.4 MB（多约 1.7 MB；这一版新增了 iPhone 图片预览的编码器，没有单独量它占多少）。
+  本机日常版用 `./scripts/install.sh` 对齐到 v0.18.0。
+- **npm**：发布步骤的日志里五个包都打印了 `+ …@0.18.0`（四个平台包在前，主包最后），`latest` 指向 0.18.0，主包把四个平台包固定在 0.18.0。
+  隔离目录、全新缓存里 `npm install askhuman@0.18.0` 装上了主包与 `darwin-arm64`，能运行 `AskHuman --version`（v0.18.0），其 native binary 的 SHA-256 与 GitHub 下载包一致。
+  注册表有延迟：发布后约 3 分钟平台包才能下载；主包的 tarball 在我过早请求（发布后约 2.5 分钟）之后被 CDN 缓存了一份 5 分钟的 404（`cache-control: public, max-age=300`，加个查询串就能取到 200，说明源站早有文件），
+  约 8 分钟后我才装成功。刚发布的几分钟里，用户可能遇到同样的 404。
+- **与 v0.17.3 的对照**：那次首发死在两个 macOS 构建的签名一步；这次读了当时的日志，原因是 `codesign --timestamp` 联不上 Apple 的时间戳服务
+  （`A timestamp was expected but was not found.`，同日 Apple 开发者服务宕机），不是证书或密钥的问题。这次同一步一次通过，`PROGRESS.md` 里的说法已改。
+- **没验证**：Windows、Linux、Intel Mac 的发布二进制没有在本机运行（CI 只覆盖编译与测试）；没有实际走一遍应用内自更新到 0.18.0；
+  没有用一台没加过测试的手机从落地页走到安装成功（仍在 `PROGRESS.md`）。
+- **没做的对外动作**：没有在 #29、#30、#31、#32 里告诉报告者「修复 / 诊断已在 v0.18.0」（公开评论）；`PROGRESS.md` 记着 #30 与 #32 的后续。
 
 ## 风险与回退
 

@@ -3,7 +3,7 @@
 记录需要跨会话保留的未完成 / 延期事项和明确下一步。任务 / 需求完成后删除其 section
 （历史留在 git）。
 
-## 进行中：iOS 设置体验（设计已通过；除 Mac 新版外都已完成，已推送、Pages 已发布）
+## 进行中：iOS 设置体验（已全部放出：Pages、公共组、Mac v0.18.0；剩手机走查与放出后的检查）
 
 用户 2026-11-22 要求全面优化 iOS 渠道的设置界面：打开设置就能完成后续配置（Broker、TestFlight、配对），并能让 Agent 代配。
 规格 [ios-setup-experience.md](specs/ios-setup-experience.md)（全部文案在 §14），计划 [plans/ios-setup-experience.md](plans/ios-setup-experience.md)，
@@ -29,8 +29,7 @@ TestFlight 公共链接 + Pages 落地页、卡片顶部「设置步骤」清单
 - [x] P3 文档与落地页：`scripts/build-ios-beta-site.mjs` 的根页改成中英双语 TestFlight 落地页（公共链接只读 `docs/public/ios/testflight.json`，
   缺失时显示「仅限邀请」，所以 Pages 现状不变；`node --test` 校验链接格式与站内链接，截图 `docs/assets/ios-setup-experience/18–20`）；
   `docs/public/ios/beta*.md` 改成公共链接版；`docs/wiki/ios-setup*.md` 的入口与步骤、`ios-broker*.md` 的一句摘要说明、README 中英各一节、
-  OA12 与 `overview-ios.md` 已回写。**这些文档已经按放出后的路径（设置 → 通信渠道 → iOS App）写成，而已发布的 v0.17.3 里入口还在「实验」里：
-  对应的代码（P5 的可见性提交）已推送，但要等 Mac 新版发出，用户才在自己的 Mac 上找得到那张卡片（见下面的「发 Mac 新版」）。**
+  OA12 与 `overview-ios.md` 已回写。这些文档按放出后的路径（设置 → 通信渠道 → iOS App）写成，随 Mac v0.18.0 发布后与已发布的版本一致。
 - [x] 隐私政策（`docs/public/ios/privacy*.md`）两处措辞已改并经用户审阅：「邀请制内测」→「TestFlight 测试版」，「邀请邮箱」→ 按邮件邀请 / 仅公共链接区分（Apple 的说明：只通过公共链接加入时，开发者看不到邮箱和姓名）；联系方式一句与生效日期（2026-11-22）没动。已随 Pages 发布（2026-11-22）。
 - [x] P4 本地部分：手机 App 里两处路径提示改成「设置 → 通信渠道 → iOS App」（模拟器构建通过，字符串目录由脚本重新生成、只差这两个键）；
   Beta 描述、审核备注草稿与 `ios-testflight` 技能参考里去掉「EMQX」「实验」字样。这一步本身没有出包、上传、送审。
@@ -46,15 +45,14 @@ TestFlight 公共链接 + Pages 落地页、卡片顶部「设置步骤」清单
 - [x] P5 的可见性提交（2026-11-22，`e9c565b6`）：iOS App 卡移到「通信渠道」页、紧跟「本地弹窗」卡；`channel ios …`、`channel list`
   与帮助不再看 `experimental.enabled`；「离开模式」卡和向导磁贴对所有人显示（磁贴名改成「iOS App」）；搜索与深链 `channel#channel-ios` 可用；
   「实验」页只剩 iCloud 待办同步。前端 2163 项测试与 `vue-tsc`、Rust `cli::` + `onboarding::` 373 项、`clippy -D warnings`、本地 broker 的配对 → 回答 E2E 通过，已装机；
-  真实的 `SettingsView`（浏览器 + mock 后端）里看过卡片的三种形态、深链、搜索结果跳转。可见性要等 Mac 新版发出才对用户生效。
+  真实的 `SettingsView`（浏览器 + mock 后端）里看过卡片的三种形态、深链、搜索结果跳转。可见性随 Mac v0.18.0 对用户生效。
 - [x] 推送与 Pages（用户 2026-11-22 同意）：23 个本地提交已推送（`955e8924..e9c565b6`），Pages 工作流成功，线上五个页面与本地构建逐字节相同，
   落地页上的 TestFlight 公共链接可打开（匿名读到「Join the AskHuman Mobile beta」）。**公共链接从此是公开的**；公共组里是构建 29，已带新路径文案。
 - [ ] 用一台没加过测试的手机从落地页走到 TestFlight 安装成功（要用户的手机，或另一个 Apple ID），再把整条链路走一遍
   （新 Broker 账号 → 落地页 → TestFlight → 配对 → 测试问题）。Pages 与链接我只读回过页面和链接本身，没有用手机走。
-- [ ] 发 Mac 新版（要用户另行授权发布）：README 与指南写的「设置 → 通信渠道 → iOS App」，要新版发出才与已发布的 v0.17.3 一致，所以这一步要尽快跟上。
-  用 git-cliff 对 `v0.17.3` 之后的提交跑出的更新日志草稿已给用户看过，没有改措辞（规格 §12 第 10 轮）：3 条 Features（iOS 渠道转正、iOS 大图先看预览、本地文件链接在预览面板打开）、
-  6 条 Fixes、1 条 Security。发版时若要改措辞，手写 `docs/release-notes/v<版本>.md` 覆盖自动生成的内容。
-- [ ] 放出后：**至少每 80 天出一次 TestFlight 包**（构建 90 天过期，公共链接才一直可用；现在公共组里的构建 29 在 2027-02-19 过期）；一周后复核中继与公共链接的用量。
+- [x] 发 Mac 新版 [v0.18.0](https://github.com/Naituw/AskHuman/releases/tag/v0.18.0)（用户 2026-11-22 定了版本号、选手写发布说明并在 CI 全绿后点头；发布工作流约 12 分钟）：
+  卡片对用户可见，README、落地页与指南写的路径与已发布的版本一致；CI 里 `cargo audit` 的红灯随这次推送修好（`url` 2.5.9）。发布记录与核验见[计划](plans/ios-setup-experience.md)的「发布记录」。
+- [ ] 放出后（2026-11-22 已全部放出）：**至少每 80 天出一次 TestFlight 包**（构建 90 天过期，公共链接才一直可用；现在公共组里的构建 29 在 2027-02-19 过期）；一周后复核中继与公共链接的用量。
 
 ## 进行中：Antigravity 深度集成（P1–P4 已实现并装为日常版，等用户验收）
 
@@ -85,6 +83,7 @@ TestFlight 公共链接 + Pages 落地页、卡片顶部「设置步骤」清单
 - 诊断（只加信息，没改任何行为）：飞书的网络错误文本带上 reqwest 的 `source()` 链；取 endpoint 阶段在 `ASKHUMAN_FEISHU_DEBUG=1` 时
   写 `feishu-debug.log`。用装好的二进制验过：经 launchd 拉起的隔离 daemon，`daemon.log` 里的 `feishu router connect failed`
   现在带 `client error (Connect): tcp connect error: Connection refused (os error 61)`；成功路径只记耗时，wss 地址（带 ticket）不落日志。
+- 这条诊断已随 [v0.18.0](https://github.com/Naituw/AskHuman/releases/tag/v0.18.0)（2026-11-22）发布，报告者升级后日志里会带上原因；还没有在 issue 里告诉他。
 - 在本机（macOS 27.2.1、0.17.3）走同一条 launchd 路径（CLI 触发的 `spawn_via_gui_launchd`、隔离 `ASKHUMAN_HOME`、假飞书服务）**没有复现**，
   日常 daemon 也由 launchd 管理且飞书正常；所以本机的 launchd 路径没问题，原因可能在报告者的环境里。
 - 已[回复](https://github.com/Naituw/AskHuman/issues/32#issuecomment-7045289814)，请报告者在 launchd 里用 curl 对照访问他的飞书域名、
@@ -417,7 +416,7 @@ macOS：相关 325 条测试、提交前 clippy、Dev 正式转送、日常二�
 下一步：
 - [ ] 日常使用里遇到 Claude 起后台子 Agent（`Agent` 工具 `run_in_background`）时核对：Agent 控制台一直显示「运行中」，
   直到子 Agent 的结果回来、最终 `Stop` 才变空闲并弹确认卡。不必专门造场景。
-- [ ] 发版后留意 #30 反馈者的确认：issue 已关闭，他若仍能复现会在里面回复，到时重新打开。
+- [ ] 留意 #30 反馈者的确认：修复已随 [v0.18.0](https://github.com/Naituw/AskHuman/releases/tag/v0.18.0)（2026-11-22）发布；issue 已关闭，他若仍能复现会在里面回复，到时重新打开。
 - [ ] 已知取舍，等用户决定要不要处理：子 Agent 被手动终止、之后再没有最终 `Stop` 时，会话要等 30 分钟兜底才变空闲，
   期间不弹确认卡。
 
@@ -569,7 +568,6 @@ Agents 列表 + 实时观看 + 关注 + 插话读取回执 + 完成横幅、任�
 下一步：
 
 - [ ] 上线一周后：用函数监控里的运行时间核对单次推送的真实运行时长（规格 4.1：切换当天五个样本是热 0.2 s、冷 1 s，平均值取决于冷热比例；明细账单没有资源使用量的行，读不到），按实际调用量核对两条告警的阈值，再看一遍要不要做账号层面的兜底（Owner 2026-11-22：现在不做，上线一周看实际用量再定；费用中心「余额预警」或单独的腾讯云账号，规格 4.4）。
-- [ ] 隐私政策页的新版（`docs/public/ios/privacy*.md`，生效日期 2026-11-22）已在仓库里，但公开站点要手动运行 `ios-beta-pages` 工作流才会更新，还没运行；时机待 Owner 定——页面里的「使用我自己的中继」开关只在带默认中继的 Mac 新版里才有（最新发布 v0.17.3 不含）。
 - [ ] 约 2027-01：确认托管证书（2027-02-19 到期）已自动续期并部署到 SCF 自定义域名。
 - [ ] 告警到邮件 / 短信的通知链路没有真实触发过（Owner 2026-11-22：等真有告警再看）；真有告警时看一眼通知是否到达、内容是否够判断。
 
@@ -1287,8 +1285,9 @@ WebKit 可刷新页面缩放，但 Popup / 历史窗口的几何仍沿用旧值�
 Rust 全量、Swift 全量与「真实 daemon + 真实手机引擎 + 本地 broker」的端到端都通过（实现记录与实测数字见规格 §8）。
 Mac 端已装进日常环境，并随桌面补丁 [v0.17.3](https://github.com/Naituw/AskHuman/releases/tag/v0.17.3) 发布（2026-11-18）；
 手机端随内外 TestFlight `0.1.0 (28)` 分发（源码 `ec57bab7`，见 [Build 28 交付记录](plans/ios-channel.md#2026-11-18testflight-内部与外部构建-28)）。
-v0.17.3 第一次发布时，两个 macOS 构建都死在「Sign macOS binary (Developer ID)」一步（各 16 秒；没有登录 GitHub，看不到日志，原因没查实，
-同日 Apple 开发者服务大面积宕机），没有发出任何东西；同一提交删掉未发布的标签重推后一次成功。再遇到同一步失败时要先看日志（`gh auth login` 或浏览器）。
+v0.17.3 第一次发布时，两个 macOS 构建都死在「Sign macOS binary (Developer ID)」一步（各 16 秒），没有发出任何东西；同一提交删掉未发布的标签重推后一次成功。
+原因 2026-11-22 读日志查实了：`codesign --timestamp` 报 `A timestamp was expected but was not found.`，即当时联不上 Apple 的时间戳服务（同日 Apple 开发者服务大面积宕机），
+与证书、密钥无关；v0.18.0 同一步一次通过。再遇到时先读日志确认是同一条报错，再重跑失败的作业（`gh run rerun --failed`，没在本仓库试过）或照 v0.17.3 的做法重推标签。
 2026-11-21 已用两台 Mac 的 `trafficBreakdown` 与 EMQX 控制台核对（规格 [§9](specs/ios-traffic-reduction.md#9-实测2026-11-21)）：
 台账与 EMQX 的报文流量对上（差 0.1%）；除附件外的同步约 13 MB/天（整月约 0.4 GB），低于当时推算的 0.73 GB；
 但附件分块占落地后总字节的 92%，11 月到 11-21 已计费 1.67 GB。附件不在这份规格的范围内，由 [附件流量收敛](specs/ios-attachment-traffic.md) 接手（见下一节，2026-11-21 已实现，待出构建与真机核验）。
@@ -1297,7 +1296,7 @@ v0.17.3 第一次发布时，两个 macOS 构建都死在「Sign macOS binary (D
   打开详情仍实时；从后台回前台只补变化、没有整套刷新；Watch 一个会话时帧与列表活动照常。新旧版本互配（旧手机配新 Mac、新手机配旧 Mac）
   都照旧工作，只是没省到流量。
 
-## 待办：iOS 附件流量收敛（已实现并验证；手机已随 Build 29 出包，Mac 版本还没发，待真机核验）
+## 待办：iOS 附件流量收敛（已实现并验证；手机随 Build 29、Mac 随 v0.18.0 都已发布，待真机核验）
 
 2026-11-21 做完并提交（Owner 选了主工作树）：[规格](specs/ios-attachment-traffic.md)（决策 AT1–AT20，Owner 都已确认）、
 [计划](plans/ios-attachment-traffic.md)（P1–P4，逐阶段的实施记录、测量与对照实验都在里面）。
@@ -1308,10 +1307,10 @@ v0.17.3 第一次发布时，两个 macOS 构建都死在「Sign macOS binary (D
 验证过的（数字与细节见计划 P4 的实施记录）：Rust 全量、Swift 全量、真实 daemon + 本地 broker 的端到端（新旧互配四格都跑过）、
 模拟器 UI 测试、模拟器上的真 App（看预览、点「原图」、同一张截图再来不再下载）。
 一张 3.7 MB 的合成截图：预览线上约 28.6 KB，原图线上约 3.72 MB（旧版 Mac 发同一张图约 6.6 MB）。整月用量按规格 §10 估算约 0.58 GiB（现在约 5.3 GiB），
-前提是「看过的图里有 10% 要再取原图」，这个比例没有数据。新 Mac 二进制已装在本机、日常 daemon 也已换成它（2026-11-22 装机交接）；Mac 版本还没有发布。
+前提是「看过的图里有 10% 要再取原图」，这个比例没有数据。新 Mac 二进制已装在本机、日常 daemon 也已换成它（2026-11-22 装机交接）；Mac 版本已随 [v0.18.0](https://github.com/Naituw/AskHuman/releases/tag/v0.18.0) 发布（2026-11-22）。
 
-- [ ] 出 Mac 版本（要 Owner 另行授权）。TestFlight 构建已出：2026-11-22 的 0.1.0 (29)（Internal 与 Friends，源码 `d90c25dc`，
-  见 [Build 29 交付记录](plans/ios-channel.md#2026-11-22testflight-内部与外部构建-29)）；预览要 Mac 升级后才生效，已发布的 v0.17.3 没有，朋友的 Mac 升级前看不到预览。
+- [x] 两端的版本都已发布：TestFlight 构建 2026-11-22 的 0.1.0 (29)（Internal 与 Friends，源码 `d90c25dc`，
+  见 [Build 29 交付记录](plans/ios-channel.md#2026-11-22testflight-内部与外部构建-29)）；Mac 随 v0.18.0。预览要 Mac 升级到 v0.18.0 才生效，朋友的 Mac 升级前看不到预览。
 - [ ] 真机核验（手机更新到 Build 29、Mac 已升级）：预览在真机、最低 iOS 17 上的解码与观感（固定质量 76，不满意改 `ios/preview.rs` 里的常量）；
   打开一张图是预览、有「原图」按钮；分享拿到原文件；同一份内容再来不再下载；新旧版本互配照旧。
 - [ ] 真机用几天后读 `AskHuman channel ios status --json` 的 `trafficBreakdown.assets`（预览 / 原图 / 重复各多少）与 EMQX 用量，换算整月，
