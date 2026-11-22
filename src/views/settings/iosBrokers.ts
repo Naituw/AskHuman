@@ -1,10 +1,27 @@
 // The services the iOS channel's connection form can help with (docs/specs/ios-open-access.md OA11,
-// §6.4). Pure data: no config field records the choice, so a service is recognized by the host name,
-// and anything unknown is "custom" (self-hosted or another provider). The wording of every entry —
-// name, key points, hints — lives in the i18n files under `settings.experimental.ios.broker.<id>`.
+// docs/specs/ios-setup-experience.md §4). Pure data: no config field records the choice, so a service
+// is recognized by the host name, and anything unknown is "custom" (self-hosted or another provider).
+// The wording of every entry — tile, notice, steps, hints — lives in the i18n files under
+// `settings.channels.ios.tile.<id>`, `…guide.<id>` and `…broker.<id>.hint`.
 // Facts here mirror docs/wiki/ios-broker.md, which stays the place that carries their dates.
 
 export type IosBrokerId = "emqx" | "flespi" | "custom";
+
+/** One line of a service's instructions: `…guide.<id>.<key>`, with optional sub-lines under it. */
+export interface IosGuideStep {
+  key: string;
+  sub?: readonly string[];
+}
+
+/** A link a step's text points at (`[label](id)`): an address, or a section of the wiki page. */
+export type IosGuideLink = { url: string } | { anchor: { zh: string; en: string } };
+
+/**
+ * A string a step has the person type somewhere else (`[[id]]`), shown as a chip that copies it.
+ * `{ acl }` is a topic for the account's user name (`{}` stands for it): until one is typed the chip
+ * shows a placeholder and cannot be copied.
+ */
+export type IosGuideChip = { value: string } | { acl: string };
 
 export interface IosBrokerPreset {
   id: IosBrokerId;
@@ -14,11 +31,22 @@ export interface IosBrokerPreset {
   host?: string;
   tlsPort: number;
   wssPort: number;
-  /** Keys of the short points shown under the choice, in order (`…broker.<id>.<key>`). */
-  points: readonly string[];
-  /** Heading anchors of the service's section in docs/wiki/ios-broker.md, per language. */
-  anchor: { zh: string; en: string };
+  /** `…guide.<id>.notice`, a line shown above the instructions: a warning, a plain note, or none. */
+  notice: "warn" | "info" | null;
+  /** What goes between `ah/<` and `>/#` where a step names the topic of one account. */
+  aclWord: "username" | "number";
+  /** Whether `…guide.<id>.links`, a line of further reading, is shown below them. */
+  footer: boolean;
+  /** Numbered steps for a service the person signs up to; bullet requirements for one they run. */
+  numbered: boolean;
+  steps: readonly IosGuideStep[];
+  links: Readonly<Record<string, IosGuideLink>>;
+  chips: Readonly<Record<string, IosGuideChip>>;
 }
+
+/** Sections of docs/wiki/ios-broker.md the self-hosted instructions point at. */
+const WIKI_MOSQUITTO = { zh: "路径三自建-mosquitto", en: "path-3-self-hosted-mosquitto" };
+const WIKI_VERIFY = { zh: "怎样自己验证", en: "verify-a-broker-yourself" };
 
 export const IOS_BROKERS: readonly IosBrokerPreset[] = [
   {
@@ -26,8 +54,19 @@ export const IOS_BROKERS: readonly IosBrokerPreset[] = [
     hostSuffixes: [".emqxsl.cn", ".emqxsl.com"],
     tlsPort: 8883,
     wssPort: 8084,
-    points: ["host", "credentials", "acl", "limits"],
-    anchor: { zh: "路径一emqx-cloud-serverless托管", en: "path-1-emqx-cloud-serverless-hosted" },
+    notice: "warn",
+    aclWord: "username",
+    footer: false,
+    numbered: true,
+    steps: [
+      { key: "step1" },
+      { key: "step2" },
+      { key: "step3" },
+      { key: "step4", sub: ["step4a", "step4b"] },
+    ],
+    links: { console: { url: "https://cloud.emqx.com/" } },
+    // The catch-all deny every account of a shared deployment needs, then the allow for this one.
+    chips: { all: { value: "#" }, acl: { acl: "ah/{}/#" } },
   },
   {
     id: "flespi",
@@ -35,16 +74,26 @@ export const IOS_BROKERS: readonly IosBrokerPreset[] = [
     host: "mqtt.flespi.io",
     tlsPort: 8883,
     wssPort: 443,
-    points: ["host", "credentials", "acl", "limits"],
-    anchor: { zh: "路径二flespi托管欧洲", en: "path-2-flespi-hosted-europe" },
+    notice: "info",
+    aclWord: "number",
+    footer: false,
+    numbered: true,
+    steps: [{ key: "step1" }, { key: "step2" }, { key: "step3" }, { key: "step4" }],
+    links: { console: { url: "https://flespi.io/" } },
+    chips: { wild: { value: "ah/#" }, acl: { acl: "ah/{}/#" } },
   },
   {
     id: "custom",
     hostSuffixes: [],
     tlsPort: 8883,
     wssPort: 8084,
-    points: ["requirements", "tls", "acl", "limits"],
-    anchor: { zh: "对-broker-的要求", en: "what-the-broker-must-do" },
+    notice: null,
+    aclWord: "username",
+    footer: true,
+    numbered: false,
+    steps: [{ key: "step1" }, { key: "step2" }, { key: "step3" }],
+    links: { mosquitto: { anchor: WIKI_MOSQUITTO }, suite: { anchor: WIKI_VERIFY } },
+    chips: { mosquitto: { value: "pattern readwrite ah/%u/#" } },
   },
 ];
 
@@ -88,9 +137,38 @@ export function isHintKind(kind: string): kind is IosTestHintKind {
   return (HINT_KINDS as readonly string[]).includes(kind);
 }
 
-/** The wiki page of the services, in the reader's language. */
-export function brokerGuideUrl(id: IosBrokerId, zh: boolean): string {
-  const anchor = brokerPreset(id).anchor;
-  const file = zh ? "ios-broker.md" : "ios-broker.en.md";
-  return `https://github.com/Naituw/AskHuman/blob/main/docs/wiki/${file}#${zh ? anchor.zh : anchor.en}`;
+const WIKI = "https://github.com/Naituw/AskHuman/blob/main/docs/wiki";
+
+/** The addresses a service's steps link to, in the reader's language. */
+export function brokerLinks(id: IosBrokerId, zh: boolean): Record<string, string> {
+  const out: Record<string, string> = {};
+  for (const [name, link] of Object.entries(brokerPreset(id).links)) {
+    out[name] =
+      "url" in link
+        ? link.url
+        : `${WIKI}/${zh ? "ios-broker.md" : "ios-broker.en.md"}#${zh ? link.anchor.zh : link.anchor.en}`;
+  }
+  return out;
+}
+
+/**
+ * What a step's chips copy, for the account's user name. A chip that needs the user name has no
+ * value until one is typed (`null`: shown as a placeholder, not copyable).
+ */
+export function brokerChips(id: IosBrokerId, username: string): Record<string, string | null> {
+  const name = username.trim();
+  const out: Record<string, string | null> = {};
+  for (const [chip, spec] of Object.entries(brokerPreset(id).chips)) {
+    out[chip] = "value" in spec ? spec.value : name ? spec.acl.replace("{}", name) : null;
+  }
+  return out;
+}
+
+/** Every key a service's text needs below `settings.channels.ios.guide.<id>`. */
+export function guideKeys(id: IosBrokerId): string[] {
+  const preset = brokerPreset(id);
+  const keys = preset.steps.flatMap((step) => [step.key, ...(step.sub ?? [])]);
+  if (preset.notice) keys.push("notice");
+  if (preset.footer) keys.push("links");
+  return keys;
 }

@@ -1,6 +1,7 @@
-// iOS channel card state (experimental): gateway status polling, pairing session, device list
-// actions and the broker connection helpers. Everything stateful about the gateway lives in the
-// daemon; this module only asks it (`ios_op`) and renders what comes back.
+// iOS App card state: gateway status polling, pairing session, device list actions and the
+// broker connection helpers. Everything stateful about the gateway lives in the daemon; this
+// module only asks it (`ios_op`) and renders what comes back. The card's components share one
+// instance through `iosChannelContext.ts`.
 import { computed, onBeforeUnmount, onMounted, ref, watch } from "vue";
 import {
   iosConnectionExport,
@@ -51,9 +52,18 @@ export function useIosChannel() {
   }
 
   // The broker service (docs/specs/ios-open-access.md OA11). No config field records it: the host
-  // name decides until the user picks one here, and then the pick stands.
+  // name decides until the user picks one here, and then the pick stands. With no pick and no host
+  // there is no service yet (`null`: no tile is selected), and "custom" is only what hints fall back to.
   const brokerPick = ref<IosBrokerId | null>(null);
-  const broker = computed<IosBrokerId>(() => brokerPick.value ?? detectBroker(ios.value.host));
+  const provider = computed<IosBrokerId | null>(
+    () => brokerPick.value ?? (ios.value.host.trim() ? detectBroker(ios.value.host) : null),
+  );
+  const broker = computed<IosBrokerId>(() => provider.value ?? "custom");
+
+  /** A password is typed now or already stored: either way the connection has one. */
+  const passwordFilled = computed(
+    () => ios.value.password.trim() !== "" || ctx.secretsPresent.value.iosBrokerPassword,
+  );
 
   /** Picking a service fills in its ports (and its host when it has one for everybody). */
   async function chooseBroker(id: IosBrokerId) {
@@ -67,6 +77,9 @@ export function useIosChannel() {
   }
 
   const state = ref<IosGatewayState | null>(null);
+  // How many times the gateway answered while the channel was on (a failed ask counts: it is an
+  // answer, "not running"). The card tells its first answer from the ones that follow.
+  const polls = ref(0);
   const now = ref(Date.now());
   let pollTimer: ReturnType<typeof setTimeout> | null = null;
   let clockTimer: ReturnType<typeof setInterval> | null = null;
@@ -89,6 +102,8 @@ export function useIosChannel() {
     } catch {
       state.value = null;
     }
+    // Turned off while the question was on its way: the answer is of no use.
+    if (ios.value.enabled) polls.value++;
     settlePairing();
   }
 
@@ -126,13 +141,6 @@ export function useIosChannel() {
     () => ios.value.enabled,
     () => refreshSoon(),
   );
-
-  // ——— status line ———
-
-  const statusKind = computed<"off" | "ok" | "warn">(() => {
-    if (!state.value) return "off";
-    return state.value.connected ? "ok" : "warn";
-  });
 
   // ——— pairing ———
 
@@ -296,6 +304,8 @@ export function useIosChannel() {
       testMessage.value = result.message;
       testWarnings.value = result.warnings ?? [];
       testError.value = false;
+      // The gateway is about to connect with these settings: do not wait for the next poll to say so.
+      refreshSoon();
     } catch (e) {
       const failure = asTestError(e);
       testMessage.value = failure.message;
@@ -343,14 +353,17 @@ export function useIosChannel() {
 
   return {
     ios,
+    provider,
     broker,
     chooseBroker,
+    passwordFilled,
     defaultRelayUrl,
     relayMode,
     setRelayMode,
     state,
+    polls,
+    refreshSoon,
     activePhones,
-    statusKind,
     pairing,
     pairBusy,
     pairNotice,

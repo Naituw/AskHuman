@@ -20,7 +20,7 @@ const pushOptions = computed(() =>
     if (secs === 0) return { secs, label: t("settings.away.pushNow") };
     const d = splitDuration(secs);
     const text = t("settings.away.pushIdle", {
-      time: t(`settings.experimental.ios.duration.${d.unit}`, { n: d.n }),
+      time: t(`settings.channels.ios.duration.${d.unit}`, { n: d.n }),
     });
     return {
       secs,

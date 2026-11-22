@@ -1,8 +1,9 @@
 import { flushPromises, mount } from "@vue/test-utils";
-import { reactive, ref } from "vue";
+import { reactive, ref, type Ref } from "vue";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { i18n } from "../../i18n";
 import IosChannelCard from "./IosChannelCard.vue";
+import { IOS_JOIN_URL } from "./iosLinks";
 
 const iosOp = vi.hoisted(() => vi.fn());
 const iosPairQr = vi.hoisted(() => vi.fn());
@@ -11,6 +12,9 @@ const iosConnectionImport = vi.hoisted(() => vi.fn());
 const iosConnectionExport = vi.hoisted(() => vi.fn());
 const iosDefaultRelayUrl = vi.hoisted(() => vi.fn());
 const openPath = vi.hoisted(() => vi.fn());
+const setupProbeStart = vi.hoisted(() => vi.fn());
+const setupProbeCancel = vi.hoisted(() => vi.fn());
+const listen = vi.hoisted(() => vi.fn());
 const useSettingsContext = vi.hoisted(() => vi.fn());
 
 vi.mock("../../lib/ipc", () => ({
@@ -21,7 +25,10 @@ vi.mock("../../lib/ipc", () => ({
   iosConnectionExport,
   iosDefaultRelayUrl,
   openPath,
+  setupProbeStart,
+  setupProbeCancel,
 }));
+vi.mock("@tauri-apps/api/event", () => ({ listen }));
 vi.mock("./context", () => ({ useSettingsContext }));
 
 const phone = {
@@ -61,11 +68,15 @@ function testFailed(kind: string, message: string, warnings: string[] = []) {
 
 describe("IosChannelCard", () => {
   let config: ReturnType<typeof makeConfig>;
+  let secretsPresent: Ref<{ iosBrokerPassword: boolean }>;
   let supportsAgentTasks: boolean;
   let activeTab: ReturnType<typeof ref<string>>;
   let taskReadiness: ReturnType<typeof ref<unknown[]>>;
+  let probeResult: ((result: Record<string, unknown>) => void) | null;
   const persist = vi.fn(async () => {});
   const toggleAgentTasks = vi.fn();
+  const changeDaemonLifecycle = vi.fn(async () => {});
+  const writeText = vi.fn(async () => {});
 
   function makeConfig(enabled: boolean) {
     return ref({
@@ -83,6 +94,7 @@ describe("IosChannelCard", () => {
         }),
       },
       agentTasks: reactive({ enabled: false }),
+      general: reactive({ daemonLifecycle: "activity" }),
     });
   }
 
@@ -90,13 +102,15 @@ describe("IosChannelCard", () => {
     useSettingsContext.mockReturnValue({
       config,
       persist,
-      secretsPresent: ref({ iosBrokerPassword: true }),
+      secretsPresent,
       SECRET_PLACEHOLDER: "••••",
       clearSecret: vi.fn(),
       supportsAgentTasks,
       toggleAgentTasks,
+      changeDaemonLifecycle,
       taskReadiness,
       activeTab,
+      settingsTargetHighlight: ref(""),
     });
   }
 
@@ -111,9 +125,24 @@ describe("IosChannelCard", () => {
     iosDefaultRelayUrl.mockResolvedValue("");
     openPath.mockReset();
     openPath.mockResolvedValue(undefined);
+    setupProbeStart.mockReset();
+    setupProbeCancel.mockReset();
+    setupProbeCancel.mockResolvedValue(undefined);
+    probeResult = null;
+    listen.mockReset();
+    listen.mockImplementation(async (_event: string, handler: (e: { payload: Record<string, unknown> }) => void) => {
+      probeResult = (payload) => handler({ payload });
+      return () => {
+        probeResult = null;
+      };
+    });
+    writeText.mockClear();
+    Object.defineProperty(navigator, "clipboard", { value: { writeText }, configurable: true });
     persist.mockClear();
+    changeDaemonLifecycle.mockClear();
     iosPairQr.mockResolvedValue('<svg id="qr"></svg>');
     config = makeConfig(true);
+    secretsPresent = ref({ iosBrokerPassword: true });
     activeTab = ref("channels");
     taskReadiness = ref([]);
     toggleAgentTasks.mockClear();
@@ -130,22 +159,532 @@ describe("IosChannelCard", () => {
     return mount(IosChannelCard, { attachTo: "#mount", global: { plugins: [i18n] } });
   }
 
-  it("does not touch the daemon while the channel is off", async () => {
-    config.value.channels.ios.enabled = false;
-    const wrapper = mountCard();
-    await flushPromises();
-    expect(iosOp).not.toHaveBeenCalled();
-    expect(wrapper.find(".ios-devices").exists()).toBe(false);
+  type Card = ReturnType<typeof mountCard>;
+  const button = (wrapper: Card, text: string) => wrapper.findAll("button").find((b) => b.text() === text);
+  const byId = (wrapper: Card, id: string) => wrapper.get(`[data-testid="${id}"]`);
+  const tag = (wrapper: Card) => byId(wrapper, "channel-state-ios").text();
+  const stepClasses = (wrapper: Card, n: number) => byId(wrapper, `ios-step-${n}`).classes();
+
+  // ——— the three forms of the card ———
+
+  describe("off", () => {
+    beforeEach(() => {
+      config.value.channels.ios.enabled = false;
+    });
+
+    it("does not touch the daemon, and offers the two ways to begin", async () => {
+      const wrapper = mountCard();
+      await flushPromises();
+      expect(iosOp).not.toHaveBeenCalled();
+      expect(wrapper.find('[data-testid="ios-steps"]').exists()).toBe(false);
+      expect(wrapper.find('[data-testid="ios-ready"]').exists()).toBe(false);
+      expect(byId(wrapper, "ios-start").text()).toBe("Start setup");
+      expect(byId(wrapper, "ios-agent").text()).toBe("Set up with an Agent");
+      expect(wrapper.get(".card-title").text()).toBe("iOS App");
+      wrapper.unmount();
+    });
+
+    it("says whether anything was filled in yet", async () => {
+      const filled = mountCard();
+      await flushPromises();
+      expect(tag(filled)).toBe("Off");
+      filled.unmount();
+
+      config.value.channels.ios.host = "";
+      secretsPresent.value.iosBrokerPassword = false;
+      const blank = mountCard();
+      await flushPromises();
+      expect(tag(blank)).toBe("Not set up");
+      blank.unmount();
+    });
+
+    it("turns the channel on with 'Start setup' and shows the steps", async () => {
+      iosOp.mockResolvedValue({ kind: "state", state: null });
+      const wrapper = mountCard();
+      await flushPromises();
+      await byId(wrapper, "ios-start").trigger("click");
+      await flushPromises();
+      expect(config.value.channels.ios.enabled).toBe(true);
+      expect(persist).toHaveBeenCalled();
+      expect(wrapper.find('[data-testid="ios-steps"]').exists()).toBe(true);
+      expect(wrapper.find('[data-testid="ios-start"]').exists()).toBe(false);
+      wrapper.unmount();
+    });
+
+    it("shows the prompt for an Agent in full and copies it only on a click", async () => {
+      const wrapper = mountCard();
+      await flushPromises();
+      expect(wrapper.find('[data-testid="ios-agent-box"]').exists()).toBe(false);
+      await byId(wrapper, "ios-agent").trigger("click");
+      const prompt =
+        "Please set up AskHuman's iOS App channel. First run:\nAskHuman channel ios --agent-guide\nThen follow the steps it prints.";
+      expect(byId(wrapper, "ios-agent-prompt").text()).toBe(prompt);
+      expect(writeText).not.toHaveBeenCalled();
+
+      await byId(wrapper, "ios-agent-copy").trigger("click");
+      await flushPromises();
+      expect(writeText).toHaveBeenCalledWith(prompt);
+      expect(byId(wrapper, "ios-agent-copy").text()).toBe("Copied");
+
+      await byId(wrapper, "ios-agent").trigger("click");
+      expect(wrapper.find('[data-testid="ios-agent-box"]').exists()).toBe(false);
+      wrapper.unmount();
+    });
+
+    it("hands the prompt over in Chinese when the interface is Chinese", async () => {
+      i18n.global.locale.value = "zh";
+      const wrapper = mountCard();
+      await flushPromises();
+      expect(byId(wrapper, "ios-start").text()).toBe("开始设置");
+      await byId(wrapper, "ios-agent").trigger("click");
+      expect(byId(wrapper, "ios-agent-prompt").text()).toBe(
+        "请帮我配置 AskHuman 的 iOS App 渠道。先运行：\nAskHuman channel ios --agent-guide\n然后按输出的步骤做。",
+      );
+      wrapper.unmount();
+    });
   });
 
-  it("shows the broker status and the paired phones", async () => {
-    iosOp.mockResolvedValue({ kind: "state", state: gateway() });
-    const wrapper = mountCard();
-    await flushPromises();
-    expect(wrapper.text()).toContain("Broker connected (tls)");
-    expect(wrapper.get(".ios-device-name").text()).toBe("Tian's iPhone");
-    wrapper.unmount();
+  describe("setup", () => {
+    it("starts at the connection while the gateway is not running", async () => {
+      iosOp.mockResolvedValue({ kind: "state", state: null });
+      const wrapper = mountCard();
+      await flushPromises();
+      expect(byId(wrapper, "ios-progress").text()).toBe("1 / 3");
+      expect(tag(wrapper)).toBe("Enabled");
+      expect(stepClasses(wrapper, 1)).toEqual(expect.arrayContaining(["current", "open"]));
+      expect(stepClasses(wrapper, 2)).toContain("upcoming");
+      expect(stepClasses(wrapper, 2)).not.toContain("open");
+      expect(stepClasses(wrapper, 3)).toContain("upcoming");
+      expect(wrapper.find('[data-testid="ios-ready"]').exists()).toBe(false);
+      // The Agent button sits at the top right of the steps, not in the off state's place.
+      expect(button(wrapper, "Set up with an Agent")).toBeDefined();
+      wrapper.unmount();
+    });
+
+    it("moves on to the app once the broker is connected, and folds the finished step to one line", async () => {
+      iosOp.mockResolvedValue({ kind: "state", state: gateway({ phones: [] }) });
+      const wrapper = mountCard();
+      await flushPromises();
+      expect(byId(wrapper, "ios-progress").text()).toBe("2 / 3");
+      expect(tag(wrapper)).toBe("Connected");
+      expect(stepClasses(wrapper, 1)).toContain("done");
+      expect(stepClasses(wrapper, 1)).not.toContain("open");
+      expect(byId(wrapper, "ios-step-1").text()).toContain("broker.example.com · Connected");
+      expect(stepClasses(wrapper, 2)).toEqual(expect.arrayContaining(["current", "open"]));
+      wrapper.unmount();
+    });
+
+    it("names a hosted broker by its service, and tucks its instructions away once it works", async () => {
+      config.value.channels.ios.host = "abc123.ala.cn-hangzhou.emqxsl.cn";
+      iosOp.mockResolvedValue({ kind: "state", state: gateway({ phones: [] }) });
+      const wrapper = mountCard();
+      await flushPromises();
+      expect(byId(wrapper, "ios-step-1").text()).toContain("EMQX Cloud · Connected");
+      await byId(wrapper, "ios-step-1").get(".ios-step-head").trigger("click");
+      expect(stepClasses(wrapper, 1)).toContain("open");
+      expect(stepClasses(wrapper, 2)).not.toContain("open");
+      const fold = byId(wrapper, "ios-provider-guide");
+      expect(fold.element.tagName).toBe("DETAILS");
+      expect(fold.get("summary").text()).toBe("Setup instructions (EMQX Cloud)");
+      wrapper.unmount();
+    });
+
+    it("keeps the person in step 1 when the connection comes up, and moves on with 'Next'", async () => {
+      vi.useFakeTimers();
+      let connected = false;
+      iosOp.mockImplementation(async (op: { op: string }) =>
+        op.op === "state"
+          ? { kind: "state", state: connected ? gateway({ phones: [] }) : null }
+          : { kind: "done", found: true },
+      );
+      const wrapper = mountCard();
+      await vi.advanceTimersByTimeAsync(0);
+      expect(stepClasses(wrapper, 1)).toContain("open");
+      expect(wrapper.find('[data-testid="ios-next-1"]').exists()).toBe(false);
+
+      connected = true;
+      await vi.advanceTimersByTimeAsync(3100);
+      // Done, but still open, with the way to go on: the page does not move under the person's hands.
+      expect(stepClasses(wrapper, 1)).toEqual(expect.arrayContaining(["done", "open"]));
+      expect(stepClasses(wrapper, 2)).not.toContain("open");
+      expect(byId(wrapper, "ios-progress").text()).toBe("2 / 3");
+
+      await byId(wrapper, "ios-next-1").trigger("click");
+      expect(stepClasses(wrapper, 1)).not.toContain("open");
+      expect(stepClasses(wrapper, 2)).toContain("open");
+      wrapper.unmount();
+    });
+
+    it("lets any step be opened, one at a time", async () => {
+      iosOp.mockResolvedValue({ kind: "state", state: gateway({ phones: [] }) });
+      const wrapper = mountCard();
+      await flushPromises();
+      await byId(wrapper, "ios-step-3").get(".ios-step-head").trigger("click");
+      expect(stepClasses(wrapper, 3)).toContain("open");
+      expect(stepClasses(wrapper, 2)).not.toContain("open");
+      await byId(wrapper, "ios-step-3").get(".ios-step-head").trigger("click");
+      expect(wrapper.findAll(".ios-step.open")).toHaveLength(0);
+      wrapper.unmount();
+    });
+
+    it("shows the QR code of the landing page in step 2 and takes the person's word that the app is installed", async () => {
+      iosOp.mockResolvedValue({ kind: "state", state: gateway({ phones: [] }) });
+      const wrapper = mountCard();
+      await flushPromises();
+      expect(iosPairQr).toHaveBeenCalledWith(IOS_JOIN_URL);
+      expect(byId(wrapper, "ios-join-qr").find("#qr").exists()).toBe(true);
+      expect(wrapper.get(".ios-side").text()).toContain("Install TestFlight on your iPhone.");
+      expect(wrapper.get(".ios-side").text()).toContain("Requires iOS 17 or later.");
+
+      await byId(wrapper, "ios-join-copy").trigger("click");
+      await flushPromises();
+      expect(writeText).toHaveBeenCalledWith(IOS_JOIN_URL);
+      expect(byId(wrapper, "ios-join-copy").text()).toBe("Copied");
+      await byId(wrapper, "ios-join-open").trigger("click");
+      expect(openPath).toHaveBeenCalledWith(IOS_JOIN_URL);
+
+      await byId(wrapper, "ios-join-done").trigger("click");
+      expect(byId(wrapper, "ios-progress").text()).toBe("3 / 3");
+      expect(byId(wrapper, "ios-step-2").text()).toContain("Installed");
+      expect(stepClasses(wrapper, 2)).toContain("done");
+      expect(stepClasses(wrapper, 3)).toEqual(expect.arrayContaining(["current", "open"]));
+      expect(wrapper.get('[data-testid="ios-pair-help"]').text()).toContain("Pair a new phone");
+      wrapper.unmount();
+    });
+
+    it("still gets the person to the link when the QR code cannot be drawn", async () => {
+      iosPairQr.mockRejectedValue("no code");
+      iosOp.mockResolvedValue({ kind: "state", state: gateway({ phones: [] }) });
+      const wrapper = mountCard();
+      await flushPromises();
+      expect(wrapper.find('[data-testid="ios-join-qr"]').exists()).toBe(false);
+      expect(wrapper.find('[data-testid="ios-join-open"]').exists()).toBe(true);
+      wrapper.unmount();
+    });
+
+    it("says what is wrong when the gateway reports an error", async () => {
+      iosOp.mockResolvedValue({
+        kind: "state",
+        state: gateway({ connected: false, lastError: "authentication failed", phones: [] }),
+      });
+      const wrapper = mountCard();
+      await flushPromises();
+      expect(tag(wrapper)).toBe("Problem");
+      expect(byId(wrapper, "ios-issue").text()).toBe("Broker not connected: authentication failed");
+      expect(stepClasses(wrapper, 1)).toEqual(expect.arrayContaining(["current", "open"]));
+      wrapper.unmount();
+    });
+
+    it("says the settings are incomplete while a field is missing, and counts a stored password", async () => {
+      iosOp.mockResolvedValue({ kind: "state", state: null });
+      config.value.channels.ios.username = "";
+      const wrapper = mountCard();
+      await flushPromises();
+      expect(tag(wrapper)).toBe("Incomplete");
+      wrapper.unmount();
+
+      config.value.channels.ios.username = "abc123";
+      secretsPresent.value.iosBrokerPassword = false;
+      const noPassword = mountCard();
+      await flushPromises();
+      expect(tag(noPassword)).toBe("Incomplete");
+      noPassword.unmount();
+
+      secretsPresent.value.iosBrokerPassword = false;
+      config.value.channels.ios.password = "typed";
+      const typed = mountCard();
+      await flushPromises();
+      expect(tag(typed)).toBe("Enabled");
+      typed.unmount();
+    });
+
+    it("speaks Chinese when the interface is Chinese", async () => {
+      i18n.global.locale.value = "zh";
+      iosOp.mockResolvedValue({ kind: "state", state: gateway({ phones: [] }) });
+      const wrapper = mountCard();
+      await flushPromises();
+      expect(wrapper.get(".ios-guide-title").text()).toBe("设置步骤");
+      expect(byId(wrapper, "ios-step-1").text()).toContain("连接 Broker");
+      expect(byId(wrapper, "ios-step-1").text()).toContain("broker.example.com · 已连接");
+      expect(byId(wrapper, "ios-step-2").text()).toContain("安装 iPhone App");
+      expect(byId(wrapper, "ios-step-3").text()).toContain("配对手机");
+      wrapper.unmount();
+    });
   });
+
+  describe("ready", () => {
+    beforeEach(() => {
+      iosOp.mockResolvedValue({ kind: "state", state: gateway() });
+    });
+
+    it("folds the steps into one box and shows the usual sections", async () => {
+      const wrapper = mountCard();
+      await flushPromises();
+      expect(tag(wrapper)).toBe("Connected");
+      expect(wrapper.find('[data-testid="ios-steps"]').exists()).toBe(false);
+      expect(byId(wrapper, "ios-ready-line").text()).toBe("Ready · broker.example.com · 1 phone online");
+      expect(wrapper.get(".ios-device-name").text()).toBe("Tian's iPhone");
+      // No prompt for an Agent any more: a finished setup does not need one.
+      expect(button(wrapper, "Set up with an Agent")).toBeUndefined();
+      wrapper.unmount();
+    });
+
+    it("says when no phone is online", async () => {
+      iosOp.mockResolvedValue({ kind: "state", state: gateway({ phones: [{ ...phone, online: false }] }) });
+      const wrapper = mountCard();
+      await flushPromises();
+      expect(byId(wrapper, "ios-ready-line").text()).toBe("Ready · broker.example.com · No phone is online");
+      wrapper.unmount();
+    });
+
+    it("counts several phones", async () => {
+      iosOp.mockResolvedValue({
+        kind: "state",
+        state: gateway({ phones: [phone, { ...phone, phoneId: "p2" }, { ...phone, phoneId: "p3", online: false }] }),
+      });
+      const wrapper = mountCard();
+      await flushPromises();
+      expect(byId(wrapper, "ios-ready-line").text()).toBe("Ready · broker.example.com · 2 phones online");
+      wrapper.unmount();
+    });
+
+    it("does not count a revoked phone", async () => {
+      iosOp.mockResolvedValue({ kind: "state", state: gateway({ phones: [{ ...phone, state: "revoked" }] }) });
+      const wrapper = mountCard();
+      await flushPromises();
+      expect(wrapper.find('[data-testid="ios-ready"]').exists()).toBe(false);
+      expect(byId(wrapper, "ios-progress").text()).toBe("2 / 3");
+      wrapper.unmount();
+    });
+
+    it("brings the steps back above the box, all of them done, and takes them away again", async () => {
+      const wrapper = mountCard();
+      await flushPromises();
+      await byId(wrapper, "ios-steps-toggle").trigger("click");
+      expect(byId(wrapper, "ios-steps-toggle").text()).toBe("Hide setup steps");
+      expect(byId(wrapper, "ios-progress").text()).toBe("Done");
+      expect([1, 2, 3].map((n) => stepClasses(wrapper, n).includes("done"))).toEqual([true, true, true]);
+      expect(wrapper.findAll(".ios-step.open")).toHaveLength(0);
+      const html = wrapper.html();
+      expect(html.indexOf('data-testid="ios-steps"')).toBeLessThan(html.indexOf('data-testid="ios-ready"'));
+      expect(byId(wrapper, "ios-step-3").text()).toContain("1 phone");
+
+      // Any finished step can be read again, say the TestFlight link for a second phone.
+      await byId(wrapper, "ios-step-2").get(".ios-step-head").trigger("click");
+      expect(wrapper.find('[data-testid="ios-join"]').exists()).toBe(true);
+
+      await byId(wrapper, "ios-steps-toggle").trigger("click");
+      expect(wrapper.find('[data-testid="ios-steps"]').exists()).toBe(false);
+      expect(byId(wrapper, "ios-steps-toggle").text()).toBe("Show setup steps");
+      wrapper.unmount();
+    });
+
+    it("falls back to the steps when the broker goes away, and the sections return with it", async () => {
+      vi.useFakeTimers();
+      let connected = true;
+      iosOp.mockImplementation(async (op: { op: string }) =>
+        op.op === "state"
+          ? { kind: "state", state: gateway({ connected, lastError: connected ? undefined : "connection lost" }) }
+          : { kind: "done", found: true },
+      );
+      const wrapper = mountCard();
+      await vi.advanceTimersByTimeAsync(0);
+      expect(wrapper.find('[data-testid="ios-ready"]').exists()).toBe(true);
+
+      connected = false;
+      await vi.advanceTimersByTimeAsync(3100);
+      expect(wrapper.find('[data-testid="ios-ready"]').exists()).toBe(false);
+      expect(tag(wrapper)).toBe("Problem");
+      expect(stepClasses(wrapper, 1)).toEqual(expect.arrayContaining(["current", "open"]));
+
+      connected = true;
+      await vi.advanceTimersByTimeAsync(3100);
+      expect(wrapper.find('[data-testid="ios-ready"]').exists()).toBe(true);
+      wrapper.unmount();
+    });
+
+    it("keeps the EMQX note at the bottom for that service only", async () => {
+      const note = "if the free allowance (1 million connection minutes and 1 GB of traffic per month) runs out";
+      const other = mountCard();
+      await flushPromises();
+      expect(other.find('[data-testid="ios-emqx-notice"]').exists()).toBe(false);
+      other.unmount();
+
+      config.value.channels.ios.host = "abc123.ala.cn-hangzhou.emqxsl.cn";
+      const emqx = mountCard();
+      await flushPromises();
+      expect(byId(emqx, "ios-emqx-notice").text()).toContain(note);
+      expect(byId(emqx, "ios-ready-line").text()).toContain("EMQX Cloud");
+      emqx.unmount();
+    });
+
+    it("speaks Chinese when the interface is Chinese", async () => {
+      i18n.global.locale.value = "zh";
+      const wrapper = mountCard();
+      await flushPromises();
+      expect(byId(wrapper, "ios-ready-line").text()).toBe("已就绪 · broker.example.com · 1 台手机在线");
+      expect(byId(wrapper, "ios-steps-toggle").text()).toBe("查看设置步骤");
+      expect(byId(wrapper, "ios-try-text").text()).toBe("发一条测试问题，确认手机能收到并回答。");
+      wrapper.unmount();
+    });
+  });
+
+  // ——— the test question ———
+
+  describe("the test question", () => {
+    const answer = (outcome: string) =>
+      probeResult!({ probeId: "probe-1", kind: "channel", channel: "ios", outcome });
+
+    beforeEach(() => {
+      iosOp.mockResolvedValue({ kind: "state", state: gateway() });
+      setupProbeStart.mockResolvedValue("probe-1");
+    });
+
+    it("sends a real question to the phone and reports the answer", async () => {
+      const wrapper = mountCard();
+      await flushPromises();
+      expect(byId(wrapper, "ios-try-text").text()).toBe(
+        "Send a test question to check that your phone receives it and can answer.",
+      );
+      expect(byId(wrapper, "ios-try").text()).toBe("Send test question");
+
+      await byId(wrapper, "ios-try").trigger("click");
+      await flushPromises();
+      expect(setupProbeStart).toHaveBeenCalledWith("channel", "ios");
+      expect(byId(wrapper, "ios-try-text").text()).toBe("Sent. Answer it on your phone…");
+      expect(byId(wrapper, "ios-try").attributes("disabled")).toBeDefined();
+
+      answer("ok");
+      await flushPromises();
+      expect(byId(wrapper, "ios-try-text").text()).toBe("Answer received. Everything works.");
+      expect(byId(wrapper, "ios-try").text()).toBe("Send another");
+      expect(byId(wrapper, "ios-try").attributes("disabled")).toBeUndefined();
+      wrapper.unmount();
+    });
+
+    it("says when nobody answered in time, and lets the person try again", async () => {
+      const wrapper = mountCard();
+      await flushPromises();
+      await byId(wrapper, "ios-try").trigger("click");
+      await flushPromises();
+      answer("timeout");
+      await flushPromises();
+      expect(byId(wrapper, "ios-try-text").text()).toBe(
+        "No answer within 120 seconds. Make sure the phone is online and notifications are allowed.",
+      );
+      expect(byId(wrapper, "ios-try").text()).toBe("Send test question");
+      wrapper.unmount();
+    });
+
+    it("says when the question was closed on the phone", async () => {
+      const wrapper = mountCard();
+      await flushPromises();
+      await byId(wrapper, "ios-try").trigger("click");
+      await flushPromises();
+      answer("cancelled");
+      await flushPromises();
+      expect(byId(wrapper, "ios-try-text").text()).toBe("Test cancelled.");
+      wrapper.unmount();
+    });
+
+    it("says why the question could not be sent", async () => {
+      setupProbeStart.mockRejectedValue("the iOS channel is not connected");
+      const wrapper = mountCard();
+      await flushPromises();
+      await byId(wrapper, "ios-try").trigger("click");
+      await flushPromises();
+      expect(byId(wrapper, "ios-try-text").text()).toBe(
+        "The test question could not be sent: the iOS channel is not connected",
+      );
+      wrapper.unmount();
+    });
+
+    it("does not blame a missing reason on the person", async () => {
+      const wrapper = mountCard();
+      await flushPromises();
+      await byId(wrapper, "ios-try").trigger("click");
+      await flushPromises();
+      answer("failed");
+      await flushPromises();
+      expect(byId(wrapper, "ios-try-text").text()).toBe("The test question could not be sent.");
+      wrapper.unmount();
+    });
+
+    it("ignores the answer to somebody else's check", async () => {
+      const wrapper = mountCard();
+      await flushPromises();
+      await byId(wrapper, "ios-try").trigger("click");
+      await flushPromises();
+      probeResult!({ probeId: "other", kind: "channel", channel: "ios", outcome: "ok" });
+      await flushPromises();
+      expect(byId(wrapper, "ios-try-text").text()).toBe("Sent. Answer it on your phone…");
+      wrapper.unmount();
+    });
+
+    it("withdraws a question that is still waiting when the card goes away", async () => {
+      const wrapper = mountCard();
+      await flushPromises();
+      await byId(wrapper, "ios-try").trigger("click");
+      await flushPromises();
+      wrapper.unmount();
+      expect(setupProbeCancel).toHaveBeenCalledWith("probe-1");
+    });
+  });
+
+  // ——— keeping the Mac reachable ———
+
+  describe("keep this Mac reachable", () => {
+    beforeEach(() => {
+      iosOp.mockResolvedValue({ kind: "state", state: gateway() });
+    });
+
+    const keep = (wrapper: Card) => byId(wrapper, "ios-keep-switch");
+
+    it("is the daemon lifecycle, switched from the card", async () => {
+      const wrapper = mountCard();
+      await flushPromises();
+      expect((keep(wrapper).element as HTMLInputElement).checked).toBe(false);
+      expect(byId(wrapper, "ios-keep-row").text()).toContain("When on, the background service stays running");
+      await keep(wrapper).setValue(true);
+      expect(changeDaemonLifecycle).toHaveBeenLastCalledWith("keepalive");
+      await keep(wrapper).setValue(false);
+      expect(changeDaemonLifecycle).toHaveBeenLastCalledWith("activity");
+      wrapper.unmount();
+    });
+
+    it("shows a resident daemon as on", async () => {
+      config.value.general.daemonLifecycle = "keepalive";
+      const wrapper = mountCard();
+      await flushPromises();
+      expect((keep(wrapper).element as HTMLInputElement).checked).toBe(true);
+      wrapper.unmount();
+    });
+
+    it("is pinned on, with the reason, while Agent tasks are allowed", async () => {
+      config.value.agentTasks.enabled = true;
+      const wrapper = mountCard();
+      await flushPromises();
+      expect((keep(wrapper).element as HTMLInputElement).checked).toBe(true);
+      expect(keep(wrapper).attributes("disabled")).toBeDefined();
+      expect(byId(wrapper, "ios-keep-row").text()).toContain(
+        'Kept running by "Allow creating Agent tasks from phone or IM".',
+      );
+      wrapper.unmount();
+    });
+
+    it("is also in step 1, once a service is chosen", async () => {
+      iosOp.mockResolvedValue({ kind: "state", state: null });
+      const wrapper = mountCard();
+      await flushPromises();
+      expect(byId(wrapper, "ios-step-1").find('[data-testid="ios-keep-switch"]').exists()).toBe(true);
+      config.value.channels.ios.host = "";
+      await flushPromises();
+      expect(wrapper.find('[data-testid="ios-keep-switch"]').exists()).toBe(false);
+      wrapper.unmount();
+    });
+  });
+
+  // ——— traffic ———
 
   it("shows this month's traffic and says plainly when it is close to a GB or past it", async () => {
     const mib = 1024 * 1024;
@@ -207,11 +746,10 @@ describe("IosChannelCard", () => {
     expect(wrapper.get(".ios-traffic-details").text()).toContain("Office Mac");
     expect(wrapper.text()).toContain("Traffic could not be saved");
     // The traffic area does not name a service or link to its console, and it does not measure the use
-    // against a plan: the usage is the broker's to show. (The connection form below does name the
-    // services it can help with; that is a different part of the card.)
+    // against a plan: the usage is the broker's to show.
     expect(wrapper.get(".ios-traffic-details").text()).toContain("broker's console");
     expect(wrapper.find(".ios-traffic-details a").exists()).toBe(false);
-    const trafficArea = [".ios-status", ".ios-traffic", ".ios-traffic-details"].map((s) => wrapper.get(s).text()).join(" ");
+    const trafficArea = [".ios-traffic", ".ios-traffic-details"].map((s) => wrapper.get(s).text()).join(" ");
     expect(trafficArea).not.toMatch(/EMQX|%|allowance|quota/i);
     wrapper.unmount();
   });
@@ -227,9 +765,10 @@ describe("IosChannelCard", () => {
     wrapper.unmount();
   });
 
+  // ——— push timing ———
+
   describe("push timing", () => {
-    const optionTexts = (wrapper: ReturnType<typeof mountCard>) =>
-      wrapper.findAll(".ios-alert-after option").map((o) => o.text());
+    const optionTexts = (wrapper: Card) => wrapper.findAll(".ios-alert-after option").map((o) => o.text());
 
     it("offers the waits, with the configured one selected", async () => {
       iosOp.mockResolvedValue({ kind: "state", state: gateway() });
@@ -237,6 +776,16 @@ describe("IosChannelCard", () => {
       await flushPromises();
       expect(optionTexts(wrapper)).toEqual(["Immediately", "5 min", "15 min", "30 min", "1 h"]);
       expect((wrapper.get(".ios-alert-after select").element as HTMLSelectElement).value).toBe("900");
+      wrapper.unmount();
+    });
+
+    it("explains in one short paragraph when the phone is notified", async () => {
+      iosOp.mockResolvedValue({ kind: "state", state: gateway() });
+      const wrapper = mountCard();
+      await flushPromises();
+      expect(wrapper.text()).toContain(
+        "Questions reach the phone app as soon as they are asked. The phone is only notified after the Mac's keyboard and mouse have been idle for this long, at most once per question; \"Immediately\" notifies right away.",
+      );
       wrapper.unmount();
     });
 
@@ -258,14 +807,7 @@ describe("IosChannelCard", () => {
       iosOp.mockResolvedValue({ kind: "state", state: gateway() });
       const wrapper = mountCard();
       await flushPromises();
-      expect(optionTexts(wrapper)).toEqual([
-        "Immediately",
-        "5 min",
-        "10 min (custom)",
-        "15 min",
-        "30 min",
-        "1 h",
-      ]);
+      expect(optionTexts(wrapper)).toEqual(["Immediately", "5 min", "10 min (custom)", "15 min", "30 min", "1 h"]);
       expect((wrapper.get(".ios-alert-after select").element as HTMLSelectElement).value).toBe("600");
       expect(persist).not.toHaveBeenCalled();
       wrapper.unmount();
@@ -302,115 +844,155 @@ describe("IosChannelCard", () => {
     });
   });
 
-  it("says so when the gateway is not running", async () => {
-    iosOp.mockResolvedValue({ kind: "state", state: null });
-    const wrapper = mountCard();
-    await flushPromises();
-    expect(wrapper.text()).toContain("Not running yet");
-    const pair = wrapper.findAll("button").find((b) => b.text() === "Pair a new phone");
-    expect(pair?.attributes("disabled")).toBeDefined();
-    wrapper.unmount();
-  });
+  // ——— pairing and phones ———
 
-  it("walks through pairing: QR code, confirmation code, allow", async () => {
-    vi.useFakeTimers();
+  describe("pairing", () => {
     let live: Record<string, unknown> | undefined;
-    iosOp.mockImplementation(async (op: { op: string }) => {
-      if (op.op === "state") return { kind: "state", state: gateway({ pairing: live }) };
-      if (op.op === "pairStart") {
-        live = { ticketId: "t1", code: "ahpair1.x", expiresAtMs: Date.now() + 300_000, stage: "waiting" };
-        return { kind: "pairing", ticketId: "t1", code: "ahpair1.x", expiresAtMs: Date.now() + 300_000 };
-      }
-      return { kind: "done", found: true };
+
+    function pairingBackend(phones: unknown[]) {
+      iosOp.mockImplementation(async (op: { op: string }) => {
+        if (op.op === "state") return { kind: "state", state: gateway({ phones, pairing: live }) };
+        if (op.op === "pairStart") {
+          live = { ticketId: "t1", code: "ahpair1.x", expiresAtMs: Date.now() + 300_000, stage: "waiting" };
+          return { kind: "pairing", ticketId: "t1", code: "ahpair1.x", expiresAtMs: Date.now() + 300_000 };
+        }
+        return { kind: "done", found: true };
+      });
+    }
+
+    beforeEach(() => {
+      live = undefined;
     });
-    const wrapper = mountCard();
-    await vi.advanceTimersByTimeAsync(0);
 
-    await wrapper.findAll("button").find((b) => b.text() === "Pair a new phone")!.trigger("click");
-    await vi.advanceTimersByTimeAsync(0);
-    expect(wrapper.find("#qr").exists()).toBe(true);
-    expect(wrapper.text()).toContain("Scan the QR code");
+    it("walks through pairing in step 3: QR code, confirmation code, allow, and the new phone makes it ready", async () => {
+      vi.useFakeTimers();
+      pairingBackend([]);
+      const wrapper = mountCard();
+      await vi.advanceTimersByTimeAsync(0);
+      await byId(wrapper, "ios-step-3").get(".ios-step-head").trigger("click");
+      // The first thing in step 3 is the way to the phone's side of it, and the primary button.
+      expect(byId(wrapper, "ios-pair-help").text()).toContain("AskHuman → Macs → Add a Mac");
+      expect(byId(wrapper, "ios-pair").classes()).toContain("btn-primary");
 
-    // The phone scans the code: the gateway moves to the confirmation stage.
-    live = { ...live, stage: "pending", phoneName: "Work iPhone", sas: "123456" };
-    await vi.advanceTimersByTimeAsync(1100);
-    expect(wrapper.text()).toContain('"Work iPhone" wants to pair');
-    expect(wrapper.get(".ios-sas").text()).toBe("123 456");
+      await byId(wrapper, "ios-pair").trigger("click");
+      await vi.advanceTimersByTimeAsync(0);
+      expect(wrapper.find("#qr").exists()).toBe(true);
+      expect(wrapper.text()).toContain("Scan the QR code");
+      // The button gives way to the code while it runs.
+      expect(wrapper.find('[data-testid="ios-pair"]').exists()).toBe(false);
 
-    await wrapper.findAll("button").find((b) => b.text() === "Allow")!.trigger("click");
-    await vi.advanceTimersByTimeAsync(0);
-    expect(iosOp).toHaveBeenCalledWith({ op: "pairDecision", ticketId: "t1", allow: true });
+      // The phone scans the code: the gateway moves to the confirmation stage, which has no use for the code.
+      live = { ...live, stage: "pending", phoneName: "Work iPhone", sas: "123456" };
+      await vi.advanceTimersByTimeAsync(1100);
+      expect(wrapper.text()).toContain('"Work iPhone" wants to pair');
+      expect(wrapper.get(".ios-sas").text()).toBe("123 456");
+      expect(wrapper.find("#qr").exists()).toBe(false);
+      expect(wrapper.find('[data-testid="ios-pair-help"]').exists()).toBe(false);
 
-    // The session ends with a new phone in the list: success is reported.
-    live = undefined;
-    iosOp.mockImplementation(async (op: { op: string }) =>
-      op.op === "state"
-        ? {
-            kind: "state",
-            state: gateway({ phones: [phone, { ...phone, phoneId: "p2", name: "Work iPhone" }] }),
-          }
-        : { kind: "done", found: true },
-    );
-    await vi.advanceTimersByTimeAsync(3000);
-    expect(wrapper.text()).toContain('Paired "Work iPhone".');
-    expect(wrapper.find("#qr").exists()).toBe(false);
-    wrapper.unmount();
-  });
+      await button(wrapper, "Allow")!.trigger("click");
+      await vi.advanceTimersByTimeAsync(0);
+      expect(iosOp).toHaveBeenCalledWith({ op: "pairDecision", ticketId: "t1", allow: true });
 
-  it("asks before revoking a phone", async () => {
-    iosOp.mockResolvedValue({ kind: "state", state: gateway() });
-    const wrapper = mountCard();
-    await flushPromises();
-    await wrapper.findAll(".ios-device button").find((b) => b.text() === "Revoke")!.trigger("click");
-    expect(document.body.textContent).toContain('Revoke "Tian\'s iPhone"?');
-    expect(iosOp).not.toHaveBeenCalledWith(expect.objectContaining({ op: "revoke" }));
-
-    const confirm = Array.from(document.querySelectorAll(".confirm-actions button")).find(
-      (b) => b.textContent?.trim() === "Revoke pairing",
-    ) as HTMLButtonElement;
-    confirm.click();
-    await flushPromises();
-    expect(iosOp).toHaveBeenCalledWith({ op: "revoke", phoneId: "p1" });
-    wrapper.unmount();
-  });
-
-  it("tests the broker and the relay address of the form", async () => {
-    iosOp.mockResolvedValue({ kind: "state", state: gateway() });
-    iosTest.mockResolvedValue(testOk());
-    const wrapper = mountCard();
-    await flushPromises();
-    const testButton = () => wrapper.findAll("button").find((b) => b.text() === "Test connection")!;
-
-    await testButton().trigger("click");
-    await flushPromises();
-    expect(iosTest).toHaveBeenCalledWith({
-      host: "broker.example.com",
-      port: 8883,
-      wsPort: 8084,
-      username: "abc123",
-      password: "",
-      relayUrl: "https://relay.example.com",
+      // The session ends with a new phone in the list: success is reported, and the card is ready.
+      live = undefined;
+      pairingBackend([phone]);
+      live = undefined;
+      await vi.advanceTimersByTimeAsync(3000);
+      expect(wrapper.find('[data-testid="ios-ready"]').exists()).toBe(true);
+      expect(wrapper.text()).toContain('Paired "Tian\'s iPhone".');
+      expect(wrapper.find("#qr").exists()).toBe(false);
+      wrapper.unmount();
     });
-    expect(wrapper.get(".result").classes()).toContain("ok");
-    expect(wrapper.get(".result").text()).toContain("The relay answered in 850 ms");
 
-    iosTest.mockRejectedValue(
-      testFailed("relay", "The broker works, but the relay check failed: the relay did not answer in time"),
-    );
-    await testButton().trigger("click");
-    await flushPromises();
-    expect(wrapper.get(".result").classes()).toContain("err");
-    expect(wrapper.get(".result").text()).toContain("the relay check failed");
-    wrapper.unmount();
+    it("pairs another phone from the section of a finished setup", async () => {
+      vi.useFakeTimers();
+      pairingBackend([phone]);
+      const wrapper = mountCard();
+      await vi.advanceTimersByTimeAsync(0);
+      await byId(wrapper, "ios-pair-ready").trigger("click");
+      await vi.advanceTimersByTimeAsync(0);
+      expect(wrapper.find("#qr").exists()).toBe(true);
+      expect(byId(wrapper, "ios-pair-ready").attributes("disabled")).toBeDefined();
+      await button(wrapper, "Cancel pairing")!.trigger("click");
+      await vi.advanceTimersByTimeAsync(0);
+      expect(iosOp).toHaveBeenCalledWith({ op: "pairCancel" });
+      expect(wrapper.find("#qr").exists()).toBe(false);
+      wrapper.unmount();
+    });
+
+    it("cannot pair while the gateway is not running", async () => {
+      iosOp.mockResolvedValue({ kind: "state", state: null });
+      const wrapper = mountCard();
+      await flushPromises();
+      await byId(wrapper, "ios-step-3").get(".ios-step-head").trigger("click");
+      expect(byId(wrapper, "ios-pair").attributes("disabled")).toBeDefined();
+      wrapper.unmount();
+    });
+
+    it("asks before revoking a phone", async () => {
+      iosOp.mockResolvedValue({ kind: "state", state: gateway() });
+      const wrapper = mountCard();
+      await flushPromises();
+      await wrapper.findAll(".ios-device button").find((b) => b.text() === "Revoke")!.trigger("click");
+      expect(document.body.textContent).toContain('Revoke "Tian\'s iPhone"?');
+      expect(iosOp).not.toHaveBeenCalledWith(expect.objectContaining({ op: "revoke" }));
+
+      const confirm = Array.from(document.querySelectorAll(".confirm-actions button")).find(
+        (b) => b.textContent?.trim() === "Revoke pairing",
+      ) as HTMLButtonElement;
+      confirm.click();
+      await flushPromises();
+      expect(iosOp).toHaveBeenCalledWith({ op: "revoke", phoneId: "p1" });
+      wrapper.unmount();
+    });
   });
+
+  // ——— the form: test, import, services, relay ———
 
   describe("test connection: warnings that never block, and a hint that fits the service", () => {
-    const testButton = (wrapper: ReturnType<typeof mountCard>) =>
-      wrapper.findAll("button").find((b) => b.text() === "Test connection")!;
-    const hint = (wrapper: ReturnType<typeof mountCard>) => wrapper.find(".ios-test-hint");
+    const testButton = (wrapper: Card) => byId(wrapper, "ios-test");
+    const hint = (wrapper: Card) => wrapper.find(".ios-test-hint");
 
     beforeEach(() => {
       iosOp.mockResolvedValue({ kind: "state", state: gateway() });
+    });
+
+    it("tests the broker and the relay address of the form", async () => {
+      iosTest.mockResolvedValue(testOk());
+      const wrapper = mountCard();
+      await flushPromises();
+      await testButton(wrapper).trigger("click");
+      await flushPromises();
+      expect(iosTest).toHaveBeenCalledWith({
+        host: "broker.example.com",
+        port: 8883,
+        wsPort: 8084,
+        username: "abc123",
+        password: "",
+        relayUrl: "https://relay.example.com",
+      });
+      expect(wrapper.get(".result").classes()).toContain("ok");
+      expect(wrapper.get(".result").text()).toContain("The relay answered in 850 ms");
+
+      iosTest.mockRejectedValue(
+        testFailed("relay", "The broker works, but the relay check failed: the relay did not answer in time"),
+      );
+      await testButton(wrapper).trigger("click");
+      await flushPromises();
+      expect(wrapper.get(".result").classes()).toContain("err");
+      expect(wrapper.get(".result").text()).toContain("the relay check failed");
+      wrapper.unmount();
+    });
+
+    it("asks the gateway again right after a good test instead of waiting for the next poll", async () => {
+      iosTest.mockResolvedValue(testOk());
+      const wrapper = mountCard();
+      await flushPromises();
+      const before = iosOp.mock.calls.filter(([op]) => op.op === "state").length;
+      await testButton(wrapper).trigger("click");
+      await flushPromises();
+      expect(iosOp.mock.calls.filter(([op]) => op.op === "state").length).toBeGreaterThan(before);
+      wrapper.unmount();
     });
 
     it("shows what the check found beside a result that is fine, in the warning colour", async () => {
@@ -515,57 +1097,129 @@ describe("IosChannelCard", () => {
     });
   });
 
-  it("fills the form from a pasted connection string and saves it", async () => {
-    iosOp.mockResolvedValue({ kind: "state", state: gateway() });
-    iosConnectionImport.mockResolvedValue({
+  describe("the connection string of another Mac", () => {
+    const fields = {
       host: "other.example.com",
       port: 8883,
       wsPort: 8084,
       username: "zzz999",
       password: "secret",
       relayUrl: "https://relay2.example.com",
-    });
-    const wrapper = mountCard();
-    await flushPromises();
-    await wrapper.get(".ios-import input").setValue("ahconn1.abc");
-    await wrapper.findAll(".ios-import button").find((b) => b.text() === "Import")!.trigger("click");
-    await flushPromises();
-    expect(config.value.channels.ios.host).toBe("other.example.com");
-    expect(config.value.channels.ios.password).toBe("secret");
-    expect(persist).toHaveBeenCalled();
-    expect(wrapper.text()).toContain("Connection settings filled in.");
-    wrapper.unmount();
-  });
-
-  describe("the broker service: key points per service, ports filled in on a pick", () => {
-    const select = (wrapper: ReturnType<typeof mountCard>) => wrapper.get<HTMLSelectElement>(".ios-broker-select");
-    const points = (wrapper: ReturnType<typeof mountCard>) => wrapper.findAll(".ios-broker-points li").map((li) => li.text());
+    };
 
     beforeEach(() => {
       iosOp.mockResolvedValue({ kind: "state", state: gateway() });
     });
 
-    it("lists the services and treats a host it does not know as self-hosted or another broker", async () => {
+    it("is offered behind a button, and fills the form and saves it", async () => {
+      iosConnectionImport.mockResolvedValue(fields);
       const wrapper = mountCard();
       await flushPromises();
-      expect(select(wrapper).findAll("option").map((o) => o.text())).toEqual([
-        "EMQX Cloud Serverless",
-        "flespi",
-        "Self-hosted or another broker",
-      ]);
-      expect(select(wrapper).element.value).toBe("custom");
-      expect(points(wrapper)).toHaveLength(4);
-      expect(points(wrapper)[0]).toContain("MQTT 3.1.1");
+      expect(wrapper.find(".ios-import").exists()).toBe(false);
+      await byId(wrapper, "ios-import-open").trigger("click");
+      await wrapper.get(".ios-import input").setValue("ahconn1.abc");
+      await byId(wrapper, "ios-import").trigger("click");
+      await flushPromises();
+      expect(config.value.channels.ios.host).toBe("other.example.com");
+      expect(config.value.channels.ios.password).toBe("secret");
+      expect(persist).toHaveBeenCalled();
+      expect(wrapper.text()).toContain("Connection settings filled in.");
+      // Done: the field is put away again.
+      expect(wrapper.find(".ios-import").exists()).toBe(false);
       wrapper.unmount();
     });
 
-    it("recognizes a service by its host name, with the points that matter for it", async () => {
+    it("keeps the field and says why when the string is not good", async () => {
+      iosConnectionImport.mockRejectedValue("not a connection string");
+      const wrapper = mountCard();
+      await flushPromises();
+      await byId(wrapper, "ios-import-open").trigger("click");
+      await wrapper.get(".ios-import input").setValue("nonsense");
+      await byId(wrapper, "ios-import").trigger("click");
+      await flushPromises();
+      expect(wrapper.find(".ios-import").exists()).toBe(true);
+      expect(wrapper.text()).toContain("not a connection string");
+      wrapper.unmount();
+    });
+
+    it("copies this Mac's connection string once the setup is finished", async () => {
+      iosConnectionExport.mockResolvedValue("ahconn1.xyz");
+      const wrapper = mountCard();
+      await flushPromises();
+      await byId(wrapper, "ios-export").trigger("click");
+      await flushPromises();
+      expect(writeText).toHaveBeenCalledWith("ahconn1.xyz");
+      expect(wrapper.text()).toContain("Connection string copied");
+      wrapper.unmount();
+    });
+
+    it("does not offer the export while the connection is still being set up", async () => {
+      iosOp.mockResolvedValue({ kind: "state", state: null });
+      const wrapper = mountCard();
+      await flushPromises();
+      expect(wrapper.find('[data-testid="ios-export"]').exists()).toBe(false);
+      expect(byId(wrapper, "ios-import-open").text()).toBe("Import from another Mac…");
+      wrapper.unmount();
+    });
+  });
+
+  describe("the broker service: three neutral choices, then the steps of the one picked", () => {
+    const tile = (wrapper: Card, id: string) => byId(wrapper, `ios-broker-${id}`);
+    const active = (wrapper: Card) => wrapper.findAll(".ios-tile.active").map((t) => t.attributes("data-testid"));
+
+    beforeEach(() => {
+      // Step 1 stays open while the gateway is not running.
+      iosOp.mockResolvedValue({ kind: "state", state: null });
+    });
+
+    it("lists the three services without recommending one", async () => {
+      const wrapper = mountCard();
+      await flushPromises();
+      expect(wrapper.findAll(".ios-tile").map((t) => t.text())).toEqual([
+        "EMQX CloudChina region · free allowance",
+        "flespiEU region · free plan",
+        "Self-hosted or othere.g. Mosquitto",
+      ]);
+      expect(wrapper.get(".ios-lead").text()).toBe(
+        "The broker relays messages between your Mac and phone. Choose a provider:",
+      );
+      wrapper.unmount();
+    });
+
+    it("selects nothing and asks for no connection details until there is a host or a pick", async () => {
+      config.value.channels.ios.host = "";
+      const wrapper = mountCard();
+      await flushPromises();
+      expect(active(wrapper)).toEqual([]);
+      expect(wrapper.find('[data-testid="ios-host"]').exists()).toBe(false);
+      expect(wrapper.find('[data-testid="ios-guide-steps"]').exists()).toBe(false);
+      wrapper.unmount();
+    });
+
+    it("treats a host it does not know as self-hosted or another broker", async () => {
+      const wrapper = mountCard();
+      await flushPromises();
+      expect(active(wrapper)).toEqual(["ios-broker-custom"]);
+      expect(wrapper.findAll('[data-testid="ios-guide-steps"] > li')).toHaveLength(3);
+      expect(wrapper.find('[data-testid="ios-guide-steps"]').element.tagName).toBe("UL");
+      wrapper.unmount();
+    });
+
+    it("recognizes a service by its host name, with the note and the steps that matter for it", async () => {
       config.value.channels.ios.host = "abc123.ala.cn-hangzhou.emqxsl.cn";
       const wrapper = mountCard();
       await flushPromises();
-      expect(select(wrapper).element.value).toBe("emqx");
-      // The ACL step is the one that leaks other people's topics when it is skipped.
-      expect(points(wrapper).find((p) => p.includes("ACL"))).toContain("catch-all deny");
+      expect(active(wrapper)).toEqual(["ios-broker-emqx"]);
+      expect(byId(wrapper, "ios-notice-emqx").text()).toBe(
+        "Note: if the free allowance (1 million connection minutes and 1 GB of traffic per month) runs out, the minimum top-up may be ¥100. Keep an eye on traffic and try to stay within the free allowance.",
+      );
+      const steps = byId(wrapper, "ios-guide-steps");
+      expect(steps.element.tagName).toBe("OL");
+      expect(steps.findAll(":scope > li")).toHaveLength(4);
+      // The step that leaks other people's topics when it is skipped says so, with a chip for each rule.
+      expect(steps.findAll(":scope > li")[3]!.text()).toContain("you must set it up as follows");
+      expect(steps.findAll(":scope > li > ul > li")).toHaveLength(2);
+      expect(steps.get('[data-chip="all"]').text()).toBe("#");
       wrapper.unmount();
     });
 
@@ -574,34 +1228,35 @@ describe("IosChannelCard", () => {
       await flushPromises();
       const ios = config.value.channels.ios;
 
-      await select(wrapper).setValue("flespi");
+      await tile(wrapper, "flespi").trigger("click");
       await flushPromises();
       expect([ios.host, ios.port, ios.wsPort]).toEqual(["mqtt.flespi.io", 8883, 443]);
       expect(persist).toHaveBeenCalled();
-      expect(points(wrapper)[0]).toContain("mqtt.flespi.io");
+      expect(active(wrapper)).toEqual(["ios-broker-flespi"]);
+      expect(byId(wrapper, "ios-guide-steps").text()).toContain("Open flespi");
 
       // EMQX gives every account its own host: only the ports are filled in.
-      await select(wrapper).setValue("emqx");
+      await tile(wrapper, "emqx").trigger("click");
       await flushPromises();
       expect([ios.host, ios.port, ios.wsPort]).toEqual(["mqtt.flespi.io", 8883, 8084]);
 
       // "Self-hosted" fills nothing and does not save anything.
       persist.mockClear();
       ios.port = 1884;
-      await select(wrapper).setValue("custom");
+      await tile(wrapper, "custom").trigger("click");
       await flushPromises();
       expect([ios.host, ios.port, ios.wsPort]).toEqual(["mqtt.flespi.io", 1884, 8084]);
       expect(persist).not.toHaveBeenCalled();
-      expect(select(wrapper).element.value).toBe("custom");
+      expect(active(wrapper)).toEqual(["ios-broker-custom"]);
       wrapper.unmount();
     });
 
     it("lets a pick stand while the host is still being typed, and a pasted connection string decide again", async () => {
       const wrapper = mountCard();
       await flushPromises();
-      await select(wrapper).setValue("emqx");
+      await tile(wrapper, "emqx").trigger("click");
       await flushPromises();
-      expect(select(wrapper).element.value).toBe("emqx");
+      expect(active(wrapper)).toEqual(["ios-broker-emqx"]);
 
       iosConnectionImport.mockResolvedValue({
         host: "mqtt.flespi.io",
@@ -611,36 +1266,119 @@ describe("IosChannelCard", () => {
         password: "token",
         relayUrl: "https://relay.example.com",
       });
+      await byId(wrapper, "ios-import-open").trigger("click");
       await wrapper.get(".ios-import input").setValue("ahconn1.abc");
-      await wrapper.findAll(".ios-import button").find((b) => b.text() === "Import")!.trigger("click");
+      await byId(wrapper, "ios-import").trigger("click");
       await flushPromises();
-      expect(select(wrapper).element.value).toBe("flespi");
+      expect(active(wrapper)).toEqual(["ios-broker-flespi"]);
       wrapper.unmount();
     });
 
-    it("opens the step-by-step page of the service in the reader's language", async () => {
-      config.value.channels.ios.host = "mqtt.flespi.io";
+    it("hands the person the strings to type at the service, and only copies on a click", async () => {
+      config.value.channels.ios.host = "abc123.ala.cn-hangzhou.emqxsl.cn";
+      config.value.channels.ios.username = "";
       const wrapper = mountCard();
       await flushPromises();
-      await wrapper.get(".ios-broker-guide").trigger("click");
+      const acl = () => byId(wrapper, "ios-guide-steps").get('[data-chip="acl"]');
+
+      // Nothing to copy for the account's topic until its user name is typed.
+      expect(acl().text()).toBe("ah/<username>/#");
+      expect(acl().attributes("disabled")).toBeDefined();
+
+      await wrapper.get('[data-testid="ios-username"]').setValue("ah7");
+      await flushPromises();
+      expect(acl().text()).toBe("ah/ah7/#");
+      expect(acl().attributes("disabled")).toBeUndefined();
+      expect(writeText).not.toHaveBeenCalled();
+      await acl().trigger("click");
+      await flushPromises();
+      expect(writeText).toHaveBeenCalledWith("ah/ah7/#");
+      expect(acl().text()).toContain("Copied");
+
+      await byId(wrapper, "ios-guide-steps").get('[data-chip="all"]').trigger("click");
+      await flushPromises();
+      expect(writeText).toHaveBeenLastCalledWith("#");
+      wrapper.unmount();
+    });
+
+    it("names the account's topic after what flespi calls the account", async () => {
+      config.value.channels.ios.host = "mqtt.flespi.io";
+      config.value.channels.ios.username = "";
+      const wrapper = mountCard();
+      await flushPromises();
+      expect(byId(wrapper, "ios-notice-flespi").classes()).toContain("info");
+      expect(byId(wrapper, "ios-guide-steps").get('[data-chip="wild"]').text()).toBe("ah/#");
+      expect(byId(wrapper, "ios-guide-steps").get('[data-chip="acl"]').text()).toBe("ah/<number>/#");
+      wrapper.unmount();
+    });
+
+    it("opens the service's console and the wiki sections in the reader's language", async () => {
+      config.value.channels.ios.host = "abc123.ala.cn-hangzhou.emqxsl.cn";
+      const wrapper = mountCard();
+      await flushPromises();
+      await byId(wrapper, "ios-guide-steps").get('[data-link="console"]').trigger("click");
+      expect(openPath).toHaveBeenLastCalledWith("https://cloud.emqx.com/");
+
+      await tile(wrapper, "custom").trigger("click");
+      await flushPromises();
+      await wrapper.get('.ios-lead [data-link="suite"]').trigger("click");
       expect(openPath).toHaveBeenLastCalledWith(
-        "https://github.com/Naituw/AskHuman/blob/main/docs/wiki/ios-broker.en.md#path-2-flespi-hosted-europe",
+        "https://github.com/Naituw/AskHuman/blob/main/docs/wiki/ios-broker.en.md#verify-a-broker-yourself",
       );
 
       i18n.global.locale.value = "zh";
       await flushPromises();
-      await wrapper.get(".ios-broker-guide").trigger("click");
+      await wrapper.get('.ios-lead [data-link="mosquitto"]').trigger("click");
       expect(openPath).toHaveBeenLastCalledWith(
-        "https://github.com/Naituw/AskHuman/blob/main/docs/wiki/ios-broker.md#路径二flespi托管欧洲",
+        "https://github.com/Naituw/AskHuman/blob/main/docs/wiki/ios-broker.md#路径三自建-mosquitto",
       );
+      wrapper.unmount();
+    });
+  });
+
+  describe("the header", () => {
+    beforeEach(() => {
+      iosOp.mockResolvedValue({ kind: "state", state: gateway() });
+    });
+
+    it("turns the channel off and on, and saves it", async () => {
+      const wrapper = mountCard();
+      await flushPromises();
+      await byId(wrapper, "channel-toggle-ios").setValue(false);
+      await flushPromises();
+      expect(config.value.channels.ios.enabled).toBe(false);
+      expect(persist).toHaveBeenCalled();
+      expect(wrapper.find('[data-testid="ios-ready"]').exists()).toBe(false);
+      expect(wrapper.find('[data-testid="ios-start"]').exists()).toBe(true);
+      wrapper.unmount();
+    });
+
+    it("opens the setup guide in the reader's language", async () => {
+      const wrapper = mountCard();
+      await flushPromises();
+      await wrapper.get(".guide-link").trigger("click");
+      expect(openPath).toHaveBeenLastCalledWith(
+        "https://github.com/Naituw/AskHuman/blob/main/docs/wiki/ios-setup.en.md",
+      );
+      i18n.global.locale.value = "zh";
+      await flushPromises();
+      await wrapper.get(".guide-link").trigger("click");
+      expect(openPath).toHaveBeenLastCalledWith("https://github.com/Naituw/AskHuman/blob/main/docs/wiki/ios-setup.md");
+      wrapper.unmount();
+    });
+
+    it("can be the target of a link from elsewhere in the settings", async () => {
+      const wrapper = mountCard();
+      await flushPromises();
+      expect(wrapper.find("#channel-ios").exists()).toBe(true);
       wrapper.unmount();
     });
   });
 
   describe("the push relay: the public one built into the app, or one of your own", () => {
     const PUBLIC = "https://public-relay.example";
-    const relaySelect = (wrapper: ReturnType<typeof mountCard>) => wrapper.find<HTMLSelectElement>(".ios-relay-mode");
-    const relayInput = (wrapper: ReturnType<typeof mountCard>) => wrapper.find<HTMLInputElement>(".ios-relay input");
+    const relaySelect = (wrapper: Card) => wrapper.find<HTMLSelectElement>(".ios-relay-mode");
+    const relayInput = (wrapper: Card) => wrapper.find<HTMLInputElement>(".ios-relay input");
 
     beforeEach(() => {
       iosOp.mockResolvedValue({ kind: "state", state: gateway() });
@@ -753,8 +1491,9 @@ describe("IosChannelCard", () => {
       const wrapper = mountCard();
       await flushPromises();
       expect(relaySelect(wrapper).element.value).toBe("own");
+      await byId(wrapper, "ios-import-open").trigger("click");
       await wrapper.get(".ios-import input").setValue("ahconn1.abc");
-      await wrapper.findAll(".ios-import button").find((b) => b.text() === "Import")!.trigger("click");
+      await byId(wrapper, "ios-import").trigger("click");
       await flushPromises();
       expect(config.value.channels.ios.relayUrl).toBe("");
       expect(relaySelect(wrapper).element.value).toBe("public");
@@ -767,8 +1506,9 @@ describe("IosChannelCard", () => {
         password: "secret",
         relayUrl: "https://relay2.example.com",
       });
+      await byId(wrapper, "ios-import-open").trigger("click");
       await wrapper.get(".ios-import input").setValue("ahconn1.def");
-      await wrapper.findAll(".ios-import button").find((b) => b.text() === "Import")!.trigger("click");
+      await byId(wrapper, "ios-import").trigger("click");
       await flushPromises();
       expect(relaySelect(wrapper).element.value).toBe("own");
       expect(relayInput(wrapper).element.value).toBe("https://relay2.example.com");
@@ -781,7 +1521,7 @@ describe("IosChannelCard", () => {
       iosTest.mockResolvedValue(testOk());
       const wrapper = mountCard();
       await flushPromises();
-      await wrapper.findAll("button").find((b) => b.text() === "Test connection")!.trigger("click");
+      await byId(wrapper, "ios-test").trigger("click");
       await flushPromises();
       expect(iosTest).toHaveBeenCalledWith(expect.objectContaining({ relayUrl: "" }));
       wrapper.unmount();
@@ -793,17 +1533,15 @@ describe("IosChannelCard", () => {
       iosOp.mockResolvedValue({ kind: "state", state: gateway() });
     });
 
-    it("has the switch right under the status, above the connection form", async () => {
+    it("has the switch among the sections of a finished setup, between the timing and the connection", async () => {
       const wrapper = mountCard();
       await flushPromises();
       const row = wrapper.get('[data-testid="agent-tasks-row"]');
       expect(row.text()).toContain("Allow creating Agent tasks from phone or IM");
       expect(row.text()).toContain("One switch for all channels");
       const html = wrapper.html();
-      expect(html.indexOf('data-testid="agent-tasks-row"')).toBeGreaterThan(html.indexOf("ios-status"));
-      expect(html.indexOf('data-testid="agent-tasks-row"')).toBeLessThan(html.indexOf("ios-section-title"));
-      // The old callout that only pointed at the switch is gone.
-      expect(wrapper.find('[data-testid="ios-tasks-callout"]').exists()).toBe(false);
+      expect(html.indexOf('data-testid="agent-tasks-row"')).toBeGreaterThan(html.indexOf("ios-alert-after"));
+      expect(html.indexOf('data-testid="agent-tasks-row"')).toBeLessThan(html.indexOf('data-testid="ios-conn"'));
       wrapper.unmount();
     });
 

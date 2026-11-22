@@ -19,21 +19,20 @@
 
 目标：把 `IosChannelCard.vue`（473 行）重做成规格 §3–§9 的样子，行为沿用现有的配置读写、测试连接与配对，不改后端。
 
-1. **步骤判定**：新增 `src/views/settings/useIosSetup.ts`，纯函数 `deriveSetup({ ios, gateway, appAcked })` → `{ steps: [{ id, done }], current, ready, tag }`（规格 §3.2–§3.3），不碰 Vue 响应式，写单测：全空、已启用未填全、填全未连接、已连接无手机、`pendingConfirm` 的手机不算、有手机、`last_error` → 异常、`appAcked` 只影响步骤 2、已就绪的判定。
-2. **组件拆分**（原型 → 产品）：
-   - `IosChannelCard.vue`：壳、头部、三种形态；
-   - `IosSetupSteps.vue`：手风琴（同时只展开一步，当前步默认展开，点标题展开别的步）；
-   - `IosProviderGuide.vue`：三个磁贴 + 编号步骤 + 提示；**数据进 `iosBrokers.ts`**（每家的步骤键、官方入口链接、提示种类），文案进 i18n；`detectBroker` / `brokerFill` / 失败提示分类沿用；
-   - `IosConnectionForm.vue`：字段、测试连接、导入、「更多设置」；
-   - `IosPairing.vue`：配对块与设备列表（沿用现有的 `useIosChannel.ts` 逻辑）；
+1. **步骤判定**：新增 `src/views/settings/useIosSetup.ts`，纯函数 `deriveIosSetup({ enabled, host, username, passwordFilled, gateway, phones, appInstalled })` → `{ configured, connected, tag, tone, done, current, ready }`（规格 §3.2–§3.3），不碰 Vue 响应式，写单测：全空、已启用未填全、填全未连接、已连接无手机、`pendingConfirm` 的手机不算、有手机、`last_error` → 异常、`appAcked` 只影响步骤 2、已就绪的判定。
+2. **组件拆分**（原型 → 产品）。卡片壳 `IosChannelCard.vue` 持有手风琴与三种形态；它的状态来自 `useIosChannel.ts`，各部件通过 `iosChannelContext.ts` 的 provide / inject 读同一份：
    - `IosAgentBox.vue`：提示词框与复制；
-   - `IosReadyBox.vue`：已就绪框 + 测试问题行；
-   - `useIosTestQuestion.ts`：封装 `setup_probe_start("channel","ios")` / `setup_probe_cancel` 与 `setup-probe-result` 事件、四种结局、120 s 超时、窗口关闭时取消；
-   - 保活行：读写 `general.daemonLifecycle`，锁定判定复用 `useAgentTasks.ts` / `AgentTasksSwitchRow` 现有的逻辑，不新增配置。
+   - `IosProviderGuide.vue` + `IosRich.vue` / `iosRich.ts`：三个磁贴 + 编号步骤 + 提示；**数据进 `iosBrokers.ts`**（每家的步骤键、官方入口链接、提示种类、可复制的「片段」），文案进 i18n，`**粗体**`、`` `代码` ``、链接与可复制片段由 `iosRich.ts` 解析；`detectBroker` / `brokerFill` / 失败提示分类沿用；
+   - `IosConnectionForm.vue`：字段、测试连接、导入、「更多设置」（就绪后同一份表单收进「连接设置」，多一个「复制连接串」）；
+   - `IosKeepAlive.vue`：保活行，读写 `general.daemonLifecycle`，锁定判定沿用 `AgentTasksSwitchRow` 现有的逻辑，不新增配置；
+   - `IosJoinApp.vue`：步骤 2（二维码、复制链接、在浏览器中打开、「我已装好」）；
+   - `IosPairing.vue`：配对块与设备列表（沿用 `useIosChannel.ts` 的逻辑）；
+   - `IosReadyBox.vue` + `useIosTestQuestion.ts`：已就绪框与测试问题行；后者封装 `setup_probe_start("channel","ios")` / `setup_probe_cancel` 与 `setup-probe-result` 事件、结局、窗口关闭时取消（120 s 超时由后端管）；
+   - `IosPushTiming.vue`、`IosTrafficInfo.vue`：就绪后保留的两块，从旧卡原样搬出；
 3. **步骤 2**：二维码用现有 Tauri 命令 `ios_pair_qr(text)`（名字是配对专用，实际接受任意文本）渲染落地页地址；落地页地址是一个常量（`iosBrokers.ts` 旁的 `iosLinks.ts`），**不放 TestFlight 链接**。「复制链接」「在浏览器中打开」用现有的 `openUrl`。
 4. **样式**：原型用 `ios2-` 前缀避免冲突；产品并回 `settings.css` 的 `ios-` 一组，删掉旧样式；只用设计令牌，深色、480 / 560 宽度都要看。
-5. **i18n**：新键放 `settings.channels.ios.*`（中英），文案逐字取自规格 §14（含提示词中英）；旧的 `settings.experimental.ios.*` 在 P5 随位置一起迁移，P1 先在新命名空间里写新文案并让新卡引用它，旧键留到 P5 删（避免 P1 一次改两处）。
-6. **事实一致性测试**（规格 §7.5）：`iosFacts.test.ts` 检查关键数字（100 万连接分钟、1 GB、¥100、8760 小时、8883 / 8084 / 443、`ah/<用户名>/#`）在 zh / en 卡片文案里都有；P2 的指南出来后，同一个测试把指南文本也纳入。
+5. **i18n**：新键放 `settings.channels.ios.*`（中英），文案逐字取自规格 §14（含提示词中英）。旧卡整个被换掉，所以 `settings.experimental.ios.*` 在 P1 就整体迁到 `settings.channels.ios.*`（`AwayCard.vue` 的时长文案一并改引用），没有留着不用的旧键；P5 只剩位置与门控。
+6. **事实一致性测试**（规格 §7.5）：前端 `iosFacts.test.ts` 把卡片文案与 `ios-broker*.md`（zh / en）对照：关键数字（100 万连接分钟、1 GB、¥100、8760 小时、60 天、8883 / 8084 / 443、`ah/<用户名>/#`）、`iOS 17` 对 `ios/project.yml`、卡片指向的 wiki 小节锚点确实存在；P2 的 Rust 测试用同一组数字断言 `--agent-guide` 的输出。
 7. **测试**：`useIosSetup` 单测；`IosChannelCard.test.ts` 重写（三种形态、手风琴、磁贴选择与填充、复制、保活锁定、测试问题四种结局、「我已装好」只改界面、已就绪后「查看设置步骤」）；`iosBrokers.test.ts` 补新数据。
 
 验证：`npx vitest run src/views/settings src/views/setup src/i18n`、`vue-tsc --noEmit`；把原型页的挂载换成真实的 `IosChannelCard` 在浏览器里用 mock 后端点一遍所有场景（浅 / 深、480 / 560），与规格截图逐张对照；`./scripts/install.sh` 前先 `node scripts/machine-health.mjs`。不改 IPC，不改配置字段，不需要 recovery 迁移。
@@ -83,7 +82,7 @@
 1. 发布 Pages（手动工作流 `ios-beta-pages`），打开落地页与 TestFlight 公共链接，**用一台没加过测试的手机从落地页走到 TestFlight 安装成功**；
 2. 带新文案的 iOS 构建已在公共组、审核通过；
 3. **一个提交**翻可见性（规格 §10.1）：
-   - 卡片移到 `ChannelsTab.vue` 的最上面（规格 D13）：模板里紧跟「本地弹窗」卡、排在「按需发送」提示之前，按 DOM 顺序，不用 CSS `order`；`id="channel-ios"`、`useSearch.ts` 与深链；`ExperimentalTab.vue` 空状态一行；`settings.experimental.ios.*` 迁到 `settings.channels.ios.*` 并删旧键；
+   - 卡片移到 `ChannelsTab.vue` 的最上面（规格 D13）：模板里紧跟「本地弹窗」卡、排在「按需发送」提示之前，按 DOM 顺序，不用 CSS `order`；`id="channel-ios"`、`useSearch.ts` 与深链；`ExperimentalTab.vue` 空状态一行（`settings.experimental.ios.*` 已在 P1 迁完）；
    - `AwayCard.vue`、`RemotePage.vue`（`showIos` 与 `openSettings("channel#channel-ios")`）；
    - `ios_cmd::available()` 与 `channel_cmd.rs` 里四处门控去掉，`channel list` / `help` 与测试更新，`ios_cmd.rs` 帮助里的「(experimental)」去掉；
    - 文档：`ios-channel.md`（D22、L97、L282、L284）、`overview-ios.md`、`docs/overview.md` 里提到「实验」的地方；

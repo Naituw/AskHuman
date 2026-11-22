@@ -1370,67 +1370,347 @@
   color: #ff453a;
 }
 
-/* iOS channel card (experimental tab). */
-.ios-status {
-  margin: 0 0 var(--space-3);
+/* iOS App channel card (docs/specs/ios-setup-experience.md): one card for the whole setup. Built on the
+   settings vocabulary (.card / .row / .field / .input / .btn / .switch / .status-tag / .link). */
+.ios-card .channel-head {
+  gap: var(--space-3);
 }
-.ios-traffic {
-  margin: 0 0 var(--space-2);
+.ios-desc {
+  margin: var(--space-2) 0 0;
 }
-.ios-traffic-note {
-  margin: 0 0 var(--space-3);
+.ios-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+  margin-top: var(--space-3);
 }
-.ios-section-title {
-  margin: 0 0 var(--space-2);
+
+/* "Ask an Agent to do it": a visible prompt with a copy button, never a hidden clipboard write. */
+.ios-agent {
+  margin-top: var(--space-3);
+  padding: var(--space-3);
+  border: var(--hairline) solid var(--border);
+  border-radius: var(--radius-lg);
+  background: var(--bg-elevated);
+}
+.ios-agent-head {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  margin-bottom: var(--space-2);
+}
+.ios-agent-text {
+  font-size: 12.5px;
+  color: var(--text-secondary);
+}
+.ios-prompt {
+  margin: 0;
+  padding: 8px 10px;
+  border-radius: var(--radius-md);
+  background: var(--control-bg);
+  border: var(--hairline) solid var(--control-border);
+  font-family: var(--font-mono);
+  font-size: 11.5px;
+  line-height: 1.55;
+  white-space: pre-wrap;
+  user-select: text;
+}
+
+/* Guide header and step list. */
+.ios-guide-head {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  margin: var(--space-4) 0 var(--space-2);
+}
+.ios-guide-title {
   font-size: 12.5px;
   font-weight: 600;
+}
+.ios-progress {
+  font-size: 11.5px;
+  color: var(--text-secondary);
+  font-variant-numeric: tabular-nums;
+}
+.ios-steps {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  border: var(--hairline) solid var(--border);
+  border-radius: var(--radius-lg);
+  overflow: hidden;
+}
+.ios-step + .ios-step {
+  border-top: var(--hairline) solid var(--border);
+}
+.ios-step-head {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  width: 100%;
+  min-height: 40px;
+  padding: 8px 12px;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: default;
+}
+.ios-step-head:hover {
+  background: var(--bg-elevated);
+}
+.ios-num {
+  flex: 0 0 auto;
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  display: grid;
+  place-items: center;
+  font-size: 11.5px;
+  font-weight: 600;
+  background: var(--bg-elevated);
+  color: var(--text-secondary);
+}
+.ios-step.current .ios-num {
+  background: var(--accent);
+  color: #fff;
+}
+.ios-step.done .ios-num {
+  background: var(--accent-green);
+  color: #fff;
+}
+.ios-num svg {
+  width: 11px;
+  height: 11px;
+}
+.ios-step-title {
+  font-size: 13px;
+  font-weight: 600;
+}
+.ios-step.upcoming .ios-step-title {
+  color: var(--text-secondary);
+  font-weight: 500;
+}
+.ios-step-sum {
+  margin-left: auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 12px;
+  color: var(--text-secondary);
+}
+.ios-chevron {
+  flex: 0 0 auto;
+  width: 10px;
+  height: 10px;
+  color: var(--text-tertiary);
+  transition: transform 0.15s ease;
+}
+.ios-step.open .ios-chevron {
+  transform: rotate(180deg);
+}
+/* The body lines up under the title: padding + number + gap. */
+.ios-step-body {
+  padding: 0 12px 14px 44px;
+}
+.ios-lead {
+  margin: 0 0 var(--space-2);
+  font-size: 12.5px;
+  line-height: 1.55;
+  color: var(--text-secondary);
+}
+
+/* Broker choice. */
+.ios-tiles {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: var(--space-2);
+  margin: var(--space-2) 0 var(--space-3);
+}
+.ios-tile {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  justify-content: flex-start;
+  padding: 9px 10px;
+  border: 1px solid var(--control-border);
+  border-radius: var(--radius-md);
+  background: var(--control-bg);
+  box-shadow: var(--clickable-shadow);
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: default;
+}
+.ios-tile:hover {
+  background: var(--control-hover-bg);
+}
+.ios-tile.active {
+  border-color: var(--accent);
+  box-shadow: var(--focus-ring);
+}
+.ios-tile b {
+  display: block;
+  font-size: 12.5px;
+  font-weight: 600;
+}
+.ios-tile span {
+  display: block;
+  margin-top: 2px;
+  font-size: 11.5px;
+  line-height: 1.35;
+  color: var(--text-secondary);
+}
+
+/* Numbered provider instructions, copy chips and the notice. */
+.ios-list {
+  margin: 0 0 var(--space-3);
+  padding-left: 18px;
+  font-size: 12.5px;
+  line-height: 1.7;
+}
+.ios-list > li + li {
+  margin-top: 4px;
+}
+.ios-list ul {
+  margin: 2px 0 0;
+  padding-left: 16px;
+  list-style: disc;
+}
+.ios-list .link {
+  white-space: nowrap;
+}
+.ios-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  margin: 0 1px;
+  padding: 0 6px;
+  border: var(--hairline) solid var(--control-border);
+  border-radius: 5px;
+  background: var(--control-bg);
+  color: var(--text-primary);
+  font-family: var(--font-mono);
+  font-size: 11.5px;
+  line-height: 18px;
+  cursor: default;
+}
+.ios-chip:hover:not(:disabled) {
+  background: var(--control-hover-bg);
+}
+.ios-chip:disabled {
+  opacity: 0.55;
+}
+.ios-chip .ios-copied {
+  font-family: var(--font-sans);
+  font-size: 11px;
+  color: var(--accent-green);
+}
+.ios-notice {
+  margin: 0 0 var(--space-3);
+  padding: 8px 10px;
+  border: var(--hairline) solid color-mix(in srgb, var(--accent-orange) 40%, transparent);
+  border-radius: var(--radius-md);
+  background: color-mix(in srgb, var(--accent-orange) 12%, transparent);
+  font-size: 12px;
+  line-height: 1.6;
   color: var(--text-primary);
 }
-.ios-broker-select {
-  max-width: 100%;
+.ios-notice b {
+  font-weight: 600;
 }
-.ios-broker-points {
-  margin: var(--space-2) 0 var(--space-1);
-  padding-left: 18px;
-  font-size: 12px;
-  line-height: 1.5;
+.ios-notice.info {
+  border-color: var(--border);
+  background: var(--bg-elevated);
   color: var(--text-secondary);
 }
-.ios-broker-points li + li {
-  margin-top: 2px;
-}
-.ios-broker-guide {
-  font-size: 12px;
-}
-.ios-relay-note {
-  margin: var(--space-2) 0 0;
-}
-.ios-relay .ios-relay-pending {
-  margin: var(--space-2) 0 0;
-  color: #ff9f0a;
-}
-.ios-test-hint {
-  margin: var(--space-1) 0 0;
-  font-size: 12px;
-  line-height: 1.5;
-  color: var(--text-secondary);
-}
-.result.warn {
-  color: #ff9f0a;
+
+/* Connection form. */
+.ios-form .field + .field {
+  margin-top: var(--space-3);
 }
 .ios-ports {
   display: grid;
   grid-template-columns: 1fr 1fr;
   gap: var(--space-3);
-  margin-top: var(--space-2);
+  margin-top: var(--space-3);
 }
-/* Side by side, not stacked: the spacing between stacked fields would push the second one down. */
 .ios-ports > .field + .field {
   margin-top: 0;
 }
-.ios-import {
+.ios-ports + .field {
   margin-top: var(--space-3);
 }
+.ios-form .ios-form-actions {
+  margin-top: var(--space-3);
+}
+.ios-more {
+  margin-top: var(--space-3);
+  font-size: 12px;
+}
+.ios-more > summary {
+  cursor: default;
+  color: var(--text-secondary);
+}
+.ios-more[open] > summary {
+  margin-bottom: var(--space-2);
+}
+/* The folded provider steps sit above the form, so they leave the gap below instead of above. */
+.ios-more.ios-guide-fold {
+  margin: 0 0 var(--space-3);
+}
+.ios-keep {
+  margin-top: var(--space-4);
+  padding-top: var(--space-3);
+  border-top: var(--hairline) solid var(--border);
+}
+.ios-keep .label {
+  font-size: 12.5px;
+}
+.ios-next {
+  display: flex;
+  justify-content: flex-end;
+  margin-top: var(--space-3);
+}
+
+/* Step 2: the TestFlight join block. */
+.ios-join {
+  display: flex;
+  gap: var(--space-4);
+  align-items: flex-start;
+}
+.ios-qr {
+  flex: 0 0 auto;
+  width: 132px;
+  height: 132px;
+  border-radius: 8px;
+  overflow: hidden;
+  background: #fff;
+  border: var(--hairline) solid var(--border);
+}
+.ios-qr svg {
+  display: block;
+  width: 100%;
+  height: 100%;
+}
+.ios-side {
+  flex: 1;
+  min-width: 0;
+}
+.ios-side .ios-list {
+  margin-bottom: var(--space-2);
+}
+.ios-links {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+  align-items: center;
+  margin-top: var(--space-2);
+}
+
+/* Step 3 and the device list: same look as today's card. */
 .ios-pair {
   display: flex;
   gap: var(--space-4);
@@ -1438,29 +1718,11 @@
   margin: var(--space-3) 0;
   padding: var(--space-3);
   border: var(--hairline) solid var(--border);
-  border-radius: var(--radius-md, 10px);
+  border-radius: var(--radius-lg);
 }
-.ios-pair-qr {
-  flex: 0 0 auto;
-  width: 176px;
-  height: 176px;
-  border-radius: 8px;
-  overflow: hidden;
-  background: #fff;
-}
-.ios-pair-qr svg {
-  display: block;
-  width: 100%;
-  height: 100%;
-}
-.ios-pair-side {
-  flex: 1;
-  min-width: 0;
-}
-.ios-pair-title {
-  margin: 0 0 var(--space-1);
-  font-size: 13.5px;
-  font-weight: 600;
+.ios-pair .ios-qr {
+  width: 156px;
+  height: 156px;
 }
 .ios-sas {
   margin: 0 0 var(--space-3);
@@ -1483,17 +1745,15 @@
 .ios-device + .ios-device {
   border-top: var(--hairline) solid var(--border);
 }
-.ios-device .dot {
+.ios-dot {
   flex: 0 0 auto;
   width: 8px;
   height: 8px;
   border-radius: 50%;
+  background: var(--text-tertiary);
 }
-.ios-device .dot.on {
-  background: #30d158;
-}
-.ios-device .dot.off {
-  background: var(--text-tertiary, #8e8e93);
+.ios-dot.on {
+  background: var(--accent-green);
 }
 .ios-device-main {
   flex: 1;
@@ -1508,8 +1768,106 @@
   font-size: 11.5px;
   color: var(--text-secondary);
 }
+
+/* Step 4. */
+/* Ready: one box for the guide (status line + the test question), then the management sections. */
+.ios-ready {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  margin-top: var(--space-3);
+  padding: 9px 12px;
+  border: var(--hairline) solid color-mix(in srgb, var(--accent-green) 40%, transparent);
+  border-radius: var(--radius-lg);
+  background: color-mix(in srgb, var(--accent-green) 10%, transparent);
+  font-size: 12.5px;
+}
+.ios-ready-line {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-height: 24px;
+}
+/* Header lines that are not a `.row` still push their last item to the right. */
+.ios-card .spacer {
+  flex: 1 1 auto;
+}
+.ios-try {
+  padding-top: var(--space-2);
+  border-top: var(--hairline) solid color-mix(in srgb, var(--accent-green) 28%, transparent);
+}
+.ios-try-text {
+  min-width: 0;
+  color: var(--text-secondary);
+}
+/* The text gives way when the card is narrow, never the button label. */
+.ios-try .btn {
+  flex: none;
+  white-space: nowrap;
+}
+.ios-section {
+  margin: 0 0 var(--space-2);
+  font-size: 12.5px;
+  font-weight: 600;
+}
+.row > .ios-section {
+  margin: 0;
+}
+.ios-subdesc {
+  margin: 2px 0 0;
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--text-secondary);
+}
+.ios-conn-summary {
+  font-size: 12.5px;
+}
+.ios-conn-summary .ios-subdesc {
+  display: inline;
+  margin-left: var(--space-2);
+}
+.ios-conn-body {
+  margin-top: var(--space-3);
+}
+.ios-traffic {
+  margin: 0;
+  font-size: 12px;
+  color: var(--text-secondary);
+}
+
+/* Keep each form's own spacing: the import field, a result line, the hint for the service, the relay's notes. */
+.ios-import {
+  margin-top: var(--space-3);
+}
+.ios-relay-note,
+.ios-relay-pending {
+  margin: var(--space-2) 0 0;
+}
+.ios-relay-pending {
+  color: var(--accent-orange);
+}
+.ios-test-hint {
+  margin: var(--space-1) 0 0;
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--text-secondary);
+}
+.ios-pair-title {
+  margin: 0 0 var(--space-1);
+  font-size: 13.5px;
+  font-weight: 600;
+}
+.ios-traffic-note {
+  margin: var(--space-2) 0 0;
+}
+.ios-traffic-details {
+  margin: var(--space-2) 0 0;
+}
 .ios-device-meta.warn {
-  color: #ff9f0a;
+  color: var(--accent-orange);
+}
+.result.warn {
+  color: var(--accent-orange);
 }
 
 /* Setup wizard entries in Settings: the banner under the tab bar while the Agent question is open,

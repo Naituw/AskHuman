@@ -1,453 +1,311 @@
 <script setup lang="ts">
-// iOS app channel card (experimental tab): broker connection, device list and the pairing flow.
-// docs/specs/ios-channel.md §3 / §7. The app's "New task" needs the Agent-task switch, which sits
-// in the card as a row of its own (AgentTasksSwitchRow).
-import { computed } from "vue";
+// The iOS App channel card (docs/specs/ios-setup-experience.md): one card from "turn it on" to a
+// working phone. What it shows follows facts the Mac already knows (useIosSetup.ts), in three forms:
+//   off     one line about the channel and the two ways to begin
+//   setup   a three-step guide: connect a broker, install the app, pair a phone
+//   ready   connected with a phone paired: the guide is one line plus a test question, and the
+//           usual sections follow
+// The state of the gateway, the pairing and the form helpers live in useIosChannel.ts; the parts
+// of the card read it through iosChannelContext.ts.
+import { computed, ref, watch } from "vue";
 import { useI18n } from "vue-i18n";
-import AgentTasksSwitchRow from "./AgentTasksSwitchRow.vue";
-import { useSettingsContext } from "./context";
-import { useIosChannel } from "./useIosChannel";
-import type { IosPhone } from "../../lib/types";
 import { openPath } from "../../lib/ipc";
-import { IOS_BROKERS, brokerGuideUrl, brokerPreset, type IosBrokerId } from "./iosBrokers";
-import {
-  ALERT_AFTER_PRESETS,
-  alertAfterChoices,
-  idleDuration,
-  splitDuration,
-  type SplitDuration,
-} from "./iosAlertTiming";
-import { aggregateTraffic, brokerEstimate, hasCompleteTrafficHistory, formatBytes, trafficReminder } from "./iosTraffic";
+import ChannelCardHead from "./ChannelCardHead.vue";
+import AgentTasksSwitchRow from "./AgentTasksSwitchRow.vue";
+import IosAgentBox from "./IosAgentBox.vue";
+import IosConnectionForm from "./IosConnectionForm.vue";
+import IosJoinApp from "./IosJoinApp.vue";
+import IosKeepAlive from "./IosKeepAlive.vue";
+import IosPairing from "./IosPairing.vue";
+import IosProviderGuide from "./IosProviderGuide.vue";
+import IosPushTiming from "./IosPushTiming.vue";
+import IosReadyBox from "./IosReadyBox.vue";
+import IosTrafficInfo from "./IosTrafficInfo.vue";
+import { useSettingsContext } from "./context";
+import { provideIosChannel } from "./iosChannelContext";
+import { iosSetupGuideUrl } from "./iosLinks";
+import { deriveIosSetup, stepStatus, type IosStepNumber } from "./useIosSetup";
+import { useIosChannel } from "./useIosChannel";
 
 const { t, locale } = useI18n();
-const { persist, secretsPresent, SECRET_PLACEHOLDER, clearSecret } = useSettingsContext();
+const ctx = useSettingsContext();
+const { persist } = ctx;
+const channel = useIosChannel();
+provideIosChannel(channel);
 const {
   ios,
-  broker,
-  chooseBroker,
+  provider,
+  passwordFilled,
   defaultRelayUrl,
-  relayMode,
-  setRelayMode,
   state,
+  polls,
   activePhones,
-  statusKind,
-  pairing,
   pairBusy,
-  pairNotice,
-  codeCopied,
-  livePairing,
-  pairSecondsLeft,
-  sasText,
+  pairing,
   startPair,
-  cancelPair,
-  decidePair,
-  copyPairCode,
   revokeTarget,
-  renameTarget,
-  renameText,
   confirmRevoke,
-  beginRename,
-  commitRename,
-  testing,
-  testMessage,
-  testError,
-  testWarnings,
-  testHint,
-  runTest,
-  importText,
-  connectionMessage,
-  connectionError,
-  importConnection,
-  exportConnection,
-} = useIosChannel();
+} = channel;
 
-const statusText = computed(() => {
-  const s = state.value;
-  if (!s) return t("settings.experimental.ios.statusNotRunning");
-  if (s.connected) {
-    return t("settings.experimental.ios.statusConnected", { via: s.via ?? "?" });
-  }
-  const base = t("settings.experimental.ios.statusDisconnected");
-  return s.lastError ? `${base}: ${s.lastError}` : base;
-});
+const STEPS = [
+  { n: 1, key: "broker" },
+  { n: 2, key: "app" },
+  { n: 3, key: "pair" },
+] as const;
 
-// Known Mac counters converge through paired phones.
-const traffic = computed(() => {
-  const local = state.value?.traffic;
-  const records = state.value?.usageRecords ?? [];
-  const tr = records.length && local ? aggregateTraffic(records, local.month) : local;
-  return tr && tr.msgsIn + tr.msgsOut > 0 ? tr : null;
-});
-const completeTrafficHistory = computed(() => {
-  const records = state.value?.usageRecords ?? [];
-  return records.length > 0 && !!traffic.value && hasCompleteTrafficHistory(records, traffic.value.month);
-});
-const trafficText = computed(() => {
-  const tr = traffic.value;
-  if (!tr) return "";
-  return t(completeTrafficHistory.value ? "settings.experimental.ios.trafficAggregate" : "settings.experimental.ios.trafficPartial", {
-    total: formatBytes(brokerEstimate(tr)),
-    count: state.value?.usageRecords?.length ?? 1,
-    out: formatBytes(tr.bytesOut),
-    in: formatBytes(tr.bytesIn),
-  });
-});
-// Only counts, and says nothing of the broker's plan: close to each GB, or past it (same rule as the phone's Inbox).
-const trafficNote = computed(() => {
-  const reminder = traffic.value ? trafficReminder(brokerEstimate(traffic.value)) : null;
-  if (!reminder) return "";
-  return t(reminder.reached ? "settings.experimental.ios.trafficOver" : "settings.experimental.ios.trafficNear", { gb: reminder.gigabytes });
-});
+// ——— what the Mac knows ———
 
-// The service the broker belongs to (docs/specs/ios-open-access.md OA11): a short set of points per service,
-// and the wiki page that has the steps.
-const brokerPoints = computed(() => brokerPreset(broker.value).points);
+// "I've installed it" is only a fact of this window: the Mac cannot see an install, and a phone that
+// is paired proves one anyway.
+const appInstalled = ref(false);
 
-function openBrokerGuide() {
-  void openPath(brokerGuideUrl(broker.value, String(locale.value).startsWith("zh")));
-}
-
-// Push timing (docs/specs/ios-alert-timing.md): the wait before an unseen question is pushed.
-function durationText(d: SplitDuration): string {
-  return t(`settings.experimental.ios.duration.${d.unit}`, { n: d.n });
-}
-
-const alertAfterOptions = computed(() =>
-  alertAfterChoices(ios.value.alertAfterSecs).map((secs) => {
-    if (secs === 0) return { secs, label: t("settings.experimental.ios.alertAfterNow") };
-    const text = durationText(splitDuration(secs));
-    return {
-      secs,
-      label: ALERT_AFTER_PRESETS.includes(secs)
-        ? text
-        : t("settings.experimental.ios.alertAfterCustom", { value: text }),
-    };
+const setup = computed(() =>
+  deriveIosSetup({
+    enabled: ios.value.enabled,
+    host: ios.value.host,
+    username: ios.value.username,
+    passwordFilled: passwordFilled.value,
+    gateway: state.value ? { connected: state.value.connected, lastError: state.value.lastError } : null,
+    phones: activePhones.value.length,
+    appInstalled: appInstalled.value,
   }),
 );
 
-const macIdleText = computed(() => {
-  const secs = state.value?.macIdleSecs;
-  if (secs === undefined || secs === null) return "";
-  return t("settings.experimental.ios.macIdle", { time: durationText(idleDuration(secs)) });
+// The broker by name; a self-hosted one by its host, which is all that tells it apart.
+const providerName = computed(() => {
+  const id = provider.value;
+  if (!id) return t("settings.channels.ios.brokerFallback");
+  if (id === "custom" && ios.value.host.trim()) return ios.value.host.trim();
+  return t(`settings.channels.ios.tile.${id}.name`);
 });
 
-const pairNoticeText = computed(() => {
-  const n = pairNotice.value;
-  if (!n) return "";
-  if (n.kind === "done") return t("settings.experimental.ios.pairDone", { name: n.name });
-  if (n.kind === "ended") return t("settings.experimental.ios.pairEnded");
-  return n.text;
+// The prompt for an Agent is for getting started: a finished setup has no use for it.
+const showAgent = computed(() => agentOpen.value && !(ios.value.enabled && setup.value.ready));
+
+const issueText = computed(() => {
+  if (setup.value.tag !== "issue") return "";
+  return `${t("settings.channels.ios.statusDisconnected")}: ${state.value?.lastError ?? ""}`;
 });
 
-function phoneName(phone: IosPhone): string {
-  return phone.aliasName || phone.name;
+// ——— the guide ———
+
+// Which step is open: by default the first one that is not done; a click picks any step (0: none).
+const open = ref<number | null>(null);
+const stepsOpen = ref(false);
+const agentOpen = ref(false);
+
+// The provider's instructions fold away only when the broker already worked as the card first
+// appeared, never while the person is still in step 1 (the page would move under their hands).
+const foldGuide = ref(false);
+watch(polls, (count) => {
+  if (count === 1) foldGuide.value = setup.value.connected;
+});
+
+// A connection that comes up while the person is in step 1 does not move them on: they read the
+// result and go on with "Next".
+watch(
+  () => setup.value.connected,
+  (now, before) => {
+    if (now && !before && polls.value > 1 && open.value === null) open.value = 1;
+  },
+);
+
+function isOpen(n: IosStepNumber): boolean {
+  return open.value === null ? n === setup.value.current : open.value === n;
 }
 
-function lastSeenText(phone: IosPhone): string {
-  if (phone.online) return t("settings.experimental.ios.online");
-  if (!phone.lastSeenAt) return t("settings.experimental.ios.never");
-  return t("settings.experimental.ios.lastSeen", {
-    time: new Date(phone.lastSeenAt).toLocaleString(),
-  });
+function toggle(n: IosStepNumber) {
+  open.value = isOpen(n) ? 0 : n;
 }
 
-function pushWarning(phone: IosPhone): string {
-  if (phone.push === "gone") return t("settings.experimental.ios.pushGone");
-  if (phone.push === "error") return t("settings.experimental.ios.pushError");
-  return "";
+function toggleSteps() {
+  stepsOpen.value = !stepsOpen.value;
+  open.value = null;
 }
+
+function summary(n: IosStepNumber): string {
+  if (!setup.value.done[n - 1]) return "";
+  if (n === 1) return t("settings.channels.ios.stepSummary.connected", { name: providerName.value });
+  if (n === 2) return t("settings.channels.ios.stepSummary.installed");
+  const phones = activePhones.value.length;
+  return t("settings.channels.ios.stepSummary.phones", { n: phones }, phones);
+}
+
+function installed() {
+  appInstalled.value = true;
+  open.value = null;
+}
+
+// ——— the header ———
+
+async function toggleEnabled(on: boolean) {
+  ios.value.enabled = on;
+  await persist();
+}
+
+function openGuide() {
+  void openPath(iosSetupGuideUrl(String(locale.value).startsWith("zh")));
+}
+
+const highlighted = computed(() => ctx.settingsTargetHighlight?.value === "channel-ios");
 </script>
 
 <template>
-  <div class="card channel-card ios-card">
-    <div class="row">
-      <p class="card-title">{{ t("settings.experimental.ios.title") }}</p>
-      <span class="spacer"></span>
-      <label class="switch">
-        <input type="checkbox" v-model="ios.enabled" @change="persist" />
-        <span class="track"></span>
-      </label>
-    </div>
-    <p class="card-desc">
-      {{ t(defaultRelayUrl ? "settings.experimental.ios.descPublicRelay" : "settings.experimental.ios.desc") }}
+  <div
+    id="channel-ios"
+    class="card channel-card ios-card"
+    :class="{ 'settings-target-highlight': highlighted }"
+    data-testid="ios-card"
+  >
+    <ChannelCardHead
+      id="ios"
+      :title="t('settings.channels.ios.title')"
+      :enabled="ios.enabled"
+      :state="setup.tag"
+      guide
+      @toggle="toggleEnabled"
+      @guide="openGuide"
+    />
+    <p class="card-desc ios-desc">
+      {{ t(defaultRelayUrl ? "settings.channels.ios.descPublicRelay" : "settings.channels.ios.desc") }}
     </p>
+    <p v-if="issueText" class="card-desc warn ios-issue" data-testid="ios-issue">{{ issueText }}</p>
 
-    <template v-if="ios.enabled">
-      <p class="badge ios-status">
-        <span class="dot" :class="statusKind === 'ok' ? 'on' : 'off'"></span>
-        {{ statusText }}
-      </p>
-      <p v-if="trafficText" class="card-desc ios-traffic">{{ trafficText }}</p>
-      <details v-if="state?.usageRecords?.length" class="card-desc ios-traffic-details">
-        <summary>{{ t("settings.experimental.ios.trafficDetails") }}</summary>
-        <p v-for="record in state.usageRecords" :key="`${record.deviceKind ?? 'mac'}|${record.macId}`">
-          {{ record.deviceKind === 'phone' ? t("settings.experimental.ios.trafficMobile") : 'Mac' }} · {{ record.macName || record.macId.slice(0, 8) }} · {{ formatBytes(brokerEstimate(record)) }} ·
-          {{ t("settings.experimental.ios.trafficUpdated", { time: new Date(record.updatedAt).toLocaleString() }) }}
-          <template v-if="state.trafficSyncedAt?.[`${record.broker}|${record.month}|${record.deviceKind ?? 'mac'}|${record.macId}`]">
-            · {{ t("settings.experimental.ios.trafficSynced", { time: new Date(state.trafficSyncedAt[`${record.broker}|${record.month}|${record.deviceKind ?? 'mac'}|${record.macId}`]!).toLocaleString() }) }}
-          </template>
-        </p>
-        <p v-if="!completeTrafficHistory">{{ t("settings.experimental.ios.trafficIncomplete") }}</p>
-        <p>{{ t("settings.experimental.ios.trafficCoverage") }}</p>
-      </details>
-      <p v-if="state?.trafficStorageIssue" class="card-desc warn">{{ t("settings.experimental.ios.trafficStorageIssue") }}</p>
-      <p v-if="trafficNote" class="card-desc ios-traffic-note">{{ trafficNote }}</p>
-      <!-- The app's "New task" needs the Agent-task switch on this Mac: it is right here, where the phone is set up. -->
-      <hr class="divider" />
-      <AgentTasksSwitchRow />
-      <hr class="divider" />
+    <!-- Off: nothing to fill in yet, so only the two ways to begin. -->
+    <div v-if="!ios.enabled" class="ios-actions">
+      <button class="btn btn-primary" type="button" data-testid="ios-start" @click="toggleEnabled(true)">
+        {{ t("settings.channels.ios.start") }}
+      </button>
+      <button class="btn" type="button" data-testid="ios-agent" @click="agentOpen = !agentOpen">
+        {{ t("settings.channels.ios.agentButton") }}
+      </button>
+    </div>
+    <IosAgentBox v-if="showAgent" />
 
-      <p class="ios-section-title">{{ t("settings.experimental.ios.connectionTitle") }}</p>
-      <div class="field ios-broker">
-        <label>{{ t("settings.experimental.ios.brokerLabel") }}</label>
-        <select
-          class="select ios-broker-select"
-          :value="broker"
-          @change="chooseBroker(($event.target as HTMLSelectElement).value as IosBrokerId)"
-        >
-          <option v-for="b in IOS_BROKERS" :key="b.id" :value="b.id">
-            {{ t(`settings.experimental.ios.broker.${b.id}.name`) }}
-          </option>
-        </select>
-        <ul class="ios-broker-points">
-          <li v-for="key in brokerPoints" :key="key">
-            {{ t(`settings.experimental.ios.broker.${broker}.${key}`) }}
-          </li>
-        </ul>
-        <a class="link ios-broker-guide" href="#" @click.prevent="openBrokerGuide">
-          {{ t("settings.experimental.ios.brokerGuide") }} ↗
-        </a>
-      </div>
-      <div class="field">
-        <label>{{ t("settings.experimental.ios.host") }}</label>
-        <input class="input" v-model="ios.host" spellcheck="false" @change="persist" />
-      </div>
-      <div class="ios-ports">
-        <div class="field">
-          <label>{{ t("settings.experimental.ios.port") }}</label>
-          <input class="input" type="number" v-model.number="ios.port" @change="persist" />
-        </div>
-        <div class="field">
-          <label>{{ t("settings.experimental.ios.wsPort") }}</label>
-          <input class="input" type="number" v-model.number="ios.wsPort" @change="persist" />
-        </div>
-      </div>
-      <div class="field">
-        <label>{{ t("settings.experimental.ios.username") }}</label>
-        <input class="input" v-model="ios.username" spellcheck="false" @change="persist" />
-      </div>
-      <div class="field">
-        <label>{{ t("settings.experimental.ios.password") }}</label>
-        <div class="row">
-          <input
-            class="input"
-            style="flex: 1"
-            type="password"
-            :placeholder="secretsPresent.iosBrokerPassword ? SECRET_PLACEHOLDER : ''"
-            v-model="ios.password"
-            @change="persist"
-          />
-          <button
-            v-if="secretsPresent.iosBrokerPassword"
-            class="btn"
-            type="button"
-            @click="clearSecret('iosBroker')"
-          >
-            {{ t("settings.channels.clearSecret") }}
-          </button>
-        </div>
-      </div>
-      <div class="field ios-relay">
-        <label>{{ t(defaultRelayUrl ? "settings.experimental.ios.relayTitle" : "settings.experimental.ios.relayUrl") }}</label>
-        <!-- Only a build with a public relay offers the choice; otherwise it is just the address. -->
-        <select
-          v-if="defaultRelayUrl"
-          class="select ios-relay-mode"
-          :value="relayMode"
-          @change="setRelayMode(($event.target as HTMLSelectElement).value === 'own' ? 'own' : 'public')"
-        >
-          <option value="public">{{ t("settings.experimental.ios.relayPublic") }}</option>
-          <option value="own">{{ t("settings.experimental.ios.relayOwn") }}</option>
-        </select>
-        <p v-if="defaultRelayUrl && relayMode === 'public'" class="card-desc ios-relay-note">
-          {{ t("settings.experimental.ios.relayPublicNote") }}
-        </p>
-        <input
-          v-if="!defaultRelayUrl || relayMode === 'own'"
-          class="input"
-          v-model="ios.relayUrl"
-          spellcheck="false"
-          :placeholder="defaultRelayUrl ? t('settings.experimental.ios.relayOwnPlaceholder') : ''"
-          @change="persist"
-        />
-        <!-- An empty address still means the public relay, so say so while "own" has none yet. -->
-        <p v-if="defaultRelayUrl && relayMode === 'own' && !ios.relayUrl.trim()" class="card-desc ios-relay-pending">
-          {{ t("settings.experimental.ios.relayOwnEmpty") }}
-        </p>
-      </div>
-      <div class="field">
-        <label>{{ t("settings.experimental.ios.macName") }}</label>
-        <input
-          class="input"
-          v-model="ios.macName"
-          :placeholder="t('settings.experimental.ios.macNamePlaceholder')"
-          @change="persist"
-        />
-      </div>
-      <div class="row">
-        <button class="btn" type="button" :disabled="testing" @click="runTest">
-          {{ testing ? t("settings.channels.testing") : t("settings.channels.testConnection") }}
-        </button>
-        <button class="btn" type="button" @click="exportConnection(t('settings.experimental.ios.exportDone'))">
-          {{ t("settings.experimental.ios.exportButton") }}
-        </button>
+    <template v-if="ios.enabled && (!setup.ready || stepsOpen)">
+      <div class="ios-guide-head">
+        <span class="ios-guide-title">{{ t("settings.channels.ios.stepsTitle") }}</span>
+        <span class="ios-progress" data-testid="ios-progress">{{
+          setup.ready ? t("settings.channels.ios.stepsDone") : `${setup.current} / ${STEPS.length}`
+        }}</span>
         <span class="spacer"></span>
+        <button
+          v-if="!agentOpen && !setup.ready"
+          class="btn"
+          type="button"
+          data-testid="ios-agent"
+          @click="agentOpen = true"
+        >
+          {{ t("settings.channels.ios.agentButton") }}
+        </button>
       </div>
-      <p v-if="testMessage" class="result" :class="testError ? 'err' : 'ok'">
-        {{ testMessage }}
-      </p>
-      <p v-if="testHint" class="ios-test-hint">
-        {{ t(`settings.experimental.ios.broker.${testHint.broker}.hint.${testHint.kind}`) }}
-      </p>
-      <p v-for="warning in testWarnings" :key="warning" class="result warn">⚠ {{ warning }}</p>
-      <div class="field ios-import">
-        <label>{{ t("settings.experimental.ios.importLabel") }}</label>
-        <div class="row">
-          <input
-            class="input"
-            style="flex: 1"
-            v-model="importText"
-            spellcheck="false"
-            :placeholder="t('settings.experimental.ios.importPlaceholder')"
-            @keydown.enter.prevent="importConnection(t('settings.experimental.ios.importDone'))"
-          />
-          <button
-            class="btn"
-            type="button"
-            :disabled="!importText.trim()"
-            @click="importConnection(t('settings.experimental.ios.importDone'))"
-          >
-            {{ t("settings.experimental.ios.importButton") }}
+      <ol class="ios-steps" data-testid="ios-steps">
+        <li
+          v-for="step in STEPS"
+          :key="step.n"
+          class="ios-step"
+          :class="[stepStatus(setup, step.n), { open: isOpen(step.n) }]"
+          :data-testid="`ios-step-${step.n}`"
+        >
+          <button type="button" class="ios-step-head" :aria-expanded="isOpen(step.n)" @click="toggle(step.n)">
+            <span class="ios-num">
+              <svg
+                v-if="stepStatus(setup, step.n) === 'done'"
+                viewBox="0 0 12 12"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="2"
+                stroke-linecap="round"
+                stroke-linejoin="round"
+              >
+                <path d="M2.5 6.5 5 9l4.5-6" />
+              </svg>
+              <template v-else>{{ step.n }}</template>
+            </span>
+            <span class="ios-step-title">{{ t(`settings.channels.ios.step.${step.key}`) }}</span>
+            <span class="ios-step-sum">{{ summary(step.n) }}</span>
+            <svg
+              class="ios-chevron"
+              viewBox="0 0 10 10"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="1.6"
+              stroke-linecap="round"
+              stroke-linejoin="round"
+            >
+              <path d="M1.5 3.5 5 7l3.5-3.5" />
+            </svg>
           </button>
-        </div>
-      </div>
-      <p v-if="connectionMessage" class="result" :class="connectionError ? 'err' : 'ok'">
-        {{ connectionMessage }}
-      </p>
 
-      <hr class="divider" />
-      <p class="ios-section-title">{{ t("settings.experimental.ios.alertTimingTitle") }}</p>
-      <div class="row ios-alert-after">
-        <span class="label">{{ t("settings.experimental.ios.alertAfterLabel") }}</span>
-        <span class="spacer"></span>
-        <select class="select" v-model.number="ios.alertAfterSecs" @change="persist">
-          <option v-for="option in alertAfterOptions" :key="option.secs" :value="option.secs">
-            {{ option.label }}
-          </option>
-        </select>
-      </div>
-      <p class="card-desc">{{ t("settings.experimental.ios.alertAfterHint") }}</p>
-      <p v-if="macIdleText" class="card-desc ios-idle">{{ macIdleText }}</p>
+          <div v-if="isOpen(step.n)" class="ios-step-body">
+            <!-- 1 · Broker -->
+            <template v-if="step.n === 1">
+              <IosProviderGuide :folded="foldGuide" />
+              <IosConnectionForm v-if="provider" />
+              <div v-if="provider" class="ios-keep">
+                <IosKeepAlive />
+              </div>
+              <div v-if="setup.connected" class="ios-next">
+                <button class="btn btn-primary" type="button" data-testid="ios-next-1" @click="open = null">
+                  {{ t("settings.channels.ios.stepsNext") }}
+                </button>
+              </div>
+            </template>
+
+            <!-- 2 · The app, through TestFlight -->
+            <IosJoinApp v-else-if="step.n === 2" @done="installed" />
+
+            <!-- 3 · Pairing -->
+            <IosPairing v-else help />
+          </div>
+        </li>
+      </ol>
+    </template>
+
+    <!-- Ready: the guide is one box; the sections below are what the card was before, plus a few rows. -->
+    <template v-if="ios.enabled && setup.ready">
+      <IosReadyBox :name="providerName" :steps-open="stepsOpen" @toggle-steps="toggleSteps" />
 
       <hr class="divider" />
       <div class="row">
-        <p class="ios-section-title">{{ t("settings.experimental.ios.devicesTitle") }}</p>
+        <p class="ios-section">{{ t("settings.channels.ios.devicesTitle") }}</p>
         <span class="spacer"></span>
         <button
           class="btn"
           type="button"
           :disabled="pairBusy || !!pairing || !state"
+          data-testid="ios-pair-ready"
           @click="startPair"
         >
-          {{
-            pairBusy
-              ? t("settings.experimental.ios.pairStarting")
-              : t("settings.experimental.ios.pairButton")
-          }}
+          {{ pairBusy ? t("settings.channels.ios.pairStarting") : t("settings.channels.ios.pairButton") }}
         </button>
       </div>
+      <IosPairing :with-button="false" />
 
-      <div v-if="pairing" class="ios-pair">
-        <div class="ios-pair-qr" v-html="pairing.qrSvg"></div>
-        <div class="ios-pair-side">
-          <template v-if="!livePairing || livePairing.stage === 'waiting'">
-            <p class="card-desc">{{ t("settings.experimental.ios.pairScan") }}</p>
-            <p class="card-desc hint">
-              {{ t("settings.experimental.ios.pairExpires", { seconds: pairSecondsLeft }) }}
-            </p>
-            <div class="row">
-              <button class="btn" type="button" @click="copyPairCode">
-                {{
-                  codeCopied
-                    ? t("settings.experimental.ios.pairCopied")
-                    : t("settings.experimental.ios.pairCopy")
-                }}
-              </button>
-              <button class="btn" type="button" @click="cancelPair">
-                {{ t("settings.experimental.ios.pairCancel") }}
-              </button>
-            </div>
-          </template>
-          <template v-else-if="livePairing.stage === 'pending'">
-            <p class="ios-pair-title">
-              {{
-                t("settings.experimental.ios.pairConfirmTitle", {
-                  name: livePairing.phoneName || "iPhone",
-                })
-              }}
-            </p>
-            <p class="card-desc">{{ t("settings.experimental.ios.pairConfirmDesc") }}</p>
-            <p class="ios-sas">{{ sasText }}</p>
-            <div class="row">
-              <button class="btn btn-primary" type="button" @click="decidePair(true)">
-                {{ t("settings.experimental.ios.pairAllow") }}
-              </button>
-              <button class="btn" type="button" @click="decidePair(false)">
-                {{ t("settings.experimental.ios.pairDeny") }}
-              </button>
-            </div>
-          </template>
-          <template v-else>
-            <p class="card-desc">{{ t("settings.experimental.ios.pairFinishing") }}</p>
-          </template>
-        </div>
-      </div>
-      <p
-        v-if="pairNotice"
-        class="result"
-        :class="pairNotice.kind === 'error' ? 'err' : 'ok'"
-      >
-        {{ pairNoticeText }}
-      </p>
+      <hr class="divider" />
+      <IosKeepAlive />
 
-      <p v-if="!activePhones.length && !pairing" class="card-desc">
-        {{ t("settings.experimental.ios.noDevices") }}
+      <hr class="divider" />
+      <IosPushTiming />
+
+      <!-- The app's "New task" needs the Agent-task switch on this Mac: it is right here, where the phone is set up. -->
+      <hr class="divider" />
+      <AgentTasksSwitchRow />
+
+      <hr class="divider" />
+      <details class="ios-conn" data-testid="ios-conn">
+        <summary class="ios-conn-summary">
+          {{ t("settings.channels.ios.connectionTitle")
+          }}<span class="ios-subdesc">{{ providerName }} · {{ ios.host }} · {{ ios.username }}</span>
+        </summary>
+        <div class="ios-conn-body"><IosConnectionForm show-export /></div>
+      </details>
+
+      <hr class="divider" />
+      <IosTrafficInfo />
+      <p v-if="provider === 'emqx'" class="ios-notice info" data-testid="ios-emqx-notice">
+        {{ t("settings.channels.ios.guide.emqx.notice") }}
       </p>
-      <ul v-else-if="activePhones.length" class="ios-devices">
-        <li v-for="phone in activePhones" :key="phone.phoneId" class="ios-device">
-          <span class="dot" :class="phone.online ? 'on' : 'off'"></span>
-          <div class="ios-device-main">
-            <template v-if="renameTarget === phone.phoneId">
-              <input
-                class="input"
-                v-model="renameText"
-                @keydown.enter.prevent="commitRename"
-                @keydown.esc.prevent="renameTarget = null"
-                @blur="commitRename"
-              />
-            </template>
-            <p v-else class="ios-device-name">{{ phoneName(phone) }}</p>
-            <p class="ios-device-meta">{{ lastSeenText(phone) }}</p>
-            <p v-if="pushWarning(phone)" class="ios-device-meta warn">{{ pushWarning(phone) }}</p>
-          </div>
-          <button class="btn" type="button" @click="beginRename(phone)">
-            {{ t("settings.experimental.ios.rename") }}
-          </button>
-          <button class="btn" type="button" @click="revokeTarget = phone">
-            {{ t("settings.experimental.ios.revoke") }}
-          </button>
-        </li>
-      </ul>
     </template>
   </div>
 
@@ -456,16 +314,16 @@ function pushWarning(phone: IosPhone): string {
       class="confirm-dialog"
       role="alertdialog"
       aria-modal="true"
-      :aria-label="t('settings.experimental.ios.revokeTitle', { name: phoneName(revokeTarget) })"
+      :aria-label="t('settings.channels.ios.revokeTitle', { name: revokeTarget.aliasName || revokeTarget.name })"
     >
-      <h2>{{ t("settings.experimental.ios.revokeTitle", { name: phoneName(revokeTarget) }) }}</h2>
-      <p class="confirm-note">{{ t("settings.experimental.ios.revokeDesc") }}</p>
+      <h2>{{ t("settings.channels.ios.revokeTitle", { name: revokeTarget.aliasName || revokeTarget.name }) }}</h2>
+      <p class="confirm-note">{{ t("settings.channels.ios.revokeDesc") }}</p>
       <div class="confirm-actions">
         <button class="btn" type="button" @click="revokeTarget = null">
-          {{ t("settings.experimental.ios.cancel") }}
+          {{ t("settings.channels.ios.cancel") }}
         </button>
         <button class="btn btn-primary" type="button" @click="confirmRevoke">
-          {{ t("settings.experimental.ios.revokeConfirm") }}
+          {{ t("settings.channels.ios.revokeConfirm") }}
         </button>
       </div>
     </section>

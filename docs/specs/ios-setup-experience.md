@@ -89,7 +89,7 @@
 | 步骤 | 完成条件 | 折叠行右侧的摘要 |
 |---|---|---|
 | 1 连接 Broker | 网关在运行且 `connected` | 「EMQX Cloud · 已连接」（服务商名由 `detectBroker(host)` 识别，认不出的写主机名） |
-| 2 安装 iPhone App | 已有已配对手机，**或**用户点过「我已装好，下一步」（只存在于界面里，不落盘；重新打开设置、仍没有手机时回到这一步） | 「TestFlight」 |
+| 2 安装 iPhone App | 已有已配对手机，**或**用户点过「我已装好，下一步」（只存在于界面里，不落盘；重新打开设置、仍没有手机时回到这一步） | 「已安装」 |
 | 3 配对手机 | 至少一台 `state = active` 的手机 | 「N 台手机」 |
 
 - **当前步** = 第一个未完成的步骤；用户可以点任何步骤的标题展开它（手风琴，同时只展开一步）：已完成的步骤展开后仍是可用的（步骤 1 是可编辑的连接表单，步骤 2 是二维码，步骤 3 是配对）。
@@ -439,7 +439,7 @@ D18 的原则落到字上：App 里的话，短，不写作者口吻，拿不准
 | EMQX ① | 打开 EMQX Cloud ↗，注册并新建 Serverless 部署，消费限额保持 0。 | Open EMQX Cloud ↗, sign up and create a Serverless deployment. Keep the spending limit at 0. |
 | EMQX ② | 把部署概览里的「连接地址」填到下面的「主机」。 | Enter the "connection address" from the deployment overview as Broker host below. |
 | EMQX ③ | 「访问控制 → 客户端认证」：添加用户名和密码（用户名只用字母和数字），填到下面。 | "Access Control → Authentication": add a username and password (letters and digits only) and enter them below. |
-| EMQX ④ | 「访问控制 → 客户端授权」：默认放行所有话题，必须按下面设置。<br>「全部用户」标签：话题 `#`，「发布 & 订阅」，选不允许。<br>「用户名」标签：话题 `ah/<用户名>/#`，「发布 & 订阅」，选允许。 | "Access Control → Authorization": everything is allowed by default, so set it up as follows.<br>"All users" tab: topic `#`, Publish & Subscribe, Deny.<br>"Username" tab: topic `ah/<username>/#`, Publish & Subscribe, Allow. |
+| EMQX ④ | 「访问控制 → 客户端授权」：默认放行所有话题，必须按下面设置。<br>「全部用户」标签：话题 `#`，「发布 & 订阅」，选不允许。<br>「用户名」标签：话题 `ah/<用户名>/#`，「发布 & 订阅」，选允许。 | "Access Control → Authorization": everything is allowed by default, so you must set it up as follows.<br>"All users" tab: topic `#`, Publish & Subscribe, Deny.<br>"Username" tab: topic `ah/<username>/#`, Publish & Subscribe, Allow. |
 | flespi 提示 | 需要注意：免费套餐面向测试与开发；服务器在欧洲，大陆访问可能有延迟；账号 60 天没有活动会被删除。 | Note: the free plan is meant for testing and development; the servers are in Europe, so access from mainland China may be slow; an account with no activity for 60 days is deleted. |
 | flespi ① | 打开 flespi ↗，注册并保持 Free 套餐。 | Open flespi ↗, sign up and keep the Free plan. |
 | flespi ② | 「Tokens」→ 新建 token：类型选 ACL，有效期（TTL）填最大值 8760 小时；ACL 只留一条：`mqtt` 模块，publish 和 subscribe，主题 `ah/#`。 | "Tokens" → create a token: type ACL, validity (TTL) at the maximum of 8760 hours; keep one ACL entry: the `mqtt` module, publish and subscribe, topic `ah/#`. |
@@ -449,6 +449,7 @@ D18 的原则落到字上：App 里的话，短，不写作者口吻，拿不准
 | 自建 ② | TLS 证书由公共 CA 签发（App 不接受自签），默认端口 8883；WSS 可选，路径 `/mqtt`，默认 8084。 | The TLS certificate must come from a public CA (the app does not accept self-signed ones), default port 8883; WSS is optional, path `/mqtt`, default 8084. |
 | 自建 ③ | 每个账号只能读写 `ah/<用户名>/#`（Mosquitto：`pattern readwrite ah/%u/#`）。 | Each account may only read and write `ah/<username>/#` (Mosquitto: `pattern readwrite ah/%u/#`). |
 | 自建的链接 | Mosquitto 参考配置 ↗ · 兼容套件 ↗ | Mosquitto reference config ↗ · Compatibility suite ↗ |
+| 导入入口 | 从另一台 Mac 导入…（点开后才出现「沿用另一台 Mac 的设置」输入框，沿用现有文案） | Import from another Mac… (the "Reuse another Mac's settings" field only appears once it is opened, existing text) |
 | 保活行 | 保持这台 Mac 随时可连：开启后，后台服务常驻并开机自启，手机上不会显示这台 Mac 离线。<br>被锁定时：已被「允许从手机 / IM 创建 Agent 任务」固定为常驻。 | Keep this Mac reachable: when on, the background service stays running and starts at login, so the phone never shows this Mac as offline.<br>When locked: kept running by "Allow creating Agent tasks from phone or IM". |
 
 ### 14.3 步骤 2、3 与已就绪
@@ -463,7 +464,7 @@ D18 的原则落到字上：App 里的话，短，不写作者口吻，拿不准
 | 测试问题 · 已发出 | 已发送，请在手机上回答… | Sent. Answer it on your phone… |
 | 测试问题 · 收到回答 | 已收到回答，一切正常。 · 再发一条 | Answer received. Everything works. · Send another |
 | 测试问题 · 超时 | 120 秒内没有收到回答。请确认手机在线并已允许通知。 | No answer within 120 seconds. Make sure the phone is online and notifications are allowed. |
-| 测试问题 · 取消 / 失败 | 测试已取消。 / 测试问题没能发出：… | Test cancelled. / The test question could not be sent: … |
+| 测试问题 · 取消 / 失败 | 测试已取消。 / 测试问题没能发出：…（没有原因时：测试问题没能发出。） | Test cancelled. / The test question could not be sent: … (without a reason: The test question could not be sent.) |
 | 推送时机说明（改写 `alertAfterHint`） | 问题一出现就会同步到手机 App。手机通知只在 Mac 键盘和鼠标空闲满这个时长后发送，每个问题最多通知一次；选「立即」则立刻通知。 | Questions reach the phone app as soon as they are asked. The phone is only notified after the Mac's keyboard and mouse have been idle for this long, at most once per question; "Immediately" notifies right away. |
 
 ### 14.4 提示词
