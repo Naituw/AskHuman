@@ -1,6 +1,6 @@
 # iOS App 渠道设置体验：开发与交付计划
 
-日期：2026-11-22。状态：**设计已通过（第 3 轮）**；P0（原型与规格）已完成并提交，P1 起开工；碰 Apple / Pages / 公共链接 / 发版的步骤逐项另问用户。需求与决策见 [`docs/specs/ios-setup-experience.md`](../specs/ios-setup-experience.md)（全部文案在其 §14，实现以它为准），原型与截图在 `src/prototype/settings-ios.html` 一组文件与 `docs/assets/ios-setup-experience/`。
+日期：2026-11-22。状态：**设计已通过（第 3 轮）**；P0（原型与规格）、P1（卡片）、P2（后端）、P3（文档与落地页）已完成并提交，P4 起；碰 Apple / Pages / 公共链接 / 发版的步骤逐项另问用户。需求与决策见 [`docs/specs/ios-setup-experience.md`](../specs/ios-setup-experience.md)（全部文案在其 §14，实现以它为准），原型与截图在 `src/prototype/settings-ios.html` 一组文件与 `docs/assets/ios-setup-experience/`。
 
 **工作位置：主工作区**（用户第 2 轮选定，沿用现有安装流程）。同一棵树里常有别的会话的未提交改动（现在有 `docs/PROGRESS.md`、`docs/specs/ios-traffic-reduction.md`、`docs/wiki/ios-setup*.md`、`src-tauri/src/app/attachment_owner.rs` 等），提交时只暂存自己的文件或自己的改动块（`git apply --cached` 一个只含自己改动块的补丁），不碰别人的。
 
@@ -15,7 +15,7 @@
 - 截图 18 张在 `docs/assets/ios-setup-experience/`（浅色、深色、窄窗口）。
 - 规格与本计划。第 3 轮用户已通过（规格 §12），分两个提交：① `docs(ios)`：原型、截图、规格、计划、`PROGRESS.md` 里自己那一块（`Release-Note: skip`）；② `fix(ios)`：第 2 轮顺手改掉的措辞——`src/i18n/zh.ts`、`en.ts` 里 EMQX 的 `limits`、`docs/wiki/ios-broker*.md`、`docs/specs/ios-open-access.md` 的 OA6（只有隐蔽开关后面看得到，带 `Release-Note: skip`）。
 
-## P1：卡片（前端；仍放在「实验」里）
+## P1：卡片（前端；仍放在「实验」里）（已完成）
 
 目标：把 `IosChannelCard.vue`（473 行）重做成规格 §3–§9 的样子，行为沿用现有的配置读写、测试连接与配对，不改后端。
 
@@ -37,17 +37,17 @@
 
 验证：`npx vitest run src/views/settings src/views/setup src/i18n`、`vue-tsc --noEmit`；把原型页的挂载换成真实的 `IosChannelCard` 在浏览器里用 mock 后端点一遍所有场景（浅 / 深、480 / 560），与规格截图逐张对照；`./scripts/install.sh` 前先 `node scripts/machine-health.mjs`。不改 IPC，不改配置字段，不需要 recovery 迁移。
 
-## P2：后端小改（探测、Agent 指南）
+## P2：后端小改（探测、Agent 指南）（已完成）
 
 1. **探测支持 iOS**（规格 §9.2）：
    - `onboarding/probe.rs`：`ProbeTarget::parse` 接受 `ios`（不改 `channels::ORDER`）；把「`parse_probe_id("setup-probe:ios:abc") == None`」与「`Check::parse("channel", Some("ios")).is_err()`」两个测试改成相反的断言，并补 `policy(Some(ProbeTarget::Channel("ios")))` = 不弹窗 / `Only("ios")` / 无钩子 / 不改当前渠道；
    - `onboarding/probe_run.rs`：`Check::parse` 放行 `ios`；
    - `daemon/runtime/mod.rs`（约 3414 行）：直接挂载 iOS 的条件扩成 `All` 或 `Only("ios")`；顺带把 iOS 的挂载计入 `im_attached`（只影响日志 / 埋点）；
    - `ios/gateway/requests.rs::flush_due_notifications`（约 634 行）：`immediate` 再加 `ask.setup_probe`；
-   - 测试：`daemon/request.rs` 里 `setup_probe` 对 `ios` 的断言；`ios/gateway/tests_requests.rs` 里「探测提问在 Mac 刚有输入（`idle < alert_after`）时也立即通知」；`daemon/runtime` 里按现有渠道探测测试的写法补一条 iOS 的（只挂 iOS、不弹窗、不触发 `ask-received` 钩子、不进回复历史）。
+   - 测试：`daemon/request.rs` 里 `setup_probe` 对 `ios` 的断言；`ios/gateway/tests_requests.rs` 里「探测提问在 Mac 刚有输入（`idle < alert_after`）时也立即通知」；`ImScope::reaches_ios` 的纯函数测试。`daemon/runtime` 里没有现成的渠道探测运行时测试可以仿，没有补 `handle_submit` 级的测试：「只挂 iOS、不弹窗、不触发钩子、不进回复历史」由 `daemon/request` 的探测循环与这几处纯函数一起守着，真机一轮再确认。
 2. **`channel ios --agent-guide`**（规格 §7.3–§7.4）：
    - 新增 `src-tauri/src/cli/ios_guide.rs`：`render(&GuideState, Lang) -> String` 是纯函数，`GuideState` 只含**已去敏**的状态（启用、主机、用户名、服务商、密码「已填 / 未知」、网关状态、手机数与在线数、生命周期与是否被锁定）；因为输入里根本没有凭据，输出不可能带出凭据；
-   - 取状态：新增一个**不拉起守护进程**的读取（仿 `probe_run::watch_agent_ask` 用的 `client::connect_stream`），连不上就写「守护进程未运行」；配置只用 `AppConfig::load_without_secrets()`，不读钥匙串；
+   - 取状态：新增一个**不拉起守护进程**的读取（实现为 `client::ios_op_if_running`，守护进程没在运行返回 `Ok(None)`），连不上就写「守护进程未运行」；配置只用 `AppConfig::load_without_secrets()`，不读钥匙串；
    - `ios_cmd::dispatch` 增加 `--agent-guide` 分支；`channel ios help` 与 `channel --help` 的 ios 一节各提一行；
    - 文本中英各一份，内容见规格 §7.3 的分节与 §7.4 的规则、命令分级；**所有给 Agent 的规则只写在这里**，卡片复制出去的提示词只有三行、不写规则（规格 D18）；EMQX 的额度与充值提示原样带上；
    - 测试：每个状态 × 两种语言一份快照（未启用 / 已启用未填全 / 已连接无手机 / 有手机 / 守护进程未运行 / 断开带错误）；断言输出里**有**硬性规则与 EMQX 提示、**没有**命令分级里「只能用户运行」的命令被写成「可以直接运行」、**没有**任何哨兵凭据；P1 的一致性测试把本文本纳入。
@@ -55,7 +55,7 @@
 
 验证：`node scripts/machine-health.mjs` 通过后跑 `cargo test` 里 `onboarding::`、`ios::`、`cli::`、`daemon::request`、`daemon::runtime` 相关项与 `cargo clippy -D warnings`；`./scripts/install.sh` 装机后，在隐蔽开关打开的机器上：卡片的「发一条测试问题」对真实手机（用户拿手机）跑一次，另用仓库的 iOS 网关测试夹具验证立即推送；`AskHuman channel ios --agent-guide` 在各状态下读一遍输出；**由我自己（不另起 Cursor 任务）按指南走一遍**，看指南是否足够、有没有诱导越界。IPC 与 `PROTOCOL_VERSION` 不变（规格 §9.2 的论证）。
 
-## P3：文档与落地页
+## P3：文档与落地页（已完成）
 
 1. **落地页**（规格 §5.2）：`scripts/build-ios-beta-site.mjs` 的根页改成中英双语的 TestFlight 落地页；`docs/public/ios/testflight.json`（`{"url": "…"}`）由 P4 拿到真实公共链接后才新增，构建脚本读取并校验（存在但不是 `https://testflight.apple.com/join/…` 就失败）；**文件不存在时不显示按钮，保持现在「目前仅限邀请」的文案**，所以 P3 的改动不改变 Pages 现状，Pages 也可以先为别的原因（新的隐私政策）重新发布。给脚本加 `node:test` 校验（缺失、域名不对、通过三种）。本地 `node scripts/build-ios-beta-site.mjs` 后在浏览器里看 `site-dist/index.html`（有链接与没有链接两种、浅 / 深、窄屏）并留截图。
 2. **朋友内测指南** `docs/public/ios/beta.md`、`beta-zh.md`：改成公共链接版（去掉「邀请人发来的邮件邀请与中继地址」「打开实验性功能」，配置步骤改指向卡片，保留自部署一节）。
