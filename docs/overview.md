@@ -370,7 +370,7 @@ Popup 的窗口、附件、来源标题与交互实现地图见 `docs/overview-p
 
 ## iOS 渠道
 
-Daemon 里的又一个渠道：手机上的 AskHuman App 回答问题、看 / 关注 / 观察 / 插话 Agent、创建 Agent 任务。专题实现地图见 `docs/overview-ios.md`，需求与计划见 `docs/specs/ios-channel.md`、`docs/plans/ios-channel.md`，用户说明见 `docs/wiki/ios-setup.md`。
+Daemon 里的又一个渠道：手机上的 AskHuman App 回答问题、看 / 关注 / 观察 / 插话 Agent、创建 Agent 任务。专题实现地图见 `docs/overview-ios.md`，需求与计划见 `docs/specs/ios-channel.md`、`docs/plans/ios-channel.md`，用户说明见 `docs/wiki/ios-setup.md`（配置）、`ios-usage.md`（手机上的功能）、`ios-self-hosting.md`（进阶）。
 
 - **形态**：Mac Gateway ↔ 自备 MQTT broker（TLS / WSS；对 broker 的要求与已实测的服务见 `docs/wiki/ios-broker.md`）↔ iOS App；推送经 `relay/` 的无状态云函数到 APNs。Mac 不持有任何 APNs 密钥，中继不存任何状态。
 - **不变量**：端到端加密（每配对一对方向密钥，broker 与中继只见密文）；一份 broker 凭据多台 Mac 共用；状态变更消息按 `msgId` 幂等；渠道对所有人可见（卡片在「通信渠道」页，`channel list` 与帮助都列出 `ios`，不看 `experimental.enabled`），设置体验见 `docs/specs/ios-setup-experience.md`；不替用户付费（用托管 broker 时保持免费套餐、用尽即停）。
@@ -486,7 +486,7 @@ Daemon 里的又一个渠道：手机上的 AskHuman App 回答问题、看 / �
 
 ## 离开模式、本会话不再使用与快捷回复
 
-> 需求 `docs/specs/special-replies.md`，计划与实施记录 `docs/plans/special-replies.md`，用户说明在 `docs/wiki/settings.md`（桌面端的快捷回复与离开模式）和 `docs/wiki/ios-setup.md`（手机端）。
+> 需求 `docs/specs/special-replies.md`，计划与实施记录 `docs/plans/special-replies.md`，用户说明在 `docs/wiki/settings.md`（桌面端的快捷回复与离开模式）和 `docs/wiki/ios-usage.md`（手机端）。
 
 - **两种状态，一个引擎**：离开模式（全局，或单个会话）让 Agent 的提问与 whats-next 被 Daemon 自动回复「我不在，按你自己的判断推进；实在无法继续再问」；「本会话不再使用」（静音）让该会话得到「用户选择不再使用 AskHuman」的回复。引擎在 `daemon/away.rs`（纯判定 `judge` + `AwayEngine`），状态持久化到 `~/.askhuman/state/away.json`（临时文件 + 原子替换）；会话键是 `sid:<Agent 会话 id>`，没有就 `mcp:<实例 id>`；`Directive{kind,scope,note}` 是用户在弹窗 / 手机里选的「发送并…」，在回答被接受之后才生效。
 - **拦截点**：`daemon/runtime/mod.rs::handle_submit`，在刷新 Agent 会话活动之后、去重挂靠与建请求**之前**，只拦截 `is_agent_ask`（Ask 类弹窗，非开发中继、非 Codex 原生问题）。Stop 确认、权限审批、出错卡与 Codex 原生问题既不被拦截，也没有快捷回复菜单（`AskRequest.quick_reply = false`）。自动回复是 `Accepted` + `Final`，历史 channel 为 `away` / `mute`，不进重放缓存。

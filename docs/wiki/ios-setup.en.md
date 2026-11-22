@@ -2,11 +2,59 @@
 
 [简体中文](./ios-setup.md) | English
 
-The AskHuman iOS app is a communication channel next to Feishu and Slack: your Agent asks on the Mac, you answer on your iPhone. You can also see what your Agents are doing, watch one live, send it a message and start new tasks. **Several Macs can pair with one phone** (home and office, say); all their questions land in one inbox.
+Your Agent asks on the Mac, you answer on your iPhone. Several Macs can pair with one phone, and all their questions land in one inbox. For what you can do once it is set up, see [Using the iOS app](./ios-usage.en.md).
 
-> You bring one thing yourself: an MQTT broker (the free tier of a hosted service or one you run yourself, see [Brokers: requirements, options and verification](./ios-broker.en.md)). Pushes go through the **public push relay** by default; it only forwards pushes and stores nothing (see below). Only if you build the app yourself (with a different bundle ID) or want to control the relay do you need your own Apple developer account, push key and a relay you deploy (sections 2 and 3). The steps below cover all of it.
+**What you need**:
 
-In AskHuman Settings → **Channels** → **iOS App**, the card walks you through three steps: connect a broker, install the iPhone app and pair a phone, and ends with a test question you can send. You can also click "Set up with an Agent" and send the text it copies to your Agent.
+- a Mac with AskHuman installed, and an iPhone running iOS 17 or later;
+- an MQTT broker you bring yourself: the free tier of a hosted service or one you run, see [Brokers: requirements, options and verification](./ios-broker.en.md);
+- no Apple developer account: pushes go through the public push relay by default.
+
+In AskHuman Settings → **Channels** → **iOS App**, click "Start setup". The card walks you through three steps: connect a broker, install the iPhone app and pair a phone. You can also click "Set up with an Agent" and send the text it copies to your Agent. The steps below are the same.
+
+## 1. Connect a broker
+
+1. Pick one path in the [broker guide](./ios-broker.en.md) (EMQX Cloud Serverless, flespi or self-hosted Mosquitto) and set it up. When you are done you have:
+   - the **host**, a TLS port (default `8883`) and a WSS port (default `8084`; it differs per service, flespi uses `443`);
+   - a **username and password**: use letters and digits only for the username; it is also the topic namespace `ah/<username>/`;
+   - **access control**: the account may only read and write `ah/<username>/#`. It is required when several people share one broker; the broker guide has the exact steps for each service.
+2. In step 1 of the card pick your broker service, fill in the above and click **Test connection**. It connects to the broker and sends itself a message (reporting whether TLS or WSS was used and the round-trip time), asks the push relay for its health, and checks whether this account can read or write topics outside its own. If it can, you get a warning (it never blocks saving or pairing); limit the account to `ah/<username>/#` in the broker's access rules.
+
+The same from the command line:
+
+```bash
+AskHuman channel set ios --enable --host <host> --username <username> \
+  --password-stdin                              # the password is read from stdin
+AskHuman channel test ios
+```
+
+"More settings" also holds the push relay (default "Use the public relay") and the name this Mac shows on the phone (empty uses the computer name). You rarely need to change either.
+
+## 2. Install the iPhone app
+
+Install [TestFlight](https://apps.apple.com/app/testflight/id899247664) on the iPhone, then open the [join page](https://naituw.github.io/AskHuman/) that the QR code or link in step 2 of the card points to: join the beta, install AskHuman and allow notifications on first launch.
+
+## 3. Pair the phone
+
+1. On the Mac: step 3 of the card, click **Pair a new phone** (command line: `AskHuman channel ios pair`). A QR code and a pairing code appear, **valid for 5 minutes and for one use**.
+2. On the phone: the **Macs** tab in AskHuman → **Add a Mac** → **Scan QR code** (or "Paste the pairing code" when scanning is awkward).
+3. The phone and the Mac each show a **6-digit check code**. Compare them and click **Allow** on the Mac. Pairing is done and the phone immediately receives the Mac's open requests.
+
+To undo it: click **Revoke** next to the phone in the Mac settings (`AskHuman channel ios revoke <name>`); on the phone use "Unpair this Mac" in the Mac's details, or "Forget all pairings" at the bottom of the Macs tab. After reinstalling the app the phone asks whether to keep the pairings left in the keychain.
+
+## 4. Send a test question
+
+When setup is complete the card shows "Ready". Click **Send test question** and answer it on the phone; this tests answering without making a model call, and a test question is pushed at once. To test the notification, close AskHuman on the phone and send it again.
+
+Other questions are pushed only after your Mac has been idle for 15 minutes by default; **Push timing** on the card changes it to 5 minutes or "Immediately". The phone's inbox never waits: a question shows up as soon as it is asked.
+
+## Several Macs
+
+A second Mac does not need the broker set up again. On the first one, open "Connection" on the card and click **Copy connection string** (it contains the broker password: pass it only between your own devices); on the second, pick a broker service in step 1, click "Import from another Mac…", paste it and click Import, then pair the phone with it as in step 3. On the command line: `AskHuman channel ios export` and `AskHuman channel ios import -`.
+
+## Keeping the Mac visible on the phone
+
+The iOS channel does not force the background service to stay up: it is running while your Agents work, and when it has stopped the phone shows that Mac as offline. To keep the Mac visible at all times turn on "Keep this Mac reachable" on the card (the same as setting the daemon lifecycle to keepalive in Settings → Advanced; turning on "Allow creating Agent tasks from phone or IM" keeps it on).
 
 ## How it works, and who can see what
 
@@ -15,122 +63,21 @@ Agent ─► AskHuman on the Mac ──MQTT (TLS)──► your broker ──►
                  └── push relay (cloud function) ──► APNs ──► iPhone notification
 ```
 
-- **End-to-end encrypted.** Every pairing creates a pair of keys only that Mac and that phone know. The broker and the push relay see ciphertext and metadata such as "who is online", never your questions or answers.
-- **The APNs key lives only in the relay's cloud function.** The Mac holds no Apple key; the relay is stateless and forwards the encrypted preview to Apple from a fixed allowlist. The public relay uses the author's key; a relay you deploy uses yours.
-- **What the public relay sees**: the device token and the app's bundle ID when the phone registers for pushes, the encrypted envelope and the handle when a push is sent, and the network address of each request (used only in memory to limit abuse, never written to a log; Tencent Cloud's own access logs are separate). It never sees your questions or answers and keeps nothing. To control it yourself, choose "Use my own relay" in the Mac settings.
-- **Push content is encrypted too.** The question summary on the lock screen is decrypted by the notification extension on the phone; if that fails you only see a generic line.
-- **One broker account for all your Macs.** Set up the first Mac, then paste its "connection string" into the others.
-
-## 1. Prepare the broker
-
-The broker is the relay station between the Mac and the phone, and you bring it. Start with **[Brokers: requirements, options and verification](./ios-broker.en.md)**: it lists what a broker must do and puts three tested paths side by side (EMQX Cloud Serverless, hosted in China; flespi, hosted in Europe; self-hosted Mosquitto, with a reference configuration in the repository), each with step-by-step setup, its free allowance and its drawbacks. Any MQTT broker that meets the requirements works.
-
-Whichever path you take, you end up with:
-
-1. A **host name**, a TLS port (default `8883`) and a WSS port (default `8084`; it differs per service, flespi uses `443`, for example).
-2. A **username and password**. Use **letters and digits only** for the username; it is also the topic namespace `ah/<username>/` of the line.
-3. **Access control**: the account may only read and write `ah/<username>/#`. It is required when several people share one broker; the broker page has the exact steps for each service.
-4. When it is set up, verify it with the repository's compatibility suite: run `npm ci` in `ios/Tools/broker-probe`, then `AH_PROBE_PASSWORD='…' node compat.cjs --host <host> --user <username> --ws-port <WSS port>`; it should end with `COMPATIBLE` (details in [Verify a broker yourself](./ios-broker.en.md#verify-a-broker-yourself)).
-
-> Sharing with a friend: give each person their own account that can only use its own `ah/<username>/#`; see [Sharing a broker with friends](./ios-broker.en.md#sharing-a-broker-with-friends).
-
-## 2. Prepare the Apple developer resources (only for your own build or your own relay)
-
-If you install the author's app from TestFlight and use the public relay, skip sections 2 and 3 and go to section 4.
-
-1. In Apple Developer → Identifiers register two App IDs: the app `com.naituw.humaninloop.ios` (enable **Push Notifications**) and the notification extension `com.naituw.humaninloop.ios.notification` (no capabilities). With your own team, change the team and the bundle IDs in `ios/project.yml` too, and make the relay's `APNS_TOPIC` equal the app's bundle ID.
-2. Keys → create a key with **Apple Push Notifications service (APNs)** enabled. Choose the team or topics and environment matching your app: Sandbox for development builds, Production for TestFlight / distribution. Existing team-scoped keys that support both environments remain valid. Each relay instance configures one key; use a matching relay/key for each environment when needed. Download the `.p8` file (**only once**) and note the **Key ID** and **Team ID**. Follow [Apple's current APNs authentication guide](https://developer.apple.com/documentation/UserNotifications/establishing-a-token-based-connection-to-apns) for the available key settings.
-
-## 3. Deploy the push relay (only if you run your own)
-
-1. Run `relay/scripts/build-zip.sh` in the repository to get `relay/dist/askhuman-relay.zip`.
-2. Tencent Cloud console → Cloud Function → create a **Web function**: runtime Node.js 20, region Hong Kong (no ICP filing needed, reaches APNs), 128 MB of memory, 15 s timeout, upload the zip.
-3. Set the environment variables on the function:
-
-   | Variable | Content |
-   |---|---|
-   | `APNS_KEY_P8` | the whole `.p8` file (paste it; line breaks may be written as a literal `\n`) |
-   | `APNS_KEY_ID` | the key's Key ID |
-   | `APNS_TEAM_ID` | your Team ID |
-   | `APNS_TOPIC` | `com.naituw.humaninloop.ios` (the app's bundle ID) |
-   | `RELAY_HANDLE_KEY` | 32 random bytes in base64 (for example `openssl rand -base64 32`) |
-   | `REVOKED_RIDS` | (optional) handle ids to revoke by hand, comma separated |
-
-4. Create the **function URL** (public access, authorization "open"). `<function URL>/v1/health` should answer `{"ok":true,"v":1,"apns":true}`.
-
-> Keep the `.p8` and `RELAY_HANDLE_KEY` in the function's environment variables only: not in the repository, a chat or a screenshot.
-
-## 4. Set it up on the Mac
-
-1. Open AskHuman Settings → **Channels** → **iOS App** and click "Start setup". The card has three steps: **Connect a broker**, **Install the iPhone app** and **Pair a phone**; a finished step folds into a one-line summary you can reopen any time.
-2. In step 1 pick a broker provider (EMQX Cloud, flespi or self-hosted), follow the setup steps on the card, then fill in:
-   - broker host, TLS port (default 8883), WSS port (default 8084), username, password, as your broker needs them (see the [broker page](./ios-broker.en.md));
-   - under "More settings", the push relay: "Use the public relay" by default; if you deployed your own, choose "Use my own relay" and enter its function URL;
-   - under "More settings", the name this Mac shows on the phone (empty uses the computer name).
-3. Click **Test connection**: it connects to the broker and sends itself a message, reporting whether `tls` or `wss` was used and the round-trip time; then it asks the relay for its health and reports how fast it answered and whether it has an APNs key. Last it checks whether this broker account can read or write topics outside its own: if it can, you get a warning (it never blocks saving or pairing); limit the account to `ah/<username>/#` in the broker's access rules.
-4. The same from the command line:
-
-   ```bash
-   AskHuman channel set ios --enable --host <host> --username <username> \
-     --password-stdin                                   # the password is read from stdin; with your own relay add --relay-url <function URL>
-   AskHuman channel test ios
-   ```
-
-5. **A second Mac**: on the first one, once setup is complete, open "Connection" on the card and click **Copy connection string** (it contains the broker password: pass it only between your own devices); on the second, pick a provider in step 1, click "Import from another Mac…", paste it and click Import. On the command line: `AskHuman channel ios export` and `AskHuman channel ios import -`.
-
-> The iOS channel does not force the daemon to stay up: it is running while your Agents work, and when it has stopped the phone shows that Mac as offline. To keep the Mac reachable at all times turn on "Keep this Mac reachable" on the card (the same as setting the daemon lifecycle to keepalive in Settings → Advanced; turning on "Allow creating Agent tasks from phone or IM" keeps it on).
-
-## 5. Install the app and pair
-
-1. Open `ios/AskHuman.xcodeproj` in Xcode (run `cd ios && xcodegen generate` first), pick your device and Run; or install through TestFlight: the QR code and link in step 2 of the card point to [the join page](https://naituw.github.io/AskHuman/), and iOS 17 or later is required. Allow notifications on first launch.
-2. On the Mac: Settings → Channels → iOS App, step 3 → **Pair a new phone** (command line: `AskHuman channel ios pair`). A QR code and a pairing code appear, **valid for 5 minutes and for one use**.
-3. On the phone: the **Macs** tab → **Add a Mac** → **Scan QR code** (or "Paste the pairing code" when scanning is awkward).
-4. The phone and the Mac each show a **6-digit check code**. Compare them and click **Allow** on the Mac. Pairing is done and the phone immediately receives the Mac's open requests.
-5. To undo it: click **Revoke** next to the phone in the Mac settings (`AskHuman channel ios revoke <name>`); on the phone use "Unpair this Mac" in the Mac's details, or "Forget all pairings" at the bottom of the Macs tab. After reinstalling the app the phone asks whether to keep the pairings left in the keychain.
-
-## 6. Everyday use
-
-- **Inbox**: questions from all your Macs, grouped by project and filterable by Mac. Open one to pick one or several options, add a note, attach images and files; a multi-question request is one vertical page whose bottom button reads "Next" until you have seen the last question and only then turns into "Send" (as in the Mac popup, so nothing goes out half-read), recommended options carry a star (nothing is preselected). After an answer goes out the app slides to the next request and tells you how many are left. Actions that need your decision (permissions, Stop) have a dedicated confirmation page.
-- **Switch between requests**: use the arrows at the top right to open the previous or next request; More stays at the far right. Drafts, attachments and reading positions are kept, and switching dismisses the keyboard. The queue keeps the list filter and appends new requests during this visit. Uploads and replies can finish in the background without taking you away from another request. Automatic advance after sending still uses the entire inbox.
-- **When notifications arrive**: every question shows up in the phone's inbox, with nothing to "activate" or "take over"; open the app any time to see and answer it. The system notification only follows once you have been away from the Mac for a while: when the Mac's keyboard and mouse have been idle for the configured time (15 minutes by default) and you have not looked at the question on the phone, you get one notification and no reminders; while you are still working on the Mac nothing is pushed. To be told sooner, change **Push timing** on the iOS App card in the Mac settings → Channels to 5 minutes or even "Immediately" (push as soon as a question is asked); the "The Mac has been idle for …" line there shows whether the detection works.
-- **Answering across channels**: when the same question shows up in the Mac popup, Feishu and the phone, the first answer wins and the others are told it was handled.
-- **Agents tab**: shows every Mac session and its last result. A failed or incomplete result is marked in red or orange with its reason; to act on it, use the failure card in the inbox. Interrupted turns are silent. Tasks created from the phone and new rounds actually started by a phone message or by Request continuation on a failure card receive one completion, failure or incomplete-result notification (up to 5 per Mac). Notifications still wait for Mac idle time and are dropped when you return to the Mac first. A small read-only bell marks the rounds that will notify you. Other Mac turns are not automatically subscribed. Live watching is foreground-only, with up to two streams.
-- **Continue an existing session**: send an idle Codex Desktop, Cursor Desktop or live Pi session a message from its detail page; your unsent draft is preserved. To continue after a failure, choose Request continuation on the failure card in the inbox. Pi needs an updated extension; unsupported sessions explain why. Existing working-session messages can still be queued and edited or withdrawn before consumption; accepted native messages cannot be withdrawn. If delivery is unknown, check the original chat before making a fresh submission. Both the App and Mac need this update.
-- **New task**: the "New task" button on the Agents tab: pick the Mac, project, Agent kind, the permission (ask before acting / run automatically; you must choose one) and optionally a TODO, confirm with Face ID and the Mac launches it (Codex can use the desktop App or CLI, Cursor the CLI or the Agents window (experimental), other Agents use a terminal; having only the desktop app and no command-line tool is enough). It needs "Allow creating Agent tasks from phone or IM" turned on on that Mac, with its prerequisites; while it is off the phone says "Agent tasks are turned off in AskHuman Settings on this Mac." There are three places to turn it on: the "Allow creating Agent tasks from phone or IM" switch on the iOS App card once setup is complete and on every enabled IM channel card (both in Settings → Channels), Settings → Advanced, and the `AskHuman setup` wizard. The wizard asks "Allow Agent tasks to be created from your phone or IM?" on a screen of its own, with a picture of the channels you have set up and the Agents you have connected; the ones not set up yet are greyed out and work as soon as they are. It does not check whether this Mac can start a task right now and does not need a remote channel to be set up first, and the terminal version asks the same question.
-- **Task attachments**: add camera photos, library photos or videos, and files. You can add up to 5 files from the phone, each up to 10 MB. Enter instructions or select a TODO; its existing attachments are included too. Upload failures keep the draft and do not start the task. Older Macs need an AskHuman update.
-- **New requests while using the app**: a blue question bubble bounces twice and flies into Inbox when a question, permission request or Stop confirmation arrives. With the tab bar hidden, it lands in a brief hint at the top. Each request plays independently; the animation passes through touches, keeps your page and keyboard in place, and opens nothing. Visit Inbox to answer. With Reduce Motion enabled, only the static hint is shown.
-- **Codex Fast**: choose a supported model in a new task to enable Fast for either the desktop App or CLI. It starts off for each new task; off explicitly means Standard speed. Fast uses more of your allowance, and the speed choice is never remembered. AskHuman and Codex on the Mac must support this feature.
-- **Todos tab**: manage the todos on your Macs from the phone: browse projects, add, edit (tap), finish (swipe right), delete (swipe left, then tap Delete), reorder ("Edit" at the top right), switch ⚡ auto-run, and look through the history and restore from it. The menu in the title picks whose todos you see: one Mac (only the projects that have a folder on it), or **iCloud** (when you use iCloud todo sync: every synced project of your Apple ID, including ones that have no folder on the Mac in front of you; a Mac that has sync on and is online answers for it, and another one takes over when it drops). The todos live on the Macs and the phone keeps no copy of them, so the Mac you are looking at has to be online (when it is not, the page says so and the input bar is disabled; nothing is queued). The phone cannot create projects (a project is a folder on a Mac: open it under "Recent projects" / "Without todos" to give it its first todo). A change on the Mac shows up on the phone within a few seconds; a change from the phone is written to the Mac it went through and, when iCloud todo sync is on, travels from there to your other Macs (iCloud's own delay applies, usually tens of seconds). A Mac whose AskHuman is too old to know about todos shows "Needs an update" in the menu: update AskHuman on that Mac.
-- **Tidying todos on a request page**: wherever a request page lists todos (the "Todos" card of a question, the todo rows of What's next and of a Stop confirmation) you can finish, delete and add right there: swipe a row right for a green "Complete" (all the way across and letting go completes it, with a light tap), swipe left for a red "Delete" (tap it to delete), or press and hold for "Complete / Copy / Delete". After completing, "Completed “…” · Undo" floats at the bottom for a few seconds; Undo puts the todo back where it was. "+ Add todo" at the end of the list turns into an input in place, ↑ on the keyboard adds, you can add several in a row, and a todo you just added is never picked for you; when the project has no todos yet, the card is just one "+ Add todo" line. Confirmation pages and select-only questions have no such list: use the Todos tab. Changes are written to the Mac the request came from; when it is offline or too old, the actions on the rows are dimmed with the reason and nothing is queued.
-- **Picking todos while answering**: below the last question there is a collapsed "Todos" card (only when the request has a project that has todos, and the question is not select-only). Open it and tick todos like options; on send, the ticked ones are folded into the last answer ("Also look at this todo: ...") and leave the queue, and a todo alone is enough to send. A todo that is completed or deleted is dropped from the ticked ones, and a Stop confirmation lists todos the same way. What's next shows the **full queue**: the first 5 by default, "Show all N todos" expands the rest, so it is no longer cut at 10. The Mac must be on the new version too; an older Mac has no card and What's next keeps its old options.
-- **A session's history**: when the request comes from a real Agent session and the Mac runs a new enough AskHuman, pull down at the top of the request page, or use "⋯" → "Session history": the earlier exchanges of that session appear above the request (8 at a time, the newest next to the request; scroll to the top and pull again for an older page, and the end says "No earlier records"). While you pull, a history icon and "Pull down to see this session's history" show at the top; past a certain distance it reads "Release to see this session's history" with a light tap, and only letting go then loads it. The page then holds a row "Loading history…" (a highlight sweeps over the words) at the top, and when the history arrives it replaces that row while the request stays where it is on screen. A card opens in place with a tap and closes with another; far above the request a "Back to current request" button appears at the bottom. What you read is the Mac's reply history (the same one the Mac's history window shows: only the number of entries set in the settings is kept, 200 by default, so older ones are gone; with the limit set to 0 no new records are added); the phone does not keep it, and it is fetched again when you come back to the request. Loading the history on a request that has already ended counts as tapping "Stay": the countdown no longer takes you away. When the Mac is offline or does not answer, the row says "Can't reach the Mac" with "Try again". An older Mac, or a request that names no session (an MCP call that cannot tell its session id), has no such entry and the page is as it was.
-- **Requests of an offline Mac**: while a Mac cannot be reached, "Send" on a request page is dimmed (nothing is queued; your draft is kept) and there is nothing to cancel with, because the Agent cannot be told. Tap "**Remove for now ›**" after the line "The Mac is offline" at the bottom of the page, or "Remove for now" in the "⋯" menu, or swipe the row left in the inbox: the request is only taken off this phone's lists. **Neither the Mac nor the Agent is told, and the Agent keeps waiting**; your draft is kept. When the Mac is back and the request is still waiting for you, it returns to the list by itself with an unread dot; one that has ended does not come back. States that recover by themselves (connecting, retrying, updating) do not offer it; while the Mac is online, cancelling is still "⋯" → "Cancel request".
-- **Away mode**: the moon button at the top right of the Agents tab (tap it again to end) opens a half-height sheet where you pick the Macs it applies to and add a note. While it is on, every tab has a teal "Away mode on" strip above the tab bar (the colour of iOS's Sleep Focus), and its "End" button turns it off in one tap. The Mac then answers Agent questions and What's next itself ("I'm away, carry on with your best judgement") instead of bothering you; an Agent whose original objective is complete or whose remaining work cannot proceed independently can reach you with `--escalate "reason"` (MCP: `escalate: "reason"`), with its reason shown before the report. A fourth consecutive request without a valid reason retains a clearly labeled system fallback, and the question page then opens with a note that can end away mode right there. The "AskHuman in this session" row on an Agent's detail page sets just that session to "Away" or "Stop using".
-- **Quick replies**: the button to the left of "Send" in the answer bar opens a menu. The lower part is the presets (edited in Settings → General → Quick replies on the Mac; read-only on the phone): one tap sends it, replying with that sentence to every question you have not answered yet. The upper part has the two directives "Away mode" and "Stop using AskHuman": picking one parks it above the bar and it only takes effect when you send this answer. What's next and select-only questions have no presets.
-- **Annotating the message**: when something in the Agent's message raises a question, select the passage in the message and tap "Add annotation" in the system menu, then write your note; the passage is highlighted, and tapping it edits or deletes the note. When you send the answer, the notes go to the Agent together with the passage each one is about, so a note alone (no option picked, no text typed) is enough to send. Once notes exist, the answer bar gets a purple round "Annotations" button with a count; it opens a list where you can edit, delete or jump to the passage (at most 20 per answer). It needs a current Mac and a message rendered as Markdown; confirmation pages and select-only questions do not have it. When the Agent sent just one question and no separate message, that question is shown in the message area so it can be annotated too. Notes stay in the phone's draft until the answer is sent.
-- **History**: answered requests and attachments are kept on the phone.
-
-## Traffic and cost
-
-- Whether your broker has a free allowance, how large it is and what happens when it runs out depends on the service you chose; each service's allowance, where to see its usage and its drawbacks are on the [broker page](./ios-broker.en.md). A phone in the background causes no sync traffic. With the Mac and the phone both on a version that compresses the lists and sends Agent changes by attention, the sync itself (coming to the foreground, the lists and states while there, requests, to-dos) measured about 0.4 GB a month under heavy use (seven or eight Agents in parallel, the app opened about 70 times a day; counted on this device, where a message counts twice, published and delivered). **Attachments are the big part**: the phone downloads a picture from the Mac only when you open it in the viewer, and one screenshot of about 2 MB opened once counts about 7 MB by that count, so a month's total depends mostly on how many large pictures you open (the traffic figure below is the real one).
-- The Mac settings and the phone's Macs tab both show this month's traffic (counted locally; a message counts twice, published and delivered). **When this month's traffic gets close to each GB (from 0.8 GB by default) the Inbox says so once**: close the note at the top with its ✕ and it comes back only when the use gets close to the next GB. The "Data use reminders" option on the phone's Macs tab changes it to every 2 / 5 / 10 GB, or turns it off. The note only counts; it reads nothing from your broker and does not judge whether an allowance is used up, so a top-up or a plan change needs no action, and it starts over each month (UTC). For the real usage on the broker's side, look in its console. When the broker refuses connections because an allowance is gone, the app says so: "the broker refused the connection, this month's free allowance may be used up".
-- Using the public relay costs you nothing. If you deploy your own, the cloud function sees very few calls (roughly 1,000 to 20,000 a month); check your account's billing rules in the cost center before deploying so there is no surprise fixed fee.
+- **End-to-end encrypted.** Every pairing creates a pair of keys only that Mac and that phone know. The broker and the push relay see ciphertext and metadata such as "who is online", never your questions or answers. The question summary on the lock screen is encrypted too: the notification extension on the phone decrypts it, and if that fails you only see a generic line.
+- **The public push relay only forwards pushes and stores nothing.** It sees the device token and the app's bundle ID when the phone registers for pushes, the encrypted envelope and the handle when a push is sent, and the network address of each request (used only in memory to limit abuse, never written to a log; Tencent Cloud's own access logs are separate). The Apple push key lives only in the relay's cloud function; the Mac holds no Apple key. See the [privacy policy](https://naituw.github.io/AskHuman/privacy/).
 
 ## Troubleshooting
 
 | Symptom | What to do |
 |---|---|
-| Settings say "Broker not connected" | Click "Test connection" for the reason; when the office network blocks 8883 it falls back to WSS 8084 by itself; an authentication failure is usually a wrong password or ACL |
-| No pushes, but requests arrive while the app is open | Check the system notification permission; look for "push is no longer valid" under the phone in the Mac settings; make sure `<relay address>/v1/health` says `apns:true` (for the public relay: `https://askhuman-relay.maipo.me/v1/health`) |
-| A question was asked long ago and the phone never notified you | The notification waits until the Mac's keyboard and mouse have been idle for the "Push timing" setting (15 minutes by default) and is never sent while you are using the Mac; check that "The Mac has been idle for …" in the Mac settings keeps growing (stuck at 0 means some program keeps generating input), or set the push timing to "Immediately". Opening the app always shows every open question |
+| Settings say "Broker not connected" | Click "Test connection" for the reason. When the office network blocks 8883 it falls back to WSS 8084 by itself; an authentication failure is usually a wrong password or access control |
+| Questions arrive while the app is open, but no pushes | Check the system notification permission; look for "push is no longer valid" under the phone in the Mac settings; open `https://askhuman-relay.maipo.me/v1/health`, which should return `"apns":true` |
+| A question was asked long ago and the phone never notified you | The notification waits until the Mac's keyboard and mouse have been idle for the "Push timing" setting (15 minutes by default) and is never sent while you are using the Mac. Check that "The Mac has been idle for …" on the card keeps growing (stuck at 0 means some program keeps generating input), or set the push timing to "Immediately". Opening the app always shows every open question |
 | Pushes arrive with a generic text only | The notification extension could not decrypt: make sure both sides share the same pairing; after reinstalling the app pair again or keep the old pairings |
 | "This phone's clock differs too much from a Mac's" | Messages have a ±15 minute replay window; fix Date & Time on the phone |
+| That Mac shows offline on the phone | Its background service is not running (it exits when idle without Agent activity). Have an Agent ask once, or turn on "Keep this Mac reachable" on the card |
 | You want a Mac gone from the phone | Unpair it in the phone's Mac details and revoke the phone on the Mac |
-| That Mac shows offline on the phone | Its daemon is not running (it exits when idle without Agent activity): have an Agent ask once, or turn on "Keep this Mac reachable" on the card |
-| Traffic warning | Use less live watching and fewer attachments, or check the usage in your broker's console (where to look is on the [broker page](./ios-broker.en.md)); the local count only covers this device's messages |
 
-## Limits
+## Advanced
 
-- Live watching only works while the app is in the foreground and stops in the background.
-- Codex Desktop chats accept additions while running and new messages while idle, including images and files, with the chat's existing settings. Desktop must stay connected on the Mac. Success means the App accepted the message, not that the model read it; it cannot be withdrawn. If delivery is uncertain, inspect the original chat before choosing **I checked the original chat**; this prompt and recovery action require an updated phone app. Codex has no "failed" state, so there is no "failed" push for it.
-- Withdrawing a message gives back the text only, not the attachments you had picked.
+Building the app yourself (with your own Apple developer account and bundle ID) and running your own push relay: see [Advanced: your own build and push relay](./ios-self-hosting.en.md).

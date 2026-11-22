@@ -977,7 +977,7 @@ Swift 569 通过（43 条按设计跳过）、两条 Max 的 iOS UI 测试英文
   实施记录、验证结果与已知局限见计划「P3 实施记录」。**2026-10-30 用户已通过 TestFlight 安装 `0.1.0 (2)`，确认原有 Mac 连接正常**；真实 Agent 矩阵仍待验证。
 
 下一步：
-- [ ] P4：文档回写（`docs/specs/ios-channel.md` §6.8 与「不能选模型」的局限、`docs/overview-ios.md` 的线消息 / 模块 / 启动参数 `-AHNoModels` `-AHFailTask`、`docs/wiki/ios-setup.md` 与 `.en.md`、
+- [ ] P4：文档回写（`docs/specs/ios-channel.md` §6.8 与「不能选模型」的局限、`docs/overview-ios.md` 的线消息 / 模块 / 启动参数 `-AHNoModels` `-AHFailTask`、`docs/wiki/ios-usage.md` 与 `.en.md`（「新任务」一条）、
   `docs/overview.md` 的 `agents/` 清单行）；Mac 与手机均已装机，后续分发复用项目 skill `.agents/skills/ios-testflight/SKILL.md`。
 - [ ] （实现完做，**每次执行前**经用户批准，会产生模型费用；永远不含 Cursor）真机一轮：见计划 P4。同时验证两件我在本机看不到的事：已登录账号下 `grok models` 的输出
   是否带逐模型档位（带了才补 Grok 的强度行与 M10）、带真实凭据的 `codex app-server` 的 `model/list`。
@@ -1314,7 +1314,7 @@ v0.17.3 第一次发布时，两个 macOS 构建都死在「Sign macOS binary (D
 - [ ] 真机核验（手机更新到 Build 29、Mac 已升级）：预览在真机、最低 iOS 17 上的解码与观感（固定质量 76，不满意改 `ios/preview.rs` 里的常量）；
   打开一张图是预览、有「原图」按钮；分享拿到原文件；同一份内容再来不再下载；新旧版本互配照旧。
 - [ ] 真机用几天后读 `AskHuman channel ios status --json` 的 `trafficBreakdown.assets`（预览 / 原图 / 重复各多少）与 EMQX 用量，换算整月，
-  把规格 §10.2 的推算换成实测；再改 `docs/wiki/ios-setup*.md` 里的月用量说法。完成后本节换成「待核验」或删除。
+  把规格 §10.2 的推算换成实测；再改 `docs/wiki/ios-usage*.md`「流量与费用」里的月用量说法。完成后本节换成「待核验」或删除。
 - [ ] 待 Owner 决定（只是建议，还没有接受）：给 `sha2` 及其依赖（`digest`、`block-buffer`、`crypto-common`、`generic-array`、`cpufeatures`）也设 opt-level 3。
   装机版（`local-install`，opt 0）里，建请求时给附件算 SHA-256 很慢：20 个 10 MiB 的文件 4.9 s，设了之后 0.38 s；典型的几张截图是几十到一百多毫秒。
   这超出 AT20 写明的范围（「其它依赖的配置不动」），所以没做。

@@ -53,7 +53,7 @@ Compatibility suite (Cloud Serverless, Hangzhou, 2026-11-21): all required check
 4. **Authorization (ACL)** ("Access Control → Authorization"). This page defaults to **blacklist mode: anything not explicitly denied is allowed**, so rule 1 below is **required**, or any account can read and write other people's topics:
    1. On the "All users" tab add: topic `#`, action "Publish & Subscribe", **Deny** (the catch-all).
    2. On the "Username" tab add: the user name from the previous step, topic `ah/<username>/#`, action "Publish & Subscribe", **Allow**. EMQX checks the account's own rules first and the "All users" rules after, so only its own topics get through.
-5. Enter host, ports, user name and password in AskHuman (see [iOS app channel setup](./ios-setup.en.md#4-turn-it-on-on-the-mac)), then [run the compatibility suite](#verify-a-broker-yourself) to confirm the isolation works.
+5. Enter host, ports, user name and password in AskHuman (see [iOS app channel setup](./ios-setup.en.md#1-connect-a-broker)), then [run the compatibility suite](#verify-a-broker-yourself) to confirm the isolation works.
 
 ### Free allowance and usage
 

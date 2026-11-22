@@ -6,7 +6,7 @@ lang: en
 
 [简体中文](../beta-zh/) · [Privacy policy](../privacy/)
 
-Answer questions from agents on your own Mac using your iPhone. Follow these five steps; the optional self-hosted route is at the end.
+Answer questions from agents on your own Mac using your iPhone. Follow these five steps.
 
 **Before you start:** have your Mac and an iPhone running iOS 17 or later.
 
@@ -46,15 +46,6 @@ When setup is complete, the card shows **Ready**. Click **Send test question** a
 
 To test the notification, send it again while AskHuman is closed on the phone. A test question is pushed at once; other questions are pushed after your Mac has been idle for 15 minutes by default (**Push timing** on the card). Inbox delivery never waits.
 
-If something fails, send the maintainer a screenshot and both app versions. Hide passwords, connection strings and pairing codes.
+If something fails, check the [troubleshooting list](https://github.com/Naituw/AskHuman/blob/main/docs/wiki/ios-setup.en.md#troubleshooting). To report a problem, use Beta Feedback in TestFlight or [open an issue](https://github.com/Naituw/AskHuman/issues), and include both app versions; hide passwords, connection strings and pairing codes.
 
-## Optional: host your own push relay
-
-Choose this route if you have **an Apple Developer account and Xcode** and want to use your own service:
-
-1. Build and install the iOS app with your own team and bundle IDs, and create a matching APNs key.
-2. Deploy the repository's `relay/` to your Tencent Cloud function, configure that key and check `/v1/health`.
-3. On the card, open **More settings**, choose **Use my own relay**, enter your relay URL, test the connection and pair again with your own signed app.
-
-See the **[complete self-hosting guide](https://github.com/Naituw/AskHuman/blob/main/docs/wiki/ios-setup.en.md)** for commands and settings.
-This route uses your own signed iOS app. The TestFlight route above uses the maintainer's app and the public relay.
+Want to build the app yourself or run your own push relay? See the [advanced guide](https://github.com/Naituw/AskHuman/blob/main/docs/wiki/ios-self-hosting.en.md).

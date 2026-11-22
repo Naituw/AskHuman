@@ -38,4 +38,4 @@ Stop using our relay by choosing "Use my own relay" in your Mac's iOS channel se
 
 ## Contact and changes
 
-Contact the AskHuman project maintainer through the feedback email displayed in your TestFlight invitation, or [the project's issue tracker](https://github.com/Naituw/AskHuman/issues). Public issues are visible to others. We will update this page when the app's data practices change and show the effective date above.
+Contact the AskHuman project maintainer by email through Beta Feedback in TestFlight, or through [the project's issue tracker](https://github.com/Naituw/AskHuman/issues). Public issues are visible to others. We will update this page when the app's data practices change and show the effective date above.

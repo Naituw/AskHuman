@@ -38,4 +38,4 @@ AskHuman Mobile 没有广告或额外集成的第三方分析 SDK。我们不出
 
 ## 联系方式与变更
 
-可通过 TestFlight 邀请中显示的反馈邮箱，或[项目的问题反馈页面](https://github.com/Naituw/AskHuman/issues)联系 AskHuman 项目维护者。公开问题会被其他人看到。数据处理方式变化时，我们会更新本页，并在页首注明生效日期。
+可通过 TestFlight 的 Beta 版反馈（邮件），或[项目的问题反馈页面](https://github.com/Naituw/AskHuman/issues)联系 AskHuman 项目维护者。公开问题会被其他人看到。数据处理方式变化时，我们会更新本页，并在页首注明生效日期。
