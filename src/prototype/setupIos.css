@@ -1,0 +1,148 @@
+/* Prototype-only styles for the iOS App tile of the setup wizard (docs/specs/setup-ios-guidance.md §3).
+   Everything else comes from the wizard's own stylesheets. */
+
+html,
+body {
+  margin: 0;
+  background: #e9e9ec;
+}
+html.theme-dark,
+html.theme-dark body {
+  background: #0c0c0d;
+}
+
+/* The wizard window is 640 x 720 (min 560 x 600); the page shows its content area on its own. */
+#app {
+  width: 640px;
+  height: 720px;
+  background: var(--bg);
+  margin: 24px auto;
+  border-radius: 10px;
+  overflow: hidden;
+  box-shadow: 0 8px 30px rgba(0, 0, 0, 0.18);
+}
+/* The window fills its frame, not the browser viewport (the real window is the viewport). */
+#app > .settings {
+  height: 100%;
+}
+body.si-gallery #app {
+  height: auto;
+  box-shadow: none;
+  border-radius: 0;
+  margin: 0 auto;
+}
+.iost-gallery {
+  height: auto;
+}
+.iost-case + .iost-case {
+  margin-top: 18px;
+}
+.iost-case-caption {
+  margin: 0 0 6px 2px;
+  font-size: 11.5px;
+  font-weight: 600;
+  color: var(--text-secondary);
+}
+
+/* The tile is a whole row: three steps need the width, and the page's four IM tiles stay as they are.
+   Name and buttons sit on one line and wrap, not shrink, when a language or a state makes them long. */
+.iost {
+  grid-column: 1 / -1;
+  gap: 12px;
+}
+.iost-head {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+}
+.iost-badge {
+  flex: 0 0 auto;
+}
+.iost-main {
+  flex: 1 1 0;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+.iost-line {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px 10px;
+}
+.iost-name {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 30px;
+  white-space: nowrap;
+}
+.iost-actions {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  margin-left: auto;
+}
+.iost-steps {
+  list-style: none;
+  margin: 0;
+  padding: 10px 0 0;
+  border-top: var(--hairline) solid var(--border);
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: var(--space-3);
+}
+.iost-step {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  min-width: 0;
+}
+.iost-num {
+  flex: 0 0 auto;
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  display: grid;
+  place-items: center;
+  font-size: 11.5px;
+  font-weight: 600;
+  background: var(--bg-elevated);
+  color: var(--text-secondary);
+}
+.iost-num svg {
+  width: 11px;
+  height: 11px;
+}
+.iost-step.current .iost-num {
+  background: var(--accent);
+  color: #fff;
+}
+.iost-step.done .iost-num {
+  background: var(--accent-green);
+  color: #fff;
+}
+.iost-text {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+.iost-title {
+  font-size: 12.5px;
+  font-weight: 600;
+  line-height: 1.3;
+}
+.iost-step.upcoming .iost-title {
+  color: var(--text-secondary);
+  font-weight: 500;
+}
+.iost-cap {
+  font-size: 11.5px;
+  line-height: 1.4;
+  color: var(--text-secondary);
+}
+.iost .ios-agent {
+  margin-top: 0;
+}
