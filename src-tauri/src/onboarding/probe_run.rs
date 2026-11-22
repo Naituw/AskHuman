@@ -263,6 +263,11 @@ mod tests {
             Check::parse("channel", Some("telegram")),
             Ok(Check::Channel("telegram"))
         );
+        // The iOS card's test question is a channel check for `ios`.
+        assert_eq!(
+            Check::parse("channel", Some("ios")),
+            Ok(Check::Channel("ios"))
+        );
         // The channel id is only read for a channel check.
         assert_eq!(Check::parse("popup", Some("slack")), Ok(Check::Popup));
     }
@@ -274,8 +279,8 @@ mod tests {
         assert!(Check::parse("channel", None)
             .unwrap_err()
             .contains("channel"));
-        assert!(Check::parse("channel", Some("ios")).is_err());
         assert!(Check::parse("channel", Some("popup")).is_err());
+        assert!(Check::parse("channel", Some("IOS")).is_err());
         assert!(Check::parse("channel", Some("Slack")).is_err());
     }
 

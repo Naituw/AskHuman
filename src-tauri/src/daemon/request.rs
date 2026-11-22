@@ -1634,7 +1634,11 @@ mod tests {
     fn a_setup_test_question_is_an_ordinary_card_that_leaves_no_trace() {
         use crate::onboarding::probe::ProbeTarget;
         let registry = RequestRegistry::new();
-        for target in [ProbeTarget::Popup, ProbeTarget::Channel("slack")] {
+        for target in [
+            ProbeTarget::Popup,
+            ProbeTarget::Channel("slack"),
+            ProbeTarget::Channel("ios"),
+        ] {
             let (entry, _rx) = registry.create(setup_probe_task(target), None);
             let request = entry.request();
             assert!(request.setup_probe, "{target:?}");
@@ -1657,7 +1661,7 @@ mod tests {
         // Only the exact marker counts: a lookalike native id is an ordinary request.
         for native_id in [
             "setup-probe:popup:",
-            "setup-probe:ios:n1",
+            "setup-probe:IOS:n1",
             "setup-probe:n1",
             "x",
         ] {

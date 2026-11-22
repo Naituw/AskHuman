@@ -3411,7 +3411,11 @@ async fn handle_submit_recoverable(
         .is_none_or(|info| {
             info.relay || info.delivery == crate::development::verification::Delivery::Channels
         });
-    if probe_policy.im == crate::onboarding::probe::ImScope::All
+    // iOS is attached here, not by `attach_im_channels` (it is no IM candidate): to every
+    // ordinary request, and to the test question of the iOS card, which is scoped to it
+    // (`docs/specs/ios-setup-experience.md` §9.2).
+    let mut ios_attached = false;
+    if probe_policy.im.reaches_ios()
         && direct_delivery
         && ios_can_deliver(state, &state.config_snapshot())
         && !entry.coordinator.has_channel("ios")
@@ -3423,7 +3427,7 @@ async fn handle_submit_recoverable(
         );
         if let Some(channel) = ios_channel_for(state, &request_id, session) {
             let origin = im_conversation_origin(&entry, kind_env);
-            attach_channel(
+            ios_attached = attach_channel(
                 &entry,
                 channel,
                 entry.request(),
@@ -3474,7 +3478,7 @@ async fn handle_submit_recoverable(
         }
     };
     crate::perf::mark(&perf_id, "dmn.im_done");
-    if !popup_ok && !im_attached {
+    if !popup_ok && !im_attached && !ios_attached {
         log(&format!(
             "request {} has no popup and no IM surface; failing with exit {}",
             request_id,

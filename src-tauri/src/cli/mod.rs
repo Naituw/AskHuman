@@ -14,6 +14,7 @@ pub mod help;
 pub mod image_writer;
 pub mod install_check;
 pub mod ios_cmd;
+pub mod ios_guide;
 pub mod output;
 pub mod setup_cmd;
 pub mod todo_cmd;

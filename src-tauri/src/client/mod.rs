@@ -310,11 +310,46 @@ where
 pub async fn ios_op(op: crate::ipc::IosOp) -> Result<crate::ipc::IosResult, String> {
     ensure_running().await.map_err(|e| e.to_string())?;
     let (mut reader, mut writer) = connect_split().await.map_err(|e| e.to_string())?;
-    ipc::write_msg(&mut writer, &ClientMsg::Hello(hello()))
+    ios_exchange(&mut reader, &mut writer, op).await
+}
+
+/// [`ios_op`] for a read that must not leave a daemon behind (the iOS setup guide): `Ok(None)`
+/// when no daemon is running, instead of starting one.
+pub async fn ios_op_if_running(
+    op: crate::ipc::IosOp,
+) -> Result<Option<crate::ipc::IosResult>, String> {
+    let (mut reader, mut writer) = match connect_split().await {
+        Ok(connection) => connection,
+        Err(error) if diagnostics::is_not_running(&error) => return Ok(None),
+        Err(error) => return Err(error.to_string()),
+    };
+    // A daemon that accepts the connection and then says nothing must not hold the caller.
+    match tokio::time::timeout(
+        HANDSHAKE_TIMEOUT,
+        ios_exchange(&mut reader, &mut writer, op),
+    )
+    .await
+    {
+        Ok(result) => result.map(Some),
+        Err(_) => Err("the daemon did not answer in time".to_string()),
+    }
+}
+
+/// One Hello plus one iOS operation over an open connection.
+async fn ios_exchange<R, W>(
+    reader: &mut R,
+    writer: &mut W,
+    op: crate::ipc::IosOp,
+) -> Result<crate::ipc::IosResult, String>
+where
+    R: tokio::io::AsyncBufRead + Unpin,
+    W: tokio::io::AsyncWrite + Unpin,
+{
+    ipc::write_msg(writer, &ClientMsg::Hello(hello()))
         .await
         .map_err(|e| e.to_string())?;
     loop {
-        match ipc::read_msg::<_, ServerMsg>(&mut reader).await {
+        match ipc::read_msg::<_, ServerMsg>(reader).await {
             Ok(Some(ServerMsg::HelloAck(ack))) => {
                 if ack.status == HelloStatus::Ok {
                     break;
@@ -325,11 +360,11 @@ pub async fn ios_op(op: crate::ipc::IosOp) -> Result<crate::ipc::IosResult, Stri
             _ => return Err("daemon connection lost".to_string()),
         }
     }
-    ipc::write_msg(&mut writer, &ClientMsg::Ios { op })
+    ipc::write_msg(writer, &ClientMsg::Ios { op })
         .await
         .map_err(|e| e.to_string())?;
     loop {
-        match ipc::read_msg::<_, ServerMsg>(&mut reader).await {
+        match ipc::read_msg::<_, ServerMsg>(reader).await {
             Ok(Some(ServerMsg::Ios { result })) => return Ok(result),
             Ok(Some(ServerMsg::Error { message })) => return Err(message),
             Ok(Some(_)) => continue,
@@ -1494,6 +1529,82 @@ mod tests {
         assert!(hello_over(&mut BufReader::new(read), &mut write)
             .await
             .is_err());
+    }
+
+    fn hello_ack(status: HelloStatus) -> ServerMsg {
+        ServerMsg::HelloAck(ipc::HelloAck {
+            protocol_version: ipc::PROTOCOL_VERSION,
+            daemon_version: "test".into(),
+            status,
+            agent_lifecycle_version: 1,
+            reason: None,
+        })
+    }
+
+    /// What `ios_exchange` returns for the frames a daemon sends back, in order.
+    async fn ios_exchange_over(frames: Vec<ServerMsg>) -> Result<crate::ipc::IosResult, String> {
+        use tokio::io::AsyncWriteExt;
+
+        let (client, daemon) = tokio::io::duplex(4096);
+        let (read, mut write) = tokio::io::split(client);
+        // The daemon keeps its read half, so the client can still send what it sends.
+        let (_daemon_read, mut daemon_write) = tokio::io::split(daemon);
+        for frame in frames {
+            ipc::write_msg(&mut daemon_write, &frame).await.unwrap();
+        }
+        // Ending the daemon's output makes a missing frame an error instead of a hang.
+        daemon_write.shutdown().await.unwrap();
+        ios_exchange(
+            &mut BufReader::new(read),
+            &mut write,
+            crate::ipc::IosOp::State,
+        )
+        .await
+    }
+
+    #[tokio::test]
+    async fn an_ios_operation_returns_what_the_daemon_answers_after_the_hello() {
+        let result = ios_exchange_over(vec![
+            hello_ack(HelloStatus::Ok),
+            ServerMsg::Ios {
+                result: crate::ipc::IosResult::State { state: None },
+            },
+        ])
+        .await;
+        assert!(matches!(
+            result,
+            Ok(crate::ipc::IosResult::State { state: None })
+        ));
+    }
+
+    #[tokio::test]
+    async fn an_ios_operation_fails_plainly_when_the_daemon_cannot_serve_it() {
+        // Handing over to a new build: the daemon says so instead of answering.
+        assert_eq!(
+            ios_exchange_over(vec![hello_ack(HelloStatus::Restarting)])
+                .await
+                .unwrap_err(),
+            "daemon is restarting"
+        );
+        // The daemon refuses the operation.
+        assert_eq!(
+            ios_exchange_over(vec![
+                hello_ack(HelloStatus::Ok),
+                ServerMsg::Error {
+                    message: "no gateway".into(),
+                },
+            ])
+            .await
+            .unwrap_err(),
+            "no gateway"
+        );
+        // It goes away before answering.
+        assert_eq!(
+            ios_exchange_over(vec![hello_ack(HelloStatus::Ok)])
+                .await
+                .unwrap_err(),
+            "daemon connection lost"
+        );
     }
 
     #[tokio::test]

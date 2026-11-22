@@ -1,7 +1,9 @@
 //! The setup wizard's optional checks (`docs/specs/onboarding.md` D11, plan §4).
 //!
 //! A *probe* is an ordinary request the wizard sends to itself: to the desktop popup, or to
-//! exactly one remote channel, so the person can see that the path works. The request carries a
+//! exactly one remote channel, so the person can see that the path works. (The iOS App channel
+//! is no part of the wizard, but its settings card sends the same kind of question to prove the
+//! phone round trip: `docs/specs/ios-setup-experience.md` §9.) The request carries a
 //! marker in its native id. This module names the marker, decides what the daemon does
 //! differently with a marked request, builds the question, and maps its answer to an outcome.
 //! Running the checks (the ask, the wait, the Agent observation) is in `probe_run`.
@@ -15,12 +17,15 @@ use std::collections::HashSet;
 /// Start of the native id every probe carries.
 pub const PREFIX: &str = "setup-probe:";
 
+/// The id of the iOS App channel as a probe target.
+pub const IOS: &str = "ios";
+
 /// Where a probe is delivered.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ProbeTarget {
     /// The desktop popup only.
     Popup,
-    /// One remote channel only (`telegram` | `slack` | `dingding` | `feishu`).
+    /// One remote channel only (`telegram` | `slack` | `dingding` | `feishu`, or `ios`).
     Channel(&'static str),
 }
 
@@ -32,10 +37,14 @@ impl ProbeTarget {
         }
     }
 
-    /// `popup` or one of the wizard's channel ids.
+    /// `popup`, one of the wizard's channel ids, or `ios` (the iOS card's test question; it is
+    /// not in `channels::ORDER`, which drives the wizard's channel list).
     pub fn parse(name: &str) -> Option<ProbeTarget> {
         if name == "popup" {
             return Some(ProbeTarget::Popup);
+        }
+        if name == IOS {
+            return Some(ProbeTarget::Channel(IOS));
         }
         channels::ORDER
             .iter()
@@ -63,6 +72,13 @@ impl ImScope {
             ImScope::Only(id) => Some(id),
             _ => None,
         }
+    }
+
+    /// Whether the iOS channel gets the request. iOS is no IM candidate (the ordinary rules add
+    /// it whenever it can deliver), so the daemon attaches it by itself: to an ordinary request
+    /// and to a probe scoped to it.
+    pub fn reaches_ios(self) -> bool {
+        matches!(self, ImScope::All | ImScope::Only(IOS))
     }
 }
 
@@ -245,7 +261,7 @@ mod tests {
 
     #[test]
     fn a_probe_id_round_trips_for_the_popup_and_every_channel() {
-        let mut targets = vec![ProbeTarget::Popup];
+        let mut targets = vec![ProbeTarget::Popup, ProbeTarget::Channel("ios")];
         targets.extend(channels::ORDER.iter().copied().map(ProbeTarget::Channel));
         for target in targets {
             let id = native_id(target, ID);
@@ -272,7 +288,7 @@ mod tests {
             Some("setup-probe:popup"),
             Some("setup-probe:popup:"),
             Some("setup-probe::abc"),
-            Some("setup-probe:ios:abc"),
+            Some("setup-probe:IOS:abc"),
             Some("setup-probe:everything:abc"),
             Some("setup-probe:Popup:abc"),
             Some("Setup-Probe:popup:abc"),
@@ -319,6 +335,39 @@ mod tests {
         assert_eq!(policy.im.only(), Some("telegram"));
         assert!(!policy.ask_received_hook);
         assert!(!policy.follow_active_channel);
+    }
+
+    #[test]
+    fn the_ios_probe_is_scoped_like_any_channel_probe() {
+        assert_eq!(ProbeTarget::parse("ios"), Some(ProbeTarget::Channel("ios")));
+        assert_eq!(
+            parse_probe_id(Some("setup-probe:ios:abc")),
+            Some(ProbeTarget::Channel("ios"))
+        );
+        assert_eq!(
+            policy(Some(ProbeTarget::Channel("ios"))),
+            ProbePolicy {
+                popup: false,
+                im: ImScope::Only("ios"),
+                ask_received_hook: false,
+                follow_active_channel: false,
+            }
+        );
+        // The wizard's own channel list stays what it was.
+        assert!(!channels::ORDER.contains(&"ios"));
+    }
+
+    #[test]
+    fn ios_is_reached_by_an_ordinary_request_and_by_its_own_probe_only() {
+        assert!(policy(None).im.reaches_ios());
+        assert!(policy(Some(ProbeTarget::Channel("ios"))).im.reaches_ios());
+        assert!(!policy(Some(ProbeTarget::Popup)).im.reaches_ios());
+        for id in channels::ORDER {
+            assert!(
+                !policy(Some(ProbeTarget::Channel(id))).im.reaches_ios(),
+                "{id}"
+            );
+        }
     }
 
     #[test]
@@ -418,7 +467,11 @@ mod tests {
     #[test]
     fn the_question_is_one_confirmation_marked_as_a_probe() {
         for lang in [Lang::En, Lang::Zh] {
-            for target in [ProbeTarget::Popup, ProbeTarget::Channel("feishu")] {
+            for target in [
+                ProbeTarget::Popup,
+                ProbeTarget::Channel("feishu"),
+                ProbeTarget::Channel("ios"),
+            ] {
                 let task = build_task(target, ID, lang);
                 assert_eq!(
                     parse_probe_id(task.native_request_id.as_deref()),

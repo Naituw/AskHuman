@@ -631,11 +631,15 @@ impl Actor {
                     && !self.is_looking(phone_id)
                     && self.can_push(phone_id, now)
                 {
+                    // The development relay and a setup check (the iOS card's test question,
+                    // whose point is to prove the push) notify at once, not after the idle wait.
                     let immediate = pending.ask.as_ref().is_some_and(|ask| {
-                        ask.message
-                            .development
-                            .as_ref()
-                            .is_some_and(|info| info.relay)
+                        ask.setup_probe
+                            || ask
+                                .message
+                                .development
+                                .as_ref()
+                                .is_some_and(|info| info.relay)
                     }) || matches!(&pending.sink, Sink::Confirm(sink) if sink.immediate_notification());
                     waiting.push((phone_id.clone(), pending.view.id.clone(), immediate));
                 }

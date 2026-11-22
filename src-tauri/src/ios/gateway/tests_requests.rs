@@ -54,6 +54,36 @@ async fn explicit_dev_relay_pushes_at_once_without_accelerating_daily_requests()
     assert_eq!(fx.pusher.count(), 1, "the daily question keeps waiting");
 }
 
+// The iOS card's test question (docs/specs/ios-setup-experience.md §9) exists to prove the push, so
+// it cannot wait for the Mac to be idle.
+#[tokio::test(start_paused = true)]
+async fn a_setup_check_pushes_at_once_without_accelerating_daily_requests() {
+    let fx = Fixture::new().await;
+    fx.host.set_alert_after(900);
+    let phone = fx.pair_phone().await;
+    phone.set_presence(true, false).await;
+    fx.host.touch_input();
+    deliver_ask(&fx, "daily");
+    let (mut ask, view) = sample_ask("probe");
+    Arc::make_mut(&mut ask).setup_probe = true;
+    fx.gateway.deliver(DeliverRequest {
+        view,
+        sink: Sink::Ask(FakeAsk::new()),
+        ask: Some(ask),
+        deadline_ms: None,
+        assets: Vec::new(),
+    });
+    tokio::time::sleep(SECOND).await;
+    assert_eq!(
+        fx.pusher.count(),
+        1,
+        "only the setup check bypasses the idle delay"
+    );
+    assert_eq!(fx.pusher.last().unwrap().collapse_id, "rq-probe");
+    tokio::time::sleep(SECOND).await;
+    assert_eq!(fx.pusher.count(), 1, "the daily question keeps waiting");
+}
+
 fn answer(client_msg_id: &str, request_id: &str, answers: Vec<AnswerItem>) -> wire::AnswerSubmit {
     wire::AnswerSubmit {
         client_msg_id: client_msg_id.into(),

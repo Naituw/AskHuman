@@ -1,9 +1,10 @@
-//! `AskHuman channel ios <status|devices|pair|allow|deny|revoke|rename|export|import>` — management
-//! of the iOS channel for headless use. The channel is experimental: these commands exist only
+//! `AskHuman channel ios <status|devices|pair|allow|deny|revoke|rename|export|import|--agent-guide>` —
+//! management of the iOS channel for headless use. The channel is experimental: these commands exist only
 //! while the hidden `experimental.enabled` switch is on. Pairing state lives in the daemon's
 //! gateway; the commands talk to it through `ClientMsg::Ios`.
 
 use super::cfgio;
+use super::ios_guide;
 use crate::config::AppConfig;
 use crate::i18n::Lang;
 use crate::ios::gateway::{GatewayState, PhoneView};
@@ -29,6 +30,7 @@ pub fn dispatch(args: &[String], lang: Lang) -> Result<(), String> {
         "rename" => rename(rest, lang),
         "export" => export(lang),
         "import" => import(rest, lang),
+        "--agent-guide" => agent_guide(lang),
         "help" | "-h" | "--help" => {
             print_line(&help(lang));
             Ok(())
@@ -444,6 +446,24 @@ fn decide(allow: bool, lang: Lang) -> Result<(), String> {
     Ok(())
 }
 
+// ——— Agent guide ———
+
+/// Prints the setup guide for an Agent (`docs/specs/ios-setup-experience.md` §7.3). It reads the
+/// state without starting the daemon and without the keychain, so it carries no credential.
+fn agent_guide(lang: Lang) -> Result<(), String> {
+    let daemon = match cfgio::block_on(crate::client::ios_op_if_running(IosOp::State)) {
+        Ok(None) => ios_guide::DaemonView::NotRunning,
+        Ok(Some(IosResult::State { state })) => ios_guide::DaemonView::Running(
+            state.map(|state| ios_guide::Gateway::from_state(&state)),
+        ),
+        Ok(Some(_)) => ios_guide::DaemonView::Unreadable("unexpected reply from the daemon".into()),
+        Err(error) => ios_guide::DaemonView::Unreadable(error),
+    };
+    let state = ios_guide::GuideState::collect(&AppConfig::load_without_secrets(), daemon);
+    print_line(ios_guide::render(&state, lang).trim_end());
+    Ok(())
+}
+
 // ——— connection strings ———
 
 fn export(lang: Lang) -> Result<(), String> {
@@ -513,6 +533,7 @@ pub(crate) fn help(lang: Lang) -> String {
         lang,
         "AskHuman channel ios — the iOS app channel (experimental)\n\
 \n\
+  channel ios --agent-guide          Setup guide for an Agent, with the current state\n\
   channel ios status [--json]        Broker connection, devices and pending requests\n\
   channel ios devices [--json]       Paired devices\n\
   channel ios pair                   Show a pairing QR code / code and confirm the device here\n\
@@ -527,6 +548,7 @@ pub(crate) fn help(lang: Lang) -> String {
   Push relay:      the public relay is used unless you add --relay-url <url> (your own)",
         "AskHuman channel ios —— iOS App 渠道（实验功能）\n\
 \n\
+  channel ios --agent-guide          给 Agent 的配置指南（含当前状态）\n\
   channel ios status [--json]        Broker 连接、设备与待回答请求\n\
   channel ios devices [--json]       已配对设备\n\
   channel ios pair                   显示配对二维码 / 配对码，并在此确认设备\n\
@@ -583,6 +605,13 @@ mod tests {
             usage_records: Vec::new(),
             pending_requests: 0,
             mac_idle_secs: None,
+        }
+    }
+
+    #[test]
+    fn the_help_names_the_agent_guide_in_both_languages() {
+        for lang in [Lang::Zh, Lang::En] {
+            assert!(help(lang).contains("channel ios --agent-guide"), "{lang:?}");
         }
     }
 
