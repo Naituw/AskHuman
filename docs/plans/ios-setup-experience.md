@@ -55,7 +55,7 @@
 
 验证：`node scripts/machine-health.mjs` 通过后跑 `cargo test` 里 `onboarding::`、`ios::`、`cli::`、`daemon::request`、`daemon::runtime` 相关项与 `cargo clippy -D warnings`；`./scripts/install.sh` 装机后，在隐蔽开关打开的机器上：卡片的「发一条测试问题」对真实手机（用户拿手机）跑一次，另用仓库的 iOS 网关测试夹具验证立即推送；`AskHuman channel ios --agent-guide` 在各状态下读一遍输出；按指南走一遍（真实走查见 P2b：第一次用 `codex exec` 走，暴露出指南只让 Agent 念步骤的问题）。IPC 与 `PROTOCOL_VERSION` 不变（规格 §9.2 的论证）。
 
-## P2b：Agent 代办（规格 D24，已完成）
+## P2b：Agent 代办（规格 D24、D25，已完成）
 
 起因：P2 之后第一次真实走查（隔离实例、EMQX、`codex exec`）里，Agent 只是把步骤发给用户，操作仍由用户做完；用户要求「能让 Agent 做的都由它做，用户能少做就少做」。
 
@@ -64,6 +64,7 @@
 3. **两条新命令**：`channel ios pair --no-wait`（只打印配对码就返回，配合 `| pbcopy`；票据在守护进程里，返回后仍有效到过期）；`channel ios test-question`（复用探测 `build_task` + `internal_ask`，120 s 超时，文案同卡片，没有已配对手机时直接报错）。不碰 IPC，不升 `PROTOCOL_VERSION`。
 4. 测试：`cli::ios_guide`（步骤全部展开、规则编号与步骤里的引用一致、命令速查里的命令都存在于 `channel ios help`、配对步骤含 `pair --no-wait | pbcopy` / `pairing.sas` / `allow` / `deny`、状态块仍无任何凭据）与 `cli::ios_cmd`（`--no-wait` 解析、帮助、测试问题各结局的文案）。
 5. 走查（真实，交互式）：隔离实例 + 在 Terminal 窗口里用 Codex CLI（不用 `codex exec`），只给卡片上的提示词；Agent 在用户登录的 Edge 里操作 EMQX 控制台，用户登录并做手机上的几步。已走通（2026-11-22，约 7 分钟），发现的两处多余提问已改指南，已有部署改为由用户选（规格 §12 第 7 轮）；用户决定不再重走一轮。规格 §11 的「用户在真机上从零走完整条链路」随之改成：Agent 按提示词配，用户只做 D24 里只有人能做的事。
+6. 第二台 Mac（规格 D25，走查里配对码被手机拒绝暴露出来）：指南第一问加「这部手机已经配对过另一台 Mac」，选了就用连接串沿用第一台的 Broker 设置（用户在那台 Mac 上复制，Agent `pbpaste | channel ios import -` 再 `channel enable ios`，跳过建账号与第 2 步）；第 2 步开头一句说明已装好就直接配对；故障对照补手机的「Broker 账号不同」提示（不建议「忘记所有配对」）；规则 1、3 把连接串列为人做的事和要保密的内容；`channel ios import` 升到「Agent 可以直接运行」。测试 `a_second_mac_reuses_the_broker_account_of_the_first` 把引用的手机提示、「忘记所有配对」对着 `Localizable.xcstrings`，按钮路径对着卡片的 `zh.ts` / `en.ts`；用隔离实例对一对 `export` / `import -` 管道跑过（假凭据，指南状态块里只有主机与用户名）。没有再让真实 Agent 走第二台 Mac 的路径。
 
 ## P3：文档与落地页（已完成）
 

@@ -23,6 +23,8 @@ TestFlight 公共链接 + Pages 落地页、卡片顶部「设置步骤」清单
   步骤全部展开（原来第 3 步永远显示不出来）、新增 `channel ios pair --no-wait` 与 `channel ios test-question`；用户已确认新文案与「输入确认码、Agent 比对」。
   真实走查（隔离实例、Terminal 里的交互式 Codex CLI、EMQX、Edge 里的电脑操作，2026-11-22）走通，约 7 分钟（不含一次配对码过期）；
   用户回答了 9 次，其中 2 次多余，已改指南；控制台里已有部署时由用户选（规格 §12 第 7 轮）。用户决定不再重走一轮，改动由单测覆盖。
+  配对码被手机拒绝的原因是手机里已有另一个 Broker 账号（一部手机一次只能用一个）：用户定了第二台 Mac 的做法（规格 D25，第 8 轮）——
+  第一问加「这部手机已经配对过另一台 Mac」，用连接串沿用第一台的设置，故障对照补这条提示；这条路径只有单测和隔离实例的管道验证，没让真实 Agent 走过。
   Codex 的会话记录留在 `~/.codex/sessions/2026/11/22/`。**待用户清理**：EMQX 里走查新建的部署 `AskHumanIOS`（带账号 `ahios` 和两条规则），
   手机 App「Mac」页里的「走查 Mac」；清完删掉这一句。
 - [x] P3 文档与落地页：`scripts/build-ios-beta-site.mjs` 的根页改成中英双语 TestFlight 落地页（公共链接只读 `docs/public/ios/testflight.json`，

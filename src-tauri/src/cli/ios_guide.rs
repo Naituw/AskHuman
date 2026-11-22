@@ -182,9 +182,9 @@ const ZH: Words = Words {
     rules: "\
 ## 规则
 
-1. 用户只做只有人能做的事，其余由你来做。只有人能做的：在服务商登录（验证码、条款、付款）；在手机上装 App、粘贴配对码、输入确认码；点测试问题的「收到」。有浏览器或电脑操作工具时，控制台里的操作（建部署、用户和访问规则，复制主机和 token）也由你来做。
+1. 用户只做只有人能做的事，其余由你来做。只有人能做的：在服务商登录（验证码、条款、付款）；沿用另一台 Mac 的设置时，在那台 Mac 上复制连接串；在手机上装 App、粘贴配对码、输入确认码；点测试问题的「收到」。有浏览器或电脑操作工具时，控制台里的操作（建部署、用户和访问规则，复制主机和 token）也由你来做。
 2. 第一次提问就把用户要做的几件事一次说清（包括配对后手机上会弹出一条测试问题，点「收到」）。之后，你能决定的（Mac 名称、端口、是否保活、配对方式）不要问，能用命令查到的（连接状态、配对结果）也不要问；创建账号、保存密码本来就是配置，不用再征求同意。
-3. Broker 密码由你生成并保存，flespi 的 token 同理：用 `--password-stdin` 传入（见第 1 步），不要写进文件，回复用户时不要重复它。
+3. Broker 密码由你生成并保存，flespi 的 token 同理：用 `--password-stdin` 传入（见第 1 步），不要写进文件，回复用户时不要重复它。连接串里也有 Broker 密码，同样只经管道送进命令，不要显示或复述。
 4. 在控制台里只新增，不修改、不删除已有的部署、用户和访问规则。遇到付款、充值、提高消费限额或绑定银行卡的页面，停下来问用户，不要点。
 5. 用户选 EMQX 之前，先把「服务商」一节里 EMQX 的提示原样转告。
 6. 没有浏览器或电脑操作工具时，由用户操作控制台：你生成用户名和密码，把密码放进剪贴板（`printf '%s' '<密码>' | pbcopy`），一步一步告诉用户点哪里、粘贴什么，让用户把主机回给你。
@@ -197,15 +197,22 @@ const ZH: Words = Words {
         "\
 Broker 在 Mac 和手机之间转发消息，账号由用户自备。
 
-1. 用 AskHuman 问用户用哪个服务商：EMQX Cloud（国内节点，免费额度）、flespi（欧洲节点，免费套餐），或自建 / 其它（如 Mosquitto）。同一次提问里把用户要做的几件事说清（规则 2）；选 EMQX 时先转告它的提示（规则 5）。
+1. 用 AskHuman 问用户用哪个服务商：EMQX Cloud（国内节点，免费额度）、flespi（欧洲节点，免费套餐），或自建 / 其它（如 Mosquitto）；再加一项「这部手机已经配对过另一台 Mac」（沿用那台 Mac 的设置，见下）。同一次提问里把用户要做的几件事说清（规则 2）；选 EMQX 时先转告它的提示（规则 5）。
 2. 打开服务商控制台。需要登录时，请用户在你打开的浏览器窗口里登录，等他答复。然后按「服务商」一节的步骤建好用户和访问规则：用户名（只含字母和数字）和密码由你生成，如 `openssl rand -hex 12`。
 3. 保存并启用：
    `printf '%s' '<密码>' | AskHuman channel set ios --host <主机> --username <用户名> --password-stdin --enable`
    默认端口：TLS 8883，WSS 8084；flespi 的 WSS 是 443，加 `--ws-port 443`。
 4. 验证：运行 `AskHuman channel test ios`（macOS 可能弹出钥匙串授权，提醒用户点「允许」），再运行 `AskHuman channel ios status`。Broker 显示已连接，这一步才算完成；失败时见「故障对照」。
 
-装 App（第 2 步）不依赖 Broker：如果你能在后台等 AskHuman 的答复，就先发出第 2 步的请求，用户装 App 的时候你来配 Broker。",
+装 App（第 2 步）不依赖 Broker：如果你能在后台等 AskHuman 的答复，就先发出第 2 步的请求，用户装 App 的时候你来配 Broker。
+
+选了「这部手机已经配对过另一台 Mac」时，不要走第 2、3 行（一部手机一次只能用一个 Broker 账号，新建的账号它会拒绝），改为沿用那台 Mac 的设置，并跳过第 2 步（App 已经装好）：
+
+- 用 AskHuman 请用户先在那台 Mac 上复制连接串：设置 →「iOS App」卡片 →「连接设置」→「复制连接串」，或让那台 Mac 上的 Agent 运行 `AskHuman channel ios export | pbcopy`；再复制到这台 Mac 的剪贴板（两台 Mac 登录同一个 Apple ID 时会自动同步，否则请用户自己带过来），好了答复你。连接串里有密码，用户不要写进回答。
+- 运行 `pbpaste | AskHuman channel ios import -` 和 `AskHuman channel enable ios`，照第 4 行验证，然后清掉剪贴板：`printf '' | pbcopy`。",
         "\
+手机已经配对过另一台 Mac 时，App 已经装好，直接做第 3 步。
+
 需要 iOS 17 或更高版本。用 AskHuman 把链接 {join} 发给用户，请他在 iPhone 上：安装 TestFlight → 用手机浏览器打开链接 → 在 TestFlight 里接受邀请并安装 AskHuman → 打开 AskHuman，允许通知。装好后在 AskHuman 里答复你。
 
 这一步无法在 Mac 上检测，只能问用户。",
@@ -261,6 +268,7 @@ Broker 在 Mac 和手机之间转发消息，账号由用户自备。
 - 「超时」：主机或端口不对（EMQX 用部署概览里的「连接地址」和 8883；flespi 是 `mqtt.flespi.io`、8883、WSS 443）；证书不是公共 CA 签发的（自签不被接受）；EMQX 部署可能已经停止（免费额度用完，或连续 30 天没有活跃客户端，要到控制台手动启动）；flespi 在大陆偶尔超时，先再试一次。
 - 警告「Broker 放行了这个账号在自己话题…之外的发布和订阅」：不挡保存和配对，一个人自用也能工作；多人共用同一个 Broker 时必须修好，按「服务商」一节把每个账号限制在 `ah/<用户名>/#`。
 - 配对码过期（5 分钟有效）：重新运行第 3 步的第 1 行。
+- 手机上提示「这个配对码所属的 Broker 账号与你已配对的 Mac 不同」：这部手机已经配对过另一台 Mac，用的是另一个 Broker 账号，一部手机一次只能用一个。按第 1 步里「这部手机已经配对过另一台 Mac」的做法，导入那台 Mac 的连接串（会替换这台 Mac 上的 Broker 设置），再重新配对。不要让用户在手机上「忘记所有配对」：那会断开所有已配对的 Mac，要不要这样只由用户决定。
 - 手机上的「粘贴」按钮点不了：通用剪贴板可能还没同步，等几秒再试；手机和 Mac 不是同一个 Apple ID 时，改用卡片扫码。
 - 确认码不一致，或用户输错了：运行 `deny`，再重新配对。
 - 手机收不到通知：确认手机上允许了通知、AskHuman 打开过；`AskHuman channel ios devices --json` 里 `push` 不是 `ok`（`gone`：在手机上重新打开 App）；通知默认在 Mac 键盘和鼠标空闲满 15 分钟后才发送，卡片里的「推送时机」可以改成「立即」。
@@ -277,9 +285,9 @@ You are helping the user set up AskHuman's iOS App channel: the user receives th
     rules: "\
 ## Rules
 
-1. The user only does what only a person can; you do the rest. Only a person can: sign in to the provider (verification codes, terms, payment); install the app on the phone, paste the pairing code and type the check code; tap \"Received\" on the test question. With a browser or computer-use tool, the work in the console (creating the deployment, users and access rules, copying the host and token) is yours too.
+1. The user only does what only a person can; you do the rest. Only a person can: sign in to the provider (verification codes, terms, payment); when reusing another Mac's settings, copy the connection string on that Mac; install the app on the phone, paste the pairing code and type the check code; tap \"Received\" on the test question. With a browser or computer-use tool, the work in the console (creating the deployment, users and access rules, copying the host and token) is yours too.
 2. In your first question, tell the user in one go what they will have to do (including that a test question will pop up on the phone after pairing, to tap \"Received\"). After that, do not ask about what you can decide (Mac name, ports, keep-alive, how to pair) or look up with a command (connection state, pairing result); creating the account and saving the password are the setup itself, so do not ask for permission again.
-3. You generate and save the broker password; a flespi token is the same: pass it with `--password-stdin` (see step 1), do not write it to a file, and do not repeat it when you reply to the user.
+3. You generate and save the broker password; a flespi token is the same: pass it with `--password-stdin` (see step 1), do not write it to a file, and do not repeat it when you reply to the user. A connection string contains the broker password too: only pipe it into the command, and do not show or repeat it.
 4. In a console, only add: do not change or delete existing deployments, users or access rules. On a page about payment, top-ups, raising a spending limit or adding a bank card, stop and ask the user; do not click.
 5. Before the user chooses EMQX, relay EMQX's note from the \"Providers\" section verbatim.
 6. Without a browser or computer-use tool, the user works in the console: you generate the username and password, put the password on the clipboard (`printf '%s' '<password>' | pbcopy`), tell the user where to click and what to paste, one step at a time, and have them give you the host.
@@ -292,15 +300,22 @@ You are helping the user set up AskHuman's iOS App channel: the user receives th
         "\
 The broker relays messages between the Mac and the phone; the user brings their own account.
 
-1. Ask the user with AskHuman which provider to use: EMQX Cloud (China region, free allowance), flespi (EU region, free plan), or self-hosted / other (e.g. Mosquitto). In the same question, tell them what they will have to do (rule 2); if they pick EMQX, relay its note first (rule 5).
+1. Ask the user with AskHuman which provider to use: EMQX Cloud (China region, free allowance), flespi (EU region, free plan), or self-hosted / other (e.g. Mosquitto); and add the choice \"This phone is already paired with another Mac\" (reuse that Mac's settings, see below). In the same question, tell them what they will have to do (rule 2); if they pick EMQX, relay its note first (rule 5).
 2. Open the provider's console. If a login is needed, ask the user to sign in in the browser window you opened and wait for their answer. Then create the user and the access rules as \"Providers\" describes: you generate the username (letters and digits only) and the password, e.g. with `openssl rand -hex 12`.
 3. Save and enable:
    `printf '%s' '<password>' | AskHuman channel set ios --host <host> --username <username> --password-stdin --enable`
    Default ports: TLS 8883, WSS 8084; flespi's WSS port is 443, so add `--ws-port 443`.
 4. Verify: run `AskHuman channel test ios` (macOS may show a keychain prompt, so ask the user to click Allow), then `AskHuman channel ios status`. The step is done when the broker shows as connected; if it fails, see \"Troubleshooting\".
 
-Installing the app (step 2) does not depend on the broker: if you can wait for an AskHuman answer in the background, send the step 2 request first, so the user installs the app while you set up the broker.",
+Installing the app (step 2) does not depend on the broker: if you can wait for an AskHuman answer in the background, send the step 2 request first, so the user installs the app while you set up the broker.
+
+If they chose \"This phone is already paired with another Mac\", skip lines 2 and 3 (a phone can only use one broker account at a time, and it rejects a newly created one) and reuse that Mac's settings instead; skip step 2 as well (the app is already installed):
+
+- Ask the user with AskHuman to copy the connection string on that Mac first: Settings → the \"iOS App\" card → \"Connection\" → \"Copy connection string\", or have the Agent on that Mac run `AskHuman channel ios export | pbcopy`; then copy it onto this Mac's clipboard (it syncs by itself when both Macs use the same Apple ID, otherwise the user brings it over), and answer you when done. The connection string contains the password: the user must not type it into the answer.
+- Run `pbpaste | AskHuman channel ios import -` and `AskHuman channel enable ios`, verify as in line 4, then clear the clipboard: `printf '' | pbcopy`.",
         "\
+When the phone is already paired with another Mac, the app is installed: go straight to step 3.
+
 Requires iOS 17 or later. Send the user the link {join} with AskHuman and ask them, on the iPhone, to: install TestFlight → open the link in the phone's browser → accept the invitation in TestFlight and install AskHuman → open AskHuman and allow notifications. They answer you in AskHuman once it is installed.
 
 This cannot be detected from the Mac; only the user can tell.",
@@ -356,6 +371,7 @@ The result of `AskHuman channel test ios`, or what happens on the phone → like
 - \"Timed out\": wrong host or port (EMQX: the \"connection address\" from the deployment overview and 8883; flespi: `mqtt.flespi.io`, 8883, WSS 443); a certificate that is not from a public CA (self-signed is not accepted); an EMQX deployment that may have stopped (the free allowance ran out, or 30 days without an active client; it has to be started by hand in the console); flespi sometimes times out from mainland China, so try once more.
 - Warning \"The broker let this account publish to and read from a topic outside its own\": it does not block saving or pairing and works for one person; on a broker shared by several people it must be fixed: limit each account to `ah/<username>/#` as in \"Providers\".
 - The pairing code expired (valid for 5 minutes): run line 1 of step 3 again.
+- The phone says \"This code belongs to a different broker account than the Macs you already paired\": the phone has already paired another Mac, on another broker account, and it can only use one at a time. Do what step 1 says for \"This phone is already paired with another Mac\": import that Mac's connection string (it replaces the broker settings on this Mac), then pair again. Do not have the user \"Forget all pairings\" on the phone: that disconnects every Mac already paired, and only the user decides whether to do that.
 - The \"Paste\" button on the phone cannot be tapped: the shared clipboard may not have synced yet, so wait a few seconds and try again; if the phone and the Mac do not use the same Apple ID, use the card's QR code instead.
 - The check codes differ, or the user mistyped: run `deny`, then pair again.
 - The phone gets no notification: check that notifications are allowed on the phone and AskHuman has been opened; in `AskHuman channel ios devices --json`, `push` is not `ok` (`gone`: open the app on the phone again); notifications are only sent once the Mac's keyboard and mouse have been idle for 15 minutes by default, and \"Push timing\" in the card can be set to \"Immediately\".
@@ -383,13 +399,18 @@ const fn cmd(line: &'static str, en: &'static str, zh: &'static str) -> Command 
 }
 
 /// What the Agent runs to set the channel up.
-const AGENT_RUNS: [Command; 10] = [
+const AGENT_RUNS: [Command; 11] = [
     cmd("AskHuman channel ios status [--json]", "", ""),
     cmd("AskHuman channel ios devices [--json]", "", ""),
     cmd(
         "AskHuman channel set ios --host <host> --username <username> [--port N] [--ws-port N] [--mac-name <name>] [--password-stdin] --enable",
         "the password only through stdin",
         "密码只通过标准输入传入",
+    ),
+    cmd(
+        "AskHuman channel ios import <text|->",
+        "the connection string of another Mac, with its password: pipe it in from the clipboard with `-`",
+        "另一台 Mac 的连接串（含密码）：用 `-` 从剪贴板经管道传入",
     ),
     cmd("AskHuman channel enable ios", "", ""),
     cmd("AskHuman channel disable ios", "", ""),
@@ -417,7 +438,7 @@ const AGENT_RUNS: [Command; 10] = [
 ];
 
 /// Settings that are the user's, actions on their devices, and what carries the whole credential.
-const ON_REQUEST: [Command; 5] = [
+const ON_REQUEST: [Command; 4] = [
     cmd(
         "AskHuman config set general.daemonLifecycle keepalive",
         "global setting; starts the background service at login",
@@ -430,7 +451,6 @@ const ON_REQUEST: [Command; 5] = [
         "the connection string contains the password; for taking the settings to another Mac",
         "连接串包含密码；用于把设置带到另一台 Mac",
     ),
-    cmd("AskHuman channel ios import <text|->", "", ""),
 ];
 
 fn wiki_link(lang: Lang, anchors: (&str, &str)) -> String {
@@ -1030,11 +1050,14 @@ mod tests {
                 );
                 assert!(!run.contains(command.line), "{lang:?}: {}", command.line);
             }
-            // The whole credential, and the user's own settings, wait for the user to ask.
-            for word in ["export", "import", "daemonLifecycle"] {
+            // Handing the whole credential out, and the user's own settings, wait for the user to
+            // ask; taking another Mac's connection string in is part of the setup.
+            for word in ["export", "daemonLifecycle"] {
                 assert!(!run.contains(word), "{lang:?}: {word}");
                 assert!(on_request.contains(word), "{lang:?}: {word}");
             }
+            assert!(run.contains("channel ios import"), "{lang:?}");
+            assert!(!on_request.contains("import"), "{lang:?}");
             // A `channel ios …` line names a subcommand the CLI has.
             let help = super::super::ios_cmd::help(Lang::En);
             for command in AGENT_RUNS.iter().chain(&ON_REQUEST) {
@@ -1169,6 +1192,103 @@ mod tests {
             for part in [list_and_ask, only_add, deny_rule_warning] {
                 assert!(providers.contains(part), "{lang:?}: {part}");
             }
+        }
+    }
+
+    /// A phone uses one broker account at a time and refuses a pairing code from another one; the
+    /// first walkthrough only found that out on the phone, after the Agent had made a new account.
+    /// A second Mac has to reuse the settings of the first, and the guide says how.
+    #[test]
+    fn a_second_mac_reuses_the_broker_account_of_the_first() {
+        let catalog = include_str!("../../../ios/AskHuman/Resources/Localizable.xcstrings");
+        for (lang, card) in [
+            (Lang::Zh, include_str!("../../../src/i18n/zh.ts")),
+            (Lang::En, include_str!("../../../src/i18n/en.ts")),
+        ] {
+            let words = words(lang);
+            let (choice, card_title, card_button, skip_install, refusal, forget_all, secret) =
+                match lang {
+                    Lang::Zh => (
+                        "这部手机已经配对过另一台 Mac",
+                        "连接设置",
+                        "复制连接串",
+                        "直接做第 3 步",
+                        "这个配对码所属的 Broker 账号与你已配对的 Mac 不同",
+                        "忘记所有配对",
+                        "连接串",
+                    ),
+                    Lang::En => (
+                        "This phone is already paired with another Mac",
+                        "Connection",
+                        "Copy connection string",
+                        "go straight to step 3",
+                        "This code belongs to a different broker account than the Macs you already paired",
+                        "Forget all pairings",
+                        "connection string",
+                    ),
+                };
+            let first_step = words.step_bodies[0];
+
+            // The first question offers it, and the troubleshooting sends the Agent back to it.
+            assert!(first_step.contains(choice), "{lang:?}: the choice");
+            assert!(
+                words.troubleshooting.contains(choice),
+                "{lang:?}: sent back"
+            );
+            // The user copies on the other Mac, the Agent imports through the pipe, and the app
+            // that is already on the phone is not installed again.
+            for part in [
+                "channel ios export | pbcopy",
+                "pbpaste | AskHuman channel ios import -",
+                "AskHuman channel enable ios",
+            ] {
+                assert!(first_step.contains(part), "{lang:?}: {part}");
+            }
+            assert!(words.step_bodies[1].contains(skip_install), "{lang:?}");
+            // The way to the button on the other Mac is the card's own wording.
+            let quoted = |label: &str| match lang {
+                Lang::Zh => format!("「{label}」"),
+                Lang::En => format!("\"{label}\""),
+            };
+            assert!(
+                first_step.contains(&quoted(card_button)),
+                "{lang:?}: button"
+            );
+            assert!(first_step.contains(&quoted(card_title)), "{lang:?}: title");
+            assert!(
+                card.contains(&format!("connectionTitle: \"{card_title}\"")),
+                "{lang:?}: card title"
+            );
+            assert!(
+                card.contains(&format!("exportButton: \"{card_button}\"")),
+                "{lang:?}: card button"
+            );
+            // The connection string carries the password: the rules cover it.
+            let rules: Vec<&str> = words
+                .rules
+                .lines()
+                .filter(|l| l.starts_with(|c: char| c.is_ascii_digit()))
+                .collect();
+            assert!(rules[0].contains(secret), "{lang:?}: rule 1");
+            assert!(rules[2].contains(secret), "{lang:?}: rule 3");
+            // What the phone says is what the app says; forgetting every pairing is not advised,
+            // it disconnects the other Macs too.
+            assert!(
+                words.troubleshooting.contains(refusal),
+                "{lang:?}: {refusal}"
+            );
+            assert!(
+                words.troubleshooting.contains(forget_all),
+                "{lang:?}: {forget_all}"
+            );
+            assert!(
+                catalog.contains(refusal),
+                "{lang:?}: the app no longer says {refusal}"
+            );
+            assert!(
+                catalog.contains(forget_all),
+                "{lang:?}: the app no longer says {forget_all}"
+            );
         }
     }
 
