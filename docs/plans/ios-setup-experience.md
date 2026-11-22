@@ -1,6 +1,6 @@
 # iOS App 渠道设置体验：开发与交付计划
 
-日期：2026-11-22。状态：**设计已通过（第 3 轮）**；P0（原型与规格）、P1（卡片）、P2（后端）、P3（文档与落地页）已完成并提交，P4 起；碰 Apple / Pages / 公共链接 / 发版的步骤逐项另问用户。需求与决策见 [`docs/specs/ios-setup-experience.md`](../specs/ios-setup-experience.md)（全部文案在其 §14，实现以它为准），原型与截图在 `src/prototype/settings-ios.html` 一组文件与 `docs/assets/ios-setup-experience/`。
+日期：2026-11-22。状态：**设计已通过（第 3 轮）**；P0（原型与规格）、P1（卡片）、P2（后端）、P3（文档与落地页）已完成并提交，P4 的文案部分已完成，Apple 侧动作待逐项同意；碰 Apple / Pages / 公共链接 / 发版的步骤逐项另问用户。需求与决策见 [`docs/specs/ios-setup-experience.md`](../specs/ios-setup-experience.md)（全部文案在其 §14，实现以它为准），原型与截图在 `src/prototype/settings-ios.html` 一组文件与 `docs/assets/ios-setup-experience/`。
 
 **工作位置：主工作区**（用户第 2 轮选定，沿用现有安装流程）。同一棵树里常有别的会话的未提交改动（现在有 `docs/PROGRESS.md`、`docs/specs/ios-traffic-reduction.md`、`docs/wiki/ios-setup*.md`、`src-tauri/src/app/attachment_owner.rs` 等），提交时只暂存自己的文件或自己的改动块（`git apply --cached` 一个只含自己改动块的补丁），不碰别人的。
 
@@ -66,7 +66,7 @@
 
 验证：构建脚本的测试；`site-dist` 里所有站内链接可达；文案与代码事实（路径、按钮名）逐条对一遍。
 
-## P4：iOS 文案与出包（Apple 侧动作逐项需要用户同意）
+## P4：iOS 文案与出包（Apple 侧动作逐项需要用户同意；第 1、2 项已完成）
 
 1. **App 文案**：`ios/AskHuman/Views/Inbox/OnboardingView.swift:24`、`ios/AskHuman/Views/Pairing/PairingSheet.swift:80`，以及 `ios/Tools/make-catalog.py`（424、453 行）与 `Localizable.xcstrings`（用脚本重新生成）里的「设置 → 实验 → iOS App 渠道」改成「设置 → 通信渠道 → iOS App」。`xcodebuild` 模拟器编译；检查没有别的地方引用旧字符串（快照、测试）。
 2. **审核与测试材料**：`docs/release/ios-external-beta/*.txt`（审核备注、Beta 描述、What to Test）与 `ios-testflight` 技能里仍写「自备 EMQX」「实验」的字样，一并改成中立的新说法（`ios-open-access.md` P2 当时刻意留到这次出包）。

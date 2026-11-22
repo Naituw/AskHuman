@@ -112,6 +112,7 @@ AskHuman/
         config_cmd.rs        config 子命令
         channel_cmd.rs       channel 配置、测试与识别子命令
         ios_cmd.rs           channel ios 子命令（status / pair / allow / devices / revoke）与连接串导入
+        ios_guide.rs         channel ios --agent-guide：给 Agent 的配置指南（编译进二进制的中英文本 + 当前状态）
         agents_cmd.rs        agents 模式、状态与 capability 子命令
         setup_cmd.rs         setup 子命令（GUI 向导，无图形会话或 --text 时走终端文字流程）与无参 `AskHuman` 的一行欢迎语
         doctor.rs            daemon、已装二进制、渠道和 Agent 集成体检
