@@ -1,6 +1,6 @@
 # iOS 渠道免费开放：开发与交付计划
 
-日期：2026-11-21。状态：P1、P2、P3、P4 已完成（P4 的默认中继地址常量仍为空）：P3 的预发验证（3a）、注册限流（3b）、域名与证书、告警与预算，以及 2026-11-22 生产函数的切换（3c）都做完并外部验证过；接下来在一个小提交里填入默认中继地址并同步文案，再做 P5 收尾。需求与决策见 [`docs/specs/ios-open-access.md`](../specs/ios-open-access.md)。
+日期：2026-11-21。状态：P1–P4 已完成（含 3c 验证后填入的内置默认中继地址）：P3 的预发验证（3a）、注册限流（3b）、域名与证书、告警与预算，以及 2026-11-22 生产函数的切换（3c）都做完并外部验证过；P5 收尾只剩随下一次出包的文档与几项清理，见 `docs/PROGRESS.md`。需求与决策见 [`docs/specs/ios-open-access.md`](../specs/ios-open-access.md)。
 
 在主工作树做；同一棵树里常有别的会话的未提交改动，提交时只暂存自己的文件或自己的改动块（`git apply --cached` 一个只含自己改动块的补丁）。
 
@@ -73,7 +73,7 @@
 ## P4：向导与默认中继（Mac 设置页与 Rust）（已完成，默认地址除外）
 
 - **4a 服务商目录与向导**：`src/views/settings/iosBrokers.ts`（纯数据）；`IosChannelCard.vue` 顶部加下拉与要点块；i18n 中英文；组件测试。不新增配置字段。
-- **4b 默认中继**：Rust 新增 `effective_relay_url(cfg)`；`pairing.rs`（二维码里的 `r`）、`requests.rs`（推送）、`connstr.rs`、`daemon/runtime/ios.rs`、`cli/channel_cmd.rs`、`commands.rs`（健康检查）全部改用它；界面「使用公共中继 / 使用自己的中继」开关；设置里写明公共中继的数据与可用性说明。**默认地址要等 3c 域名生效后才合入。**
+- **4b 默认中继**：Rust 新增 `effective_relay_url(cfg)`；`pairing.rs`（二维码里的 `r`）、`requests.rs`（推送）、`connstr.rs`、`daemon/runtime/ios.rs`、`cli/channel_cmd.rs`、`commands.rs`（健康检查）全部改用它；界面「使用公共中继 / 使用自己的中继」开关；设置里写明公共中继的数据与可用性说明。默认地址等 3c 验证通过后才合入（见下方「结果」）。
 - **4c 隔离自检**：见规格 6.3。`ProbeReport` 新增 `isolation`；`ios_test` 的返回改为「消息 + 警告列表」；设置页与 CLI 都按结构显示；用 `local-broker` 的两种 ACL 模式做集成测试。
 - **4d 错误提示**：认证失败 / 超时按服务商给针对性提示。
 
@@ -81,16 +81,16 @@
 
 **结果（2026-11-22，`e2c37a8f`，后续小修 `30471705`）**：4a–4d 都做完了，`./scripts/install.sh` 已装机。验证：前端全量 142 个文件、2078 项，`vue-tsc` 干净；Rust 的 `ios::transport`、`config::`、`cli::channel`、`i18n` 共 121 项，clippy `-D warnings` 干净。隔离自检用装机的真实二进制跑过：对 Aedes 夹具 broker 的三种 ACL（`suback`、`forward`、`none`）和**真实 Mosquitto 2.1.2**（`pattern readwrite ah/%u/#` → 没有警告；没有 ACL → 给出警告），错误路径（密码错 → 拒绝、端口不通 → 超时）的提示文案也看过。设置页没有用 Dev 实例的真实窗口点（被遮挡的窗口内容截不到），改在浏览器里用**真实的 `SettingsView` + mock 后端**点了一遍并看过截图：服务商识别与要点、公共 / 自己的中继开关、测试成功 / 警告 / 失败 + 按服务商的提示（中英文各看过）。顺手修了两处：卡片简介随「有没有公共中继」换说法；端口两栏 4px 错位（既有问题）。
 
-仍为空的是默认中继地址常量 `IOS_DEFAULT_RELAY_URL`：3c 之后用一个小提交填入 `https://askhuman-relay.maipo.me`，同一次提交改 CLI `--relay-url` 帮助、`ios-setup*.md` 的中继一节。没做：隔离自检在真实 EMQX、flespi 上的运行（要凭据，见 `docs/PROGRESS.md` 悬而未决项）。
+默认中继地址常量 `IOS_DEFAULT_RELAY_URL` 当时仍为空，3c 验证通过后另起一个小提交填入 `https://askhuman-relay.maipo.me`，同一次提交改了 CLI `--relay-url` 帮助、`ios-setup*.md` 的中继一节、隐私政策页（中英；Owner 看过措辞并批准，生效日期改为 2026-11-22）与 `overview-ios.md`。没做：隔离自检在真实 EMQX、flespi 上的运行（要凭据，见 `docs/PROGRESS.md` 悬而未决项）。
 
 ## P5：收尾
 
-- 文档同步：`docs/overview-ios.md`（只改变了的部分）、`docs/wiki/ios-setup*.md` 的中继一节改为「默认使用公共中继；自编译 App 才需要自己部署」、本计划与规格的状态。
-- `docs/PROGRESS.md`：删除「函数 URL 被标为仅供测试」那条待办（P3 解决）；记下未完成项（出包、复测、是否公开渠道）。
-- 清理：`brew uninstall mosquitto cjson libevent libwebsockets`（用户同意后）；`/tmp` 里的草稿；预发临时函数。
+- 文档同步（已做）：`docs/overview-ios.md`（只改变了的部分）、`docs/wiki/ios-setup*.md` 的中继一节改为「默认使用公共中继；自编译 App 才需要自己部署」、本计划与规格的状态。
+- `docs/PROGRESS.md`（已做）：删除「函数 URL 被标为仅供测试」那条待办（P3 解决，老配对的旧 URL 写进了规格 §6.2 与 §7）；记下未完成项（出包、复测、是否公开渠道）。
+- 清理：预发临时函数已删，`/tmp` 里自己的草稿已清；Homebrew 的 `mosquitto cjson libevent libwebsockets` Owner 选了保留（2026-11-22）。
 - 三条路径用最终版套件再跑一遍，结果表落进 `ios-broker.md`；端到端套件对 flespi 与 Mosquitto 各再跑一遍最终代码。**结果（2026-11-22）**：兼容套件自 P1 的存档运行后没有改过，存档结果仍有效；端到端套件的本地 broker 模式用装机的最终二进制跑过（`AHE2ETests`，80 项、9 项按设计跳过——Codex 付费 4、真实服务 3、模拟器 2、0 失败，约 7.6 分钟），覆盖 P4 对中继地址取值的改动在真实 daemon + 手机引擎上的配对、请求与推送路径。真实服务模式没有跑：Mosquitto 过不了（一次性 Mac 只带 `alertAfterSecs`，不带 `insecureLocal`，回环明文 TCP 会被拒，要用公共 CA 的 TLS），flespi / EMQX 要凭据，EMQX 还会吃 Owner 的流量额度。
-- 隐私政策页核对中继的描述（默认中继后，设备 token 与 IP 会经过中继）。
-- 随下一次出包改 `docs/release/ios-external-beta/*.txt` 与 `ios-testflight` 技能里的 EMQX 字样（出包由用户另行指示，OA13）。
+- 隐私政策页核对中继的描述（默认中继后，设备 token 与 IP 会经过中继）（已做：中英各加了「只在内存里按网络地址做短期计数」一句，「停止使用我们的中继」改成选「使用自己的中继」，生效日期 2026-11-22）。
+- 随下一次出包改 `docs/release/ios-external-beta/*.txt` 与 `ios-testflight` 技能里的 EMQX 字样，以及朋友内测指南 `docs/public/ios/beta*.md` 里「中继地址由邀请人单独提供」的步骤（带默认中继的 Mac 版本发布后，改成保持「使用公共中继」）（出包由用户另行指示，OA13）。
 
 ## 验证总表
 

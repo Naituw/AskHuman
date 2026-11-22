@@ -517,10 +517,10 @@ pub const IOS_ALERT_AFTER_SECS_DEFAULT: u64 = 900;
 pub const IOS_ALERT_AFTER_SECS_MAX: u64 = 86_400;
 
 /// The public push relay built into this binary (docs/specs/ios-open-access.md OA9): the address
-/// in effect while `IosChannelConfig::relay_url` is empty. Empty means this build ships no public
-/// relay, so an empty setting still means "no relay". It is set once the production domain serves
-/// the real relay (docs/plans/ios-open-access.md, step 3c).
-pub const IOS_DEFAULT_RELAY_URL: &str = "";
+/// in effect while `IosChannelConfig::relay_url` is empty. Empty would mean this build ships no
+/// public relay, so an empty setting would still mean "no relay". The production domain serves
+/// the real relay since step 3c of docs/plans/ios-open-access.md.
+pub const IOS_DEFAULT_RELAY_URL: &str = "https://askhuman-relay.maipo.me";
 
 /// The relay address in effect for a configured one: an explicit address wins, an empty one means
 /// the built-in public relay. Every user of the setting (pairing code, pushes, health checks)

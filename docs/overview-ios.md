@@ -55,7 +55,7 @@ Agent / CLI ─► Daemon ── IosGateway（一个 actor）──► MQTT（TL
 
 ## 推送中继（`relay/`）
 
-零依赖 Node.js（`http` / `http2` / `crypto`），为腾讯云云函数 Web 函数而写：`src/core.js`（句柄编解码、请求校验、载荷白名单、ES256 JWT、错误映射、令牌桶）与 `src/adapters/scf.js`（HTTP 服务、环境变量、HTTP/2 到 APNs）。接口 `GET /v1/health`、`POST /v1/register`、`POST /v1/push`。密钥只在云函数环境变量里（`APNS_KEY_P8` 等），仓库与日志里没有任何密钥。注册限流按客户端 IP 分桶（取 `X-Forwarded-For` 里跳过 `TRUSTED_PROXY_HOPS` 个平台代理后的一项，默认 2，即从右数第三项）并有全局兜底，推送限流按句柄编号；桶在各实例自己的内存里，只是公平性手段，不是成本手段，成本由云函数的最大独占配额与告警封顶（`docs/specs/ios-open-access.md` §4）。`scripts/build-zip.sh` 产出上传用的 zip，`npm test` 跑 `node --test`。
+零依赖 Node.js（`http` / `http2` / `crypto`），为腾讯云云函数 Web 函数而写：`src/core.js`（句柄编解码、请求校验、载荷白名单、ES256 JWT、错误映射、令牌桶）与 `src/adapters/scf.js`（HTTP 服务、环境变量、HTTP/2 到 APNs）。接口 `GET /v1/health`、`POST /v1/register`、`POST /v1/push`。密钥只在云函数环境变量里（`APNS_KEY_P8` 等），仓库与日志里没有任何密钥。注册限流按客户端 IP 分桶（取 `X-Forwarded-For` 里跳过 `TRUSTED_PROXY_HOPS` 个平台代理后的一项，默认 2，即从右数第三项）并有全局兜底，推送限流按句柄编号；桶在各实例自己的内存里，只是公平性手段，不是成本手段，成本由云函数的最大独占配额与告警封顶（`docs/specs/ios-open-access.md` §4）。公共实例是腾讯云云函数（香港）加自定义域名 `askhuman-relay.maipo.me`，函数设了最大独占配额并配有告警，运行方式与止损手段见该规格。`scripts/build-zip.sh` 产出上传用的 zip，`npm test` 跑 `node --test`。
 
 ## iOS App（`ios/`）
 

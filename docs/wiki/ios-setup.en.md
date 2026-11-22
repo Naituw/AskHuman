@@ -4,7 +4,7 @@
 
 The AskHuman iOS app is a communication channel next to Feishu and Slack: your Agent asks on the Mac, you answer on your iPhone. You can also see what your Agents are doing, watch one live, send it a message and start new tasks. **Several Macs can pair with one phone** (home and office, say); all their questions land in one inbox.
 
-> This is an **experimental feature** and you bring three things yourself: an MQTT broker (the free tier of a hosted service or one you run yourself, see [Brokers: requirements, options and verification](./ios-broker.en.md)), a push relay (a Tencent Cloud function, free tier is enough) and an Apple developer account (to create a push key and install the app). The steps below cover all of it.
+> This is an **experimental feature** and you bring one thing yourself: an MQTT broker (the free tier of a hosted service or one you run yourself, see [Brokers: requirements, options and verification](./ios-broker.en.md)). Pushes go through the **public push relay** run by the author by default: free, best effort, no availability guarantee, and it stores nothing (see below). Only if you build the app yourself (with a different bundle ID) or want to control the relay do you need your own Apple developer account, push key and a relay you deploy (sections 2 and 3). The steps below cover all of it.
 
 ## How it works, and who can see what
 
@@ -14,7 +14,8 @@ Agent ─► AskHuman on the Mac ──MQTT (TLS)──► your broker ──►
 ```
 
 - **End-to-end encrypted.** Every pairing creates a pair of keys only that Mac and that phone know. The broker and the push relay see ciphertext and metadata such as "who is online", never your questions or answers.
-- **Your APNs key lives only in the cloud function.** The Mac holds no Apple key; the relay is stateless and forwards the encrypted preview to Apple from a fixed allowlist.
+- **The APNs key lives only in the relay's cloud function.** The Mac holds no Apple key; the relay is stateless and forwards the encrypted preview to Apple from a fixed allowlist. The public relay uses the author's key; a relay you deploy uses yours.
+- **What the public relay sees**: the device token and the app's bundle ID when the phone registers for pushes, the encrypted envelope and the handle when a push is sent, and the network address of each request (used only in memory to limit abuse, never written to a log; Tencent Cloud's own access logs are separate). It never sees your questions or answers and keeps nothing. To control it yourself, choose "Use my own relay" in the Mac settings.
 - **Push content is encrypted too.** The question summary on the lock screen is decrypted by the notification extension on the phone; if that fails you only see a generic line.
 - **One broker account for all your Macs.** Set up the first Mac, then paste its "connection string" into the others.
 
@@ -31,12 +32,14 @@ Whichever path you take, you end up with:
 
 > Sharing with a friend: give each person their own account that can only use its own `ah/<username>/#`; see [Sharing a broker with friends](./ios-broker.en.md#sharing-a-broker-with-friends).
 
-## 2. Prepare the Apple developer resources
+## 2. Prepare the Apple developer resources (only for your own build or your own relay)
+
+If you install the author's app from TestFlight and use the public relay, skip sections 2 and 3 and go to section 4.
 
 1. In Apple Developer → Identifiers register two App IDs: the app `com.naituw.humaninloop.ios` (enable **Push Notifications**) and the notification extension `com.naituw.humaninloop.ios.notification` (no capabilities). With your own team, change the team and the bundle IDs in `ios/project.yml` too, and make the relay's `APNS_TOPIC` equal the app's bundle ID.
 2. Keys → create a key with **Apple Push Notifications service (APNs)** enabled. Choose the team or topics and environment matching your app: Sandbox for development builds, Production for TestFlight / distribution. Existing team-scoped keys that support both environments remain valid. Each relay instance configures one key; use a matching relay/key for each environment when needed. Download the `.p8` file (**only once**) and note the **Key ID** and **Team ID**. Follow [Apple's current APNs authentication guide](https://developer.apple.com/documentation/UserNotifications/establishing-a-token-based-connection-to-apns) for the available key settings.
 
-## 3. Deploy the push relay
+## 3. Deploy the push relay (only if you run your own)
 
 1. Run `relay/scripts/build-zip.sh` in the repository to get `relay/dist/askhuman-relay.zip`.
 2. Tencent Cloud console → Cloud Function → create a **Web function**: runtime Node.js 20, region Hong Kong (no ICP filing needed, reaches APNs), 128 MB of memory, 15 s timeout, upload the zip.
@@ -60,14 +63,14 @@ Whichever path you take, you end up with:
 1. AskHuman Settings → **General** → at the very bottom turn on "Experimental features"; an "Experimental" tab appears (or run `AskHuman config set experimental.enabled true`).
 2. **Experimental** → **iOS App channel**, switch it on and fill in:
    - broker host, TLS port (default 8883), WSS port (default 8084), username, password, as your broker needs them (see the [broker page](./ios-broker.en.md));
-   - the push relay URL (the function URL);
+   - the push relay: "Use the public relay" by default; if you deployed your own, choose "Use my own relay" and enter its function URL;
    - the name this Mac shows on the phone (empty uses the computer name).
-3. Click **Test connection**: it connects to the broker and sends itself a message, reporting whether `tls` or `wss` was used and the round-trip time; then it asks the relay for its health and reports how fast it answered and whether it has an APNs key (without a relay address it warns that the phone gets no pushes).
+3. Click **Test connection**: it connects to the broker and sends itself a message, reporting whether `tls` or `wss` was used and the round-trip time; then it asks the relay for its health and reports how fast it answered and whether it has an APNs key. Last it checks whether this broker account can read or write topics outside its own: if it can, you get a warning (it never blocks saving or pairing); limit the account to `ah/<username>/#` in the broker's access rules.
 4. The same from the command line:
 
    ```bash
    AskHuman channel set ios --enable --host <host> --username <username> \
-     --relay-url <function URL> --password-stdin        # the password is read from stdin
+     --password-stdin                                   # the password is read from stdin; with your own relay add --relay-url <function URL>
    AskHuman channel test ios
    ```
 
@@ -109,14 +112,14 @@ Whichever path you take, you end up with:
 
 - Whether your broker has a free allowance, how large it is and what happens when it runs out depends on the service you chose; each service's allowance, where to see its usage and its drawbacks are on the [broker page](./ios-broker.en.md). A phone in the background causes no sync traffic. With the Mac and the phone both on a version that compresses the lists and sends Agent changes by attention, the sync itself (coming to the foreground, the lists and states while there, requests, to-dos) measured about 0.4 GB a month under heavy use (seven or eight Agents in parallel, the app opened about 70 times a day; counted on this device, where a message counts twice, published and delivered). **Attachments are the big part**: the phone downloads a picture from the Mac only when you open it in the viewer, and one screenshot of about 2 MB opened once counts about 7 MB by that count, so a month's total depends mostly on how many large pictures you open (the traffic figure below is the real one).
 - The Mac settings and the phone's Macs tab both show this month's traffic (counted locally; a message counts twice, published and delivered). **When this month's traffic gets close to each GB (from 0.8 GB by default) the Inbox says so once**: close the note at the top with its ✕ and it comes back only when the use gets close to the next GB. The "Data use reminders" option on the phone's Macs tab changes it to every 2 / 5 / 10 GB, or turns it off. The note only counts; it reads nothing from your broker and does not judge whether an allowance is used up, so a top-up or a plan change needs no action, and it starts over each month (UTC). For the real usage on the broker's side, look in its console. When the broker refuses connections because an allowance is gone, the app says so: "the broker refused the connection, this month's free allowance may be used up".
-- The cloud function sees very few calls (roughly 1,000 to 20,000 a month); check your account's billing rules in the cost center before deploying so there is no surprise fixed fee.
+- Using the public relay costs you nothing. If you deploy your own, the cloud function sees very few calls (roughly 1,000 to 20,000 a month); check your account's billing rules in the cost center before deploying so there is no surprise fixed fee.
 
 ## Troubleshooting
 
 | Symptom | What to do |
 |---|---|
 | Settings say "Broker not connected" | Click "Test connection" for the reason; when the office network blocks 8883 it falls back to WSS 8084 by itself; an authentication failure is usually a wrong password or ACL |
-| No pushes, but requests arrive while the app is open | Check the system notification permission; look for "push is no longer valid" under the phone in the Mac settings; make sure `<function URL>/v1/health` says `apns:true` |
+| No pushes, but requests arrive while the app is open | Check the system notification permission; look for "push is no longer valid" under the phone in the Mac settings; make sure `<relay address>/v1/health` says `apns:true` (for the public relay: `https://askhuman-relay.maipo.me/v1/health`) |
 | A question was asked long ago and the phone never notified you | The notification waits until the Mac's keyboard and mouse have been idle for the "Push timing" setting (15 minutes by default) and is never sent while you are using the Mac; check that "The Mac has been idle for …" in the Mac settings keeps growing (stuck at 0 means some program keeps generating input), or set the push timing to "Immediately". Opening the app always shows every open question |
 | Pushes arrive with a generic text only | The notification extension could not decrypt: make sure both sides share the same pairing; after reinstalling the app pair again or keep the old pairings |
 | "This phone's clock differs too much from a Mac's" | Messages have a ±15 minute replay window; fix Date & Time on the phone |

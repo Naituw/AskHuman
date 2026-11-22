@@ -522,8 +522,9 @@ pub(crate) fn help(lang: Lang) -> String {
   channel ios export                 Print the connection string (includes the broker password)\n\
   channel ios import <text|->        Take over the broker settings of another Mac\n\
 \n\
-  Broker settings: AskHuman channel set ios --host <h> --username <u> --relay-url <url>\n\
-                   --password-{env <VAR>|file <path>|stdin}  (or --connection-{env|file|stdin})",
+  Broker settings: AskHuman channel set ios --host <h> --username <u>\n\
+                   --password-{env <VAR>|file <path>|stdin}  (or --connection-{env|file|stdin})\n\
+  Push relay:      the public relay is used unless you add --relay-url <url> (your own)",
         "AskHuman channel ios —— iOS App 渠道（实验功能）\n\
 \n\
   channel ios status [--json]        Broker 连接、设备与待回答请求\n\
@@ -535,8 +536,9 @@ pub(crate) fn help(lang: Lang) -> String {
   channel ios export                 打印连接串（包含 Broker 密码）\n\
   channel ios import <文本|->        沿用另一台 Mac 的 Broker 设置\n\
 \n\
-  Broker 设置: AskHuman channel set ios --host <主机> --username <用户名> --relay-url <地址>\n\
-               --password-{env <变量>|file <路径>|stdin}（或 --connection-{env|file|stdin}）",
+  Broker 设置: AskHuman channel set ios --host <主机> --username <用户名>\n\
+               --password-{env <变量>|file <路径>|stdin}（或 --connection-{env|file|stdin}）\n\
+  推送中继:    默认用公共中继；用自己部署的再加 --relay-url <地址>",
     )
 }
 
