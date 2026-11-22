@@ -183,7 +183,7 @@ const ZH: Words = Words {
 ## 规则
 
 1. 用户只做只有人能做的事，其余由你来做。只有人能做的：在服务商登录（验证码、条款、付款）；在手机上装 App、粘贴配对码、输入确认码；点测试问题的「收到」。有浏览器或电脑操作工具时，控制台里的操作（建部署、用户和访问规则，复制主机和 token）也由你来做。
-2. 第一次提问就把用户要做的几件事一次说清。之后，你能决定的（Mac 名称、端口、是否保活）不要问，能用命令查到的（连接状态、配对结果）也不要问。
+2. 第一次提问就把用户要做的几件事一次说清（包括配对后手机上会弹出一条测试问题，点「收到」）。之后，你能决定的（Mac 名称、端口、是否保活、配对方式）不要问，能用命令查到的（连接状态、配对结果）也不要问；创建账号、保存密码本来就是配置，不用再征求同意。
 3. Broker 密码由你生成并保存，flespi 的 token 同理：用 `--password-stdin` 传入（见第 1 步），不要写进文件，回复用户时不要重复它。
 4. 在控制台里只新增，不修改、不删除已有的部署、用户和访问规则。遇到付款、充值、提高消费限额或绑定银行卡的页面，停下来问用户，不要点。
 5. 用户选 EMQX 之前，先把「服务商」一节里 EMQX 的提示原样转告。
@@ -213,11 +213,11 @@ Broker 在 Mac 和手机之间转发消息，账号由用户自备。
 用户装好 App 之后再开始（配对码 5 分钟内有效）。
 
 1. 运行 `AskHuman channel ios pair --no-wait | pbcopy`：配对码进入 Mac 剪贴板，不会出现在输出里。Mac 和 iPhone 登录同一个 Apple ID 时，手机上可以直接粘贴。
-2. 用 AskHuman 请用户在手机上：打开 AskHuman →「Mac」页 →「添加 Mac」→「粘贴」→「配对」，再把手机上出现的 6 位确认码输入到回答里。
+2. 用 AskHuman 请用户在手机上：打开 AskHuman →「Mac」页 →「添加 Mac」→「粘贴」→「配对」，再把手机上出现的 6 位确认码输入到回答里。同一条里告诉他：回复后手机上会弹出一条测试问题，点「收到」就行。
 3. 用户答复后，运行 `AskHuman channel ios status --json`：`pairing.stage` 应为 `pending`（还不是就隔几秒再查），`pairing.sas` 是 Mac 这边的确认码。数字相同（忽略空格）就运行 `AskHuman channel ios allow`；不同就运行 `AskHuman channel ios deny`，再从第 1 行重来。
 4. 运行 `AskHuman channel ios devices` 核对：出现一台状态为 `active` 的设备。然后清掉剪贴板：`printf '' | pbcopy`。",
     ],
-    test_question: "运行 `AskHuman channel ios test-question`，请用户在手机上点「收到」（最多等 120 秒），确认手机能收到提问、也能把回答送回来。",
+    test_question: "运行 `AskHuman channel ios test-question`：它把一条测试问题发到手机，用户在手机上点「收到」（最多等 120 秒）后才返回，返回的就是结果：手机能收到提问，也能把回答送回来。要点「收到」的事先告诉用户（配对那一问里已经说过就不用再说）；之后不要再用 AskHuman 问他点了没有，命令没返回就继续等它。",
     pair_fallback: "没有通用剪贴板（不是 macOS，或手机和 Mac 不是同一个 Apple ID）时：请用户在「iOS App」卡片上点「配对新手机」（`AskHuman --settings` 打开设置），用手机扫描二维码，核对确认码后点「允许」；你用 `AskHuman channel ios devices` 核对。",
     keep_alive_hint: "收尾时告诉用户：想让手机上一直显示这台 Mac 在线，可以在「iOS App」卡片里开启「保持这台 Mac 随时可连」（开启后后台服务常驻并开机自启）。不要替他开（规则 8）。",
     providers: "\
@@ -227,10 +227,10 @@ Broker 在 Mac 和手机之间转发消息，账号由用户自备。
 
 需要注意：如果免费额度（每月 100 万连接分钟、1 GB 流量）用完，最低充值金额可能需要 ¥100。建议关注流量使用，尽量保持在免费额度内。
 
-1. 登录后新建 **Serverless** 部署（已有部署就直接用，不要改动），消费限额保持 0。
+1. 登录后先看部署列表。没有部署：新建 **Serverless** 部署，消费限额保持 0。已有部署：用 AskHuman 把名称列给用户，问他用哪个、还是新建一个（已有的不一定是给 AskHuman 用的），不要自己选；用已有的，只新增账号和规则。
 2. 部署概览里的「连接地址」就是主机。
 3. 「访问控制 → 客户端认证」：添加用户名和密码（用户名只用字母和数字）。
-4. 「访问控制 → 客户端授权」默认放行所有话题，必须设置：「全部用户」标签：话题 `#`，发布 & 订阅，**不允许**；「用户名」标签：话题 `ah/<用户名>/#`，发布 & 订阅，**允许**。
+4. 「访问控制 → 客户端授权」默认放行所有话题，必须设置：「全部用户」标签：话题 `#`，发布 & 订阅，**不允许**；「用户名」标签：话题 `ah/<用户名>/#`，发布 & 订阅，**允许**。已有部署里「全部用户」的拒绝规则如果已经有，就不用再加；没有的话，先用 AskHuman 告诉用户这条规则会挡住这个部署上其他客户端对 `ah/` 以外话题的访问，他同意再加。
 
 端口：TLS 8883，WSS 8084。
 
@@ -278,7 +278,7 @@ You are helping the user set up AskHuman's iOS App channel: the user receives th
 ## Rules
 
 1. The user only does what only a person can; you do the rest. Only a person can: sign in to the provider (verification codes, terms, payment); install the app on the phone, paste the pairing code and type the check code; tap \"Received\" on the test question. With a browser or computer-use tool, the work in the console (creating the deployment, users and access rules, copying the host and token) is yours too.
-2. In your first question, tell the user in one go what they will have to do. After that, do not ask about what you can decide (Mac name, ports, keep-alive) or look up with a command (connection state, pairing result).
+2. In your first question, tell the user in one go what they will have to do (including that a test question will pop up on the phone after pairing, to tap \"Received\"). After that, do not ask about what you can decide (Mac name, ports, keep-alive, how to pair) or look up with a command (connection state, pairing result); creating the account and saving the password are the setup itself, so do not ask for permission again.
 3. You generate and save the broker password; a flespi token is the same: pass it with `--password-stdin` (see step 1), do not write it to a file, and do not repeat it when you reply to the user.
 4. In a console, only add: do not change or delete existing deployments, users or access rules. On a page about payment, top-ups, raising a spending limit or adding a bank card, stop and ask the user; do not click.
 5. Before the user chooses EMQX, relay EMQX's note from the \"Providers\" section verbatim.
@@ -308,11 +308,11 @@ This cannot be detected from the Mac; only the user can tell.",
 Start once the user has installed the app (the pairing code is valid for 5 minutes).
 
 1. Run `AskHuman channel ios pair --no-wait | pbcopy`: the pairing code goes to the Mac's clipboard and never appears in the output. When the Mac and the iPhone use the same Apple ID, the phone can paste it directly.
-2. Ask the user with AskHuman to do this on the phone: open AskHuman → Macs → Add a Mac → Paste → Pair, then type the 6-digit check code that appears on the phone into their answer.
+2. Ask the user with AskHuman to do this on the phone: open AskHuman → Macs → Add a Mac → Paste → Pair, then type the 6-digit check code that appears on the phone into their answer. In the same message, tell them that after they reply a test question will pop up on the phone, and to tap \"Received\".
 3. When they answer, run `AskHuman channel ios status --json`: `pairing.stage` should be `pending` (if not, check again in a few seconds), and `pairing.sas` is the Mac's check code. If the digits are the same (ignore spaces), run `AskHuman channel ios allow`; if not, run `AskHuman channel ios deny` and start again from line 1.
 4. Check with `AskHuman channel ios devices`: a device with state `active` appears. Then clear the clipboard: `printf '' | pbcopy`.",
     ],
-    test_question: "Run `AskHuman channel ios test-question` and ask the user to tap \"Received\" on the phone (it waits up to 120 seconds), to confirm the phone receives the question and sends the answer back.",
+    test_question: "Run `AskHuman channel ios test-question`: it sends a test question to the phone and returns only after the user taps \"Received\" there (it waits up to 120 seconds); what it returns is the result: the phone receives the question and sends the answer back. Tell the user beforehand to tap \"Received\" (the pairing message already did, so no need to repeat it); after that do not ask them with AskHuman whether they did, and if the command has not returned, keep waiting for it.",
     pair_fallback: "Without a shared clipboard (not macOS, or the phone and the Mac use different Apple IDs): ask the user to click \"Pair a new phone\" in the \"iOS App\" card (`AskHuman --settings` opens the settings), scan the QR code with the phone, compare the check codes and click \"Allow\"; you check with `AskHuman channel ios devices`.",
     keep_alive_hint: "At the end, tell the user that \"Keep this Mac reachable\" in the \"iOS App\" card keeps the phone showing this Mac as online (the background service then keeps running and starts at login). Do not turn it on for them (rule 8).",
     providers: "\
@@ -322,10 +322,10 @@ Start once the user has installed the app (the pairing code is valid for 5 minut
 
 Note: if the free allowance (1 million connection minutes and 1 GB of traffic per month) runs out, the minimum top-up may be ¥100. Keep an eye on traffic and try to stay within the free allowance.
 
-1. After signing in, create a **Serverless** deployment (use an existing one as it is, without changing it); keep the spending limit at 0.
+1. After signing in, look at the deployment list first. None: create a **Serverless** deployment and keep the spending limit at 0. Some: list their names for the user with AskHuman and ask which to use, or whether to create a new one (an existing one is not necessarily meant for AskHuman); do not choose yourself. In an existing deployment, only add the account and the rules.
 2. The \"connection address\" in the deployment overview is the host.
 3. \"Access Control → Authentication\": add a username and password (letters and digits only).
-4. \"Access Control → Authorization\" allows everything by default, so it must be set up: \"All users\" tab: topic `#`, Publish & Subscribe, **Deny**; \"Username\" tab: topic `ah/<username>/#`, Publish & Subscribe, **Allow**.
+4. \"Access Control → Authorization\" allows everything by default, so it must be set up: \"All users\" tab: topic `#`, Publish & Subscribe, **Deny**; \"Username\" tab: topic `ah/<username>/#`, Publish & Subscribe, **Allow**. If an existing deployment already has the \"All users\" deny rule, do not add it again; if it does not, first tell the user with AskHuman that this rule will block the other clients of that deployment from topics outside `ah/`, and add it only when they agree.
 
 Ports: TLS 8883, WSS 8084.
 
@@ -1102,6 +1102,73 @@ mod tests {
             }
             assert!(words.test_question.contains("channel ios test-question"));
             assert!(words.pair_fallback.contains("AskHuman --settings"));
+        }
+    }
+
+    /// The first walkthrough with a real Agent asked the person two things it did not need to:
+    /// whether it may create the account, and, after the tap on "Received", to come back and say
+    /// so. The guide must name the test question up front and let the command wait for the answer.
+    #[test]
+    fn the_person_is_asked_nothing_the_agent_can_decide_or_look_up() {
+        for lang in [Lang::Zh, Lang::En] {
+            let words = words(lang);
+            let rule_two = words
+                .rules
+                .lines()
+                .find(|l| l.starts_with("2. "))
+                .expect("rule 2");
+            let (permission, test_question, announced, never_ask) = match lang {
+                Lang::Zh => (
+                    "不用再征求同意",
+                    "测试问题",
+                    "回复后手机上会弹出一条测试问题",
+                    "不要再用 AskHuman 问他点了没有",
+                ),
+                Lang::En => (
+                    "do not ask for permission again",
+                    "test question",
+                    "after they reply a test question will pop up on the phone",
+                    "do not ask them with AskHuman whether they did",
+                ),
+            };
+            assert!(rule_two.contains(permission), "{lang:?}: rule 2 permission");
+            assert!(
+                rule_two.contains(test_question),
+                "{lang:?}: rule 2 names the test question"
+            );
+            assert!(
+                words.step_bodies[2].contains(announced),
+                "{lang:?}: the pairing message announces the test question"
+            );
+            assert!(
+                words.test_question.contains(never_ask),
+                "{lang:?}: the command waits, the person is not asked again"
+            );
+        }
+    }
+
+    /// Which deployment an existing EMQX account should use is not for the Agent to decide: the
+    /// deployments it finds are not necessarily meant for AskHuman, and the deny-all rule changes
+    /// what every other client of a deployment may do.
+    #[test]
+    fn an_existing_deployment_is_the_persons_choice() {
+        for lang in [Lang::Zh, Lang::En] {
+            let providers = words(lang).providers;
+            let (list_and_ask, only_add, deny_rule_warning) = match lang {
+                Lang::Zh => (
+                    "用 AskHuman 把名称列给用户，问他用哪个、还是新建一个",
+                    "只新增账号和规则",
+                    "会挡住这个部署上其他客户端",
+                ),
+                Lang::En => (
+                    "list their names for the user with AskHuman and ask which to use",
+                    "only add the account and the rules",
+                    "will block the other clients of that deployment",
+                ),
+            };
+            for part in [list_and_ask, only_add, deny_rule_warning] {
+                assert!(providers.contains(part), "{lang:?}: {part}");
+            }
         }
     }
 
