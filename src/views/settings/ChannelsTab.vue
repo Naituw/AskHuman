@@ -1,12 +1,14 @@
 <script setup lang="ts">
-// 「通信渠道」tab：弹窗渠道尺寸 + 飞书 / Telegram / 钉钉 / Slack 四家 IM 渠道配置卡
-// （含 R7 故障横幅、配置指南外链、连接测试与自动识别）。每张卡的标题行（标志、名称、状态标签、
-// 开关）由 ChannelCardHead 画，见 docs/specs/settings-agents-channels-cards.md。每张已启用的 IM 卡
-// 末尾有全局的「允许从手机 / IM 创建 Agent 任务」开关行（AgentTasksSwitchRow，与「高级」是同一个设置）。
+// 「通信渠道」tab：弹窗渠道尺寸 + iOS App 渠道卡（紧跟弹窗卡，docs/specs/ios-setup-experience.md D13）
+// + 飞书 / Telegram / 钉钉 / Slack 四家 IM 渠道配置卡（含 R7 故障横幅、配置指南外链、连接测试与
+// 自动识别）。每张卡的标题行（标志、名称、状态标签、开关）由 ChannelCardHead 画，见
+// docs/specs/settings-agents-channels-cards.md。每张已启用的 IM 卡末尾有全局的「允许从手机 / IM
+// 创建 Agent 任务」开关行（AgentTasksSwitchRow，与「高级」是同一个设置）。
 import { computed } from "vue";
 import { useI18n } from "vue-i18n";
 import AgentTasksSwitchRow from "./AgentTasksSwitchRow.vue";
 import ChannelCardHead from "./ChannelCardHead.vue";
+import IosChannelCard from "./IosChannelCard.vue";
 import { useSettingsContext } from "./context";
 
 const { t } = useI18n();
@@ -128,6 +130,9 @@ function setEnabled(id: "popup" | "telegram" | "dingding" | "feishu" | "slack", 
       </div>
     </template>
   </div>
+
+  <!-- iOS App 渠道：按 DOM 顺序排在弹窗卡之后；IM 卡靠 CSS order（10 起）排在它后面 -->
+  <IosChannelCard />
 
   <!-- 引导到「高级 · 按需发送」：独立 tip 卡，走 .card+.card 间距；仅未开启时显示（默认关时的发现性） -->
   <div

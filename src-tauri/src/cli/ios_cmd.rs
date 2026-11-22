@@ -1,7 +1,6 @@
 //! `AskHuman channel ios <status|devices|pair|allow|deny|test-question|revoke|rename|export|import|--agent-guide>` —
-//! management of the iOS channel for headless use. The channel is experimental: these commands exist only
-//! while the hidden `experimental.enabled` switch is on. Pairing state lives in the daemon's
-//! gateway; the commands talk to it through `ClientMsg::Ios`.
+//! management of the iOS channel for headless use. Pairing state lives in the daemon's gateway; the
+//! commands talk to it through `ClientMsg::Ios`.
 
 use super::cfgio;
 use super::ios_guide;
@@ -13,11 +12,6 @@ use crate::onboarding::probe::{self, Outcome, ProbeTarget};
 use crate::onboarding::probe_run::ASK_TIMEOUT;
 use std::collections::HashSet;
 use std::time::{Duration, Instant};
-
-/// Whether the experimental switch is on (the iOS channel is invisible otherwise).
-pub fn available() -> bool {
-    AppConfig::load_without_secrets().experimental.enabled
-}
 
 pub fn dispatch(args: &[String], lang: Lang) -> Result<(), String> {
     let sub = args.first().map(|s| s.as_str()).unwrap_or("help");
@@ -637,7 +631,7 @@ pub(crate) fn apply_connection(cfg: &mut AppConfig, text: &str) -> Result<(), St
 pub(crate) fn help(lang: Lang) -> String {
     cfgio::t(
         lang,
-        "AskHuman channel ios — the iOS app channel (experimental)\n\
+        "AskHuman channel ios — the iOS app channel\n\
 \n\
   channel ios --agent-guide          Setup guide for an Agent, with the current state\n\
   channel ios status [--json]        Broker connection, devices and pending requests\n\
@@ -654,7 +648,7 @@ pub(crate) fn help(lang: Lang) -> String {
   Broker settings: AskHuman channel set ios --host <h> --username <u>\n\
                    --password-{env <VAR>|file <path>|stdin}  (or --connection-{env|file|stdin})\n\
   Push relay:      the public relay is used unless you add --relay-url <url> (your own)",
-        "AskHuman channel ios —— iOS App 渠道（实验功能）\n\
+        "AskHuman channel ios —— iOS App 渠道\n\
 \n\
   channel ios --agent-guide          给 Agent 的配置指南（含当前状态）\n\
   channel ios status [--json]        Broker 连接、设备与待回答请求\n\

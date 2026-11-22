@@ -98,13 +98,15 @@ Friends 与 Internal 读回没变。`docs/public/ios/testflight.json` 已加（�
 1. 发布 Pages（手动工作流 `ios-beta-pages`），打开落地页与 TestFlight 公共链接，**用一台没加过测试的手机从落地页走到 TestFlight 安装成功**；
 2. 带新文案的 iOS 构建（0.1.0 的新 Build）已在公共组，审核状态读回 `APPROVED`（沿用先前的审核，规格 D23）；
 3. **一个提交**翻可见性（规格 §10.1）：
-   - 卡片移到 `ChannelsTab.vue` 的最上面（规格 D13）：模板里紧跟「本地弹窗」卡、排在「按需发送」提示之前，按 DOM 顺序，不用 CSS `order`；`id="channel-ios"`、`useSearch.ts` 与深链；`ExperimentalTab.vue` 空状态一行（`settings.experimental.ios.*` 已在 P1 迁完）；
-   - `AwayCard.vue`、`RemotePage.vue`（`showIos` 与 `openSettings("channel#channel-ios")`）；
+   - 卡片移到 `ChannelsTab.vue` 的最上面（规格 D13）：模板里紧跟「本地弹窗」卡、排在「按需发送」提示之前，按 DOM 顺序，不用 CSS `order`；`id="channel-ios"`、`useSearch.ts` 与深链；`ExperimentalTab.vue` 不再渲染 iOS 卡（页里还有 iCloud 待办同步卡，所以空状态那行用不上，没有加；`settings.experimental.ios.*` 已在 P1 迁完）；
+   - `AwayCard.vue`、`RemotePage.vue`（`showIos` 与 `openSettings("channel#channel-ios")`；磁贴名「iOS（实验）」改成「iOS App」，即 `setup.remote.ios`）；
    - `ios_cmd::available()` 与 `channel_cmd.rs` 里四处门控去掉，`channel list` / `help` 与测试更新，`ios_cmd.rs` 帮助里的「(experimental)」去掉；
-   - 文档：`ios-channel.md`（D22、L97、L282、L284）、`overview-ios.md`、`docs/overview.md` 里提到「实验」的地方；
+   - 文档：`ios-channel.md`（D22、L97、L282、L284）、`overview-ios.md`、`docs/overview.md` 与 `overview-configuration.md` 里提到「实验」的地方；顺带 `ios-open-access.md` OA12、`onboarding.md` D22、`mac-mesh.md`、`todo-sync.md`、`ios-alert-timing.md` 里写着旧路径的几处；
    - 提交信息 `feat(ios): …`，**不带** `Release-Note: skip`，并写 `Release-Note:` 一行：「iOS App 渠道不再是实验功能：设置里有分步引导（Broker、TestFlight、配对）、一键测试，也可以让 Agent 帮你配置。」（先给用户看措辞）；
 4. 装机验证后发 Mac 新版（发布流程另行取得用户指示）；
 5. 把「每 80 天出一次 TestFlight 包」「公共链接与上限的现状」「一周后复核中继与链接的用量」记进 `docs/PROGRESS.md`。
+
+**状态（2026-11-22）**：第 3 项已按用户的选择做成**一个本地提交**，不推送、不发布 Pages、不发 Mac 新版；提交信息里的 `Release-Note` 措辞经用户看过。第 1、2、4、5 项还没做，仍按上面的顺序、每步取得用户同意。这一项提前做完，不改变放出顺序：卡片对用户可见要等第 4 项的 Mac 新版。
 
 验证：`node scripts/machine-health.mjs` → `./scripts/install.sh`；真实窗口里 设置 → 通信渠道 看卡片三种形态、深链、搜索；`AskHuman channel list` 与 `channel ios --agent-guide` 对没打开隐蔽开关的环境可用；**用户在真机上从零走完整条链路**（新 Broker 账号 → 落地页 → TestFlight → 配对 → 测试问题）并让一个 Agent 按提示词配一遍（密码由 Agent 生成并保存，用户只做 D24 里只有人能做的事）。
 

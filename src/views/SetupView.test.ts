@@ -710,7 +710,7 @@ describe("setup wizard", () => {
   });
 
   describe("page 2: remote answering", () => {
-    it("lists the channels in the settings page's order and recommends only Feishu", async () => {
+    it("lists the IM channels in the settings page's order, iOS last, and recommends only Feishu", async () => {
       const w = await mountWizard("remote");
       const ids = w.findAll('[data-testid^="channel-row-"]').map((el) => el.attributes("data-testid"));
       expect(ids).toEqual([
@@ -718,6 +718,8 @@ describe("setup wizard", () => {
         "channel-row-telegram",
         "channel-row-dingding",
         "channel-row-slack",
+        // Not a guided channel: its tile follows the guided ones and opens its card in Settings.
+        "channel-row-ios",
       ]);
       expect(get(w, "channel-row-feishu").find(".setup-recommended").exists()).toBe(true);
       for (const id of ["telegram", "dingding", "slack"]) {
@@ -781,17 +783,11 @@ describe("setup wizard", () => {
       expect(text(w, "channel-row-feishu")).toContain("auth failed");
     });
 
-    it("lists iOS only while the experimental features are on, and opens its Settings card", async () => {
-      const off = await mountWizard("remote");
-      expect(find(off, "channel-row-ios").exists()).toBe(false);
-      off.unmount();
-      wrappers.length = 0;
-
-      payload = settings({ experimental: true });
-      const on = await mountWizard("remote");
-      expect(find(on, "channel-row-ios").exists()).toBe(true);
-      await click(on, "channel-open-ios");
-      expect(ipc.openSettings).toHaveBeenCalledWith("experimental");
+    it("lists iOS next to the IM channels, and opens its card in the Channels settings", async () => {
+      const w = await mountWizard("remote");
+      expect(find(w, "channel-row-ios").exists()).toBe(true);
+      await click(w, "channel-open-ios");
+      expect(ipc.openSettings).toHaveBeenCalledWith("channel#channel-ios");
     });
 
     it("offers only Skip while no channel is on, and Skip records the decision and moves on", async () => {

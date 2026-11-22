@@ -178,6 +178,20 @@ export function useSettingsSearch(deps: {
         "settings.channels.defaultWidth",
         "settings.channels.defaultHeight",
       ]),
+      // The iOS App card sits right under the popup card; the card itself is the anchor.
+      {
+        ...e("channel", "settings.channels.ios.title", [
+          "settings.channels.ios.desc",
+          "settings.channels.ios.step.broker",
+          "settings.channels.ios.step.app",
+          "settings.channels.ios.step.pair",
+          "settings.channels.ios.host",
+          "settings.channels.ios.username",
+          "settings.channels.ios.keep.title",
+          "settings.channels.ios.testQuestion.send",
+        ]),
+        target: "channel-ios",
+      },
       e("channel", "settings.channels.feishuTitle", [
         "settings.channels.appId",
         "settings.channels.appSecret",

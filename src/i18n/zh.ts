@@ -1243,7 +1243,7 @@ export default {
       edit: "编辑",
       back: "返回渠道列表",
       openInSettings: "在设置页打开",
-      ios: "iOS（实验）",
+      ios: "iOS App",
       skip: "跳过",
       saveEnable: "保存并启用",
       missing: "请先填写所有必填项。",

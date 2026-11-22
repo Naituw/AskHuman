@@ -6,7 +6,7 @@ AHCore 保留更新期间的草稿和原提交 ID，完成新 epoch 同步后自
 `Caps.liveUpdate` 与 Presence 可选 `u` 保持旧手机互通，详细契约见 [即时换新](specs/daemon-live-update.md)。
 
 
-> 本文是 `docs/overview.md` 的专题补充，记录 iOS 渠道（实验功能）当前的实现地图与不变量；需求决策见 `docs/specs/ios-channel.md`，实现步骤见 `docs/plans/ios-channel.md`，用户使用说明见 `docs/wiki/ios-setup.md`；免费开放的决策见 `docs/specs/ios-open-access.md`，broker 的要求、三条已实测路径与兼容性验证见 `docs/wiki/ios-broker.md` 与 `ios/Tools/broker-probe/`。
+> 本文是 `docs/overview.md` 的专题补充，记录 iOS 渠道当前的实现地图与不变量；需求决策见 `docs/specs/ios-channel.md`，实现步骤见 `docs/plans/ios-channel.md`，用户使用说明见 `docs/wiki/ios-setup.md`；免费开放的决策见 `docs/specs/ios-open-access.md`，broker 的要求、三条已实测路径与兼容性验证见 `docs/wiki/ios-broker.md` 与 `ios/Tools/broker-probe/`。
 
 ## 形态
 
@@ -16,7 +16,7 @@ Agent / CLI ─► Daemon ── IosGateway（一个 actor）──► MQTT（TL
                                 └────── 推送中继（无状态云函数，持有 APNs 密钥）──► APNs ───────────┘
 ```
 
-- iOS 是 Daemon 里的又一个渠道（`channels/ios.rs`），受 `experimental.enabled` 隐藏；一个 Mac 一份 broker 凭据，多台 Mac 共用同一份（连接串可导入导出），手机经二维码配对。
+- iOS 是 Daemon 里的又一个渠道（`channels/ios.rs`），设置卡片在「通信渠道」页（2026-11-22 起不再藏在「实验」后面，`ios-channel.md` D22）；一个 Mac 一份 broker 凭据，多台 Mac 共用同一份（连接串可导入导出），手机经二维码配对。
 - **端到端加密**：每个配对一对方向密钥（ChaCha20-Poly1305），broker 只见密文；配对用一次性票据 + 6 位校验码，由 Mac 用户在设置页或 CLI 上放行。推送预览同样加密，由手机上的通知扩展解密。
 - **Mac 不持有 APNs 密钥**：Mac 把加密后的信封和手机的不透明句柄交给中继，中继按固定白名单拼出提醒并转给 APNs。中继地址只经 `config::effective_relay_url` 取：`channels.ios.relayUrl` 为空 = 用内置的公共中继（`config::IOS_DEFAULT_RELAY_URL`，该常量为空的构建没有公共中继，必须自己填），二维码里的 `r`、推送、连接串、健康检查因此不会各自处理空值。Broker 不绑任何服务商：设置页的服务商目录只是向导（`docs/specs/ios-open-access.md`）。
 - 手机能做的事：回答问题 / 确认（含多题、推荐、附件；回答时还能从该项目的待办里选几条随回答发给 Agent，What's next 能看到完整队列，`docs/specs/special-replies.md` D28 / D29）、看 Agent 列表（App 里没有手动关注：手机新建任务或原会话接续的新一轮出结果时 Mac 会通知，列表行与详情页只读地标出）、实时观察（Watch，≤2 路、仅前台）、给 Agent 插话、新建 Agent 任务（Face ID 确认）、管理待办（「待办」标签：来源是某台 Mac 或「iCloud」，浏览项目、增 / 改 / 勾 / 删 / 排序、⚡ 自动执行、看执行历史；`docs/specs/ios-todos.md`）；请求页里出现的每一份待办清单（提问页「待办」卡、What's next 与 Stop 的队列行）都能完成 / 删除 / 添加：右滑完成、左滑删除（也有长按菜单与 VoiceOver 操作），清单末尾「＋ 添加待办」只有文字、写到该请求所在的那台 Mac（`docs/specs/todo-list-actions.md`，取代了请求页「⋯」→「添加待办…」的半屏页）；可选的开发者模式（Macs 标签里的开关，默认关）：全局浮动按钮，按住滑到条目松手，v1 只有「快速添加待办」，不用离开当前界面（`docs/specs/ios-developer-mode.md`）。

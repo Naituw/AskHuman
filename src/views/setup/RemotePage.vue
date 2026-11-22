@@ -34,9 +34,6 @@ const openDef = computed<ChannelDef | undefined>(() =>
   detail.value ? channelDef(detail.value) : undefined,
 );
 
-/** iOS is not a guided channel yet: with the experimental features on, it points at its Settings card. */
-const showIos = computed(() => ctx.config.value?.experimental?.enabled === true);
-
 interface ListRow {
   def: ChannelDef;
   state: ChannelState;
@@ -137,7 +134,8 @@ function needs(def: ChannelDef): string {
             </div>
           </div>
 
-          <div v-if="showIos" class="channel-tile" data-testid="channel-row-ios">
+          <!-- iOS is not a guided channel: its tile points at its card in Settings, which has its own steps. -->
+          <div class="channel-tile" data-testid="channel-row-ios">
             <div class="tile-head">
               <BrandBadge id="ios" :label="t('setup.remote.ios')" />
               <span class="tile-id">
@@ -150,7 +148,7 @@ function needs(def: ChannelDef): string {
                 class="btn"
                 type="button"
                 data-testid="channel-open-ios"
-                @click="openSettings('experimental')"
+                @click="openSettings('channel#channel-ios')"
               >
                 {{ t("setup.remote.openInSettings") }}
               </button>

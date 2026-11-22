@@ -3,7 +3,7 @@
 记录需要跨会话保留的未完成 / 延期事项和明确下一步。任务 / 需求完成后删除其 section
 （历史留在 git）。
 
-## 进行中：iOS 设置体验（设计已通过；P1 卡片、P2 后端、P3 文档与落地页已实现，P4 起）
+## 进行中：iOS 设置体验（设计已通过；P1–P4 与 P5 的可见性提交已完成，放出待定）
 
 用户 2026-11-22 要求全面优化 iOS 渠道的设置界面：打开设置就能完成后续配置（Broker、TestFlight、配对），并能让 Agent 代配。
 规格 [ios-setup-experience.md](specs/ios-setup-experience.md)（全部文案在 §14），计划 [plans/ios-setup-experience.md](plans/ios-setup-experience.md)，
@@ -12,7 +12,7 @@ TestFlight 公共链接 + Pages 落地页、卡片顶部「设置步骤」清单
 卡片移出「实验」并放在「本地弹窗」之下、公共组「AskHuman Public」上限 1,000、README 加一节；在主工作区做。
 
 - [x] P1 卡片（`IosChannelCard.vue` 与拆出的部件）：前端测试与 `vue-tsc` 通过；真实卡片在浏览器里用 mock 后端与规格截图逐张对照
-  （中 / 英、浅 / 深、480 / 560 宽）一致。卡片仍在「实验」页里，可见性没变。
+  （中 / 英、浅 / 深、480 / 560 宽）一致。卡片先在「实验」页里做完，P5 的可见性提交才把它移到「通信渠道」页。
 - [x] P2 后端：设置探测多了 `ios` 目标（只发给 iOS、不弹窗、Mac 刚有输入也立即推送；`ChannelsTab` 的向导磁贴列表不变）；
   `AskHuman channel ios --agent-guide`（`cli/ios_guide.rs`，中英、按当前状态写出下一步，读状态不拉起守护进程、不碰钥匙串）；
   `client::ios_op_if_running`。Rust 全量测试与 `clippy -D warnings` 通过；用隔离的 `ASKHUMAN_HOME` 跑过指南和速查表里的命令。
@@ -25,13 +25,12 @@ TestFlight 公共链接 + Pages 落地页、卡片顶部「设置步骤」清单
   用户回答了 9 次，其中 2 次多余，已改指南；控制台里已有部署时由用户选（规格 §12 第 7 轮）。用户决定不再重走一轮，改动由单测覆盖。
   配对码被手机拒绝的原因是手机里已有另一个 Broker 账号（一部手机一次只能用一个）：用户定了第二台 Mac 的做法（规格 D25，第 8 轮）——
   第一问加「这部手机已经配对过另一台 Mac」，用连接串沿用第一台的设置，故障对照补这条提示；这条路径只有单测和隔离实例的管道验证，没让真实 Agent 走过。
-  Codex 的会话记录留在 `~/.codex/sessions/2026/11/22/`。**待用户清理**：EMQX 里走查新建的部署 `AskHumanIOS`（带账号 `ahios` 和两条规则），
-  手机 App「Mac」页里的「走查 Mac」；清完删掉这一句。
+  Codex 的会话记录留在 `~/.codex/sessions/2026/11/22/`。
 - [x] P3 文档与落地页：`scripts/build-ios-beta-site.mjs` 的根页改成中英双语 TestFlight 落地页（公共链接只读 `docs/public/ios/testflight.json`，
   缺失时显示「仅限邀请」，所以 Pages 现状不变；`node --test` 校验链接格式与站内链接，截图 `docs/assets/ios-setup-experience/18–20`）；
   `docs/public/ios/beta*.md` 改成公共链接版；`docs/wiki/ios-setup*.md` 的入口与步骤、`ios-broker*.md` 的一句摘要说明、README 中英各一节、
   OA12 与 `overview-ios.md` 已回写。**这些文档已经按放出后的路径（设置 → 通信渠道 → iOS App）写成，而当前发布版里入口还在「实验」里：
-  在 P5 的可见性提交之前不要推送，也不要单独运行 `ios-beta-pages` 发布 Pages（隐私政策那一页也会带上新的内测指南）。**
+  对应的代码（P5 的可见性提交）现在有了，但只在本地；推送和 `ios-beta-pages`（隐私政策那一页也会带上新的内测指南）都按规格 §10.4 的顺序、经用户同意再做。**
 - [x] 隐私政策（`docs/public/ios/privacy*.md`）两处措辞已改并经用户审阅：「邀请制内测」→「TestFlight 测试版」，「邀请邮箱」→ 按邮件邀请 / 仅公共链接区分（Apple 的说明：只通过公共链接加入时，开发者看不到邮箱和姓名）；联系方式一句与生效日期（2026-11-22）没动。**随 Pages 一起发布**（P5，见下面的外部依赖）。
 - [x] P4 本地部分：手机 App 里两处路径提示改成「设置 → 通信渠道 → iOS App」（模拟器构建通过，字符串目录由脚本重新生成、只差这两个键）；
   Beta 描述、审核备注草稿与 `ios-testflight` 技能参考里去掉「EMQX」「实验」字样。这一步本身没有出包、上传、送审。
@@ -45,7 +44,11 @@ TestFlight 公共链接 + Pages 落地页、卡片顶部「设置步骤」清单
   链接随时能用 `helper.py external-status` 读到。**链接已经开着，但没有任何地方公布。** 公共组不会自动拿到新构建：每个新构建要在 `start` 之后对它显式跑 `public`（幂等）。
 - [ ] 待用户决定：日常出包（Internal + Friends）要不要顺带更新公共组。不更新，公共链接就一直给构建 29，直到它在 2027-02-19 过期；
   更新，则每个新构建都会到公共测试员手上（现在技能写的是日常出包从不碰公共组）。
-- [ ] 按计划继续：P5 放出（可见性只在 P5 的一个提交里翻）。每期做完在这里勾掉并记下卡点。
+- [x] P5 的可见性提交（2026-11-22，只在本地提交，没有推送）：iOS App 卡移到「通信渠道」页、紧跟「本地弹窗」卡；`channel ios …`、`channel list`
+  与帮助不再看 `experimental.enabled`；「离开模式」卡和向导磁贴对所有人显示（磁贴名改成「iOS App」）；搜索与深链 `channel#channel-ios` 可用；
+  「实验」页只剩 iCloud 待办同步。前端 2163 项测试与 `vue-tsc`、Rust `cli::` + `onboarding::` 373 项、`clippy -D warnings`、本地 broker 的配对 → 回答 E2E 通过，已装机；
+  真实的 `SettingsView`（浏览器 + mock 后端）里看过卡片的三种形态、深链、搜索结果跳转。可见性要等 Mac 新版发出才对用户生效。
+- [ ] 按计划继续：P5 其余项（顺序见规格 §10.4：发布 Pages → 确认公共组里是带新文案的构建 → 发 Mac 新版 → 记 80 天出包），每一步都先问用户。
 - [ ] 放出前的外部依赖（每一项都要用户明确同意）：Pages 落地页与 TestFlight 公共链接（带新路径文案的 iOS 新构建已随 Build 29 出了）；
   具体放出时间由用户另行决定；放出后要**至少每 80 天出一次 TestFlight 包**（构建 90 天过期，公共链接才一直可用）。
 
@@ -498,7 +501,7 @@ Mac / iOS 交互原型、双向消息与进程重启补发已验证）。2026-10
 [`docs/specs/ios-channel.md`](specs/ios-channel.md)，计划 [`docs/plans/ios-channel.md`](plans/ios-channel.md)
 （作为新渠道 `ios`；EMQX 杭州 + 腾讯云云函数推送中继 + 端到端加密；多 Mac 配对同一部手机；回答 / 确认 / 附件 /
 Watch / Follow / 插话 / 新任务），实现地图见 [`docs/overview-ios.md`](overview-ios.md)，用户说明见
-[`docs/wiki/ios-setup.md`](wiki/ios-setup.md)。实现在 worktree `HumanInLoop-ios`（分支 `feat/ios-channel`），2026-10-26 已快进合并进 `main`（worktree 与分支 2026-11-03 已删除，本地与 `origin` 都删了；删前分支指向 `15f1c491`，已完整并入 `main`，也没有 PR；渠道默认关闭：受 `experimental.enabled` 隐藏，`channels.ios.enabled` 默认 `false`；所有 `feat` / `fix` 提交都带 `Release-Note: skip`，不进发布说明）。代码已随 v0.16.0 发出，发布说明未提及该渠道。
+[`docs/wiki/ios-setup.md`](wiki/ios-setup.md)。实现在 worktree `HumanInLoop-ios`（分支 `feat/ios-channel`），2026-10-26 已快进合并进 `main`（worktree 与分支 2026-11-03 已删除，本地与 `origin` 都删了；删前分支指向 `15f1c491`，已完整并入 `main`，也没有 PR；渠道默认关闭：`channels.ios.enabled` 默认 `false`，当时还受 `experimental.enabled` 隐藏（这层隐藏已在「iOS 设置体验」的 P5 可见性提交里去掉）；所有 `feat` / `fix` 提交都带 `Release-Note: skip`，不进发布说明）。代码已随 v0.16.0 发出，发布说明未提及该渠道。
 
 **状态（2026-10-25）**：Mac Gateway / IPC 3→4 / 设置页 / CLI、推送中继 `relay/`、iOS App（收件箱 · 作答 · 确认 ·
 附件 · Agents · 关注 · 实时观察 · 插话 · 新任务 · 历史 · 配对 · 通知扩展）全部实现，通过 Rust / Swift / 中继 / 前端测试、
@@ -581,7 +584,7 @@ Agents 列表 + 实时观看 + 关注 + 插话读取回执 + 完成横幅、任�
 
 要点：每台 Mac 的 Daemon 新增「答题端」，其他 Mac 的提问进入同一个合并作答窗口（带 Mac 标签、按「Mac + 项目」分组）；双向对称，v1 只回答提问与权限 / Stop 确认；
 对端是「电脑出口」，永远参与，不受 `channels.autoActivation` 与活跃槽管辖；配对用「异步邀请 + 手机 / 本机代批」，新 Mac 经一次批准加入整个圈子
-（两两独立密钥 + 票据转交式引荐）；提问方先发摘要、对端点开才拉正文，不用群密钥广播。依赖实验功能 iOS 渠道的 EMQX 与加密设施，不改 iOS App 与中继。
+（两两独立密钥 + 票据转交式引荐）；提问方先发摘要、对端点开才拉正文，不用群密钥广播。依赖 iOS 渠道的 EMQX 与加密设施，不改 iOS App 与中继。
 前置：并行的 `ios-alert-timing`（已批准、实现中，`docs/specs/ios-alert-timing.md`）要先合并——它把手机移出活跃槽，本需求按它落地后的语义写（需求 §6.4）。
 
 下一步：
@@ -607,7 +610,7 @@ Agents 列表 + 实时观看 + 关注 + 插话读取回执 + 完成横幅、任�
   「Mac 在用」用 `CGEventPost` 发 mouse-moved 事件模拟（实测会把空闲清零，不需要额外权限）；用 `AskHuman -q … &` 在后台发测试提问、`kill` 取消。时间线：Mac 在用时发一个提问（手机**不应**有通知）→
   停止输入，空闲满 60 秒时来**一条**且不重复 → 再发一个（此时 Mac 已空闲，应几秒内就推）。手机要关专注模式、App 在后台，Mac 上别有别的待答提问（否则它也会被推）。
   做完删掉配置里的键（原文件逐字节还原，可用 `shasum` 核对）。**不要用 `AskHuman help` 之类的词试命令**——它会被当成提问弹窗。
-- [ ] 设置页（设置 → 实验 → iOS App 渠道 → 推送时机）的实际外观：下拉、说明、「Mac 已空闲 N 分钟」。组件测试只覆盖结构与文案，没有看过截图（这台机器没给命令行 / Computer Use 屏幕录制权限，没法自己截）。
+- [ ] 设置页（设置 → 通信渠道 → iOS App → 推送时机；2026-11-22 前在「实验」页）的实际外观：下拉、说明、「Mac 已空闲 N 分钟」。组件测试只覆盖结构与文案，没有看过截图（这台机器没给命令行 / Computer Use 屏幕录制权限，没法自己截）。
 - [ ] 规格「已知局限」9 里没验证的：远程桌面 / 屏幕共享的输入是否计入空闲；daemon 由 SSH 等非图形会话拉起时读到的空闲值是否可靠。有结果后写回规格，全部验完删掉本节。
 
 后续（本期不做，细节在规格「后续」一节；Follow 的去留已另立一节，见下）：

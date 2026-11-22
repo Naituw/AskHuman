@@ -1265,7 +1265,7 @@ export default {
       edit: "Edit",
       back: "Back to channels",
       openInSettings: "Open in Settings",
-      ios: "iOS (experimental)",
+      ios: "iOS App",
       skip: "Skip",
       saveEnable: "Save and enable",
       missing: "Fill in every required field first.",

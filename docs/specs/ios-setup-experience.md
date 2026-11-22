@@ -1,7 +1,7 @@
 # 需求：iOS App 渠道的设置体验（设置进度、Broker 与 TestFlight 引导、Agent 代配置、移出「实验」）
 
 > 状态：设计已通过（2026-11-22，第 3 轮确认）。D1–D5 是用户经 AskHuman 第 1 轮定案的；D13、D18–D21 是第 2 轮定案的；D22 是实现后第 4 轮定案的；D23 是第 5 轮定案的；D6–D12、D14–D17 是设计者做原型时的派生决定，随整体设计在第 3 轮通过（§12）。
-> 原型已做完并截图（`docs/assets/ios-setup-experience/`；真实 `SettingsView` + mock 后端，代码在 `src/prototype/` 的 `settings-ios.html` 一组文件，不进产品）；实现进度见[计划](../plans/ios-setup-experience.md)：P1–P4 已完成（2026-11-22，含 Apple 侧的出包与公共链接），P5 放出还没开始，卡片仍在「实验」里。
+> 原型已做完并截图（`docs/assets/ios-setup-experience/`；真实 `SettingsView` + mock 后端，代码在 `src/prototype/` 的 `settings-ios.html` 一组文件，不进产品）；实现进度见[计划](../plans/ios-setup-experience.md)：P1–P4 已完成（2026-11-22，含 Apple 侧的出包与公共链接）；P5 的可见性提交已在本地完成（2026-11-22：卡片在「通信渠道」页，CLI 门控解除），**尚未推送、未发布 Pages、未发 Mac 新版**，放出顺序见 §10.4。
 > 依赖 / 复用：[`ios-channel.md`](ios-channel.md)（D22：内测期放「实验」，对外发行后转正）、[`ios-open-access.md`](ios-open-access.md)（OA2–OA6 Broker 并列与中立措辞、OA11 服务商目录、OA12 本文接手的可见性）、
 > [`docs/wiki/ios-broker.md`](../wiki/ios-broker.md)（Broker 事实的唯一出处）、[`onboarding.md`](onboarding.md)（`setup-probe` 探测）、
 > [`settings-agents-channels-cards.md`](settings-agents-channels-cards.md)（渠道卡片的徽标、状态标签与版式）、[`ios-external-testflight.md`](../plans/ios-external-testflight.md)（外部测试的资料与 Apple 侧约束）。
@@ -57,7 +57,7 @@
 | D12 | 测试问题的实现 | 复用设置向导的探测（`setup-probe`），给它增加 `ios` 目标；**不新增 IPC 变体，不升 `PROTOCOL_VERSION`**（§9）。 |
 | D14 | 折叠规则 | 当前步展开，同时只展开一步；已完成的步骤一行；Broker 一旦连上，服务商的配置步骤折叠成「配置步骤（EMQX Cloud）」，表单留着；连上后**停在原步**，由「下一步」切到下一步，不自动跳（避免页面在用户眼前跳动）。 |
 | D15 | Agent 指南的边界（已被 D24 取代） | 原决定：Agent 只能做不含机密的部分，`pair`、`allow`、`deny`、`export`、`import` 与任何要密码、配对码、连接串的事一律只能用户做。现行边界见 D24、D25 与 §7.4。 |
-| D16 | 实验机制本身 | 隐蔽开关、「实验」Tab 与 `experimental.enabled` 字段**保留**，现在没有内容时显示一行「目前没有实验中的功能」；不删、不迁移配置。**否决**顺手删掉：以后的实验功能还要用，与本次的范围无关。 |
+| D16 | 实验机制本身 | 隐蔽开关、「实验」Tab 与 `experimental.enabled` 字段**保留**，现在没有内容时显示一行「目前没有实验中的功能」；不删、不迁移配置。**否决**顺手删掉：以后的实验功能还要用，与本次的范围无关。**实施时的发现**：「实验」页里还有 iCloud 待办同步卡，所以 iOS 卡移走后页面不是空的，这行空状态暂时用不上，没有加；等那张卡也离开时再加。 |
 | D17 | 平台范围 | 卡片对三个平台都显示（与其它 IM 渠道一致）；Windows / Linux 沿用「只在 macOS 验证」的口径（`ios-channel.md` 平台基线），不另做平台分支（§10.6）。 |
 
 ## 3. 卡片的结构与状态
@@ -361,9 +361,9 @@ Then follow the steps it prints.
 | 位置 | 改动 |
 |---|---|
 | `src/views/settings/ChannelsTab.vue`、`settings.css` | 放进渠道页最上面（D13）：在模板里紧跟「本地弹窗」卡、排在「按需发送」提示卡之前，按 DOM 顺序即可，不用 CSS `order`（IM 卡片的 `order` 是 10 起）；加 `id="channel-ios"`，深链与搜索沿用 `channel-<id>` 约定 |
-| `src/views/settings/ExperimentalTab.vue`、`SettingsView.vue`、`useGeneralSettings.ts`、`GeneralTab.vue` | 不再渲染 iOS 卡；实验机制保留，空时显示「目前没有实验中的功能」（D16） |
+| `src/views/settings/ExperimentalTab.vue`、`SettingsView.vue`、`useGeneralSettings.ts`、`GeneralTab.vue` | 不再渲染 iOS 卡；实验机制保留（页里仍有 iCloud 待办同步卡，所以空状态那行暂不加，见 D16） |
 | `src/views/settings/AwayCard.vue`（通用页「离开模式」卡） | 「离开后多久推送到手机」一行不再依赖 `experimental.enabled`：整张卡对所有人显示，Mac 专属的两行仍只在 macOS 显示；文件头注释同步 |
-| `src/views/setup/RemotePage.vue` | 向导里的 iOS 磁贴对所有人显示（去掉 `showIos` 门控），「在设置中打开」改成 `openSettings("channel#channel-ios")` |
+| `src/views/setup/RemotePage.vue` | 向导里的 iOS 磁贴对所有人显示（去掉 `showIos` 门控），「在设置中打开」改成 `openSettings("channel#channel-ios")`；磁贴名 `setup.remote.ios` 从「iOS（实验）」改成「iOS App」（允许页示意图与完成页摘要用的是同一个文案） |
 | `src-tauri/src/cli/ios_cmd.rs`、`channel_cmd.rs` | 去掉 `available()` 门控：`channel ios …`、`channel set/enable/test ios`、`channel list`、`channel help` 对所有人可用并列出 `ios` |
 | `docs/specs/ios-channel.md` | D22 标「已转正（日期）」；L97 / L282 / L284 的「实验」路径改成渠道页；L284 与代码对不上的「命令始终可用」改成事实 |
 | `docs/specs/ios-open-access.md` | OA12 标「已由本文接手并决定」 |
@@ -419,6 +419,7 @@ iOS 渠道代码平台无关，但只在 macOS 验证过。非 macOS 读不到 M
 - 第 6 轮（2026-11-22，真实走查之后）：D24，Agent 代办，用户只做只有人能做的事；密码、配对码、连接串可以经 Agent；有浏览器 / 电脑操作工具的 Agent 操作服务商控制台。实现时把方案里的「用户点『一致』、Agent 代点『允许』」改成「用户在手机上读出确认码并输入、Agent 与 Mac 的确认码比对」（一次操作、不可能不看手机就点过去），**用户已确认这一处改动（2026-11-22）**；另新增 `channel ios pair --no-wait` 与 `channel ios test-question`（§7.4）。
 - 第 7 轮（2026-11-22，交互式 Codex CLI 真实走查之后）：走通了（新建 EMQX 部署、规则、账号，保存密码，剪贴板配对，输入确认码，测试问题，约 7 分钟，不含一次配对码过期）。多余的两次提问：「可以创建这个专用账号吗」与点完「收到」后回电脑报告；已改指南（规则 2、第 3 步、`test-question` 一句）。用户定：控制台里已有部署时，Agent 列出名称问用户用哪个、还是新建，不自己选（§7.4）。用户决定不再重走一轮，改动由单测覆盖。配对码那次过期的原因不在指南：走查用的临时 Broker 与手机里已有的不是同一个账号，App 拒绝（「这个配对码所属的 Broker 账号与你已配对的 Mac 不同」），用户只好另编译一个 Bundle ID 不同的 App 才配上。单 Mac 的真实用户不会遇到；给已配对的手机再添一台 Mac、又在新 Mac 上建了新账号时会遇到，指南对这种情况怎么处理在第 8 轮定了（D25）。
 - 第 8 轮（2026-11-22，走查收尾）：D25，给已配对的手机再配第二台 Mac 时，指南让 Agent 沿用第一台的 Broker 设置（连接串导入），不再建新账号；用户选「两处都补」：第一问加选项，故障对照加手机拒绝提示那一条。`channel ios import` 因此升到「Agent 可以直接运行」，`export` 仍只在用户要求时运行。走查收尾时用户还问过：线上的 TestFlight 页面还是旧的朋友版，会不会更新？会，随 P5 发布 Pages 时更新（落地页已在本地提交里），发布仍要用户另行点头（D20）。
+- 第 9 轮（2026-11-22，P5 的可见性提交）：用户选「做可见性提交，只提交到本地，不推送、不发布 Pages、不发 Mac 版」，所以 §10.4 的放出顺序不变，只是第 3 步（本节 §10.1 的清单）先做了。提交信息的 `Release-Note` 经用户确认：「The iOS App channel is no longer experimental: it now lives under Settings → Channels with step-by-step setup (broker, TestFlight, pairing), a test question you can send to the phone, and a guide your Agent can follow to set it up for you.」（更新日志里只显示这一句，英文，与此前的条目一致）。走查留下的测试环境（EMQX 里的 `AskHumanIOS` 部署、测试 App 里的「走查 Mac」）用户定为不清理、不再追踪，已从 `PROGRESS.md` 删掉。
 
 ## 13. 不做
 

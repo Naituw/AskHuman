@@ -3,7 +3,7 @@
 > 状态：2026-10-27 起草，**同日评审通过**（结论见 §14、§17）；**等并行需求 `ios-alert-timing` 合并后开工**
 > 关联计划：`docs/plans/mac-mesh.md`（决策编号 M1–M12 均指本文 §3）
 > 前置资料：`docs/specs/ios-channel.md`（Gateway、线协议、配对、端到端加密、流量与成本口径）、`docs/plans/ios-channel.md` §3（线协议 v1）、`docs/plans/im-channel-activation.md`（渠道自动激活）、`docs/specs/popup-request-inbox.md` 与 `docs/specs/popup-inbox-collapse.md`（合并作答窗口、稍后答）
-> 依赖：iOS 渠道（实验功能 `channels.ios`）已有的 EMQX 接入、Gateway 与端到端加密。**不依赖**推送中继与 iOS App，也不修改它们
+> 依赖：iOS 渠道（`channels.ios`；2026-11-22 起不再是实验功能，见 `ios-channel.md` D22）已有的 EMQX 接入、Gateway 与端到端加密。**不依赖**推送中继与 iOS App，也不修改它们
 > 衔接：`docs/specs/ios-alert-timing.md`（2026-10-26 已批准、实现中）把手机移出活跃槽、改成「提问方 Mac 空闲一阵才推送」。本文按它落地后的语义写——**活跃槽只管 IM**，手机始终投递；它应先于本需求合并（§6.4）
 > 平台：Mac 首期验证；Windows / Linux 代码路径同源，首期不验证
 
@@ -96,7 +96,7 @@
 
 两台 Mac 不会同时在场，所以整个过程允许任何一方在任何一步离线，最终一致。
 
-1. **家里 Mac（H）**：设置 → 实验 → iOS 渠道 → 设备 →「添加 Mac」→「邀请另一台 Mac」，得到邀请码：24 小时内有效、仅限一次、不含 broker 密码，带一个 broker 指纹（让加入方在本地先核对「是不是同一个 EMQX 账号」）。邀请的临时私钥与票据秘密落盘，Daemon 重启不丢。
+1. **家里 Mac（H）**：设置 → 通信渠道 → iOS App → 设备 →「添加 Mac」→「邀请另一台 Mac」，得到邀请码：24 小时内有效、仅限一次、不含 broker 密码，带一个 broker 指纹（让加入方在本地先核对「是不是同一个 EMQX 账号」）。邀请的临时私钥与票据秘密落盘，Daemon 重启不丢。
 2. **公司 Mac（O）**：设置 → 添加 Mac →「加入」，粘贴邀请码。O 本地校验（版本、未过期、broker 指纹与本机一致）后把加入请求发给 H，然后显示「等待『家里 Mac』批准」和一个 6 位**安全码**。
 3. **H 收到请求**（H 当时不在线也不丢：请求保留在 broker 上，H 上线后处理；H 离线时 O 显示「家里 Mac 目前离线，上线后会收到你的请求」）→ 生成**批准卡**。卡片文案要点：新 Mac 的名称、同一个 6 位安全码、「允许后它可以回答你所有 Mac 上 Agent 的提问，包括批准权限请求」。批准卡**同时**出现在 H 的本机作答窗口、H 已配对的所有手机、以及圈内已配对的对端 Mac 上，谁先点谁生效，其余处自动消失。没配手机时卡片只在 H 本机等（24 小时内，过期自动作废）。
 4. **用户核对**：在公司拿手机（或任一台已配对设备）看批准卡上的安全码，与 O 屏幕上的对一下，一致点「允许」；不一致或不认识点「拒绝」。
@@ -254,14 +254,14 @@ MQTT 本身有话题扇出，但我们只在「在线状态」上用它：所有
 
 ## 9. 设置与 CLI
 
-**设置页（「实验」Tab → iOS 渠道卡）新增**：
+**设置页（「通信渠道」Tab → iOS App 卡）新增**：
 
 - **设备列表分「手机」「Mac」两栏**。Mac 行：名称（可重命名）、在线 / 离线 / 已暂停徽标、最后在线、「由 M 引荐」标注、「暂停接收」开关（M6）、「摘要里不带预览」开关、撤销。
 - **「添加 Mac」**两个入口：「邀请另一台 Mac」（生成邀请码：复制按钮、倒计时、取消；列出待使用的邀请）与「加入」（粘贴邀请码：等待批准 + 安全码 / 已加入 / 被拒 / 已失效）。
 - **待批准列表**：本机作为批准方时待处理的「批准新 Mac 加入」（同时作为卡片出现在作答窗口与手机上）。
 - **全局**：「收到摘要后自动加载」（默认关）、「暂停接收所有 Mac 的提问」、本月流量（含 Mac 互通）、Daemon 常驻提示（M13）。
 
-**CLI**（随 iOS 渠道在 `experimental.enabled` 下才列出，命令本身始终可用；命令名暂定）：`channel ios mac invite`（打印邀请码）、`mac join <邀请码|->`（`-` 从 stdin 读）、`mac approve <编号> [--deny]`、`mac pause|resume <名称>`、`ios devices` 的输出加类型列、`ios revoke` 同时接受 Mac。
+**CLI**（随 iOS 渠道列出，不再看 `experimental.enabled`；命令名暂定）：`channel ios mac invite`（打印邀请码）、`mac join <邀请码|->`（`-` 从 stdin 读）、`mac approve <编号> [--deny]`、`mac pause|resume <名称>`、`ios devices` 的输出加类型列、`ios revoke` 同时接受 Mac。
 
 **配置**：只新增 `channels.ios.mesh.autoLoad`（默认 `false`）；每个对端的偏好（暂停、是否带预览、别名）放 iOS 渠道自己的本机状态里。
 

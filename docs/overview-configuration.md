@@ -37,13 +37,13 @@
 - `channels.dingding`：`enabled`、`clientId`、`clientSecret`、`userId`、普通提问/确认/权限卡片模板 ID，以及文本附件内联/转 docx 开关；Agent 任务输入复用普通提问模板
 - `channels.feishu`：`enabled`、`appId`、`appSecret`、`openId`、`baseUrl`
 - `channels.slack`：`enabled`、`botToken`、`appToken`、`userId`
-- `channels.ios`（实验，设置「实验」Tab 的 iOS 渠道卡）：`enabled`、`host`、`port`（TLS，默认 8883）、`wsPort`（WSS，默认 8084）、`username`（只含字母数字，同时是话题命名空间 `ah/{username}/`）、`password`（进钥匙串）、`relayUrl`、`macName`（留空取电脑名）、`alertAfterSecs`（手机没在看某个提问时，Mac 键盘 / 鼠标空闲满多少秒才推送通知，默认 900，`0` = 立即，上限 86400；改它不会重连 broker）；隐藏的 `insecureLocal` 只给回环测试 broker 用（对非回环地址无效）。手机配对、关注集、推送句柄与流量计数不在 `AppConfig`，存于 `~/.askhuman/ios/`
+- `channels.ios`（设置「通信渠道」Tab 的 iOS App 卡）：`enabled`、`host`、`port`（TLS，默认 8883）、`wsPort`（WSS，默认 8084）、`username`（只含字母数字，同时是话题命名空间 `ah/{username}/`）、`password`（进钥匙串）、`relayUrl`、`macName`（留空取电脑名）、`alertAfterSecs`（手机没在看某个提问时，Mac 键盘 / 鼠标空闲满多少秒才推送通知，默认 900，`0` = 立即，上限 86400；改它不会重连 broker）；隐藏的 `insecureLocal` 只给回环测试 broker 用（对非回环地址无效）。手机配对、关注集、推送句柄与流量计数不在 `AppConfig`，存于 `~/.askhuman/ios/`
 - `channels.autoActivation`：IM 渠道按需发送，默认 `false`
 - `channels.autoEndWatch`：切离活跃 IM 后自动结束该渠道 watch，默认 `true`，仅在 `autoActivation` 开启时生效
 - `agentTasks.enabled`：是否允许从手机（iPhone App 的「新任务」）/ IM（`/new`）创建电脑端 Agent 任务（设置里叫「允许从手机 / IM 创建 Agent 任务」），默认 `false`；允许会强制 `daemonLifecycle=keepalive` 并同步 daemon 登录项。它是全局一项，设置里有两处入口，效果相同：每个已启用的远程渠道卡片（Telegram / 钉钉 / 飞书 / Slack / iOS App）底部的开关，以及「高级」Tab；`AskHuman setup` 向导（GUI 在远程回答之后有一屏确认页，只问允不允许，用一张渠道 → Agent 的示意图说明「允许后，你选的这些渠道就能远程创建这些 Agent 的任务」，不检查现在能不能启动；没配远程渠道也会出现，因为这项设置不属于任何渠道；文字版是同一个问题）也能允许（`docs/specs/onboarding.md` D25）。「能不能启动」只有一个判定（`integrations/agent_start.rs`）：Agent CLI 就绪，或 Codex 桌面 App / Cursor Agents 窗口路线可用；手机、IM 与「高级」页的就绪矩阵读它，向导不读。
 - `agentTasks.permissionPrompt`：`ask|agent-default|yolo`，默认 `ask`
 - `agentTasks.cursorMax.{policy, plan}`：Cursor Max 模式控制。`policy` 为 `enforce-off`（默认，创建任务时强制关闭 Max）或 `inherit`（沿用 Cursor 当前设置，不干预）；`plan` 为 `auto`（默认，读 Cursor 的本地数据判断）、`legacy` 或 `token-based`（新计划无 Max，全部隐藏且不干预）；每次启动读取，改后立即生效
-- `experimental.enabled`：显示实验区，默认 `false`（当前实验区里是 iOS 渠道卡；`channel list` 与帮助也只在它开启时列出 `ios`）
+- `experimental.enabled`：显示实验区，默认 `false`（当前实验区里是 iCloud 待办同步卡；iOS 渠道不受它控制，2026-11-22 起它的卡片、`channel ios …`、`channel list` 与帮助都对所有人可用）
 - `experimental.verticalQuestions`：多问题纵向同时显示全部问题，默认 `true`（设置「通用」Tab 可关回旧版一次一题；配置键沿用 `experimental.` 前缀）。2026-10-17 起出厂默认由关改为开：新配置与缺该字段的旧配置跟随新默认，已落盘的显式值（含 `false`）不迁移
 
 ## 读取入口

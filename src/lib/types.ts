@@ -1129,7 +1129,7 @@ export interface SlackChannelConfig {
   userId: string;
 }
 
-/** iOS 渠道（实验功能，docs/specs/ios-channel.md）：自备 MQTT broker + 推送中继。 */
+/** iOS 渠道（docs/specs/ios-channel.md）：自备 MQTT broker + 推送中继。 */
 export interface IosChannelConfig {
   enabled: boolean;
   host: string;

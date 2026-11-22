@@ -204,7 +204,7 @@ export const quickReplyDefaults = () => invoke<QuickReplyDefaults>("quick_reply_
 export const permissionRulesPanel = (op: PermissionRulesOp) =>
   invoke<PermissionRulesResult>("permission_rules_panel", { op });
 
-/** iOS 渠道管理（实验功能）：配对 / 设备列表 / 撤销 / 改名，全部经 daemon 的网关完成。 */
+/** iOS 渠道管理：配对 / 设备列表 / 撤销 / 改名，全部经 daemon 的网关完成。 */
 export const iosOp = (op: IosOp) => invoke<IosResult>("ios_op", { op });
 export const iosTest = (args: {
   host: string;

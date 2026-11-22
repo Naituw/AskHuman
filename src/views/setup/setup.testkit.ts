@@ -74,7 +74,6 @@ interface ConfigOptions {
   style?: string;
   menuBarIcon?: string;
   daemonLifecycle?: string;
-  experimental?: boolean;
   agentTasks?: boolean;
   /** The iOS app channel is on (it is set up in Settings, not in the wizard). */
   ios?: boolean;
@@ -98,7 +97,7 @@ export function config(opts: ConfigOptions = {}): AppConfig {
       ios: { enabled: opts.ios ?? false, password: "" },
     },
     agentTasks: { enabled: opts.agentTasks ?? false },
-    experimental: { enabled: opts.experimental ?? false },
+    experimental: { enabled: false },
   } as unknown as AppConfig;
 }
 

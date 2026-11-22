@@ -13,6 +13,16 @@ import ChannelsTab from "./ChannelsTab.vue";
 const useSettingsContext = vi.hoisted(() => vi.fn());
 
 vi.mock("./context", () => ({ useSettingsContext }));
+// The iOS App card has its own tests (IosChannelCard.test.ts): here it is only a card in the list.
+vi.mock("./IosChannelCard.vue", async () => {
+  const { defineComponent, h } = await import("vue");
+  return {
+    default: defineComponent({
+      name: "IosChannelCard",
+      setup: () => () => h("div", { id: "channel-ios", class: "card channel-card ios-card" }),
+    }),
+  };
+});
 
 const IM_CHANNELS = ["feishu", "telegram", "dingding", "slack"] as const;
 
@@ -132,6 +142,28 @@ describe("ChannelsTab", () => {
     expect(config.value!.channels.popup.enabled).toBe(false);
     expect(api.persist).toHaveBeenCalledTimes(1);
     expect(wrapper.findAll(".stepper")).toHaveLength(0);
+  });
+
+  it("puts the iOS App card right under the popup card, before the tip and the IM cards", async () => {
+    const { wrapper, config } = mountTab();
+    config.value!.channels.autoActivation = false;
+    await nextTick();
+    // DOM order: the IM cards take their places among themselves with CSS `order`, which comes
+    // after the unordered cards.
+    const order = wrapper
+      .findAll(".card")
+      .map((card) =>
+        card.attributes("id") ?? (card.classes().includes("channels-tip") ? "tip" : "popup"),
+      );
+    expect(order).toEqual([
+      "popup",
+      "channel-ios",
+      "tip",
+      "channel-telegram",
+      "channel-dingding",
+      "channel-feishu",
+      "channel-slack",
+    ]);
   });
 
   it("keeps each card's anchor and its jump highlight", () => {

@@ -21,9 +21,7 @@ pub fn dispatch(args: &[String], lang: Lang) {
         "disable" => toggle(rest, false, lang),
         "test" => test(rest, lang),
         "detect" => detect(rest, lang),
-        // The iOS channel is experimental: its management commands exist only while the hidden
-        // switch is on (otherwise they look like any other unknown subcommand).
-        "ios" if ios_cmd::available() => ios_cmd::dispatch(rest, lang),
+        "ios" => ios_cmd::dispatch(rest, lang),
         "help" | "-h" | "--help" => {
             print_line(&help(lang));
             Ok(())
@@ -52,8 +50,9 @@ fn list(args: &[String], lang: Lang) -> Result<(), String> {
         .unwrap_or_default();
     let daemon_up = status.is_some();
 
-    let ios = ios_cmd::available().then(|| {
-        // Only ask the daemon when it is already up: `list` must not start it.
+    // The iOS channel is listed after the IM channels: the gateway answers for itself, and only
+    // when the daemon is already up (`list` must not start it).
+    let ios = {
         let state = if daemon_up {
             ios_cmd::fetch_state().ok().flatten()
         } else {
@@ -64,7 +63,7 @@ fn list(args: &[String], lang: Lang) -> Result<(), String> {
             is_configured(&cfg, "ios"),
             daemon_up.then(|| state.map(|s| s.connected).unwrap_or(false)),
         )
-    });
+    };
 
     if json {
         let mut arr: Vec<serde_json::Value> = CHANNELS
@@ -84,14 +83,13 @@ fn list(args: &[String], lang: Lang) -> Result<(), String> {
                 })
             })
             .collect();
-        if let Some((enabled, configured, connected)) = ios {
-            arr.push(serde_json::json!({
-                "name": "ios",
-                "enabled": enabled,
-                "configured": configured,
-                "connected": connected,
-            }));
-        }
+        let (enabled, configured, connected) = ios;
+        arr.push(serde_json::json!({
+            "name": "ios",
+            "enabled": enabled,
+            "configured": configured,
+            "connected": connected,
+        }));
         print_line(&serde_json::to_string_pretty(&serde_json::json!(arr)).unwrap_or_default());
         return Ok(());
     }
@@ -118,17 +116,16 @@ fn list(args: &[String], lang: Lang) -> Result<(), String> {
             connected
         ));
     }
-    if let Some((enabled, configured, connected)) = ios {
-        print_line(&format!(
-            "{:<10} {:<8} {:<11} {}",
-            "ios",
-            yn(enabled),
-            yn(configured),
-            connected
-                .map(yn)
-                .unwrap_or_else(|| cfgio::t(lang, "n/a", "—"))
-        ));
-    }
+    let (enabled, configured, connected) = ios;
+    print_line(&format!(
+        "{:<10} {:<8} {:<11} {}",
+        "ios",
+        yn(enabled),
+        yn(configured),
+        connected
+            .map(yn)
+            .unwrap_or_else(|| cfgio::t(lang, "n/a", "—"))
+    ));
     if !daemon_up {
         print_line("");
         print_line(&cfgio::t(
@@ -752,11 +749,11 @@ fn canon(name: &str, lang: Lang) -> Result<&'static str, String> {
         "dingding" | "dingtalk" | "ding" => Ok("dingding"),
         "feishu" | "lark" => Ok("feishu"),
         "slack" => Ok("slack"),
-        "ios" if ios_cmd::available() => Ok("ios"),
+        "ios" => Ok("ios"),
         other => Err(cfgio::t(
             lang,
-            &format!("unknown channel: {other} (expected telegram|dingding|feishu|slack)"),
-            &format!("未知渠道: {other}（应为 telegram|dingding|feishu|slack）"),
+            &format!("unknown channel: {other} (expected telegram|dingding|feishu|slack|ios)"),
+            &format!("未知渠道: {other}（应为 telegram|dingding|feishu|slack|ios）"),
         )),
     }
 }
@@ -829,12 +826,7 @@ pub(crate) fn is_configured(cfg: &AppConfig, name: &str) -> bool {
 }
 
 fn help(lang: Lang) -> String {
-    let base = base_help(lang);
-    if ios_cmd::available() {
-        format!("{base}\n\n{}", ios_cmd::help(lang))
-    } else {
-        base
-    }
+    format!("{}\n\n{}", base_help(lang), ios_cmd::help(lang))
 }
 
 fn base_help(lang: Lang) -> String {
@@ -881,4 +873,36 @@ fn base_help(lang: Lang) -> String {
 
 fn print_line(s: &str) {
     super::print_line(s);
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn the_help_lists_the_ios_channel_for_everyone() {
+        // `help` is a pure function of the language: no `experimental.enabled` switch is read.
+        for lang in [Lang::Zh, Lang::En] {
+            let text = help(lang);
+            assert!(text.contains("channel ios --agent-guide"), "{lang:?}");
+            assert!(!text.to_lowercase().contains("experimental"), "{lang:?}");
+            assert!(!text.contains("实验"), "{lang:?}");
+        }
+    }
+
+    #[test]
+    fn ios_is_a_channel_name_like_the_others() {
+        assert_eq!(canon("ios", Lang::En), Ok("ios"));
+        assert_eq!(canon(" iOS ", Lang::En), Ok("ios"));
+        for lang in [Lang::Zh, Lang::En] {
+            let error = canon("nope", lang).unwrap_err();
+            assert!(error.contains("slack|ios"), "{lang:?}: {error}");
+        }
+    }
+
+    #[test]
+    fn the_im_list_stays_four_channels_for_the_wizard_and_doctor() {
+        // The onboarding wizard and `doctor` iterate `CHANNELS`: iOS is appended by `channel list`.
+        assert_eq!(CHANNELS, ["telegram", "dingding", "feishu", "slack"]);
+    }
 }

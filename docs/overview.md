@@ -22,7 +22,7 @@
 **进程职责（同一二进制按角色切换，本地 IPC 通信）**：
 
 - **AskHuman CLI**（多、短命）：解析 argv（`-f` 在此解析为绝对路径、缺失即退 1）→ 提交 `AskRequest` 给 Daemon → 流式取回结果打到 stdout → 按终态映射退出码 0/1/3。
-- **AskHuman Daemon**（macOS/Linux/Windows 每用户 1 个、常驻、**无 GUI**）：独占四种 IM 的 Router/长连接和实验性 iOS 渠道的 Gateway（一条 MQTT 连接，端到端加密，见 `docs/overview-ios.md`），承载每请求的 Coordinator/Preemption，集中落盘，监听配置变更，并管理空闲退出、二进制换新和排空。
+- **AskHuman Daemon**（macOS/Linux/Windows 每用户 1 个、常驻、**无 GUI**）：独占四种 IM 的 Router/长连接和 iOS 渠道的 Gateway（一条 MQTT 连接，端到端加密，见 `docs/overview-ios.md`），承载每请求的 Coordinator/Preemption，集中落盘，监听配置变更，并管理空闲退出、二进制换新和排空。
 - **Codex App 适配器**（macOS）：由 Daemon 独占原生 IPC，将桌面会话状态、控制与新建任务接入现有 registry / Watch / 问答协调；随 Codex 整体集成启停，新任务默认优先 App、可改为优先 CLI。详见 `docs/specs/codex-desktop-session-integration.md`。
 - **Popup Host**（默认合并模式，每 Daemon / Dev Instance 至多 1 个）：独立 Tauri 进程，通过一次认证连接承载统一作答窗口；普通提问、权限和 Stop 按请求 ID 路由。答完本轮隐藏，按 popupPrewarm 决定保留空闲宿主或退出；故障由 Daemon 有界重建。见 `docs/specs/popup-request-inbox.md`、`docs/specs/popup-prewarm.md`。
 - **独立 Popup Helper**（可选 `channels.popup.windowMode=independent`）：每请求一个窗口，沿用旧冷热池及焦点仲裁；模式切换只影响新请求，保留在途窗口和草稿。
@@ -216,7 +216,7 @@ AskHuman/
         markdown.rs          Markdown 到 Slack mrkdwn
         router.rs            Slack 单长连接与会话路由
 
-      ios/                   iOS 渠道（实验）：线协议与密码学、MQTT 传输、持久状态、Gateway actor（`gateway/`）；专题见 overview-ios.md
+      ios/                   iOS 渠道：线协议与密码学、MQTT 传输、持久状态、Gateway actor（`gateway/`）；专题见 overview-ios.md
       integrations/
         hook_edit.rs         JSONC Hook 的最小编辑
         mutation_lock.rs     集成配置写入的跨进程锁
@@ -353,7 +353,7 @@ CLI、Popup Host、GUI Host 与 Daemon 共用 NDJSON 消息类型（`ClientMsg` 
 - Agent Rules：`agent_rule_reveal` / `open`（安装、更新与卸载走 `agent_mode_*`）
 - Agent 模式与配置文件：`agent_mode_status` / `set` / `update`、`mcp_config_reveal` / `open`、`agent_hook_reveal` / `open`、`mcp_command_path`（`agent_mode_status` 只聚合本地集成产物；Agent CLI 是否在 PATH / Pi 版本由 `agent_task_readiness` 负责，它同时带上统一的「现在能不能启动任务」结论 `startable` / `startRoute`，见 `integrations/agent_start.rs`）
 - 渠道测试与识别：`telegram_test`；钉钉、飞书、Slack 各自的 `*_test` / `*_detect_prepare` / `*_detect_wait`；共用 `detect_cancel`
-- iOS 渠道（设置页「实验」Tab）：`ios_op`（状态 / 配对 / 撤销 / 重命名，经 IPC 的 `ClientMsg::Ios`）、`ios_test`（返回「消息 + 警告列表」，含隔离自检）、`ios_default_relay_url`、`ios_pair_qr`、`ios_connection_export` / `ios_connection_import`
+- iOS 渠道（设置页「通信渠道」Tab 的 iOS App 卡）：`ios_op`（状态 / 配对 / 撤销 / 重命名，经 IPC 的 `ClientMsg::Ios`）、`ios_test`（返回「消息 + 警告列表」，含隔离自检）、`ios_default_relay_url`、`ios_pair_qr`、`ios_connection_export` / `ios_connection_import`
 - iCloud 待办同步（设置页「实验」Tab 与待办窗口侧栏）：`todo_sync_*`（状态 / 启用 / 停用 / 立即同步 / 清除 / 修复，以及 iCloud 模式窗口用的项目列表、详情与移除；全部在阻塞线程上跑），见 `docs/overview-todo-sync.md`
 - 版本自更新：`get_app_version`、`update_check`、`update_get_notes`、`update_apply`、`update_dismiss`、`popup_update_state`、`restart_settings`
 - Agent 生命周期：`agents_init`、`agent_force_idle`；自动集成卡内的 capability 通过
@@ -368,12 +368,12 @@ Popup 的窗口、附件、来源标题与交互实现地图见 `docs/overview-p
 - 多问题默认纵向平铺全部问题（`experimental.verticalQuestions` 默认开，设置可关回一次一题），设计见 `docs/specs/multi-question-vertical.md`。
 - 推荐选项不自动预选，提交值始终为原文，规格见 `docs/specs/recommended-option.md`。
 
-## iOS 渠道（实验）
+## iOS 渠道
 
 Daemon 里的又一个渠道：手机上的 AskHuman App 回答问题、看 / 关注 / 观察 / 插话 Agent、创建 Agent 任务。专题实现地图见 `docs/overview-ios.md`，需求与计划见 `docs/specs/ios-channel.md`、`docs/plans/ios-channel.md`，用户说明见 `docs/wiki/ios-setup.md`。
 
 - **形态**：Mac Gateway ↔ 自备 MQTT broker（TLS / WSS；对 broker 的要求与已实测的服务见 `docs/wiki/ios-broker.md`）↔ iOS App；推送经 `relay/` 的无状态云函数到 APNs。Mac 不持有任何 APNs 密钥，中继不存任何状态。
-- **不变量**：端到端加密（每配对一对方向密钥，broker 与中继只见密文）；一份 broker 凭据多台 Mac 共用；状态变更消息按 `msgId` 幂等；渠道藏在 `experimental.enabled` 后，`channel list` 与帮助默认不列出；不替用户付费（用托管 broker 时保持免费套餐、用尽即停）。
+- **不变量**：端到端加密（每配对一对方向密钥，broker 与中继只见密文）；一份 broker 凭据多台 Mac 共用；状态变更消息按 `msgId` 幂等；渠道对所有人可见（卡片在「通信渠道」页，`channel list` 与帮助都列出 `ios`，不看 `experimental.enabled`），设置体验见 `docs/specs/ios-setup-experience.md`；不替用户付费（用托管 broker 时保持免费套餐、用尽即停）。
 - **投递与通知分开**：iOS 不参与 IM 的活跃槽 / `channels.autoActivation`——每个提问和确认都挂给所有已配对手机，手机一打开就能拉到；手机没在看时的系统推送只在 Mac 键盘 / 鼠标空闲满 `channels.ios.alertAfterSecs`（默认 15 分钟，`0` = 立即）后才发，每题每手机最多一条，不重复提醒。规格见 `docs/specs/ios-alert-timing.md`。
 - **手机上的回答与离开模式**：提问里可以选项目待办（`AnswerSubmit.todoIds`，Mac 网关按提问的项目反查并合并进回答，What's next 里看完整队列；`Caps.answerTodos` 缺失的旧 Mac 不显示），回答的底栏菜单有快捷回复与「离开模式 / 不再使用」两条指令（`AskView.quickReplies`、`AnswerSubmit.directive`），Agents 页有离开模式的常驻条、开启页与会话行（`away.state` / `away.set` / `away.session.set`、`Caps.away`）。细节见 `docs/overview-ios.md`，规格 `docs/specs/special-replies.md`。
 - **跨语言**：Rust `ios/{crypto,envelope,wire}.rs` 与 Swift `AHProtocol` 共用 `ios/Fixtures/wire-v1/`，限额常量两边一致；改线协议先改夹具。

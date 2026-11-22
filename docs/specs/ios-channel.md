@@ -3,7 +3,7 @@
 > 状态：已于 2026-10-25 获用户批准并实现为可用原型（模拟器与本地 broker 验证通过）；真实 EMQX / 中继 / APNs 与真机验收待进行，进度见 `docs/PROGRESS.md`。实现与计划的差异见 `docs/plans/ios-channel.md` §13。本文是 2026-10-25 多轮 AskHuman 问答后的定稿。
 > 关联计划：`docs/plans/ios-channel.md`
 > 前置资料：`docs/investigations/native-ios-channel-handoff.md`（2026-10-24 交接：EMQX 杭州实测、Mac / iOS 交互原型、费用模型）
-> 依赖：Daemon 渠道体系（`Channel` / Coordinator）、统一作答窗口（`popup-request-inbox.md`）、IM watch（`im-watch.md`）、插话（`agent-interject.md`）、IM 创建任务（`im-agent-task-launch.md`）、「实验」设置 Tab。
+> 依赖：Daemon 渠道体系（`Channel` / Coordinator）、统一作答窗口（`popup-request-inbox.md`）、IM watch（`im-watch.md`）、插话（`agent-interject.md`）、IM 创建任务（`im-agent-task-launch.md`）、「通信渠道」设置 Tab（内测期放在「实验」Tab，见 D22）。
 > 平台：Mac 端沿用现有 Daemon（首期只在 macOS 验证）；手机端为 iPhone，iOS 17+，中 / 英双语。
 > 2026-11-21 修订：iOS 渠道向更多用户开放，**不再绑定 EMQX**（D3、D23），决策见 [`ios-open-access.md`](ios-open-access.md)。下文提到 EMQX 之处是当时的设计与实测背景，保持原样；对 broker 的要求、EMQX / flespi / 自建 Mosquitto 三条已实测的路径见 [`docs/wiki/ios-broker.md`](../wiki/ios-broker.md)。
 
@@ -64,7 +64,7 @@
 | D19 | 出错信号 | 统一 TurnResult 为准，保留可选 `failed` 投影；Claude/Grok、Cursor、Pi 各按其最终错误事件，Codex Desktop 与已核对的 CLI 共享服务按原生终态。缺少来源时保持未知。开启「结束／出错时确认」还会生成普通错误卡，不受 D18 手机发起资格限制，与同轮结果提醒去重；见 `agent-failure-confirmation.md` |
 | D20 | 安全门 | 提交新任务（含 YOLO）需要 Face ID / 设备密码；回答与插话不需要 |
 | D21 | 标识 | Bundle ID `com.naituw.humaninloop.ios`；通知扩展 `com.naituw.humaninloop.ios.notification`；显示名「AskHuman」（若 App Store Connect 名称被占用，退回「AskHuman Mobile」）；Team 沿用 `DMJXDB9H6Q` |
-| D22 | 设置入口 | 内测期放「实验」Tab（需先打开隐蔽开关 `experimental.enabled`）；对外发行后再转正到「渠道」Tab（与「Agent 任务」从实验转正走同一路径） |
+| D22 | 设置入口 | ~~内测期放「实验」Tab（需先打开隐蔽开关 `experimental.enabled`）；对外发行后再转正到「渠道」Tab（与「Agent 任务」从实验转正走同一路径）~~ **2026-11-22 已转正**（[`ios-setup-experience.md`](ios-setup-experience.md) D5、D13）：iOS App 卡在「设置 → 通信渠道」，紧跟「本地弹窗」卡；`channel ios …`、`channel list` 与帮助不再看 `experimental.enabled`，对所有人可用。`experimental.enabled` 保留，现在只控制「实验」Tab（里面是 iCloud 待办同步） |
 | D23 | 成本红线 | 按量计费；不把固定月费作为默认方案；~~EMQX 两个实例的消费上限保持 0（额度用尽即停，不自动付费）~~ **2026-11-21 修订（`ios-open-access.md` OA6）：不替用户付费**，用托管 broker 时保持免费套餐、用尽即停（EMQX 的消费上限保持 0；各服务的做法见 [`ios-broker.md`](../wiki/ios-broker.md)）；不创建管理 API Key |
 | D24 | 本期功能边界 | 回答、确认、附件、Watch、Follow、插话、新任务、本地历史。用户未选的备选项（锁屏快捷操作、Live Activity、小组件 / 快捷指令）本期不做 |
 
@@ -94,7 +94,7 @@
 
 ### 5.1 Mac 一次性配置
 
-在「设置 → 实验 → iOS 渠道」（或 CLI）填写：Broker 主机 / 端口 / 用户名 / 密码、中继地址、Mac 名称（默认取主机名，手机上显示）。
+在「设置 → 通信渠道 → iOS App」（或 CLI）填写：Broker 主机 / 端口 / 用户名 / 密码、中继地址、Mac 名称（默认取主机名，手机上显示）。
 为了避免第二台 Mac 重复手填，第一台 Mac 提供「复制连接串」，其它 Mac「导入连接串」一次性填入 broker 与中继信息。
 密码进入系统钥匙串，不写 `config.json`。
 
@@ -279,9 +279,9 @@ Mac 未开启「Agent 任务」或终端不可用时，入口置灰并说明如�
 
 ## 9. Mac 端设置与 CLI
 
-**设置页（「实验」Tab → iOS 渠道卡）**：启用开关；Broker 主机 / 端口 / 用户名 / 密码；中继地址；Mac 名称；复制 / 导入连接串；「测试连接」（连接 broker 并做一次回环）；「测试中继」（调用中继健康检查）；已配对手机列表（名称、配对时间、最后在线、在线徽标、推送状态、重命名、解除）；「添加手机」（二维码 + 配对码 + 5 分钟倒计时 + 校验码确认）；本月流量估算；Daemon 常驻提示。
+**设置页（「通信渠道」Tab → iOS App 卡；卡片的分步引导、Agent 代配置与一键测试见 [`ios-setup-experience.md`](ios-setup-experience.md)）**：启用开关；Broker 主机 / 端口 / 用户名 / 密码；中继地址；Mac 名称；复制 / 导入连接串；「测试连接」（连接 broker 并做一次回环）；「测试中继」（调用中继健康检查）；已配对手机列表（名称、配对时间、最后在线、在线徽标、推送状态、重命名、解除）；「添加手机」（二维码 + 配对码 + 5 分钟倒计时 + 校验码确认）；本月流量估算；Daemon 常驻提示。
 
-**CLI**：`AskHuman channel set ios …`（密码经 `--password-{env|file|stdin}`，也可 `--connection-{env|file|stdin}` 导入连接串）、`channel enable|disable ios`、`channel test ios`、`ios pair`（终端二维码 + 校验码确认）、`ios devices`、`ios revoke <名称或标识>`。内测期隐藏（D22）：`channel list` 与帮助只在 `experimental.enabled` 时才列出 `ios`，命令本身始终可用。
+**CLI**：`AskHuman channel set ios …`（密码经 `--password-{env|file|stdin}`，也可 `--connection-{env|file|stdin}` 导入连接串）、`channel enable|disable ios`、`channel test ios`、`ios pair`（终端二维码 + 校验码确认）、`ios devices`、`ios revoke <名称或标识>`。~~内测期隐藏（D22）：`channel list` 与帮助只在 `experimental.enabled` 时才列出 `ios`，命令本身始终可用。~~ 2026-11-22 起不再隐藏（D22）：`channel list`（`ios` 行排在四家 IM 之后，daemon 在运行时才报连接状态，`list` 不会为它启动 daemon）与帮助都列出 `ios`。此前「命令本身始终可用」与代码不符：`channel ios …` 与 `channel set|enable|test ios` 在 `experimental.enabled` 关闭时同样拒绝；现在对所有人可用。
 
 ## 10. 性能、流量与成本
 

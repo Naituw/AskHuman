@@ -249,7 +249,7 @@ whats-next 的待办卡片由 **CLI 进程自己**读 `todos.json` 现场构建�
 
 ## 8. 设置与 CLI
 
-- **位置**：设置 → 实验 → 「iCloud 待办同步」卡片（与 iOS 渠道同处，稳定后再考虑提升）。仅 macOS 显示；Dev Instance 置灰。
+- **位置**：设置 → 实验 → 「iCloud 待办同步」卡片（稳定后再考虑提升；iOS 渠道 2026-11-22 移出「实验」后，这一页只剩它）。仅 macOS 显示；Dev Instance 置灰。
 - **卡片内容**（见 `settings.jpg`）：存储位置（仅本机 / iCloud 同步）、状态（已同步 N 条待办 · M 条历史 · 刚刚）、这台 Mac 的名称（默认系统的电脑名，可改）、已加入同步的 Mac 列表与各自「最后同步」、同步程序状态、「立即同步」、「停止同步（保留本机副本）」、「清除 iCloud 中的待办数据…」。
 - **配置字段**（`config.json`）：`todoSync.enabled`、`todoSync.deviceName`、`todoSync.pollMinutes`（默认 10，不在界面暴露）。账号哈希、令牌等放旁路元数据，不进配置文件。
 - **CLI**（隐藏子命令，不写进 Agent 帮助）：`AskHuman todo-sync status [--json]`、`tick`、`enable`、`disable`；用于排障与 helper 触发。

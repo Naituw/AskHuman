@@ -165,6 +165,47 @@ describe("useSettingsSearch", () => {
     wrapper.unmount();
   });
   it.each([
+    ["en", ["iphone", "broker host", "keep this mac"]],
+    ["zh", ["iPhone", "保持这台 Mac", "发一条测试问题"]],
+  ] as const)("finds the iOS App card on the Channels tab in %s and anchors on the card itself", async (locale, queries) => {
+    i18n.global.locale.value = locale;
+    let search!: ReturnType<typeof useSettingsSearch>;
+    const activeTab = ref<Tab>("general");
+    const wrapper = mount(
+      defineComponent({
+        setup() {
+          search = useSettingsSearch({ config: ref<AppConfig | null>(null), activeTab });
+          return () =>
+            h("div", { class: "settings-body" }, h("div", { id: "channel-ios", class: "card" }));
+        },
+      }),
+      { attachTo: document.body, global: { plugins: [i18n] } },
+    );
+    const scroll = vi.fn();
+    const previous = HTMLElement.prototype.scrollIntoView;
+    HTMLElement.prototype.scrollIntoView = scroll;
+    vi.useFakeTimers();
+    try {
+      for (const query of queries) {
+        search.searchQuery.value = query;
+        await nextTick();
+        expect(search.searchResults.value).toContainEqual(
+          expect.objectContaining({ tab: "channel", title: "iOS App", target: "channel-ios" }),
+        );
+      }
+      await search.gotoSearchResult(search.searchResults.value.find((entry) => entry.title === "iOS App")!);
+      expect(activeTab.value).toBe("channel");
+      expect(wrapper.get("#channel-ios").classes()).toContain("search-hit-highlight");
+      expect(scroll).toHaveBeenCalledWith({ behavior: "smooth", block: "center" });
+      vi.runAllTimers();
+    } finally {
+      wrapper.unmount();
+      HTMLElement.prototype.scrollIntoView = previous;
+      vi.useRealTimers();
+      i18n.global.locale.value = "en";
+    }
+  });
+  it.each([
     ["en", "wizard", "Setup wizard"],
     ["zh", "向导", "设置向导"],
   ] as const)("indexes the setup wizard card on the General tab in %s", async (locale, query, title) => {
