@@ -3,7 +3,7 @@
 记录需要跨会话保留的未完成 / 延期事项和明确下一步。任务 / 需求完成后删除其 section
 （历史留在 git）。
 
-## 进行中：iOS 设置体验（设计已通过；P1–P4 与 P5 的可见性提交已完成，放出待定）
+## 进行中：iOS 设置体验（设计已通过；除 Mac 新版外都已完成，已推送、Pages 已发布）
 
 用户 2026-11-22 要求全面优化 iOS 渠道的设置界面：打开设置就能完成后续配置（Broker、TestFlight、配对），并能让 Agent 代配。
 规格 [ios-setup-experience.md](specs/ios-setup-experience.md)（全部文案在 §14），计划 [plans/ios-setup-experience.md](plans/ios-setup-experience.md)，
@@ -29,9 +29,9 @@ TestFlight 公共链接 + Pages 落地页、卡片顶部「设置步骤」清单
 - [x] P3 文档与落地页：`scripts/build-ios-beta-site.mjs` 的根页改成中英双语 TestFlight 落地页（公共链接只读 `docs/public/ios/testflight.json`，
   缺失时显示「仅限邀请」，所以 Pages 现状不变；`node --test` 校验链接格式与站内链接，截图 `docs/assets/ios-setup-experience/18–20`）；
   `docs/public/ios/beta*.md` 改成公共链接版；`docs/wiki/ios-setup*.md` 的入口与步骤、`ios-broker*.md` 的一句摘要说明、README 中英各一节、
-  OA12 与 `overview-ios.md` 已回写。**这些文档已经按放出后的路径（设置 → 通信渠道 → iOS App）写成，而当前发布版里入口还在「实验」里：
-  对应的代码（P5 的可见性提交）现在有了，但只在本地；推送和 `ios-beta-pages`（隐私政策那一页也会带上新的内测指南）都按规格 §10.4 的顺序、经用户同意再做。**
-- [x] 隐私政策（`docs/public/ios/privacy*.md`）两处措辞已改并经用户审阅：「邀请制内测」→「TestFlight 测试版」，「邀请邮箱」→ 按邮件邀请 / 仅公共链接区分（Apple 的说明：只通过公共链接加入时，开发者看不到邮箱和姓名）；联系方式一句与生效日期（2026-11-22）没动。**随 Pages 一起发布**（P5，见下面的外部依赖）。
+  OA12 与 `overview-ios.md` 已回写。**这些文档已经按放出后的路径（设置 → 通信渠道 → iOS App）写成，而已发布的 v0.17.3 里入口还在「实验」里：
+  对应的代码（P5 的可见性提交）已推送，但要等 Mac 新版发出，用户才在自己的 Mac 上找得到那张卡片（见下面的「发 Mac 新版」）。**
+- [x] 隐私政策（`docs/public/ios/privacy*.md`）两处措辞已改并经用户审阅：「邀请制内测」→「TestFlight 测试版」，「邀请邮箱」→ 按邮件邀请 / 仅公共链接区分（Apple 的说明：只通过公共链接加入时，开发者看不到邮箱和姓名）；联系方式一句与生效日期（2026-11-22）没动。已随 Pages 发布（2026-11-22）。
 - [x] P4 本地部分：手机 App 里两处路径提示改成「设置 → 通信渠道 → iOS App」（模拟器构建通过，字符串目录由脚本重新生成、只差这两个键）；
   Beta 描述、审核备注草稿与 `ios-testflight` 技能参考里去掉「EMQX」「实验」字样。这一步本身没有出包、上传、送审。
 - [x] P4 的 Apple 侧三项（用户 2026-11-22 逐项同意）都做了：签名 helper 新增有界的 `public` / `public-off` 操作并装到本机（旧版是 `testflight-helper.previous`；
@@ -40,17 +40,21 @@ TestFlight 公共链接 + Pages 落地页、卡片顶部「设置步骤」清单
   用户定：不换版本号，继续在 0.1.0 上发新 Build，沿用已通过的 Beta 审核（规格 D23），所以不用给审核员附 Mac 预发布包，
   原先「审核备注与可见性提交」的顺序冲突不再存在；只有将来换版本号才会真正送审（那时 Mac 包必须已含可见性提交）。
 - [x] 公共组：`public` 先 `dryRun`（组不存在，差异是建组、分配构建、开链接、设上限）再写入，读回：组「AskHuman Public」、测试员上限 1,000、构建 29、公共链接已开；
-  匿名打开链接，页面是「Join the AskHuman Mobile beta」；Friends 与 Internal 读回没变。`docs/public/ios/testflight.json` 已加（本地提交，没推送，Pages 没发布）；
-  链接随时能用 `helper.py external-status` 读到。**链接已经开着，但没有任何地方公布。** 公共组不会自动拿到新构建：每个新构建要在 `start` 之后对它显式跑 `public`（幂等）。
-- [ ] 待用户决定：日常出包（Internal + Friends）要不要顺带更新公共组。不更新，公共链接就一直给构建 29，直到它在 2027-02-19 过期；
-  更新，则每个新构建都会到公共测试员手上（现在技能写的是日常出包从不碰公共组）。
-- [x] P5 的可见性提交（2026-11-22，只在本地提交，没有推送）：iOS App 卡移到「通信渠道」页、紧跟「本地弹窗」卡；`channel ios …`、`channel list`
+  匿名打开链接，页面是「Join the AskHuman Mobile beta」；Friends 与 Internal 读回没变。`docs/public/ios/testflight.json` 已加；
+  链接随时能用 `helper.py external-status` 读到。公共组不会自动拿到新构建：每个新构建要在 `start` 之后对它显式跑 `public`（幂等）；
+  用户 2026-11-22 定了日常出包也做这一步（规格 D26），`AGENTS.md` 与 `ios-testflight` 技能已改，下一次出包起生效。
+- [x] P5 的可见性提交（2026-11-22，`e9c565b6`）：iOS App 卡移到「通信渠道」页、紧跟「本地弹窗」卡；`channel ios …`、`channel list`
   与帮助不再看 `experimental.enabled`；「离开模式」卡和向导磁贴对所有人显示（磁贴名改成「iOS App」）；搜索与深链 `channel#channel-ios` 可用；
   「实验」页只剩 iCloud 待办同步。前端 2163 项测试与 `vue-tsc`、Rust `cli::` + `onboarding::` 373 项、`clippy -D warnings`、本地 broker 的配对 → 回答 E2E 通过，已装机；
   真实的 `SettingsView`（浏览器 + mock 后端）里看过卡片的三种形态、深链、搜索结果跳转。可见性要等 Mac 新版发出才对用户生效。
-- [ ] 按计划继续：P5 其余项（顺序见规格 §10.4：发布 Pages → 确认公共组里是带新文案的构建 → 发 Mac 新版 → 记 80 天出包），每一步都先问用户。
-- [ ] 放出前的外部依赖（每一项都要用户明确同意）：Pages 落地页与 TestFlight 公共链接（带新路径文案的 iOS 新构建已随 Build 29 出了）；
-  具体放出时间由用户另行决定；放出后要**至少每 80 天出一次 TestFlight 包**（构建 90 天过期，公共链接才一直可用）。
+- [x] 推送与 Pages（用户 2026-11-22 同意）：23 个本地提交已推送（`955e8924..e9c565b6`），Pages 工作流成功，线上五个页面与本地构建逐字节相同，
+  落地页上的 TestFlight 公共链接可打开（匿名读到「Join the AskHuman Mobile beta」）。**公共链接从此是公开的**；公共组里是构建 29，已带新路径文案。
+- [ ] 用一台没加过测试的手机从落地页走到 TestFlight 安装成功（要用户的手机，或另一个 Apple ID），再把整条链路走一遍
+  （新 Broker 账号 → 落地页 → TestFlight → 配对 → 测试问题）。Pages 与链接我只读回过页面和链接本身，没有用手机走。
+- [ ] 发 Mac 新版（要用户另行授权发布）：README 与指南写的「设置 → 通信渠道 → iOS App」，要新版发出才与已发布的 v0.17.3 一致，所以这一步要尽快跟上。
+  用 git-cliff 对 `v0.17.3` 之后的提交跑出的更新日志草稿已给用户看过，没有改措辞（规格 §12 第 10 轮）：3 条 Features（iOS 渠道转正、iOS 大图先看预览、本地文件链接在预览面板打开）、
+  6 条 Fixes、1 条 Security。发版时若要改措辞，手写 `docs/release-notes/v<版本>.md` 覆盖自动生成的内容。
+- [ ] 放出后：**至少每 80 天出一次 TestFlight 包**（构建 90 天过期，公共链接才一直可用；现在公共组里的构建 29 在 2027-02-19 过期）；一周后复核中继与公共链接的用量。
 
 ## 进行中：Antigravity 深度集成（P1–P4 已实现并装为日常版，等用户验收）
 

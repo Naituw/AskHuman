@@ -89,7 +89,7 @@
 实施记录（2026-11-22）：第 3 项在 `d90c25dc` 里给 helper 加了 `public` / `public-off`（模拟 Apple 的检查 25 条通过；`helper.py install` 装到本机后 `status`、`--check-signing`、`notes --mode read` 正常）。
 第 4 项出了 0.1.0 (29)（源码 `d90c25dc`，Internal 与 Friends，`submit` 读回直接 `APPROVED`，交付记录见 [ios-channel.md](ios-channel.md#2026-11-22testflight-内部与外部构建-29)）；
 公共组经 `public` 的 `dryRun`（只读现状，只有创建这一类差异）后写入，读回为：外部组「AskHuman Public」、测试员上限 1,000、构建 29、链接已开；匿名打开链接，页面是「Join the AskHuman Mobile beta」；
-Friends 与 Internal 读回没变。`docs/public/ios/testflight.json` 已加（本地提交，没推送，Pages 没发布）。
+Friends 与 Internal 读回没变。`docs/public/ios/testflight.json` 已加（当时只是本地提交；之后已推送、Pages 已发布，见 P5 的状态）。
 
 ## P5：放出（翻可见性 + 发版）
 
@@ -106,7 +106,7 @@ Friends 与 Internal 读回没变。`docs/public/ios/testflight.json` 已加（�
 4. 装机验证后发 Mac 新版（发布流程另行取得用户指示）；
 5. 把「每 80 天出一次 TestFlight 包」「公共链接与上限的现状」「一周后复核中继与链接的用量」记进 `docs/PROGRESS.md`。
 
-**状态（2026-11-22）**：第 3 项已按用户的选择做成**一个本地提交**，不推送、不发布 Pages、不发 Mac 新版；提交信息里的 `Release-Note` 措辞经用户看过。第 1、2、4、5 项还没做，仍按上面的顺序、每步取得用户同意。这一项提前做完，不改变放出顺序：卡片对用户可见要等第 4 项的 Mac 新版。
+**状态（2026-11-22）**：第 3 项已做成一个提交（`e9c565b6`），`Release-Note` 措辞经用户确认。随后用户同意推送并发布 Pages：23 个本地提交已推送，工作流成功，线上五个页面与本地构建逐字节相同，落地页上的公共链接可打开——第 1 项的发布与读回完成；其中「用一台没加过测试的手机从落地页走到 TestFlight 安装成功」还没做，要用户的手机。第 2 项早已满足（公共组里是 Build 29，带新路径文案）。第 5 项的记录已写进 `docs/PROGRESS.md`。**第 4 项（Mac 新版）还没做**，要用户另行授权；卡片对用户可见要等它。
 
 验证：`node scripts/machine-health.mjs` → `./scripts/install.sh`；真实窗口里 设置 → 通信渠道 看卡片三种形态、深链、搜索；`AskHuman channel list` 与 `channel ios --agent-guide` 对没打开隐蔽开关的环境可用；**用户在真机上从零走完整条链路**（新 Broker 账号 → 落地页 → TestFlight → 配对 → 测试问题）并让一个 Agent 按提示词配一遍（密码由 Agent 生成并保存，用户只做 D24 里只有人能做的事）。
 

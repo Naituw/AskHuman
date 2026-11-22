@@ -46,7 +46,7 @@ For remote iPhone installation or a new internal TestFlight build, use the proje
 Keychain-backed signing helper, build/upload commands, and phone-side verification. Reuse that setup
 for routine updates; credentials stay outside the repository.
 
-Routine TestFlight publication defaults to both existing Internal and Friends groups, including Beta review and starting testing. Use internal-only distribution only when explicitly requested. Keep existing testers and invitations; do not add recipients or enable public links for a routine update.
+Routine TestFlight publication defaults to the existing Internal, Friends and Public groups, including Beta review, starting testing, and assigning the build to the public group. Use internal-only distribution only when explicitly requested. Keep existing testers and invitations; do not add recipients, and do not open, resize or close the public link for a routine update.
 
 ## Changing IPC messages
 

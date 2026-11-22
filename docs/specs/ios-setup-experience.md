@@ -1,7 +1,7 @@
 # 需求：iOS App 渠道的设置体验（设置进度、Broker 与 TestFlight 引导、Agent 代配置、移出「实验」）
 
-> 状态：设计已通过（2026-11-22，第 3 轮确认）。D1–D5 是用户经 AskHuman 第 1 轮定案的；D13、D18–D21 是第 2 轮定案的；D22 是实现后第 4 轮定案的；D23 是第 5 轮定案的；D6–D12、D14–D17 是设计者做原型时的派生决定，随整体设计在第 3 轮通过（§12）。
-> 原型已做完并截图（`docs/assets/ios-setup-experience/`；真实 `SettingsView` + mock 后端，代码在 `src/prototype/` 的 `settings-ios.html` 一组文件，不进产品）；实现进度见[计划](../plans/ios-setup-experience.md)：P1–P4 已完成（2026-11-22，含 Apple 侧的出包与公共链接）；P5 的可见性提交已在本地完成（2026-11-22：卡片在「通信渠道」页，CLI 门控解除），**尚未推送、未发布 Pages、未发 Mac 新版**，放出顺序见 §10.4。
+> 状态：设计已通过（2026-11-22，第 3 轮确认）。D1–D5 是用户经 AskHuman 第 1 轮定案的；D13、D18–D21 是第 2 轮定案的；D22 是实现后第 4 轮定案的；D23 是第 5 轮定案的；D24 是第 6 轮、D25 是第 8 轮、D26 是第 10 轮定案的；D6–D12、D14–D17 是设计者做原型时的派生决定，随整体设计在第 3 轮通过（§12）。
+> 原型已做完并截图（`docs/assets/ios-setup-experience/`；真实 `SettingsView` + mock 后端，代码在 `src/prototype/` 的 `settings-ios.html` 一组文件，不进产品）；实现进度见[计划](../plans/ios-setup-experience.md)：P1–P4 已完成（2026-11-22，含 Apple 侧的出包与公共链接）；P5 的可见性提交已完成（2026-11-22：卡片在「通信渠道」页，CLI 门控解除），已推送，Pages 已发布；**Mac 新版尚未发**，所以对用户来说卡片还没出现，放出顺序见 §10.4。D26：日常出包也更新公共组。
 > 依赖 / 复用：[`ios-channel.md`](ios-channel.md)（D22：内测期放「实验」，对外发行后转正）、[`ios-open-access.md`](ios-open-access.md)（OA2–OA6 Broker 并列与中立措辞、OA11 服务商目录、OA12 本文接手的可见性）、
 > [`docs/wiki/ios-broker.md`](../wiki/ios-broker.md)（Broker 事实的唯一出处）、[`onboarding.md`](onboarding.md)（`setup-probe` 探测）、
 > [`settings-agents-channels-cards.md`](settings-agents-channels-cards.md)（渠道卡片的徽标、状态标签与版式）、[`ios-external-testflight.md`](../plans/ios-external-testflight.md)（外部测试的资料与 Apple 侧约束）。
@@ -43,6 +43,7 @@
 | D23 | 版本号与审核（第 5 轮） | 不换版本号，继续在 **0.1.0** 上发新 Build，沿用该版本已通过的 Beta 审核：本项目的交付记录里 Build 10 是首个构建、真正走了审核，从 Build 14 起每个新 Build 提交即读回 `APPROVED`。所以放出前**没有「等审核」这一步，也不用给审核员附 Mac 预发布包**。只有版本号变化（或 Apple 对某个构建要求重审）时才会真正送审，那时审核备注里的 Mac 包必须已含可见性提交（`docs/release/ios-external-beta/README.md`）。公共组「AskHuman Public」加入同一构建是否同样直接批准，到那一步读回确认，这不是 Apple 的承诺。 |
 | D24 | Agent 代办（第 6 轮，真实走查之后） | 让 Agent 照指南在真实 Broker 上走了一遍，结果是 Agent 只把步骤念给用户，操作还是用户做完。改为：**能让 Agent 做的都由它做，用户只做只有人能做的事，并且越少越好**。有浏览器 / 电脑操作工具的 Agent 在用户已登录的浏览器里操作服务商控制台；Broker 密码与 token 由 Agent 生成并保存（`--password-stdin`）；配对由 Agent 发起，配对码经 Mac 剪贴板（通用剪贴板）送到手机、不进对话；用户在手机上输入确认码，Agent 与 Mac 这边的确认码比对后 `allow` / `deny`；最后由 Agent 发测试问题，用户在手机上点「收到」。没有这类工具的 Agent 退回指导，但用户名和密码仍由它生成。**取代** D3 / D15 原来的「密码与配对码永远不经过 Agent」。代价：密码与配对码会出现在 Agent 的上下文里；消息端到端加密，Broker 只见密文，泄露只影响这一个 Broker 账号（在控制台里重设密码、再保存一次即可）。**否决**让 Agent 不经用户核对就 `allow`：确认码比对是配对本身的安全检查，所以由用户读出手机上的确认码，而不是由 Agent 代为确认。 |
 | D25 | 第二台 Mac（第 8 轮，真实走查之后） | 手机一次只能用一个 Broker 账号：App 按「主机 + 用户名」判断，手机上已有 Mac 配对时，会拒绝另一个账号的配对码（「这个配对码所属的 Broker 账号与你已配对的 Mac 不同…」）。所以给**已经配对过别的 Mac 的手机**再配一台 Mac 时，不能新建账号，要沿用第一台的设置。指南据此：步骤 1 的第一问多一项「这部手机已经配对过另一台 Mac」，选了就不走建账号，改用连接串——用户在那台 Mac 上复制（卡片「连接设置」里的「复制连接串」，或那台 Mac 的 Agent 运行 `channel ios export \| pbcopy`），Agent 在这台 Mac 上 `pbpaste \| channel ios import -`、`channel enable ios`，验证、清剪贴板，并跳过第 2 步（App 已装好）；故障对照补手机的这条拒绝提示，做法同上。**`channel ios import` 从「只在用户要求时」挪到「Agent 可以直接运行」**：连接串只经剪贴板和管道，不进对话；`export` 仍只在用户要求时运行。**否决**让 Agent 建议用户在手机上「忘记所有配对」：它会断开所有已配对的 Mac，要不要这样只由用户决定。 |
+| D26 | 日常出包与公共组（第 10 轮，P5 之后） | 日常 TestFlight 出包默认覆盖 Internal、Friends 与 Public 三组：`start` 之后对同一构建执行 `public`，带组当前的上限，所以只分配构建、不动链接状态与上限；开关链接、改上限、`public-off` 仍要明确要求。理由：公共链接是新用户的入口，要一直指向最新构建（构建 90 天过期，§5.3），也省得每次出包再问一次；代价是构建有问题时公共测试员也会拿到，不过 Friends 拿到的本来就是同一个构建。**否决**「只在用户点名时更新公共组」与「先发 Friends、用户确认后再推广」：前者会让链接停在旧构建上直到过期，后者每次出包多一步用户操作。技能 `ios-testflight`、`AGENTS.md` 随之改。 |
 
 ### 2.2 设计者的派生决定（第 3 轮随整体设计通过）
 
@@ -196,7 +197,7 @@
 - 公共链接可以设测试员上限，上限只挡新加入的人，不影响已加入的人；随时可以关掉链接。
 - **TestFlight 构建 90 天后过期**（Apple 文档所述，本账号未实测）：公共链接要一直可用，就得**至少每 80 天出一次包，并把新构建分配进公共组**（新构建不会自动进去）。这是个长期的维护承诺，随放出一起记入 `docs/PROGRESS.md`（§10.4）。
 - 链接挂在新建的外部组「AskHuman Public」上，上限 1,000（D19）；中继成本按 `ios-open-access.md` §4 估算约每用户每月 ¥0.004，1,000 人约 ¥4。上限随时可调。
-- 签名 helper 的 `public` / `public-off` 是**有界**操作（固定到本应用与这个组：建组、分配构建、开关链接、设上限），**只在用户明确同意之后**才对 App Store Connect 执行；2026-11-22 已用它建了「AskHuman Public」、开了链接（上限 1,000，构建 29）。Friends 组仍只有 1–5 人、公共链接关，helper 的其余操作不变。
+- 签名 helper 的 `public` / `public-off` 是**有界**操作（固定到本应用与这个组：建组、分配构建、开关链接、设上限），**只在用户明确同意之后**才对 App Store Connect 执行；2026-11-22 已用它建了「AskHuman Public」、开了链接（上限 1,000，构建 29）。其中「把新构建分配进公共组」这一件事，用户在第 10 轮一次性同意作为日常出包的一步（D26）；开关链接、改上限与 `public-off` 仍逐次同意。Friends 组仍只有 1–5 人、它自己的公共链接关着，helper 的其余操作不变。
 
 ## 6. 步骤 3：配对手机与「已就绪」
 
@@ -420,6 +421,7 @@ iOS 渠道代码平台无关，但只在 macOS 验证过。非 macOS 读不到 M
 - 第 7 轮（2026-11-22，交互式 Codex CLI 真实走查之后）：走通了（新建 EMQX 部署、规则、账号，保存密码，剪贴板配对，输入确认码，测试问题，约 7 分钟，不含一次配对码过期）。多余的两次提问：「可以创建这个专用账号吗」与点完「收到」后回电脑报告；已改指南（规则 2、第 3 步、`test-question` 一句）。用户定：控制台里已有部署时，Agent 列出名称问用户用哪个、还是新建，不自己选（§7.4）。用户决定不再重走一轮，改动由单测覆盖。配对码那次过期的原因不在指南：走查用的临时 Broker 与手机里已有的不是同一个账号，App 拒绝（「这个配对码所属的 Broker 账号与你已配对的 Mac 不同」），用户只好另编译一个 Bundle ID 不同的 App 才配上。单 Mac 的真实用户不会遇到；给已配对的手机再添一台 Mac、又在新 Mac 上建了新账号时会遇到，指南对这种情况怎么处理在第 8 轮定了（D25）。
 - 第 8 轮（2026-11-22，走查收尾）：D25，给已配对的手机再配第二台 Mac 时，指南让 Agent 沿用第一台的 Broker 设置（连接串导入），不再建新账号；用户选「两处都补」：第一问加选项，故障对照加手机拒绝提示那一条。`channel ios import` 因此升到「Agent 可以直接运行」，`export` 仍只在用户要求时运行。走查收尾时用户还问过：线上的 TestFlight 页面还是旧的朋友版，会不会更新？会，随 P5 发布 Pages 时更新（落地页已在本地提交里），发布仍要用户另行点头（D20）。
 - 第 9 轮（2026-11-22，P5 的可见性提交）：用户选「做可见性提交，只提交到本地，不推送、不发布 Pages、不发 Mac 版」，所以 §10.4 的放出顺序不变，只是第 3 步（本节 §10.1 的清单）先做了。提交信息的 `Release-Note` 经用户确认：「The iOS App channel is no longer experimental: it now lives under Settings → Channels with step-by-step setup (broker, TestFlight, pairing), a test question you can send to the phone, and a guide your Agent can follow to set it up for you.」（更新日志里只显示这一句，英文，与此前的条目一致）。走查留下的测试环境（EMQX 里的 `AskHumanIOS` 部署、测试 App 里的「走查 Mac」）用户定为不清理、不再追踪，已从 `PROGRESS.md` 删掉。
+- 第 10 轮（2026-11-22，P5 之后）：用户选了三件事。① 发布说明草稿：用项目的 git-cliff 对 `v0.17.3` 之后的提交跑出的结果给用户看过，没有改措辞，也不发布。② 同意推送这 23 个本地提交并发布 Pages，发布后读回线上页面核对（Pages 工作流在 GitHub 上构建 `main`，所以必须先推送）；已做：推送 `955e8924..e9c565b6`，工作流成功，线上五个页面与本地构建逐字节相同，落地页上的 TestFlight 公共链接可打开。这一步让 §10.4 的第 1 项完成；Mac 新版还没发，README 与指南写的新路径要等它发出才与已发布的版本一致。③ D26：日常出包也更新公共组。
 
 ## 13. 不做
 

@@ -1639,7 +1639,7 @@ Apple build `6296974d-adec-4bed-accc-62e6a966490b`，VALID / APP_STORE_ELIGIBLE 
 `status`、`upload.py … --check-signing`、`notes --mode read` 都正常；再用 `public` 的 `dryRun` 读 Apple 的现状（外部组「AskHuman Public」不存在，差异是建组、分配构建、开链接、设上限），然后写入。
 读回：外部组「AskHuman Public」、测试员上限 1,000、只有构建 29、公共链接已开、没有测试员；Friends 的公开链接仍关、成员与构建没变，Internal 没变；
 匿名打开链接，页面是「Join the AskHuman Mobile beta」。公共组与 Friends 的构建各自分配，今后新构建不会自动进公共组。
-链接写在 `docs/public/ios/testflight.json`（本地提交，没推送），Pages 没发布，也没有别处公布这个链接。
+链接写在 `docs/public/ios/testflight.json`（本地提交，没推送），Pages 没发布，也没有别处公布这个链接（当时；同日稍后已推送、Pages 已发布，见 `docs/specs/ios-setup-experience.md` §12 第 10 轮）。
 
 手机更新与原有 Mac 连接确认尚待用户反馈。真机上要看的就是测试说明里的三项。
 

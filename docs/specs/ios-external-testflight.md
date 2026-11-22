@@ -11,7 +11,7 @@
 
 ## 分发与资料
 
-- 2026-11-09 用户决定日常发布默认同时覆盖现有 Internal 与 Friends 组；上传默认 external eligibility，同一构建供两组使用。只有明确要求仅内部才用 `--audience internal`；Python 与 Swift 均只接受 `internal` / `external`。外部模式只改临时导出选项，持久配置仍必须 internal-only。
+- 2026-11-09 用户决定日常发布默认同时覆盖现有 Internal 与 Friends 组；上传默认 external eligibility，同一构建供两组使用。只有明确要求仅内部才用 `--audience internal`；Python 与 Swift 均只接受 `internal` / `external`。外部模式只改临时导出选项，持久配置仍必须 internal-only。2026-11-22 起日常发布还会在 `start` 之后把同一构建分配进公共组「AskHuman Public」（helper 的 `public`，只分配构建、不动链接与上限；`ios-setup-experience.md` D26）。
 - 外测构建必须 `VALID`、未过期、`APP_STORE_ELIGIBLE`、出口加密声明已解决。已有 `INTERNAL_ONLY` 构建不能转用。
 - 中英文隐私政策和接入指南来自四份显式公开文档，构建脚本清空专用输出再渲染；仅手动 Pages 发布。
 - Macs 页「关于」按 App 语言打开隐私 / 接入链接。首次外测交付前必须核实实际 HTTPS 页面可达。
