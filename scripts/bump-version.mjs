@@ -89,5 +89,5 @@ updateJson("packaging/npm/platforms/linux-x64/package.json", (j) => {
 
 console.log(`\n版本已同步为 ${version}`);
 console.log(
-  `下一步: 检查 diff → 提交 → git tag v${version} → git push --tags 触发发布`
+  `下一步: cargo update --workspace --offline（刷新 Cargo.lock 里的版本）→ 检查 diff → 提交并推送 → CI 全绿后打注解 tag v${version}，只推这一个 tag（不要 --tags）。见 docs/development.md 的 Release。`
 );

@@ -26,3 +26,21 @@ Inside a commit message footer you can also:
 
 - `Release-Note: <text>` — replace the subject with `<text>` in the changelog.
 - `Release-Note: skip` — exclude that commit from the changelog.
+
+## Check for managed files before the notes are final
+
+AskHuman writes some files into the user's Agent setup: hook scripts, rule text, MCP
+entries and plugin files (the code is under `src-tauri/src/integrations/`, plus
+`src-tauri/resources/integrations/`). Upgrading the binary does not rewrite them.
+Settings → Agents shows "Update available" on the card, and the user has to press Update
+(or run `AskHuman agents update <agent>`) before a changed file takes effect.
+
+Run this against the previous tag:
+
+```
+git diff vPREVIOUS..HEAD --stat -- src-tauri/src/integrations src-tauri/resources/integrations
+```
+
+For every user-visible fix or feature that lives in a changed file, the note must say that
+the user has to press Update on that Agent, as the v0.16.0 note does for Codex. The v0.18.0
+note first left this out for the Windows Claude Code hook fix and was edited after release.

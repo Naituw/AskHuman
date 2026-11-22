@@ -351,18 +351,22 @@ newest) and mirror every hit. Roughly:
 
 ## Release
 
-Versions across the repo are kept in sync by `scripts/bump-version.mjs` (writes `Cargo.toml`, `tauri.conf.json`, root `package.json`, the npm main package, and the platform subpackages, including the main package's lock on subpackage versions):
+Versions across the repo are kept in sync by `scripts/bump-version.mjs` (writes `Cargo.toml`, `tauri.conf.json`, root `package.json`, the npm main package, and the platform subpackages, including the main package's lock on subpackage versions). The release is built from a tag, and the tag is created only after the release commit has passed CI. The steps below are the ones used since v0.17.2:
 
-```bash
-# 1. Bump version everywhere
-node scripts/bump-version.mjs 0.2.0
-git commit -am "release: v0.2.0"
+1. Start from a clean `main` and run `node scripts/bump-version.mjs X.Y.Z`. The script does not touch `src-tauri/Cargo.lock`: run `cargo update --workspace --offline` so its `humaninloop` entry follows (one line changes), and check that `cargo update --workspace --locked --offline` has nothing left to change.
+2. Notes: rely on git-cliff (Conventional Commits, see `AGENTS.md`), or hand-write `docs/release-notes/vX.Y.Z.md`, which the workflow then uses verbatim. Before the notes are final, do the check for managed files that need an Update in [`docs/release-notes/README.md`](./release-notes/README.md).
+3. Commit `chore(release): prepare vX.Y.Z` (with the notes file) and push that commit to `main` (`git push origin <sha>:refs/heads/main`). Wait for CI on it to pass (about 20 minutes, `cargo audit` included).
+4. Tagging cannot be undone (an npm version cannot be reused), so get the owner's approval once CI is green. Then tag that commit with an annotated tag and push **only that tag**:
 
-# 2. Publish: verifies version consistency / not-already-published → tags → pushes (triggers CI)
-./scripts/publish.sh           # add -y to skip the confirmation prompt
-```
+   ```bash
+   git tag -a vX.Y.Z -m "release: vX.Y.Z" <sha>
+   git push origin vX.Y.Z
+   ```
 
-`scripts/publish.sh` checks that all versions match and that the version isn't already on npm (errors and asks you to bump otherwise), then tags and pushes. `.github/workflows/release.yml` then compiles the four platform binaries → publishes to npm (main package + platform subpackages) → creates a GitHub Release.
+   Never run `git push --tags`: the local `ios-testflight-*` baseline tags must not reach the public repository. `scripts/publish.sh` is not part of this flow either: it runs a bare `git push` and does not wait for CI.
+5. `.github/workflows/release.yml` (12 to 25 minutes) builds and notarizes the todo-sync helper, compiles the four platform binaries (the macOS ones signed with Developer ID), publishes to npm (platform subpackages first, the main package last; safe to re-run) and creates the GitHub Release.
+6. Verify the result. The Release is not a draft and has the four archives plus `SHA256SUMS` (check them), and its body is the notes you wrote. `npm view askhuman version dist-tags` shows the new version as `latest`. The macOS binary from the archive passes `codesign --verify --strict` and reports the new version. A fresh `npm install` can answer 404 for several minutes after publishing (registry and CDN caching): wait instead of republishing.
+7. Record the release (flow, run links, what was not verified) in the relevant plan, update `docs/PROGRESS.md`, and push the record with `[skip ci]`.
 
 > Prerequisite: set `NPM_TOKEN` (an npmjs automation token) under the repo's Settings → Secrets. Pre-release versions (e.g. `0.2.0-rc.1`) are published under the npm dist-tag `next` and marked as a GitHub pre-release.
 
