@@ -1,4 +1,4 @@
-//! `AskHuman channel ios <status|devices|pair|allow|deny|revoke|rename|export|import|--agent-guide>` —
+//! `AskHuman channel ios <status|devices|pair|allow|deny|test-question|revoke|rename|export|import|--agent-guide>` —
 //! management of the iOS channel for headless use. The channel is experimental: these commands exist only
 //! while the hidden `experimental.enabled` switch is on. Pairing state lives in the daemon's
 //! gateway; the commands talk to it through `ClientMsg::Ios`.
@@ -9,6 +9,8 @@ use crate::config::AppConfig;
 use crate::i18n::Lang;
 use crate::ios::gateway::{GatewayState, PhoneView};
 use crate::ipc::{IosOp, IosResult};
+use crate::onboarding::probe::{self, Outcome, ProbeTarget};
+use crate::onboarding::probe_run::ASK_TIMEOUT;
 use std::collections::HashSet;
 use std::time::{Duration, Instant};
 
@@ -23,9 +25,10 @@ pub fn dispatch(args: &[String], lang: Lang) -> Result<(), String> {
     match sub {
         "status" => status(rest, lang),
         "devices" | "ls" => devices(rest, lang),
-        "pair" => pair(lang),
+        "pair" => pair(rest, lang),
         "allow" => decide(true, lang),
         "deny" => decide(false, lang),
+        "test-question" => test_question(lang),
         "revoke" => revoke(rest, lang),
         "rename" => rename(rest, lang),
         "export" => export(lang),
@@ -316,7 +319,33 @@ fn start_pairing(lang: Lang) -> Result<(String, String, i64), String> {
     }
 }
 
-fn pair(lang: Lang) -> Result<(), String> {
+/// What `channel ios pair` was asked to do.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct PairOptions {
+    /// Print the code and return instead of waiting for the phone. An Agent pipes the code to the
+    /// clipboard, then reads the check code from `status --json` once the phone has knocked.
+    no_wait: bool,
+}
+
+fn pair_options(args: &[String], lang: Lang) -> Result<PairOptions, String> {
+    let mut options = PairOptions { no_wait: false };
+    for arg in args {
+        match arg.as_str() {
+            "--no-wait" => options.no_wait = true,
+            other => {
+                return Err(cfgio::t(
+                    lang,
+                    &format!("unknown option: {other}"),
+                    &format!("未知选项: {other}"),
+                ))
+            }
+        }
+    }
+    Ok(options)
+}
+
+fn pair(args: &[String], lang: Lang) -> Result<(), String> {
+    let options = pair_options(args, lang)?;
     crate::development::routing::require_config_writes()?;
     let known: HashSet<String> = running_state(lang)?
         .phones
@@ -325,6 +354,21 @@ fn pair(lang: Lang) -> Result<(), String> {
         .collect();
     let (ticket_id, code, expires_at_ms) = start_pairing(lang)?;
     let remaining = ((expires_at_ms - chrono::Utc::now().timestamp_millis()) / 1000).max(0);
+    if options.no_wait {
+        // The code alone goes to stdout, so `| pbcopy` keeps it out of an Agent's output. The QR
+        // code is the same secret in another form and stays out too; the ticket lives in the
+        // daemon, so it stays valid after this process returns.
+        eprintln!(
+            "{}",
+            cfgio::t(
+                lang,
+                &format!("Pairing code valid for {remaining} s (on stdout). When the phone asks, 'channel ios status --json' shows pairing.sas; then run 'channel ios allow' or 'channel ios deny'."),
+                &format!("配对码 {remaining} 秒内有效（在 stdout）。手机发起配对后，'channel ios status --json' 里的 pairing.sas 是确认码；再运行 'channel ios allow' 或 'channel ios deny'。"),
+            )
+        );
+        print_line(&code);
+        return Ok(());
+    }
     if let Ok(qr) = crate::ios::qr::text(&code) {
         eprintln!("{qr}");
     }
@@ -446,6 +490,68 @@ fn decide(allow: bool, lang: Lang) -> Result<(), String> {
     Ok(())
 }
 
+// ——— test question ———
+
+/// The settings card's test question, sent from the command line: one question that only the iOS
+/// channel carries, answered on the phone (`docs/specs/ios-setup-experience.md` §9).
+fn test_question(lang: Lang) -> Result<(), String> {
+    let state = running_state(lang)?;
+    if !state.phones.iter().any(|p| p.state == "active") {
+        return Err(cfgio::t(
+            lang,
+            "no paired phone yet: pair one first ('channel ios pair')",
+            "还没有配对的手机：请先配对（'channel ios pair'）",
+        ));
+    }
+    let seconds = ASK_TIMEOUT.as_secs();
+    eprintln!(
+        "{}",
+        cfgio::t(
+            lang,
+            &format!("Test question sent to the phone; waiting up to {seconds} s for the answer…"),
+            &format!("测试问题已发到手机，最多等 {seconds} 秒…"),
+        )
+    );
+    let task = probe::build_task(
+        ProbeTarget::Channel(probe::IOS),
+        &uuid::Uuid::new_v4().to_string(),
+        lang,
+    );
+    let accepted = std::sync::Mutex::new(None);
+    let outcome = cfgio::block_on(async {
+        match tokio::time::timeout(ASK_TIMEOUT, crate::client::internal_ask(task, &accepted)).await
+        {
+            Ok((stdout, exit_code)) => probe::outcome_of(exit_code, &stdout),
+            // Dropping the question closes its connection and the daemon withdraws it everywhere.
+            Err(_) => Outcome::Timeout,
+        }
+    });
+    print_line(&test_question_result(outcome, lang, seconds)?);
+    Ok(())
+}
+
+/// What the person running the command is told, with the same words as the card's test row.
+fn test_question_result(outcome: Outcome, lang: Lang, seconds: u64) -> Result<String, String> {
+    match outcome {
+        Outcome::Ok => Ok(cfgio::t(
+            lang,
+            "Answered on the phone: the question arrived and the answer came back.",
+            "已收到回答，一切正常。",
+        )),
+        Outcome::Timeout => Err(cfgio::t(
+            lang,
+            &format!("No answer within {seconds} s. Check that the phone is online and notifications are allowed."),
+            &format!("{seconds} 秒内没有收到回答。请确认手机在线并已允许通知。"),
+        )),
+        Outcome::Cancelled => Err(cfgio::t(lang, "The test was cancelled.", "测试已取消。")),
+        Outcome::Failed => Err(cfgio::t(
+            lang,
+            "The test question could not be sent. Check the broker connection with 'channel ios status'.",
+            "测试问题没能发出。用 'channel ios status' 检查 Broker 连接。",
+        )),
+    }
+}
+
 // ——— Agent guide ———
 
 /// Prints the setup guide for an Agent (`docs/specs/ios-setup-experience.md` §7.3). It reads the
@@ -536,8 +642,10 @@ pub(crate) fn help(lang: Lang) -> String {
   channel ios --agent-guide          Setup guide for an Agent, with the current state\n\
   channel ios status [--json]        Broker connection, devices and pending requests\n\
   channel ios devices [--json]       Paired devices\n\
-  channel ios pair                   Show a pairing QR code / code and confirm the device here\n\
+  channel ios pair [--no-wait]       Show a pairing QR code / code and confirm the device here;\n\
+                                     --no-wait prints only the code and returns (for an Agent)\n\
   channel ios allow | deny           Decide a waiting pairing request (when not in a terminal)\n\
+  channel ios test-question          Send a test question to the phone and wait for the answer\n\
   channel ios revoke <device>        Unpair a device (id, id prefix or name)\n\
   channel ios rename <device> <name> Rename a device\n\
   channel ios export                 Print the connection string (includes the broker password)\n\
@@ -551,8 +659,10 @@ pub(crate) fn help(lang: Lang) -> String {
   channel ios --agent-guide          给 Agent 的配置指南（含当前状态）\n\
   channel ios status [--json]        Broker 连接、设备与待回答请求\n\
   channel ios devices [--json]       已配对设备\n\
-  channel ios pair                   显示配对二维码 / 配对码，并在此确认设备\n\
+  channel ios pair [--no-wait]       显示配对二维码 / 配对码，并在此确认设备；\n\
+                                     --no-wait 只打印配对码就返回（给 Agent 用）\n\
   channel ios allow | deny           处理等待中的配对请求（不在终端时）\n\
+  channel ios test-question          给手机发一条测试问题，等待回答\n\
   channel ios revoke <设备>          解除某台设备的配对（id、id 前缀或名称）\n\
   channel ios rename <设备> <名称>   重命名设备\n\
   channel ios export                 打印连接串（包含 Broker 密码）\n\
@@ -613,6 +723,51 @@ mod tests {
         for lang in [Lang::Zh, Lang::En] {
             assert!(help(lang).contains("channel ios --agent-guide"), "{lang:?}");
         }
+    }
+
+    #[test]
+    fn the_help_names_what_an_agent_drives_the_pairing_with() {
+        for lang in [Lang::Zh, Lang::En] {
+            let text = help(lang);
+            assert!(text.contains("channel ios pair [--no-wait]"), "{lang:?}");
+            assert!(text.contains("channel ios test-question"), "{lang:?}");
+        }
+    }
+
+    #[test]
+    fn pair_takes_only_the_no_wait_option() {
+        let args = |list: &[&str]| list.iter().map(|a| a.to_string()).collect::<Vec<_>>();
+        assert_eq!(
+            pair_options(&args(&[]), Lang::En),
+            Ok(PairOptions { no_wait: false })
+        );
+        assert_eq!(
+            pair_options(&args(&["--no-wait"]), Lang::En),
+            Ok(PairOptions { no_wait: true })
+        );
+        let error = pair_options(&args(&["--wait"]), Lang::En).unwrap_err();
+        assert!(error.contains("--wait"), "{error}");
+    }
+
+    #[test]
+    fn the_test_question_reports_each_outcome_in_the_cards_words() {
+        let ok = test_question_result(Outcome::Ok, Lang::Zh, 120).unwrap();
+        assert_eq!(ok, "已收到回答，一切正常。");
+        assert_eq!(
+            test_question_result(Outcome::Timeout, Lang::Zh, 120).unwrap_err(),
+            "120 秒内没有收到回答。请确认手机在线并已允许通知。"
+        );
+        assert_eq!(
+            test_question_result(Outcome::Cancelled, Lang::Zh, 120).unwrap_err(),
+            "测试已取消。"
+        );
+        for lang in [Lang::Zh, Lang::En] {
+            let failed = test_question_result(Outcome::Failed, lang, 120).unwrap_err();
+            assert!(failed.contains("channel ios status"), "{lang:?}: {failed}");
+        }
+        assert!(test_question_result(Outcome::Timeout, Lang::En, 90)
+            .unwrap_err()
+            .contains("90 s"));
     }
 
     #[test]

@@ -18,7 +18,13 @@ TestFlight 公共链接 + Pages 落地页、卡片顶部「设置步骤」清单
   `client::ios_op_if_running`。Rust 全量测试与 `clippy -D warnings` 通过；用隔离的 `ASKHUMAN_HOME` 跑过指南和速查表里的命令。
   「发一条测试问题」已在真实手机上跑通（2026-11-22）：手机离线时 Mac 立即推送，几秒内弹出，作答后卡片显示成功。第一轮推送没到，原因没查明
   （当时没有推送日志，手机每次连上都会把推送状态重置为 ok）；现在 daemon 日志会写下每次推送的结果与耗时，再出现会直接给出原因。
-  还没让 Agent 照指南完整走一遍（需要真实 Broker），放到 P5 前。
+  Agent 照指南走一遍见下面的 P2b。
+- [ ] P2b Agent 代办（规格 D24，用户在第一次真实走查之后要求）：走查（`codex exec`、隔离实例、EMQX）里 Agent 只给用户念步骤、操作还是用户做。
+  已改：指南按「用户只做只有人能做的事」重写（中英；Agent 操作控制台、生成并保存 Broker 密码、发起配对）、步骤全部展开（原来第 3 步永远显示不出来）、
+  新增 `channel ios pair --no-wait` 与 `channel ios test-question`；`cli::ios_guide`、`cli::ios_cmd` 单测通过。
+  用户已确认新文案，包括「在手机上输入确认码、Agent 比对」（代替当时方案里的「点一致」）；上次中断的走查没有在 EMQX 里留下东西。
+  **待做**：在隔离实例里用 Terminal 里的交互式 Codex CLI（不用 `codex exec`）真实走一遍，按发现修指南，再走到顺。
+  走查时记得：Agent 在用户登录的浏览器里点控制台；Codex 的会话记录留在 `~/.codex/sessions`。
 - [x] P3 文档与落地页：`scripts/build-ios-beta-site.mjs` 的根页改成中英双语 TestFlight 落地页（公共链接只读 `docs/public/ios/testflight.json`，
   缺失时显示「仅限邀请」，所以 Pages 现状不变；`node --test` 校验链接格式与站内链接，截图 `docs/assets/ios-setup-experience/18–20`）；
   `docs/public/ios/beta*.md` 改成公共链接版；`docs/wiki/ios-setup*.md` 的入口与步骤、`ios-broker*.md` 的一句摘要说明、README 中英各一节、

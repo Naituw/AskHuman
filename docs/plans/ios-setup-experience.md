@@ -53,7 +53,17 @@
    - 测试：每个状态 × 两种语言一份快照（未启用 / 已启用未填全 / 已连接无手机 / 有手机 / 守护进程未运行 / 断开带错误）；断言输出里**有**硬性规则与 EMQX 提示、**没有**命令分级里「只能用户运行」的命令被写成「可以直接运行」、**没有**任何哨兵凭据；P1 的一致性测试把本文本纳入。
 3. 保持 `ios_cmd::available()` 门控**不变**（P5 才去掉）：P2 的验证要在打开隐蔽开关的环境里做。
 
-验证：`node scripts/machine-health.mjs` 通过后跑 `cargo test` 里 `onboarding::`、`ios::`、`cli::`、`daemon::request`、`daemon::runtime` 相关项与 `cargo clippy -D warnings`；`./scripts/install.sh` 装机后，在隐蔽开关打开的机器上：卡片的「发一条测试问题」对真实手机（用户拿手机）跑一次，另用仓库的 iOS 网关测试夹具验证立即推送；`AskHuman channel ios --agent-guide` 在各状态下读一遍输出；**由我自己（不另起 Cursor 任务）按指南走一遍**，看指南是否足够、有没有诱导越界。IPC 与 `PROTOCOL_VERSION` 不变（规格 §9.2 的论证）。
+验证：`node scripts/machine-health.mjs` 通过后跑 `cargo test` 里 `onboarding::`、`ios::`、`cli::`、`daemon::request`、`daemon::runtime` 相关项与 `cargo clippy -D warnings`；`./scripts/install.sh` 装机后，在隐蔽开关打开的机器上：卡片的「发一条测试问题」对真实手机（用户拿手机）跑一次，另用仓库的 iOS 网关测试夹具验证立即推送；`AskHuman channel ios --agent-guide` 在各状态下读一遍输出；按指南走一遍（真实走查见 P2b：第一次用 `codex exec` 走，暴露出指南只让 Agent 念步骤的问题）。IPC 与 `PROTOCOL_VERSION` 不变（规格 §9.2 的论证）。
+
+## P2b：Agent 代办（规格 D24）
+
+起因：P2 之后第一次真实走查（隔离实例、EMQX、`codex exec`）里，Agent 只是把步骤发给用户，操作仍由用户做完；用户要求「能让 Agent 做的都由它做，用户能少做就少做」。
+
+1. **指南改写**（`cli/ios_guide.rs`，中英各一份）：规则改成「用户只做只有人能做的事」、第一次提问说清用户要做的事、Agent 生成并保存 Broker 密码、控制台只新增 / 付款页必须停、没有浏览器工具时的做法、确认码比对后才 `allow`、不改保活；步骤 1 用 `printf … | channel set ios … --password-stdin --enable`；步骤 3 改成 Agent 发起配对；命令速查改成两张（直接运行 / 只在用户要求时）；服务商一节面向「谁在操作控制台」；故障对照补粘贴按钮、确认码不一致。
+2. **步骤全部展开**：原来「只展开当前步」会让第 3 步永远不显示（只有配对完成才同时完成第 2、3 步），改成已完成的一行、其余全部展开、第一个标「（当前）」。
+3. **两条新命令**：`channel ios pair --no-wait`（只打印配对码就返回，配合 `| pbcopy`；票据在守护进程里，返回后仍有效到过期）；`channel ios test-question`（复用探测 `build_task` + `internal_ask`，120 s 超时，文案同卡片，没有已配对手机时直接报错）。不碰 IPC，不升 `PROTOCOL_VERSION`。
+4. 测试：`cli::ios_guide`（步骤全部展开、规则编号与步骤里的引用一致、命令速查里的命令都存在于 `channel ios help`、配对步骤含 `pair --no-wait | pbcopy` / `pairing.sas` / `allow` / `deny`、状态块仍无任何凭据）与 `cli::ios_cmd`（`--no-wait` 解析、帮助、测试问题各结局的文案）。
+5. 走查（真实，交互式）：隔离实例 + 在 Terminal 窗口里用 Codex CLI（不用 `codex exec`），只给卡片上的提示词；EMQX 临时用户，Agent 操作控制台、用户登录与在手机上的几步；走查后按发现修指南，再走一遍直到顺。规格 §11 的「用户在真机上从零走完整条链路」随之改成：Agent 按提示词配，用户只做 D24 里只有人能做的事。
 
 ## P3：文档与落地页（已完成）
 
@@ -95,7 +105,7 @@ Friends 与 Internal 读回没变。`docs/public/ios/testflight.json` 已加（�
 4. 装机验证后发 Mac 新版（发布流程另行取得用户指示）；
 5. 把「每 80 天出一次 TestFlight 包」「公共链接与上限的现状」「一周后复核中继与链接的用量」记进 `docs/PROGRESS.md`。
 
-验证：`node scripts/machine-health.mjs` → `./scripts/install.sh`；真实窗口里 设置 → 通信渠道 看卡片三种形态、深链、搜索；`AskHuman channel list` 与 `channel ios --agent-guide` 对没打开隐蔽开关的环境可用；**用户在真机上从零走完整条链路**（新 Broker 账号 → 落地页 → TestFlight → 配对 → 测试问题）并让一个 Agent 按提示词配一遍（密码仍由用户输入）。
+验证：`node scripts/machine-health.mjs` → `./scripts/install.sh`；真实窗口里 设置 → 通信渠道 看卡片三种形态、深链、搜索；`AskHuman channel list` 与 `channel ios --agent-guide` 对没打开隐蔽开关的环境可用；**用户在真机上从零走完整条链路**（新 Broker 账号 → 落地页 → TestFlight → 配对 → 测试问题）并让一个 Agent 按提示词配一遍（密码由 Agent 生成并保存，用户只做 D24 里只有人能做的事）。
 
 ## 风险与回退
 

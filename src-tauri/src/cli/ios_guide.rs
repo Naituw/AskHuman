@@ -158,16 +158,20 @@ struct Words {
     state_title: &'static str,
     steps_title: &'static str,
     step_titles: [&'static str; 3],
-    /// The body of each step, which is shown while the step is the current one. The last item of
-    /// step 3 (`test_question`) is added to it.
+    /// The body of each step, shown for every step that is not done (the Agent needs the later
+    /// steps early: to tell the user what is coming, and to start the app install while it sets
+    /// the broker up). The last item of step 3 (`test_question`) and `pair_fallback` follow it.
     step_bodies: [&'static str; 3],
     /// Ends the third step, and closes the guide when every step is done.
     test_question: &'static str,
+    /// What to do when the pairing code cannot reach the phone through the clipboard.
+    pair_fallback: &'static str,
+    /// Said to the user at the end, while keep-alive is off.
     keep_alive_hint: &'static str,
     providers: &'static str,
     troubleshooting: &'static str,
     commands_title: &'static str,
-    tiers: [&'static str; 3],
+    tiers: [&'static str; 2],
 }
 
 const ZH: Words = Words {
@@ -178,12 +182,14 @@ const ZH: Words = Words {
     rules: "\
 ## 规则
 
-1. 不索取、不读取、不打印、不记录：Broker 密码、flespi token、配对码、连接串（`ahconn1.` 开头）。不读 `~/.askhuman/` 下的文件和系统钥匙串，也不要让用户把它们贴进对话。
-2. 凭据只有两条路：设置里「iOS App」卡片的连接表单（首选），或用户自己在终端里运行 `AskHuman channel set ios --password-stdin`（无回显读入，给没有图形界面的 Mac 用）。
-3. 注册账号、付款、在服务商控制台里创建账号和访问规则，由用户本人完成。你可以逐步指导，也可以核对用户读出的非机密项（主机、端口、用户名）；不要替用户登录，不要碰付款页面。
-4. 用户选 EMQX 之前，先把「服务商」一节里 EMQX 的提示原样转告。
-5. 每个要用户动手的点，用 AskHuman 提问并等答复，不要假设已经做完。
-6. 修改 `general.daemonLifecycle` 之前先问用户：它是全局设置，会让后台服务开机自启。",
+1. 用户只做只有人能做的事，其余由你来做。只有人能做的：在服务商登录（验证码、条款、付款）；在手机上装 App、粘贴配对码、输入确认码；点测试问题的「收到」。有浏览器或电脑操作工具时，控制台里的操作（建部署、用户和访问规则，复制主机和 token）也由你来做。
+2. 第一次提问就把用户要做的几件事一次说清。之后，你能决定的（Mac 名称、端口、是否保活）不要问，能用命令查到的（连接状态、配对结果）也不要问。
+3. Broker 密码由你生成并保存，flespi 的 token 同理：用 `--password-stdin` 传入（见第 1 步），不要写进文件，回复用户时不要重复它。
+4. 在控制台里只新增，不修改、不删除已有的部署、用户和访问规则。遇到付款、充值、提高消费限额或绑定银行卡的页面，停下来问用户，不要点。
+5. 用户选 EMQX 之前，先把「服务商」一节里 EMQX 的提示原样转告。
+6. 没有浏览器或电脑操作工具时，由用户操作控制台：你生成用户名和密码，把密码放进剪贴板（`printf '%s' '<密码>' | pbcopy`），一步一步告诉用户点哪里、粘贴什么，让用户把主机回给你。
+7. 配对时，用户输入的确认码和 `status --json` 里的 `pairing.sas` 数字相同，才运行 `allow`；不同就运行 `deny`。
+8. 不要修改 `general.daemonLifecycle`（全局设置，会让后台服务开机自启），除非用户要求。",
     state_title: "## 当前状态",
     steps_title: "## 步骤",
     step_titles: ["连接 Broker", "安装 iPhone App", "配对手机"],
@@ -191,27 +197,29 @@ const ZH: Words = Words {
         "\
 Broker 在 Mac 和手机之间转发消息，账号由用户自备。
 
-1. 用 AskHuman 问用户用哪个服务商：EMQX Cloud（国内节点，免费额度）、flespi（欧洲节点，免费套餐），或自建 / 其它（如 Mosquitto）。各家的操作见「服务商」一节。
-2. 用户在服务商控制台里建好账号和访问规则后，把主机和用户名读给你（端口不是默认值时再加端口），或自己填进卡片。你可以代为保存并启用：
-   `AskHuman channel set ios --host <主机> --username <用户名> --enable`
+1. 用 AskHuman 问用户用哪个服务商：EMQX Cloud（国内节点，免费额度）、flespi（欧洲节点，免费套餐），或自建 / 其它（如 Mosquitto）。同一次提问里把用户要做的几件事说清（规则 2）；选 EMQX 时先转告它的提示（规则 5）。
+2. 打开服务商控制台。需要登录时，请用户在你打开的浏览器窗口里登录，等他答复。然后按「服务商」一节的步骤建好用户和访问规则：用户名（只含字母和数字）和密码由你生成，如 `openssl rand -hex 12`。
+3. 保存并启用：
+   `printf '%s' '<密码>' | AskHuman channel set ios --host <主机> --username <用户名> --password-stdin --enable`
    默认端口：TLS 8883，WSS 8084；flespi 的 WSS 是 443，加 `--ws-port 443`。
-3. 密码由用户填：在「iOS App」卡片的连接表单里；没有图形界面的 Mac，让用户在自己的终端里运行 `AskHuman channel set ios --password-stdin`。
-4. 验证：运行 `AskHuman channel test ios`（用已存的凭据；macOS 可能弹出钥匙串授权，提醒用户点「允许」），再运行 `AskHuman channel ios status`。Broker 显示已连接，这一步才算完成；失败时见「故障对照」。
-5. 可选：问用户要不要开启「保持这台 Mac 随时可连」（卡片里有同名开关，命令是 `AskHuman config set general.daemonLifecycle keepalive`）。开启后后台服务常驻并开机自启，手机上不会显示这台 Mac 离线；不开也能回答问题。",
-        "\
-需要 iOS 17 或更高版本。让用户在 iPhone 上：安装 TestFlight → 用手机浏览器打开 {join}（或扫描卡片里的二维码）→ 在 TestFlight 里接受邀请并安装 AskHuman → 打开 AskHuman，允许通知。
+4. 验证：运行 `AskHuman channel test ios`（macOS 可能弹出钥匙串授权，提醒用户点「允许」），再运行 `AskHuman channel ios status`。Broker 显示已连接，这一步才算完成；失败时见「故障对照」。
 
-这一步无法在 Mac 上检测：用 AskHuman 问用户是否已经装好。",
+装 App（第 2 步）不依赖 Broker：如果你能在后台等 AskHuman 的答复，就先发出第 2 步的请求，用户装 App 的时候你来配 Broker。",
         "\
-配对由用户本人操作，你不要运行 `pair`、`allow`、`deny`。
+需要 iOS 17 或更高版本。用 AskHuman 把链接 {join} 发给用户，请他在 iPhone 上：安装 TestFlight → 用手机浏览器打开链接 → 在 TestFlight 里接受邀请并安装 AskHuman → 打开 AskHuman，允许通知。装好后在 AskHuman 里答复你。
 
-1. 用户在「iOS App」卡片上点「配对新手机」。没有图形界面的 Mac：用户在自己的终端里运行 `AskHuman channel ios pair`，终端会显示二维码并核对确认码。
-2. 手机上打开 AskHuman →「Mac」页 →「添加 Mac」，扫描二维码（5 分钟内有效）。
-3. 两边的确认码一致后，用户在卡片上点「允许」。
-4. 你运行 `AskHuman channel ios devices` 核对：出现一台状态为 `active` 的设备。",
+这一步无法在 Mac 上检测，只能问用户。",
+        "\
+用户装好 App 之后再开始（配对码 5 分钟内有效）。
+
+1. 运行 `AskHuman channel ios pair --no-wait | pbcopy`：配对码进入 Mac 剪贴板，不会出现在输出里。Mac 和 iPhone 登录同一个 Apple ID 时，手机上可以直接粘贴。
+2. 用 AskHuman 请用户在手机上：打开 AskHuman →「Mac」页 →「添加 Mac」→「粘贴」→「配对」，再把手机上出现的 6 位确认码输入到回答里。
+3. 用户答复后，运行 `AskHuman channel ios status --json`：`pairing.stage` 应为 `pending`（还不是就隔几秒再查），`pairing.sas` 是 Mac 这边的确认码。数字相同（忽略空格）就运行 `AskHuman channel ios allow`；不同就运行 `AskHuman channel ios deny`，再从第 1 行重来。
+4. 运行 `AskHuman channel ios devices` 核对：出现一台状态为 `active` 的设备。然后清掉剪贴板：`printf '' | pbcopy`。",
     ],
-    test_question: "让用户在「iOS App」卡片上点「发一条测试问题」，在手机上点「收到」，确认手机能收到提问、也能把回答送回来。",
-    keep_alive_hint: "「保持这台 Mac 随时可连」还没有开启，可以问用户要不要开（见第 1 步）。",
+    test_question: "运行 `AskHuman channel ios test-question`，请用户在手机上点「收到」（最多等 120 秒），确认手机能收到提问、也能把回答送回来。",
+    pair_fallback: "没有通用剪贴板（不是 macOS，或手机和 Mac 不是同一个 Apple ID）时：请用户在「iOS App」卡片上点「配对新手机」（`AskHuman --settings` 打开设置），用手机扫描二维码，核对确认码后点「允许」；你用 `AskHuman channel ios devices` 核对。",
+    keep_alive_hint: "收尾时告诉用户：想让手机上一直显示这台 Mac 在线，可以在「iOS App」卡片里开启「保持这台 Mac 随时可连」（开启后后台服务常驻并开机自启）。不要替他开（规则 8）。",
     providers: "\
 ## 服务商
 
@@ -219,7 +227,7 @@ Broker 在 Mac 和手机之间转发消息，账号由用户自备。
 
 需要注意：如果免费额度（每月 100 万连接分钟、1 GB 流量）用完，最低充值金额可能需要 ¥100。建议关注流量使用，尽量保持在免费额度内。
 
-1. 注册并新建 **Serverless** 部署，消费限额保持 0。
+1. 登录后新建 **Serverless** 部署（已有部署就直接用，不要改动），消费限额保持 0。
 2. 部署概览里的「连接地址」就是主机。
 3. 「访问控制 → 客户端认证」：添加用户名和密码（用户名只用字母和数字）。
 4. 「访问控制 → 客户端授权」默认放行所有话题，必须设置：「全部用户」标签：话题 `#`，发布 & 订阅，**不允许**；「用户名」标签：话题 `ah/<用户名>/#`，发布 & 订阅，**允许**。
@@ -230,10 +238,10 @@ Broker 在 Mac 和手机之间转发消息，账号由用户自备。
 
 需要注意：免费套餐面向测试与开发；服务器在欧洲，大陆访问可能有延迟；账号 60 天没有活动会被删除。
 
-1. 注册并保持 **Free** 套餐。
+1. 登录后保持 **Free** 套餐。
 2. 「Tokens」新建 token：类型 **ACL**，有效期（TTL）填最大值 8760 小时；ACL 只留一条：`mqtt` 模块，publish 和 subscribe，主题 `ah/#`。
 3. 记下 token 左上角 `#` 后面的**编号**，打开这个 token，把 ACL 主题改成 `ah/<编号>/#`。
-4. 用户名填**编号**，密码填**完整的 token**（只有新建时能复制）。
+4. 用户名填**编号**，密码填**完整的 token**（只有新建时能看到，读到后马上保存）。
 
 主机 `mqtt.flespi.io`，TLS 8883，WSS 443。
 
@@ -248,19 +256,17 @@ Broker 在 Mac 和手机之间转发消息，账号由用户自备。
 
 `AskHuman channel test ios` 的结果或手机上的现象 → 可能的原因 → 做法：
 
-- 「Broker 拒绝了凭据」：用户名或密码不对。EMQX：要用部署里「客户端认证」添加的那一对，不是 EMQX 账号的登录信息；flespi：用户名是 token 的编号（只有数字），密码是完整的 token，token 过期或被删除也会被拒；用户名只能含字母和数字。让用户核对后重新填密码。
+- 「Broker 拒绝了凭据」：用户名或密码不对。EMQX：要用部署里「客户端认证」添加的那一对，不是 EMQX 账号的登录信息；flespi：用户名是 token 的编号（只有数字），密码是完整的 token，token 过期或被删除也会被拒；用户名只能含字母和数字。用户名可以对照控制台核对；密码对不上（或无法确认）时，在控制台里重设一个新密码，再用 `--password-stdin` 保存同一个。
 - 「测试消息没有回来」：已登录，但访问规则拦下了测试消息。检查这个账号是否被允许发布和订阅 `ah/<用户名>/#`：EMQX 在「用户名」标签下，flespi 看 token 的 ACL 主题，Mosquitto 看 ACL 文件。
 - 「超时」：主机或端口不对（EMQX 用部署概览里的「连接地址」和 8883；flespi 是 `mqtt.flespi.io`、8883、WSS 443）；证书不是公共 CA 签发的（自签不被接受）；EMQX 部署可能已经停止（免费额度用完，或连续 30 天没有活跃客户端，要到控制台手动启动）；flespi 在大陆偶尔超时，先再试一次。
 - 警告「Broker 放行了这个账号在自己话题…之外的发布和订阅」：不挡保存和配对，一个人自用也能工作；多人共用同一个 Broker 时必须修好，按「服务商」一节把每个账号限制在 `ah/<用户名>/#`。
-- 配对码过期（5 分钟有效）：让用户重新点「配对新手机」。
+- 配对码过期（5 分钟有效）：重新运行第 3 步的第 1 行。
+- 手机上的「粘贴」按钮点不了：通用剪贴板可能还没同步，等几秒再试；手机和 Mac 不是同一个 Apple ID 时，改用卡片扫码。
+- 确认码不一致，或用户输错了：运行 `deny`，再重新配对。
 - 手机收不到通知：确认手机上允许了通知、AskHuman 打开过；`AskHuman channel ios devices --json` 里 `push` 不是 `ok`（`gone`：在手机上重新打开 App）；通知默认在 Mac 键盘和鼠标空闲满 15 分钟后才发送，卡片里的「推送时机」可以改成「立即」。
 - 手机上显示这台 Mac 离线：开启「保持这台 Mac 随时可连」。",
     commands_title: "## 命令",
-    tiers: [
-        "可以直接运行：",
-        "先问用户再运行：",
-        "只能用户自己运行：",
-    ],
+    tiers: ["可以直接运行：", "只在用户要求时运行："],
 };
 
 const EN: Words = Words {
@@ -271,12 +277,14 @@ You are helping the user set up AskHuman's iOS App channel: the user receives th
     rules: "\
 ## Rules
 
-1. Never ask for, read, print or log: the broker password, a flespi token, a pairing code, or a connection string (it starts with `ahconn1.`). Do not read files under `~/.askhuman/` or the system keychain, and do not let the user paste them into the chat.
-2. Credentials go only one of two ways: the connection form of the \"iOS App\" card in the settings (preferred), or `AskHuman channel set ios --password-stdin`, run by the user in their own terminal (it reads without echo; for a Mac with no graphical interface).
-3. Signing up, paying, and creating accounts and access rules in a provider's console are done by the user. You may guide them step by step and check the non-secret items they read out (host, port, username); do not log in for them and do not touch payment pages.
-4. Before the user chooses EMQX, relay EMQX's note from the \"Providers\" section verbatim.
-5. For every point that needs the user to act, ask with AskHuman and wait for the answer; never assume it is done.
-6. Ask the user before changing `general.daemonLifecycle`: it is a global setting that starts the background service at login.",
+1. The user only does what only a person can; you do the rest. Only a person can: sign in to the provider (verification codes, terms, payment); install the app on the phone, paste the pairing code and type the check code; tap \"Received\" on the test question. With a browser or computer-use tool, the work in the console (creating the deployment, users and access rules, copying the host and token) is yours too.
+2. In your first question, tell the user in one go what they will have to do. After that, do not ask about what you can decide (Mac name, ports, keep-alive) or look up with a command (connection state, pairing result).
+3. You generate and save the broker password; a flespi token is the same: pass it with `--password-stdin` (see step 1), do not write it to a file, and do not repeat it when you reply to the user.
+4. In a console, only add: do not change or delete existing deployments, users or access rules. On a page about payment, top-ups, raising a spending limit or adding a bank card, stop and ask the user; do not click.
+5. Before the user chooses EMQX, relay EMQX's note from the \"Providers\" section verbatim.
+6. Without a browser or computer-use tool, the user works in the console: you generate the username and password, put the password on the clipboard (`printf '%s' '<password>' | pbcopy`), tell the user where to click and what to paste, one step at a time, and have them give you the host.
+7. When pairing, run `allow` only if the check code the user typed is the same digits as `pairing.sas` in `status --json`; otherwise run `deny`.
+8. Do not change `general.daemonLifecycle` (a global setting that starts the background service at login) unless the user asks.",
     state_title: "## Current state",
     steps_title: "## Steps",
     step_titles: ["Connect a broker", "Install the iPhone app", "Pair a phone"],
@@ -284,27 +292,29 @@ You are helping the user set up AskHuman's iOS App channel: the user receives th
         "\
 The broker relays messages between the Mac and the phone; the user brings their own account.
 
-1. Ask the user with AskHuman which provider to use: EMQX Cloud (China region, free allowance), flespi (EU region, free plan), or self-hosted / other (e.g. Mosquitto). \"Providers\" has the steps for each.
-2. Once the user has created the account and access rules in the provider's console, they read you the host and username (and the ports if they are not the defaults), or enter them in the card themselves. You may save them and enable the channel:
-   `AskHuman channel set ios --host <host> --username <username> --enable`
+1. Ask the user with AskHuman which provider to use: EMQX Cloud (China region, free allowance), flespi (EU region, free plan), or self-hosted / other (e.g. Mosquitto). In the same question, tell them what they will have to do (rule 2); if they pick EMQX, relay its note first (rule 5).
+2. Open the provider's console. If a login is needed, ask the user to sign in in the browser window you opened and wait for their answer. Then create the user and the access rules as \"Providers\" describes: you generate the username (letters and digits only) and the password, e.g. with `openssl rand -hex 12`.
+3. Save and enable:
+   `printf '%s' '<password>' | AskHuman channel set ios --host <host> --username <username> --password-stdin --enable`
    Default ports: TLS 8883, WSS 8084; flespi's WSS port is 443, so add `--ws-port 443`.
-3. The user enters the password: in the connection form of the \"iOS App\" card; on a Mac with no graphical interface, by running `AskHuman channel set ios --password-stdin` in their own terminal.
-4. Verify: run `AskHuman channel test ios` (it uses the stored credentials; macOS may show a keychain prompt, so ask the user to click Allow), then `AskHuman channel ios status`. The step is done when the broker shows as connected; if it fails, see \"Troubleshooting\".
-5. Optional: ask the user whether to turn on \"Keep this Mac reachable\" (the card has the same switch; the command is `AskHuman config set general.daemonLifecycle keepalive`). When on, the background service keeps running and starts at login, so the phone never shows this Mac as offline. Questions can be answered without it.",
-        "\
-Requires iOS 17 or later. The user, on the iPhone: installs TestFlight → opens {join} in the phone's browser (or scans the QR code in the card) → accepts the invitation in TestFlight and installs AskHuman → opens AskHuman and allows notifications.
+4. Verify: run `AskHuman channel test ios` (macOS may show a keychain prompt, so ask the user to click Allow), then `AskHuman channel ios status`. The step is done when the broker shows as connected; if it fails, see \"Troubleshooting\".
 
-This cannot be detected from the Mac: ask the user with AskHuman whether it is installed.",
+Installing the app (step 2) does not depend on the broker: if you can wait for an AskHuman answer in the background, send the step 2 request first, so the user installs the app while you set up the broker.",
         "\
-The user does the pairing; do not run `pair`, `allow` or `deny`.
+Requires iOS 17 or later. Send the user the link {join} with AskHuman and ask them, on the iPhone, to: install TestFlight → open the link in the phone's browser → accept the invitation in TestFlight and install AskHuman → open AskHuman and allow notifications. They answer you in AskHuman once it is installed.
 
-1. In the \"iOS App\" card the user clicks \"Pair a new phone\". On a Mac with no graphical interface, the user runs `AskHuman channel ios pair` in their own terminal, which prints a QR code and checks the confirmation codes.
-2. On the phone: AskHuman → Macs → Add a Mac, and scan the QR code (valid for 5 minutes).
-3. When the confirmation codes on both devices match, the user clicks \"Allow\" in the card.
-4. You check with `AskHuman channel ios devices`: a device with state `active` appears.",
+This cannot be detected from the Mac; only the user can tell.",
+        "\
+Start once the user has installed the app (the pairing code is valid for 5 minutes).
+
+1. Run `AskHuman channel ios pair --no-wait | pbcopy`: the pairing code goes to the Mac's clipboard and never appears in the output. When the Mac and the iPhone use the same Apple ID, the phone can paste it directly.
+2. Ask the user with AskHuman to do this on the phone: open AskHuman → Macs → Add a Mac → Paste → Pair, then type the 6-digit check code that appears on the phone into their answer.
+3. When they answer, run `AskHuman channel ios status --json`: `pairing.stage` should be `pending` (if not, check again in a few seconds), and `pairing.sas` is the Mac's check code. If the digits are the same (ignore spaces), run `AskHuman channel ios allow`; if not, run `AskHuman channel ios deny` and start again from line 1.
+4. Check with `AskHuman channel ios devices`: a device with state `active` appears. Then clear the clipboard: `printf '' | pbcopy`.",
     ],
-    test_question: "Ask the user to click \"Send test question\" in the \"iOS App\" card and tap \"Received\" on the phone, to confirm the phone receives the question and sends the answer back.",
-    keep_alive_hint: "\"Keep this Mac reachable\" is not on yet; you can ask the user whether to turn it on (see step 1).",
+    test_question: "Run `AskHuman channel ios test-question` and ask the user to tap \"Received\" on the phone (it waits up to 120 seconds), to confirm the phone receives the question and sends the answer back.",
+    pair_fallback: "Without a shared clipboard (not macOS, or the phone and the Mac use different Apple IDs): ask the user to click \"Pair a new phone\" in the \"iOS App\" card (`AskHuman --settings` opens the settings), scan the QR code with the phone, compare the check codes and click \"Allow\"; you check with `AskHuman channel ios devices`.",
+    keep_alive_hint: "At the end, tell the user that \"Keep this Mac reachable\" in the \"iOS App\" card keeps the phone showing this Mac as online (the background service then keeps running and starts at login). Do not turn it on for them (rule 8).",
     providers: "\
 ## Providers
 
@@ -312,7 +322,7 @@ The user does the pairing; do not run `pair`, `allow` or `deny`.
 
 Note: if the free allowance (1 million connection minutes and 1 GB of traffic per month) runs out, the minimum top-up may be ¥100. Keep an eye on traffic and try to stay within the free allowance.
 
-1. Sign up and create a **Serverless** deployment; keep the spending limit at 0.
+1. After signing in, create a **Serverless** deployment (use an existing one as it is, without changing it); keep the spending limit at 0.
 2. The \"connection address\" in the deployment overview is the host.
 3. \"Access Control → Authentication\": add a username and password (letters and digits only).
 4. \"Access Control → Authorization\" allows everything by default, so it must be set up: \"All users\" tab: topic `#`, Publish & Subscribe, **Deny**; \"Username\" tab: topic `ah/<username>/#`, Publish & Subscribe, **Allow**.
@@ -323,10 +333,10 @@ Ports: TLS 8883, WSS 8084.
 
 Note: the free plan is meant for testing and development; the servers are in Europe, so access from mainland China may be slow; an account with no activity for 60 days is deleted.
 
-1. Sign up and keep the **Free** plan.
+1. After signing in, keep the **Free** plan.
 2. \"Tokens\" → create a token: type **ACL**, validity (TTL) at the maximum of 8760 hours; keep one ACL entry: the `mqtt` module, publish and subscribe, topic `ah/#`.
 3. Note the **number** after `#` at the top left of the token, open the token and change the ACL topic to `ah/<number>/#`.
-4. Username: the **number**. Password: the **full token** (it can only be copied when it is created).
+4. Username: the **number**. Password: the **full token** (it can only be seen when it is created; read it and save it right away).
 
 Host `mqtt.flespi.io`, TLS 8883, WSS 443.
 
@@ -341,15 +351,17 @@ Host `mqtt.flespi.io`, TLS 8883, WSS 443.
 
 The result of `AskHuman channel test ios`, or what happens on the phone → likely cause → what to do:
 
-- \"The broker rejected the credentials\": wrong username or password. EMQX: use the pair added under \"Authentication\" in the deployment, not the EMQX account login; flespi: the username is the token's number (digits only) and the password the full token, and an expired or deleted token is rejected too; the username may only contain letters and digits. Have the user check and enter the password again.
+- \"The broker rejected the credentials\": wrong username or password. EMQX: use the pair added under \"Authentication\" in the deployment, not the EMQX account login; flespi: the username is the token's number (digits only) and the password the full token, and an expired or deleted token is rejected too; the username may only contain letters and digits. Compare the username with the console; if the password does not match (or cannot be confirmed), set a new one in the console and save the same one with `--password-stdin`.
 - \"a test message did not come back\": logged in, but the access rules swallowed the test message. Check that the account may publish and subscribe to `ah/<username>/#`: for EMQX under the \"Username\" tab, for flespi in the token's ACL topic, for Mosquitto in the ACL file.
 - \"Timed out\": wrong host or port (EMQX: the \"connection address\" from the deployment overview and 8883; flespi: `mqtt.flespi.io`, 8883, WSS 443); a certificate that is not from a public CA (self-signed is not accepted); an EMQX deployment that may have stopped (the free allowance ran out, or 30 days without an active client; it has to be started by hand in the console); flespi sometimes times out from mainland China, so try once more.
 - Warning \"The broker let this account publish to and read from a topic outside its own\": it does not block saving or pairing and works for one person; on a broker shared by several people it must be fixed: limit each account to `ah/<username>/#` as in \"Providers\".
-- The pairing code expired (valid for 5 minutes): have the user click \"Pair a new phone\" again.
+- The pairing code expired (valid for 5 minutes): run line 1 of step 3 again.
+- The \"Paste\" button on the phone cannot be tapped: the shared clipboard may not have synced yet, so wait a few seconds and try again; if the phone and the Mac do not use the same Apple ID, use the card's QR code instead.
+- The check codes differ, or the user mistyped: run `deny`, then pair again.
 - The phone gets no notification: check that notifications are allowed on the phone and AskHuman has been opened; in `AskHuman channel ios devices --json`, `push` is not `ok` (`gone`: open the app on the phone again); notifications are only sent once the Mac's keyboard and mouse have been idle for 15 minutes by default, and \"Push timing\" in the card can be set to \"Immediately\".
 - The phone shows this Mac as offline: turn on \"Keep this Mac reachable\".",
     commands_title: "## Commands",
-    tiers: ["You may run:", "Ask the user first:", "Only the user runs:"],
+    tiers: ["You may run:", "Only when the user asks:"],
 };
 
 fn words(lang: Lang) -> &'static Words {
@@ -370,14 +382,14 @@ const fn cmd(line: &'static str, en: &'static str, zh: &'static str) -> Command 
     Command { line, en, zh }
 }
 
-/// Neither reads nor writes a secret.
-const AGENT_RUNS: [Command; 6] = [
+/// What the Agent runs to set the channel up.
+const AGENT_RUNS: [Command; 10] = [
     cmd("AskHuman channel ios status [--json]", "", ""),
     cmd("AskHuman channel ios devices [--json]", "", ""),
     cmd(
-        "AskHuman channel set ios --host <host> --username <username> [--port N] [--ws-port N] [--mac-name <name>] --enable",
-        "non-secret items only",
-        "只含非机密项",
+        "AskHuman channel set ios --host <host> --username <username> [--port N] [--ws-port N] [--mac-name <name>] [--password-stdin] --enable",
+        "the password only through stdin",
+        "密码只通过标准输入传入",
     ),
     cmd("AskHuman channel enable ios", "", ""),
     cmd("AskHuman channel disable ios", "", ""),
@@ -386,51 +398,39 @@ const AGENT_RUNS: [Command; 6] = [
         "uses the stored credentials; macOS may show a keychain prompt",
         "用已存的凭据；macOS 可能弹出钥匙串授权",
     ),
+    cmd(
+        "AskHuman channel ios pair --no-wait",
+        "prints the pairing code (a broker credential) and returns; pipe it to the clipboard",
+        "打印配对码（Broker 凭据）后立即返回；用管道送进剪贴板",
+    ),
+    cmd(
+        "AskHuman channel ios allow",
+        "only as rule 7 says",
+        "只按规则 7",
+    ),
+    cmd("AskHuman channel ios deny", "", ""),
+    cmd(
+        "AskHuman channel ios test-question",
+        "a question to the phone only; waits up to 120 s",
+        "只发给手机的提问；最多等 120 秒",
+    ),
 ];
 
-/// Settings of the user's, or actions on their devices.
-const ASK_FIRST: [Command; 3] = [
+/// Settings that are the user's, actions on their devices, and what carries the whole credential.
+const ON_REQUEST: [Command; 5] = [
     cmd(
         "AskHuman config set general.daemonLifecycle keepalive",
         "global setting; starts the background service at login",
         "全局设置；后台服务开机自启",
     ),
-    cmd(
-        "AskHuman channel ios rename <device> <name>",
-        "only when the user asks",
-        "只在用户明确要求时",
-    ),
-    cmd(
-        "AskHuman channel ios revoke <device>",
-        "only when the user asks",
-        "只在用户明确要求时",
-    ),
-];
-
-/// Print or take a credential, or need a person to compare something on two devices.
-const USER_ONLY: [Command; 6] = [
-    cmd(
-        "AskHuman channel ios pair",
-        "prints the pairing code, which is a broker credential",
-        "会打印配对码，它就是 Broker 凭据",
-    ),
-    cmd(
-        "AskHuman channel ios allow",
-        "a person compares the 6-digit codes on both devices",
-        "确认码要由人核对两台设备上的 6 位数",
-    ),
-    cmd("AskHuman channel ios deny", "", ""),
+    cmd("AskHuman channel ios rename <device> <name>", "", ""),
+    cmd("AskHuman channel ios revoke <device>", "", ""),
     cmd(
         "AskHuman channel ios export",
-        "the connection string contains the password",
-        "连接串包含密码",
+        "the connection string contains the password; for taking the settings to another Mac",
+        "连接串包含密码；用于把设置带到另一台 Mac",
     ),
     cmd("AskHuman channel ios import <text|->", "", ""),
-    cmd(
-        "AskHuman channel set ios --password-stdin",
-        "the password (also --password-env and --password-file)",
-        "密码（还有 --password-env 和 --password-file）",
-    ),
 ];
 
 fn wiki_link(lang: Lang, anchors: (&str, &str)) -> String {
@@ -587,7 +587,10 @@ fn state_lines(state: &GuideState, lang: Lang, done: &[bool; 3]) -> Vec<String> 
     lines
 }
 
-/// The steps: a finished one in a line, the current one in full, later ones by title.
+/// The steps: a finished one in a line, every other one in full, the first of those marked as the
+/// current one. The later steps are shown too: the Agent tells the user what is coming, and
+/// starts the app install while it sets the broker up. (Step 3 would never be shown otherwise: the
+/// Mac cannot see the app being installed, so only a paired phone completes steps 2 and 3.)
 fn step_lines(state: &GuideState, lang: Lang, done: &[bool; 3]) -> Vec<String> {
     let zh = lang == Lang::Zh;
     let words = words(lang);
@@ -601,16 +604,20 @@ fn step_lines(state: &GuideState, lang: Lang, done: &[bool; 3]) -> Vec<String> {
         };
         if done[index] {
             lines.push(format!("✓ {heading}"));
-        } else if current == Some(index) {
-            let now = if zh { "（当前）" } else { " (current)" };
+        } else {
+            let now = match (current == Some(index), zh) {
+                (true, true) => "（当前）",
+                (true, false) => " (current)",
+                (false, _) => "",
+            };
             lines.push(format!("### {heading}{now}"));
             lines.push(String::new());
             lines.push(words.step_bodies[index].to_string());
             if index == 2 {
                 lines.push(format!("5. {}", words.test_question));
+                lines.push(String::new());
+                lines.push(words.pair_fallback.to_string());
             }
-        } else {
-            lines.push(heading);
         }
         lines.push(String::new());
     }
@@ -631,8 +638,7 @@ fn command_lines(lang: Lang) -> Vec<String> {
     let mut lines = vec![words.commands_title.to_string()];
     for (tier, commands) in [
         (words.tiers[0], &AGENT_RUNS[..]),
-        (words.tiers[1], &ASK_FIRST[..]),
-        (words.tiers[2], &USER_ONLY[..]),
+        (words.tiers[1], &ON_REQUEST[..]),
     ] {
         lines.push(String::new());
         lines.push(tier.to_string());
@@ -825,8 +831,11 @@ mod tests {
         assert!(text.contains("- Broker：未填，用户名：未填"));
         assert!(text.contains("下一步：第 1 步（连接 Broker）。"));
         assert!(text.contains("### 第 1 步：连接 Broker（当前）"));
-        assert!(text.contains("第 3 步：配对手机\n"));
-        assert!(!text.contains("### 第 3 步"), "later steps are only titles");
+        // Every step that is not done is shown in full, only the first one as the current one.
+        assert!(text.contains("### 第 2 步：安装 iPhone App\n"));
+        assert!(text.contains("### 第 3 步：配对手机\n"));
+        assert!(!text.contains("### 第 2 步：安装 iPhone App（当前）"));
+        assert!(text.contains("channel ios pair --no-wait | pbcopy"));
 
         let text = find(&zh, "enabled, incomplete");
         assert!(text.contains("- 渠道：已启用"));
@@ -841,16 +850,20 @@ mod tests {
         assert!(text.contains("✓ 第 1 步：连接 Broker"));
         assert!(text.contains("下一步：第 2 步（安装 iPhone App）。"));
         assert!(text.contains("### 第 2 步：安装 iPhone App（当前）"));
+        assert!(
+            text.contains("### 第 3 步：配对手机\n"),
+            "the pairing is shown"
+        );
         assert!(!text.contains("### 第 1 步"), "a finished step is one line");
 
         let text = find(&zh, "phone paired");
         assert!(text.contains("- 手机：已配对 1 台，1 台在线"));
         assert!(text.contains("三步都已完成。"));
         assert!(!text.contains("（当前）"));
-        assert!(text.contains("发一条测试问题"));
+        assert!(text.contains("channel ios test-question"));
         assert!(
-            text.contains("还没有开启，可以问用户要不要开"),
-            "keep-alive off is mentioned at the end"
+            text.contains("不要替他开（规则 8）"),
+            "keep-alive off is mentioned at the end, as something to tell, not to ask"
         );
 
         let text = find(&zh, "daemon not running");
@@ -953,7 +966,8 @@ mod tests {
                 }
                 assert!(text.contains(note), "{lang:?} {name}");
                 // The rules come first; the note is only reached through them.
-                assert!(text.find("ahconn1.").unwrap() < text.find(note).unwrap());
+                let rules_at = text.find(words.rules.lines().next().unwrap()).unwrap();
+                assert!(rules_at < text.find(note).unwrap(), "{lang:?} {name}");
                 assert!(text.ends_with('\n') && !text.ends_with("\n\n"));
             }
         }
@@ -999,70 +1013,95 @@ mod tests {
     }
 
     #[test]
-    fn a_command_only_the_user_may_run_is_never_offered_to_the_agent() {
+    fn the_cheat_sheet_has_two_tiers_and_only_commands_that_exist() {
         for lang in [Lang::Zh, Lang::En] {
             let text = command_lines(lang).join("\n");
-            let (agent, rest) = text
-                .split_once(if lang == Lang::Zh {
-                    "先问用户再运行："
-                } else {
-                    "Ask the user first:"
-                })
-                .unwrap();
-            let (ask, user) = rest
-                .split_once(if lang == Lang::Zh {
-                    "只能用户自己运行："
-                } else {
-                    "Only the user runs:"
-                })
-                .unwrap();
-            for command in &USER_ONLY {
-                assert!(user.contains(command.line), "{lang:?}: {}", command.line);
-                assert!(!agent.contains(command.line), "{lang:?}: {}", command.line);
-                assert!(!ask.contains(command.line), "{lang:?}: {}", command.line);
+            let words = words(lang);
+            let (run, on_request) = text.split_once(words.tiers[1]).unwrap();
+            assert!(run.contains(words.tiers[0]), "{lang:?}");
+            for command in &AGENT_RUNS {
+                assert!(run.contains(command.line), "{lang:?}: {}", command.line);
             }
-            // The secret-carrying forms never appear in the tiers the Agent runs.
-            for part in [agent, ask] {
-                for word in [
-                    "pair",
-                    "allow",
-                    "deny",
-                    "export",
-                    "import",
-                    "--password",
-                    "--connection",
-                ] {
-                    assert!(!part.contains(word), "{lang:?}: {word}");
+            for command in &ON_REQUEST {
+                assert!(
+                    on_request.contains(command.line),
+                    "{lang:?}: {}",
+                    command.line
+                );
+                assert!(!run.contains(command.line), "{lang:?}: {}", command.line);
+            }
+            // The whole credential, and the user's own settings, wait for the user to ask.
+            for word in ["export", "import", "daemonLifecycle"] {
+                assert!(!run.contains(word), "{lang:?}: {word}");
+                assert!(on_request.contains(word), "{lang:?}: {word}");
+            }
+            // A `channel ios …` line names a subcommand the CLI has.
+            let help = super::super::ios_cmd::help(Lang::En);
+            for command in AGENT_RUNS.iter().chain(&ON_REQUEST) {
+                if let Some(rest) = command.line.strip_prefix("AskHuman channel ios ") {
+                    let sub = rest.split_whitespace().next().unwrap();
+                    // `allow | deny` share a line in the help.
+                    assert!(
+                        help.contains(&format!("channel ios {sub}"))
+                            || help.contains(&format!("| {sub}")),
+                        "{lang:?}: {}",
+                        command.line
+                    );
                 }
-            }
-            for command in AGENT_RUNS.iter().chain(&ASK_FIRST) {
-                assert!(!user.contains(command.line), "{lang:?}: {}", command.line);
             }
         }
     }
 
     #[test]
-    fn the_steps_never_tell_the_agent_to_run_what_only_the_user_may() {
-        // Step 3 names the commands only to forbid them; nothing else may put one in the Agent's mouth.
-        for (lang, forbid) in [
-            (Lang::Zh, "你不要运行 `pair`、`allow`、`deny`"),
-            (Lang::En, "do not run `pair`, `allow` or `deny`"),
-        ] {
-            let words = if lang == Lang::Zh { &ZH } else { &EN };
-            assert!(words.step_bodies[2].contains(forbid));
-            // The one place the user runs `pair` himself is spelled out as the user's.
-            assert!(words.step_bodies[2].contains("`AskHuman channel ios pair`"));
-            for body in [words.step_bodies[0], words.step_bodies[1]] {
-                for word in [
-                    "channel ios pair",
-                    "channel ios allow",
-                    "channel ios deny",
-                    "channel ios export",
-                    "channel ios import",
-                ] {
-                    assert!(!body.contains(word), "{lang:?}: {word}");
-                }
+    fn the_agent_owns_the_credentials_and_the_person_checks_the_pairing() {
+        for lang in [Lang::Zh, Lang::En] {
+            let words = words(lang);
+            let rules: Vec<&str> = words
+                .rules
+                .lines()
+                .filter(|l| l.starts_with(|c: char| c.is_ascii_digit()))
+                .collect();
+            let rule = |n: usize| rules[n - 1];
+            // The steps point at rules by number; the numbers must still mean what they say.
+            assert!(
+                rule(2).contains("Mac"),
+                "{lang:?}: rule 2 is about questions"
+            );
+            assert!(
+                rule(5).contains("EMQX"),
+                "{lang:?}: rule 5 is the EMQX note"
+            );
+            assert!(
+                rule(7).contains("pairing.sas"),
+                "{lang:?}: rule 7 is the check"
+            );
+            assert!(rule(8).contains("daemonLifecycle"), "{lang:?}: rule 8");
+            let (two, five) = if lang == Lang::Zh {
+                ("规则 2", "规则 5")
+            } else {
+                ("rule 2", "rule 5")
+            };
+            assert!(words.step_bodies[0].contains(two), "{lang:?}");
+            assert!(words.step_bodies[0].contains(five), "{lang:?}");
+            // Credentials: the Agent generates them and saves the password through stdin.
+            assert!(rule(3).contains("--password-stdin"), "{lang:?}");
+            assert!(words.step_bodies[0].contains("| AskHuman channel set ios"));
+            assert!(words.step_bodies[0].contains("--password-stdin"));
+            // Pairing: the code goes to the clipboard, the person types the check code, the
+            // Agent compares it with the Mac's and decides.
+            let pairing = words.step_bodies[2];
+            for part in [
+                "channel ios pair --no-wait | pbcopy",
+                "status --json",
+                "pairing.sas",
+                "channel ios allow",
+                "channel ios deny",
+                "channel ios devices",
+            ] {
+                assert!(pairing.contains(part), "{lang:?}: {part}");
             }
+            assert!(words.test_question.contains("channel ios test-question"));
+            assert!(words.pair_fallback.contains("AskHuman --settings"));
         }
     }
 
