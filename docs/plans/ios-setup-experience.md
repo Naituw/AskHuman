@@ -164,7 +164,7 @@ Friends 与 Internal 读回没变。`docs/public/ios/testflight.json` 已加（�
   日常使用、流量与费用、限制挪到 `ios-usage*.md`，自部署挪到 `ios-self-hosting*.md`，Pages 的朋友版指南里自部署一节换成一句指向它的话。
   `ios-broker*.md` 的事实不动，只修一条失效的锚点；`overview.md` 的两处指针与 `overview-ios.md` 的用户文档说明同步，
   并写明新功能的用户说明进 `ios-usage`、不再加回配置指南。
-  **Pages 的输入变了**（`beta*.md`、`privacy*.md`），线上要等重新发布（手动触发 `ios-beta-pages`）才会更新；
+  **已发布**：推送 `5ea80bb3..53f02f75` 后手动触发 `ios-beta-pages`（run 45024793805，成功），线上五个页面与本地构建逐字节相同，旧的自部署一节、「发给维护者」和「邀请中显示的反馈邮箱」两句都不在了，不带查询串的地址也已是新文案；
   `README` 里指向配置指南的链接没动（整份链接，不带锚点），Mac 卡片的「配置指南 ↗」同样。
 
 ## 风险与回退
