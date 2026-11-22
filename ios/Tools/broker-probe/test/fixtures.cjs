@@ -108,7 +108,8 @@ const listen = (server) =>
  *            willOnClean     the will is also published after a clean DISCONNECT
  *            maxPayload      a publish above this many bytes closes the connection
  *            refuseWildcard  subscriptions ending in /s/+ get a SUBACK failure
- *            maxSessionMs    sessions are cut off this long after the login, whatever they do
+ *            maxIdleSessionMs  a session that has neither subscribed nor published is cut off this long after it
+ *                            connects, whatever PINGREQs it sends (a gateway with a limit on quiet connections)
  */
 async function startBroker(options = {}) {
   const users = options.users || { alice: 'pw-alice', bob: 'pw-bob' }
@@ -163,11 +164,19 @@ async function startBroker(options = {}) {
     })
   }
 
+  // A session that has subscribed or published is in use. Only the others count as idle for maxIdleSessionMs,
+  // so a check that works through a session cannot be cut by how slowly the machine runs the checks before it.
+  const markBusy = (_subscriptionsOrPacket, client) => {
+    if (client && client.conn) client.conn.ahBusy = true
+  }
+  aedes.on('subscribe', markBusy)
+  aedes.on('publish', markBusy)
+
   const sockets = new Set()
   const track = (stream) => {
     sockets.add(stream)
     stream.on('close', () => sockets.delete(stream))
-    if (quirks.maxSessionMs) setTimeout(() => stream.destroy(), quirks.maxSessionMs).unref()
+    if (quirks.maxIdleSessionMs) setTimeout(() => !stream.ahBusy && stream.destroy(), quirks.maxIdleSessionMs).unref()
     aedes.handle(stream)
   }
   const tcp = net.createServer(track)

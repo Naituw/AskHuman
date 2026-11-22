@@ -193,8 +193,10 @@ describe('compatibility suite against unfit brokers', { concurrency: 4 }, () => 
   it('fails when the presence wildcard subscription is refused', () =>
     expectFail({ refuseWildcard: true }, ['subscribe'], (results) => assert.match(find(results, 'subscribe', 'tcp').note, /presence wildcard.*refused/)))
 
+  // The idle check pings after 1 s and again after 2 s (FAST), so 1.5 s lands between the two with half a
+  // second of room on each side. Only the idle session is cut, so the other checks do not race this limit.
   it('fails when idle sessions are cut off', () =>
-    expectFail({ maxSessionMs: 1200 }, ['keepalive'], (results) => assert.match(find(results, 'keepalive', 'tcp').note, /closed an idle session/)))
+    expectFail({ maxIdleSessionMs: 1500 }, ['keepalive'], (results) => assert.match(find(results, 'keepalive', 'tcp').note, /closed an idle session/)))
 })
 
 describe('compatibility suite when the broker cannot be used', { concurrency: 4 }, () => {
