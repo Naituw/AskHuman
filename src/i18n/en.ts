@@ -478,7 +478,7 @@ export default {
             host: "Use the \"connection address\" from the deployment overview as the host. Ports: TLS 8883, WSS 8084.",
             credentials: "Add a username and password under \"Access Control → Authentication\"; the username may only contain letters and digits.",
             acl: "The ACL is required. Under \"Access Control → Authorization\", first add a \"deny\" rule for topic # on the \"All users\" tab, then allow ah/USERNAME/# for this user on the \"Username\" tab. That page allows everything by default, so without the catch-all deny any account can read and write other people's topics.",
-            limits: "Free each month: 1 million connection minutes and 1 GB of traffic. When it runs out the deployment stops, and continuing means topping up first (the lowest top-up the author knows of is ¥100).",
+            limits: "Note: if the free allowance (1 million connection minutes and 1 GB of traffic per month) runs out, the minimum top-up may be ¥100. Keep an eye on traffic and try to stay within the free allowance.",
             hint: {
               rejected: "Use the username and password you added under \"Access Control → Authentication\" of this deployment, not your EMQX account login. The username may only contain letters and digits.",
               noEcho: "Logged in, but the access rules swallowed the test message. Under \"Access Control → Authorization\", check that the \"Username\" tab allows this user to publish and subscribe to ah/USERNAME/#.",
