@@ -1,6 +1,6 @@
 # External TestFlight for friends
 
-Read for default internal-and-external delivery, or for an explicit external-testing task. An explicit internal-only request skips this workflow. The first cohort is one to five developer friends, each with their own Mac, agents and EMQX. The maintainer provides the existing relay. No public joining link, new account platform or demo mode was requested. This is Beta App Review, not an App Store release.
+Read for default internal-and-external delivery, or for an explicit external-testing task. An explicit internal-only request skips this workflow. The first cohort is one to five developer friends, each with their own Mac, agents and MQTT broker. The maintainer provides the existing relay. No public joining link, new account platform or demo mode was requested. This is Beta App Review, not an App Store release.
 
 ## Inspect before acting
 
@@ -14,9 +14,9 @@ python3 .agents/skills/ios-testflight/scripts/helper.py contact-sources
 
 ## Materials and local validation
 
-- Public documents: `docs/public/ios/{privacy,privacy-zh,beta,beta-zh}.md`. Build with `node scripts/build-ios-beta-site.mjs`. This removes and recreates the dedicated `site-dist` output and publishes only those pages plus an index.
+- Public documents: `docs/public/ios/{privacy,privacy-zh,beta,beta-zh}.md`. Build with `node scripts/build-ios-beta-site.mjs`. This removes and recreates the dedicated `site-dist` output and publishes only those pages plus the landing page at the root. The landing page shows a TestFlight button only when `docs/public/ios/testflight.json` exists; add that file only after the owner has approved a public link.
 - Published HTTPS base: `https://naituw.github.io/AskHuman/`. Verify privacy and guide URLs in both languages without authentication **before shipping**. GitHub Pages was enabled with the owner's approval on 2026-11-05. The workflow is manual, so committing changed pages alone does not publish them.
-- Descriptions and review notes: `docs/release/ios-external-beta/`. They are drafts until the Mac download and relay information are attached. Describe the actual Mac/MQTT dependency and absence of an in-app demo honestly. Do not claim approval is guaranteed.
+- Descriptions and review notes: `docs/release/ios-external-beta/`. They are drafts until the compatible Mac download is attached. Describe the actual Mac/MQTT dependency and absence of an in-app demo honestly. Do not claim approval is guaranteed.
 - Keep contact/recipient JSON outside the repository, mode `0600`. There is no reason to read a `.p8` file or increase API-key privileges.
 - Run `node --test scripts/ios-testflight-changes.node-test.mjs scripts/ios-testflight-preflight.node-test.mjs scripts/ios-testflight-external.node-test.mjs`. The fake transport exercises the real Swift mutation rules with no credentials or network.
 

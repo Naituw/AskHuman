@@ -77,7 +77,7 @@ private struct PairingInput: View {
             VStack(alignment: .leading, spacing: 20) {
                 VStack(alignment: .leading, spacing: 6) {
                     Text("Scan the code from your Mac").font(.title3.weight(.bold))
-                    Text("On the Mac, open AskHuman Settings → Experimental → iOS app channel and choose “Pair a new phone”. It shows a QR code and a pairing code.")
+                    Text("On the Mac, open AskHuman Settings → Channels → iOS App and choose “Pair a new phone”. It shows a QR code and a pairing code.")
                         .font(.subheadline)
                         .foregroundStyle(.secondary)
                 }

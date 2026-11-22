@@ -3462,22 +3462,22 @@
         }
       }
     },
-    "On the Mac, open AskHuman Settings → Experimental → iOS app channel and choose “Pair a new phone”. It shows a QR code and a pairing code." : {
+    "On the Mac, open AskHuman Settings → Channels → iOS App and choose “Pair a new phone”. It shows a QR code and a pairing code." : {
       "localizations" : {
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "在 Mac 上打开 AskHuman 设置 → 实验 → iOS App 渠道，点“配对新手机”，会显示二维码和配对码。"
+            "value" : "在 Mac 上打开 AskHuman 设置 → 通信渠道 → iOS App，点“配对新手机”，会显示二维码和配对码。"
           }
         }
       }
     },
-    "On the Mac, open AskHuman Settings → Experimental → iOS app channel." : {
+    "On the Mac, open AskHuman Settings → Channels → iOS App." : {
       "localizations" : {
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "在 Mac 上打开 AskHuman 设置 → 实验 → iOS App 渠道。"
+            "value" : "在 Mac 上打开 AskHuman 设置 → 通信渠道 → iOS App。"
           }
         }
       }

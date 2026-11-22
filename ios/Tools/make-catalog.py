@@ -421,7 +421,7 @@ ZH = {
     # Onboarding / pairing
     "Answer your Agents from here": "在这里回答你的 Agent",
     "Pair this phone with AskHuman on your Mac. Questions and confirmations from your coding Agents then arrive here, wherever you are.": "把这部手机与 Mac 上的 AskHuman 配对。之后无论你在哪里，编码 Agent 的提问和确认都会送到这里。",
-    "On the Mac, open AskHuman Settings → Experimental → iOS app channel.": "在 Mac 上打开 AskHuman 设置 → 实验 → iOS App 渠道。",
+    "On the Mac, open AskHuman Settings → Channels → iOS App.": "在 Mac 上打开 AskHuman 设置 → 通信渠道 → iOS App。",
     "Choose “Pair a new phone” to show a QR code and a pairing code.": "点“配对新手机”，显示二维码和配对码。",
     "Scan the QR code here, or paste the code.": "在这里扫描二维码，或粘贴配对码。",
     "Pair a Mac": "配对 Mac",
@@ -450,7 +450,7 @@ ZH = {
     "The Mac refused the pairing.": "Mac 拒绝了这次配对。",
     "The Mac did not answer in time. Make sure AskHuman is running on it.": "Mac 未及时响应，请确认它上面的 AskHuman 正在运行。",
     "Scan the code from your Mac": "扫描 Mac 上的配对码",
-    "On the Mac, open AskHuman Settings → Experimental → iOS app channel and choose “Pair a new phone”. It shows a QR code and a pairing code.": "在 Mac 上打开 AskHuman 设置 → 实验 → iOS App 渠道，点“配对新手机”，会显示二维码和配对码。",
+    "On the Mac, open AskHuman Settings → Channels → iOS App and choose “Pair a new phone”. It shows a QR code and a pairing code.": "在 Mac 上打开 AskHuman 设置 → 通信渠道 → iOS App，点“配对新手机”，会显示二维码和配对码。",
     "Scan QR code": "扫描二维码",
     "Or paste the pairing code": "或粘贴配对码",
     "Paste the pairing code": "粘贴配对码",

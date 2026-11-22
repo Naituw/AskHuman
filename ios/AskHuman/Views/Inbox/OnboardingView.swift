@@ -21,7 +21,7 @@ struct OnboardingView: View {
                         .multilineTextAlignment(.center)
                 }
                 VStack(alignment: .leading, spacing: 14) {
-                    step(1, "On the Mac, open AskHuman Settings → Experimental → iOS app channel.")
+                    step(1, "On the Mac, open AskHuman Settings → Channels → iOS App.")
                     step(2, "Choose “Pair a new phone” to show a QR code and a pairing code.")
                     step(3, "Scan the QR code here, or paste the code.")
                 }
