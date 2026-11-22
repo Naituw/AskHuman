@@ -52,7 +52,7 @@ impl HttpPushClient {
             .json(push)
             .send()
             .await
-            .map_err(|e| e.to_string())?;
+            .map_err(describe_error)?;
         let status = response.status().as_u16();
         Ok(match status {
             200..=299 => PushOutcome::Accepted,
@@ -68,6 +68,30 @@ impl Default for HttpPushClient {
     fn default() -> Self {
         Self::new()
     }
+}
+
+/// The daemon-log line for one push: what was sent (its kind and the request it belongs to), to
+/// which phone, and what became of it. The relay's own log keeps no handle or payload and the phone
+/// shows nothing when a push is lost, so this line is the only trace of a push on the Mac. Only the
+/// short ids the rest of the log uses appear in it: no handle, key, content or relay address.
+pub fn log_line(
+    kind: &str,
+    collapse_id: &str,
+    phone_id: &str,
+    outcome: &PushOutcome,
+    elapsed: Duration,
+) -> String {
+    let result = match outcome {
+        PushOutcome::Accepted => "accepted".to_string(),
+        PushOutcome::Gone => "gone, the phone has to register again".to_string(),
+        PushOutcome::Failed(reason) => format!("failed: {reason}"),
+    };
+    format!(
+        "iOS push {kind} {} to {}: {result} ({} ms)",
+        collapse_id.chars().take(11).collect::<String>(),
+        phone_id.chars().take(8).collect::<String>(),
+        elapsed.as_millis()
+    )
 }
 
 /// What the relay reported for `GET /v1/health`.
@@ -248,6 +272,93 @@ mod tests {
                 "{address}: {error}"
             );
         }
+    }
+
+    fn sample_push() -> RelayPush {
+        RelayPush {
+            handle: "handle".into(),
+            kind: "alert".into(),
+            loc_key: "PUSH_ASK".into(),
+            thread_id: "mac".into(),
+            collapse_id: "rq-00000000-1111".into(),
+            ah: super::super::envelope::Envelope {
+                v: 1,
+                f: "m".into(),
+                k: 1,
+                n: "n".into(),
+                c: "c".into(),
+                z: None,
+            },
+        }
+    }
+
+    #[tokio::test]
+    async fn a_push_the_relay_accepts_or_refuses_is_told_apart() {
+        for (status, expected) in [
+            ("200 OK", PushOutcome::Accepted),
+            ("410 Gone", PushOutcome::Gone),
+            ("401 Unauthorized", PushOutcome::Gone),
+            (
+                "429 Too Many Requests",
+                PushOutcome::Failed("relay returned 429".into()),
+            ),
+        ] {
+            let (base, request) = serve_once(status, "{}").await;
+            let outcome = HttpPushClient::new().send(&base, &sample_push()).await;
+            assert_eq!(outcome, expected, "{status}");
+            assert_eq!(request.await.unwrap(), "POST /v1/push HTTP/1.1");
+        }
+    }
+
+    #[tokio::test]
+    async fn a_push_that_cannot_reach_the_relay_says_why_without_naming_its_address() {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = format!("http://{}", listener.local_addr().unwrap());
+        drop(listener);
+        let outcome = HttpPushClient::new().send(&address, &sample_push()).await;
+        let PushOutcome::Failed(reason) = outcome else {
+            panic!("expected a failure, got {outcome:?}");
+        };
+        assert!(!reason.is_empty());
+        assert!(
+            !reason.contains("127.0.0.1"),
+            "the address leaked into: {reason}"
+        );
+        assert!(
+            !reason.contains("http"),
+            "the address leaked into: {reason}"
+        );
+    }
+
+    #[test]
+    fn the_log_line_says_what_became_of_a_push_and_carries_no_secret() {
+        let elapsed = Duration::from_millis(612);
+        let line = |outcome: PushOutcome| {
+            log_line(
+                "alert",
+                "rq-1c7181ad-0720-4e54-adc2-6190df1ba24d",
+                "7pebkta7c3pulcxlncymkvwa5u",
+                &outcome,
+                elapsed,
+            )
+        };
+        assert_eq!(
+            line(PushOutcome::Accepted),
+            "iOS push alert rq-1c7181ad to 7pebkta7: accepted (612 ms)"
+        );
+        assert_eq!(
+            line(PushOutcome::Gone),
+            "iOS push alert rq-1c7181ad to 7pebkta7: gone, the phone has to register again (612 ms)"
+        );
+        assert_eq!(
+            line(PushOutcome::Failed("the relay did not answer in time".into())),
+            "iOS push alert rq-1c7181ad to 7pebkta7: failed: the relay did not answer in time (612 ms)"
+        );
+        // Ids shorter than the cut are kept whole.
+        assert_eq!(
+            log_line("replace", "rq-x", "p1", &PushOutcome::Accepted, elapsed),
+            "iOS push replace rq-x to p1: accepted (612 ms)"
+        );
     }
 
     #[tokio::test]

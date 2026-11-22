@@ -16,7 +16,9 @@ TestFlight 公共链接 + Pages 落地页、卡片顶部「设置步骤」清单
 - [x] P2 后端：设置探测多了 `ios` 目标（只发给 iOS、不弹窗、Mac 刚有输入也立即推送；`ChannelsTab` 的向导磁贴列表不变）；
   `AskHuman channel ios --agent-guide`（`cli/ios_guide.rs`，中英、按当前状态写出下一步，读状态不拉起守护进程、不碰钥匙串）；
   `client::ios_op_if_running`。Rust 全量测试与 `clippy -D warnings` 通过；用隔离的 `ASKHUMAN_HOME` 跑过指南和速查表里的命令。
-  没有对真实手机跑过「发一条测试问题」，也没有让 Agent 照指南完整走一遍（需要真实 Broker 与手机），放到装机后与 P5 前的真机一轮。
+  「发一条测试问题」已在真实手机上跑通（2026-11-22）：手机离线时 Mac 立即推送，几秒内弹出，作答后卡片显示成功。第一轮推送没到，原因没查明
+  （当时没有推送日志，手机每次连上都会把推送状态重置为 ok）；现在 daemon 日志会写下每次推送的结果与耗时，再出现会直接给出原因。
+  还没让 Agent 照指南完整走一遍（需要真实 Broker），放到 P5 前。
 - [x] P3 文档与落地页：`scripts/build-ios-beta-site.mjs` 的根页改成中英双语 TestFlight 落地页（公共链接只读 `docs/public/ios/testflight.json`，
   缺失时显示「仅限邀请」，所以 Pages 现状不变；`node --test` 校验链接格式与站内链接，截图 `docs/assets/ios-setup-experience/18–20`）；
   `docs/public/ios/beta*.md` 改成公共链接版；`docs/wiki/ios-setup*.md` 的入口与步骤、`ios-broker*.md` 的一句摘要说明、README 中英各一节、

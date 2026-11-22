@@ -778,8 +778,23 @@ impl Actor {
         let pusher = self.pusher.clone();
         let tx = self.cmd_tx.clone();
         let phone_id = phone_id.to_string();
+        let kind = kind.to_string();
+        let collapse_id = collapse_id.to_string();
         tokio::spawn(async move {
+            let started = std::time::Instant::now();
             let outcome = pusher.send(&relay_url, &push).await;
+            // Same shape as the daemon's own lines, so a push can be matched with its request.
+            eprintln!(
+                "[askhuman-daemon {}] {}",
+                chrono::Utc::now().timestamp(),
+                super::super::push::log_line(
+                    &kind,
+                    &collapse_id,
+                    &phone_id,
+                    &outcome,
+                    started.elapsed()
+                )
+            );
             let _ = tx.send(super::Cmd::PushResult { phone_id, outcome });
         });
         true
