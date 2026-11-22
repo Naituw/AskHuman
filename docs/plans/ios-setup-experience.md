@@ -71,7 +71,7 @@
 1. **App 文案**：`ios/AskHuman/Views/Inbox/OnboardingView.swift:24`、`ios/AskHuman/Views/Pairing/PairingSheet.swift:80`，以及 `ios/Tools/make-catalog.py`（424、453 行）与 `Localizable.xcstrings`（用脚本重新生成）里的「设置 → 实验 → iOS App 渠道」改成「设置 → 通信渠道 → iOS App」。`xcodebuild` 模拟器编译；检查没有别的地方引用旧字符串（快照、测试）。
 2. **审核与测试材料**：`docs/release/ios-external-beta/*.txt`（审核备注、Beta 描述、What to Test）与 `ios-testflight` 技能里仍写「自备 EMQX」「实验」的字样，一并改成中立的新说法（`ios-open-access.md` P2 当时刻意留到这次出包）。
 3. **公共链接**（规格 §5.3）：给签名 helper（`ExternalTesting.swift`，现在封闭到 Friends 组 1–5 人、公共链接关）新增**有界**的「开 / 关公共链接、设测试员上限」操作，固定到本应用与新建的外部组「AskHuman Public」（上限 1,000，规格 D19），写入前先读现状并计算差异，不增加任意 API 调用能力；Friends 组保持原样。**只有用户明确同意后才对 App Store Connect 执行**，同意只对所申请的那一项有效。
-4. **出包**：走 `ios-testflight` 技能，先列变更清单；新构建进入公共组并过 Beta App Review；拿到公共链接，新增 `docs/public/ios/testflight.json`（P3 的脚本已能读它）。出包与送审另行取得用户指示（OA13）。
+4. **出包**：走 `ios-testflight` 技能，先列变更清单；新构建（仍是 0.1.0，沿用先前的 Beta 审核，规格 D23）进入公共组，审核状态读回应直接是 `APPROVED`，不是的话停下来问用户（那时才需要给审核员附 Mac 包，见 `docs/release/ios-external-beta/README.md`）；拿到公共链接，新增 `docs/public/ios/testflight.json`（P3 的脚本已能读它）。出包与送审另行取得用户指示（OA13）。
 
 验证：模拟器编译与 `swift test --filter AHStoreTests`；helper 的模拟 HTTP 测试覆盖「固定应用 / 组边界、请求字段、幂等、失败」；真实后台只做本次目标的必要变更并读回。
 
@@ -80,7 +80,7 @@
 顺序固定（规格 §10.4），**具体放出时间由用户另行决定**（规格 D20）；每一步都先确认上一步已真实生效：
 
 1. 发布 Pages（手动工作流 `ios-beta-pages`），打开落地页与 TestFlight 公共链接，**用一台没加过测试的手机从落地页走到 TestFlight 安装成功**；
-2. 带新文案的 iOS 构建已在公共组、审核通过；
+2. 带新文案的 iOS 构建（0.1.0 的新 Build）已在公共组，审核状态读回 `APPROVED`（沿用先前的审核，规格 D23）；
 3. **一个提交**翻可见性（规格 §10.1）：
    - 卡片移到 `ChannelsTab.vue` 的最上面（规格 D13）：模板里紧跟「本地弹窗」卡、排在「按需发送」提示之前，按 DOM 顺序，不用 CSS `order`；`id="channel-ios"`、`useSearch.ts` 与深链；`ExperimentalTab.vue` 空状态一行（`settings.experimental.ios.*` 已在 P1 迁完）；
    - `AwayCard.vue`、`RemotePage.vue`（`showIos` 与 `openSettings("channel#channel-ios")`）；
