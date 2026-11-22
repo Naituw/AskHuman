@@ -1,6 +1,6 @@
 # 需求：安装向导正式引导 iOS App 渠道（`AskHuman setup` 的 GUI 与终端版）
 
-> 状态：已实现（第 3 轮）。方向由用户定下（2026-11-22：「让向导正式引导 iOS」）；第 1 轮已裁决 D1 = A、D3 = ①、D4 = A、D6 = B（先做原型再确认），D5 是用户的一句要求：「先做一版给我看效果，考虑到 iOS 配置较麻烦，你需要合理配置」；第 2 轮用户确认原型并裁决 D7 = B、D8 = A（「可以，按此实现」）。产品代码、测试与文档已按本稿落地；实现与草案的两处差别在 §3.2（磁贴怎样读写向导的配置）与 §4 末尾（终端版补的几句话、保存配置到配对之间的时序结论）。原型（`docs/assets/setup-ios-guidance/`；真实 `SetupView` + mock 后端，代码在 `src/prototype/` 的 `setup-ios.html` 一组文件，不进产品，看法见 §10）仍保留作视觉参照。
+> 状态：已实现（第 3 轮），并随 Mac v0.18.1 发布（见 §9 的发布记录）。方向由用户定下（2026-11-22：「让向导正式引导 iOS」）；第 1 轮已裁决 D1 = A、D3 = ①、D4 = A、D6 = B（先做原型再确认），D5 是用户的一句要求：「先做一版给我看效果，考虑到 iOS 配置较麻烦，你需要合理配置」；第 2 轮用户确认原型并裁决 D7 = B、D8 = A（「可以，按此实现」）。产品代码、测试与文档已按本稿落地；实现与草案的两处差别在 §3.2（磁贴怎样读写向导的配置）与 §4 末尾（终端版补的几句话、保存配置到配对之间的时序结论）。原型（`docs/assets/setup-ios-guidance/`；真实 `SetupView` + mock 后端，代码在 `src/prototype/` 的 `setup-ios.html` 一组文件，不进产品，看法见 §10）仍保留作视觉参照。
 > 依赖 / 复用：[`onboarding.md`](onboarding.md)（D3、D12、D16、D20、D22、D25）、[`ios-setup-experience.md`](ios-setup-experience.md)（卡片三步、`deriveIosSetup`、「让 Agent 帮我配置」）、[`cli-config.md`](cli-config.md)（`channel set|test ios`、`channel ios pair`）。
 > 平台：三端同一份界面与终端流程（iOS 渠道代码平台无关，只在 macOS 实机验证过）。
 > 影响面：`src/views/setup/`（`RemotePage.vue`、`useSetup.ts`、新增 `IosTile.vue`）、`src/i18n/`、`src-tauri/src/onboarding/`（`state.rs`、`text.rs`、`channels.rs` 的注释）、弹窗页脚提示条文案；D7 选 B 时还有设置页 iOS 卡片的一个深链动作；文档 `onboarding.md`、`docs/overview.md`。
@@ -198,6 +198,28 @@ ios 已保存
 - **第 1 轮**：用户选定方向「让向导正式引导 iOS：GUI 磁贴显示状态与准备项、终端版加 iOS 选项、页首文案提 iOS App」，先出方案、不动代码。方案里的问题经用户裁决：D1 = A、D3 = ①、D4 = A、D6 = B；D5 用户回复「你先做一版给我看效果，考虑到 iOS 配置较麻烦，你需要合理配置」。
 - **第 2 轮**：按 D6 = B 做了原型并截图（十二张）；按对 D5 的理解把磁贴做成「整条路径」（§3.0）；原型过程中发现并修正了头部一行在英文下重叠的版式问题（改为放不下就折行）；新增两个待裁决项 D7、D8（D8 改动了第 1 轮 §6 的「不做」）。状态映射比第 1 轮细：「待配对手机」只在网关已连接时出现，其余读不到的情况归「已配置」。用户的回答：「可以，按此实现（含下面两题的选择）」；D8 = 两处都给；D7 = B（替我点掉：打开卡片时直接启用渠道、展开第 1 步）。
 - **第 3 轮（本稿，实现）**：按第 2 轮确认的设计与文案落地：GUI 的 `IosTile`（七种显示、三步条、Agent 提示词、指南链接、按钮与 `start` 动作）、`useSetup` 的聚焦刷新、页脚按 iOS 是否启用、设置页深链的 `#start` 动作；终端版第 5 项与完整流程；`any_remote_channel_enabled`、弹窗提示条文案；单测与前端测试；`onboarding.md` 与 `overview.md` 的同步。实现时与草案不一致的地方都写在正文里：§3.2（只替换 `channels.ios` 子树，而不是「不写回」）、§4（时序核实结论；补的几句话；读网关的方式）；`TextDeps` 新增的入口比草案少两个。验收时用户另行裁决：去掉 `channel set ios` 保存后那句不适用的 `channel detect` 提示（只对 iOS，见 §4）。
+
+### 发布记录（2026-11-23：Mac v0.18.1）
+
+验收后用户问「所以这个功能已经开发完了，是吗？如果开发完了，就发一个patch版本。」，所以版本号定为 **v0.18.1**；发布说明手写（英文，一条「Setup wizard」），
+随版本提交为 `docs/release-notes/v0.18.1.md`，Release 页的正文与该文件逐字节一致。
+
+- **流程**：主工作树（干净）里 `bump-version` 到 0.18.1；`cargo update --workspace --offline` 后 `--locked --offline` 没有可改的（`Cargo.lock` 只变 `humaninloop` 一行）；
+  提交 `0c161b0d chore(release): prepare v0.18.1`（连同发布说明）并推送到 `main`。该提交的 [CI 45045217113](https://github.com/Naituw/AskHuman/actions/runs/45045217113)
+  8 项全绿（约 15 分钟，含 `cargo audit`）。用户在 CI 全绿后点头；注解 tag `v0.18.1` 指向 `0c161b0d`，只推了这一个 tag（没有 `--tags`，没有 `scripts/publish.sh`）。
+  推送前确认过远端没有 `v0.18.1`、npm 上最新是 0.18.0。
+- **发布结果**：[Release 45046730839](https://github.com/Naituw/AskHuman/actions/runs/45046730839) 全部成功，从推 tag 到结束约 14 分半；
+  2026-11-23 01:12（北京时间）发布；Release 为非草稿、非预发布，四个归档和 `SHA256SUMS` 都在；辅助组件公证、四个平台的构建、两个 macOS 的 Developer ID 签名都是一次通过。
+- **核验**：四个归档都通过 `SHA256SUMS`。Mac ARM64：严格签名验证通过（Developer ID Application，TeamID `DMJXDB9H6Q`，hardened runtime，带时间戳），`--version` 为 v0.18.1，
+  `todo-sync resource-info --require-bundled` 给出内嵌组件版本 0.18.1、协议 1，`todo-sync resource-verify` 通过（都在隔离的 `HOME` 与 `ASKHUMAN_HOME` 里运行，没有留下任何状态）。
+  Mac Intel：签名验证通过、TeamID 相同，没有运行。Linux 与 Windows：只用 `file` 认出是 ELF / PE，没有运行。本机日常版用 `./scripts/install.sh` 对齐到 v0.18.1。
+- **npm**：发布步骤的日志里五个包都打印了 `+ …@0.18.1`（四个平台包在前，主包最后），`latest` 指向 0.18.1，主包把四个平台包固定在 0.18.1。
+  隔离目录、全新缓存里 `npm install askhuman@0.18.1` 装上了主包与 `darwin-arm64`，`AskHuman --version` 为 v0.18.1，其 native binary 的 SHA-256 与 GitHub 下载包一致。
+  注册表是异步处理的（日志里「Your package is being processed and may take a few minutes to become available」）：`time["0.18.1"]` 显示主包 17:13:34Z、
+  `darwin-arm64` 17:13:41Z、`win32-x64` 17:14:11Z、`darwin-x64` 17:14:25Z 先后可见，而 `linux-x64` 到 17:18:58Z 才可见，比它的发布命令（17:11:46Z）晚约 7 分钟。
+  这段时间里主包已经是 `latest`、其中一个平台包还解析不到；这次没有用 Linux 机器去装，所以不知道那几分钟里 Linux 上 `npm install askhuman` 是报错还是只装了主包。
+- **没验证**：§7 验证结果里列的三项（「已就绪」状态、560 × 600 的真实窗口、窗口重新获得焦点时的重读）仍只有单测与原型截图覆盖；
+  Windows、Linux、Intel Mac 的发布二进制没有在本机运行（CI 只覆盖编译与测试）；没有走一遍应用内自更新到 0.18.1。
 
 ## 10. 原型怎么看
 

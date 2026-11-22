@@ -1287,7 +1287,7 @@ Mac 端已装进日常环境，并随桌面补丁 [v0.17.3](https://github.com/N
 手机端随内外 TestFlight `0.1.0 (28)` 分发（源码 `ec57bab7`，见 [Build 28 交付记录](plans/ios-channel.md#2026-11-18testflight-内部与外部构建-28)）。
 v0.17.3 第一次发布时，两个 macOS 构建都死在「Sign macOS binary (Developer ID)」一步（各 16 秒），没有发出任何东西；同一提交删掉未发布的标签重推后一次成功。
 原因 2026-11-22 读日志查实了：`codesign --timestamp` 报 `A timestamp was expected but was not found.`，即当时联不上 Apple 的时间戳服务（同日 Apple 开发者服务大面积宕机），
-与证书、密钥无关；v0.18.0 同一步一次通过。再遇到时先读日志确认是同一条报错，再重跑失败的作业（`gh run rerun --failed`，没在本仓库试过）或照 v0.17.3 的做法重推标签。
+与证书、密钥无关；v0.18.0 与 v0.18.1 同一步都一次通过。再遇到时先读日志确认是同一条报错，再重跑失败的作业（`gh run rerun --failed`，没在本仓库试过）或照 v0.17.3 的做法重推标签。
 2026-11-21 已用两台 Mac 的 `trafficBreakdown` 与 EMQX 控制台核对（规格 [§9](specs/ios-traffic-reduction.md#9-实测2026-11-21)）：
 台账与 EMQX 的报文流量对上（差 0.1%）；除附件外的同步约 13 MB/天（整月约 0.4 GB），低于当时推算的 0.73 GB；
 但附件分块占落地后总字节的 92%，11 月到 11-21 已计费 1.67 GB。附件不在这份规格的范围内，由 [附件流量收敛](specs/ios-attachment-traffic.md) 接手（见下一节，2026-11-21 已实现，待出构建与真机核验）。
