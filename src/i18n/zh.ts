@@ -848,6 +848,7 @@ export default {
         ready: {
           online: "已就绪 · {name} · {n} 台手机在线",
           offline: "已就绪 · {name} · 手机当前不在线",
+          disconnected: "Broker 未连接 · {name}",
         },
         testQuestion: {
           idle: "发一条测试问题，确认手机能收到并回答。",

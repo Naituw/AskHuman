@@ -1,6 +1,6 @@
 # 需求：iOS App 渠道的设置体验（设置进度、Broker 与 TestFlight 引导、Agent 代配置、移出「实验」）
 
-> 状态：设计已通过（2026-11-22，第 3 轮确认）。D1–D5 是用户经 AskHuman 第 1 轮定案的；D13、D18–D21 是第 2 轮定案的；D6–D12、D14–D17 是设计者做原型时的派生决定，随整体设计在第 3 轮通过（§12）。
+> 状态：设计已通过（2026-11-22，第 3 轮确认）。D1–D5 是用户经 AskHuman 第 1 轮定案的；D13、D18–D21 是第 2 轮定案的；D22 是实现后第 4 轮定案的；D6–D12、D14–D17 是设计者做原型时的派生决定，随整体设计在第 3 轮通过（§12）。
 > 原型已做完并截图（`docs/assets/ios-setup-experience/`；真实 `SettingsView` + mock 后端，代码在 `src/prototype/` 的 `settings-ios.html` 一组文件，不进产品）；**产品代码尚未改动**（除了把 EMQX 提醒里「作者所知」的措辞改掉：`src/i18n/zh.ts`、`en.ts` 各一行）。
 > 依赖 / 复用：[`ios-channel.md`](ios-channel.md)（D22：内测期放「实验」，对外发行后转正）、[`ios-open-access.md`](ios-open-access.md)（OA2–OA6 Broker 并列与中立措辞、OA11 服务商目录、OA12 本文接手的可见性）、
 > [`docs/wiki/ios-broker.md`](../wiki/ios-broker.md)（Broker 事实的唯一出处）、[`onboarding.md`](onboarding.md)（`setup-probe` 探测）、
@@ -39,6 +39,7 @@
 | D19 | 公共链接的组与上限（第 2 轮） | 新建外部组「AskHuman Public」，测试员上限 **1,000**；与 Friends 的 1–5 人邀请分开管理（§5.3）。 |
 | D20 | 放出顺序（第 2 轮） | 先 Pages 落地页 + 公共链接 + iOS 新构建，最后发 Mac 新版；具体放出时间由用户另行决定（§10.4）。 |
 | D21 | README（第 2 轮） | 加一节（中英）介绍 iOS App 并链到落地页（§10.5）。 |
+| D22 | Broker 断开时的形态（第 4 轮） | 已就绪 = 配置齐全且至少一台手机已配对，**与 Broker 此刻连没连着无关**：Mac 唤醒、后台服务重启、更新时 Broker 会暂时断开，卡片不掉回「设置步骤」、管理项（手机列表、推送时机……）照常在；断开体现在头部标签、标题下的报错行（有错误时），以及已就绪框本身（不再是绿框，改成中性灰，状态行写「Broker 未连接 · 名称」配灰点，「发一条测试问题」此时不可点）。**否决**按原规格「步骤 1 ∧ 步骤 3」：每次重连卡片整个换一个版式。 |
 
 ### 2.2 设计者的派生决定（第 3 轮随整体设计通过）
 
@@ -64,7 +65,7 @@
 |---|---|---|---|
 | 未启用 | 渠道开关关着 | 头部 + 一句简介 + 两个按钮「开始设置」「让 Agent 帮我配置」 | [01](../assets/ios-setup-experience/01-off.jpg)、[02](../assets/ios-setup-experience/02-agent.jpg) |
 | 设置中 | 已启用，三步里还有没完成的 | 头部 + 「设置步骤 n / 3」清单（手风琴）；清单右上角是「让 Agent 帮我配置」 | [03](../assets/ios-setup-experience/03-choose.jpg)–[11](../assets/ios-setup-experience/11-pair-confirm.jpg) |
-| 已就绪 | Broker 已连接且至少一台手机已配对 | 头部 + 绿色「已就绪」框（状态行 + 测试问题行）+ 管理项；「查看设置步骤」可把清单重新展开 | [12](../assets/ios-setup-experience/12-ready-first.jpg)–[14](../assets/ios-setup-experience/14-steps-reopened.jpg) |
+| 已就绪 | 配置齐全且至少一台手机已配对（Broker 暂时断开仍是这个形态，D22） | 头部 + 绿色「已就绪」框（状态行 + 测试问题行）+ 管理项；「查看设置步骤」可把清单重新展开 | [12](../assets/ios-setup-experience/12-ready-first.jpg)–[14](../assets/ios-setup-experience/14-steps-reopened.jpg) |
 
 头部沿用渠道卡片的写法（`ChannelCardHead`）：徽标 + 名称 + 状态标签、右侧「配置指南 ↗」与启用开关。「配置指南」指向 `docs/wiki/ios-setup*.md`（随界面语言）。简介沿用现有的一段（`descPublicRelay`），不改：
 「在 iPhone 上用 AskHuman App 回答问题。消息端到端加密，Broker 只能看到密文。需要自备 MQTT Broker；推送默认走公共中继，也可以换成自己的。」
@@ -93,7 +94,7 @@
 | 3 配对手机 | 至少一台 `state = active` 的手机 | 「N 台手机」 |
 
 - **当前步** = 第一个未完成的步骤；用户可以点任何步骤的标题展开它（手风琴，同时只展开一步）：已完成的步骤展开后仍是可用的（步骤 1 是可编辑的连接表单，步骤 2 是二维码，步骤 3 是配对）。
-- **已就绪** = 步骤 1 ∧ 步骤 3 完成（步骤 2 的「已装好」不参与：有手机就一定装过）。
+- **已就绪** = 渠道已启用、主机 / 用户名 / 密码齐全，且步骤 3 完成（步骤 2 的「已装好」不参与：有手机就一定装过）。**步骤 1 的「已连接」不参与**（D22）：Broker 断开时仍是已就绪形态，状态行改写成「Broker 未连接 · 名称」，点「查看设置步骤」展开时步骤 1 是当前步。
 - 这是**纯函数**（输入：配置、网关状态、界面里的「已装好」），放在 `useIosSetup.ts`，写单测。
 
 ### 3.4 与现有卡片的对应（不丢任何能力）
@@ -212,12 +213,12 @@
 
 配对成功后卡片收成一个绿色「已就绪」框，两行：
 
-- 状态行：「已就绪 · EMQX Cloud · 1 台手机在线」（0 台在线写「手机当前不在线」），右侧「查看设置步骤 / 收起设置步骤」；
+- 状态行：「已就绪 · EMQX Cloud · 1 台手机在线」（0 台在线写「手机当前不在线」；Broker 断开时写「Broker 未连接 · EMQX Cloud」，圆点变灰、整个框由绿色改成中性灰，D22），右侧「查看设置步骤 / 收起设置步骤」；
 - 测试行：「发一条测试问题，确认手机能收到并回答。」+ 按钮「发一条测试问题」（§9）。
 
 框下面是管理项，顺序：已配对的手机（「配对新手机」按钮 + 列表）→ 保持这台 Mac 随时可连（§8）→ 推送时机 → 允许从手机 / IM 创建 Agent 任务 → 连接设置（折叠，一行摘要「EMQX Cloud · 主机 · 用户名」）→ 本月流量 → EMQX 提醒（识别为 EMQX 时）。除保活行和测试行外，都是现有的行，文案与行为不变。
 
-「查看设置步骤」把三步清单重新展开在已就绪框**上面**（[14](../assets/ios-setup-experience/14-steps-reopened.jpg)），三步都是 ✓，用户可以点开任何一步重看（比如给第二台手机再看一遍 TestFlight 二维码）。
+「查看设置步骤」把三步清单重新展开在已就绪框**上面**（[14](../assets/ios-setup-experience/14-steps-reopened.jpg)），三步都是 ✓（Broker 断开时步骤 1 不是 ✓，是当前步），用户可以点开任何一步重看（比如给第二台手机再看一遍 TestFlight 二维码）。
 
 深色主题的两张见 [15](../assets/ios-setup-experience/15-dark-testflight.jpg)、[16](../assets/ios-setup-experience/16-dark-ready.jpg)，只用设计令牌，不写死颜色。
 
@@ -402,6 +403,7 @@ iOS 渠道代码平台无关，但只在 macOS 验证过。非 macOS 读不到 M
 - 第 1 轮（2026-11-22）：D1–D5。
 - 第 2 轮（2026-11-22）：D13、D18–D21，并要求按反馈重改设计与文案。
 - 第 3 轮（2026-11-22）：用户通过按第 2 轮反馈改过的设计，含派生决定 D6–D12、D14–D17 与 §14 的全部文案；允许开工，但放出时间、碰 Apple / Pages / 公共链接 / 发版的动作仍逐项另问（D20）。
+- 第 4 轮（2026-11-22，实现后）：D22，Broker 暂时断开时卡片保持已就绪形态（原规格是掉回设置步骤）；新增文案「Broker 未连接 · {name}」（§14）。
 
 ## 13. 不做
 
@@ -459,7 +461,7 @@ D18 的原则落到字上：App 里的话，短，不写作者口吻，拿不准
 | 步骤 2 | ① 在 iPhone 上安装 TestFlight。<br>② 扫描二维码，在 TestFlight 里接受邀请并安装 AskHuman。<br>③ 打开 AskHuman，允许通知。<br>需要 iOS 17 或更高版本。 | ① Install TestFlight on your iPhone.<br>② Scan the QR code, accept the invitation in TestFlight and install AskHuman.<br>③ Open AskHuman and allow notifications.<br>Requires iOS 17 or later. |
 | 步骤 2 的按钮 | 复制链接 · 在浏览器中打开 ↗ · 我已装好，下一步 | Copy link · Open in browser ↗ · I've installed it, next |
 | 步骤 3 | 点「配对新手机」，在手机上打开 AskHuman →「Mac」页 →「添加 Mac」，扫描二维码；两边的确认码一致后，点「允许」。 | Click "Pair a new phone", then on the phone open AskHuman → Macs → Add a Mac and scan the QR code. When the confirmation codes match, click "Allow". |
-| 已就绪 · 状态行 | 已就绪 · EMQX Cloud · 1 台手机在线（0 台：手机当前不在线）<br>查看设置步骤 / 收起设置步骤 | Ready · EMQX Cloud · 1 phone online (none: No phone is online)<br>Show setup steps / Hide setup steps |
+| 已就绪 · 状态行 | 已就绪 · EMQX Cloud · 1 台手机在线（0 台：手机当前不在线；Broker 断开：Broker 未连接 · EMQX Cloud）<br>查看设置步骤 / 收起设置步骤 | Ready · EMQX Cloud · 1 phone online (none: No phone is online; broker down: Broker not connected · EMQX Cloud)<br>Show setup steps / Hide setup steps |
 | 测试问题 · 未发 | 发一条测试问题，确认手机能收到并回答。 · 发一条测试问题 | Send a test question to check that your phone receives it and can answer. · Send test question |
 | 测试问题 · 已发出 | 已发送，请在手机上回答… | Sent. Answer it on your phone… |
 | 测试问题 · 收到回答 | 已收到回答，一切正常。 · 再发一条 | Answer received. Everything works. · Send another |

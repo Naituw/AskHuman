@@ -479,7 +479,7 @@ describe("IosChannelCard", () => {
       wrapper.unmount();
     });
 
-    it("falls back to the steps when the broker goes away, and the sections return with it", async () => {
+    it("keeps the box and the sections when the broker goes away, and says so there", async () => {
       vi.useFakeTimers();
       let connected = true;
       iosOp.mockImplementation(async (op: { op: string }) =>
@@ -489,17 +489,47 @@ describe("IosChannelCard", () => {
       );
       const wrapper = mountCard();
       await vi.advanceTimersByTimeAsync(0);
-      expect(wrapper.find('[data-testid="ios-ready"]').exists()).toBe(true);
+      expect(byId(wrapper, "ios-ready-line").text()).toBe("Ready · broker.example.com · 1 phone online");
 
+      // The phone stays paired, so the card stays what it was; the connection shows in the tag, the
+      // line under the title and the box's own line, and a question could not reach the phone now.
       connected = false;
       await vi.advanceTimersByTimeAsync(3100);
-      expect(wrapper.find('[data-testid="ios-ready"]').exists()).toBe(false);
+      expect(wrapper.find('[data-testid="ios-ready"]').exists()).toBe(true);
+      expect(wrapper.find('[data-testid="ios-steps"]').exists()).toBe(false);
+      expect(wrapper.get(".ios-device-name").text()).toBe("Tian's iPhone");
       expect(tag(wrapper)).toBe("Problem");
+      expect(byId(wrapper, "ios-issue").text()).toBe("Broker not connected: connection lost");
+      expect(byId(wrapper, "ios-ready-line").text()).toBe("Broker not connected · broker.example.com");
+      // Not the green "all good" box while the broker is down.
+      expect(byId(wrapper, "ios-ready").classes()).toContain("down");
+      expect(wrapper.get(".ios-ready .ios-dot").classes()).not.toContain("on");
+      expect(byId(wrapper, "ios-try").attributes("disabled")).toBeDefined();
+
+      // The way back to the steps opens the connection: the step that needs a look.
+      await byId(wrapper, "ios-steps-toggle").trigger("click");
+      expect(byId(wrapper, "ios-progress").text()).toBe("1 / 3");
       expect(stepClasses(wrapper, 1)).toEqual(expect.arrayContaining(["current", "open"]));
+      expect(stepClasses(wrapper, 3)).toContain("done");
 
       connected = true;
       await vi.advanceTimersByTimeAsync(3100);
-      expect(wrapper.find('[data-testid="ios-ready"]').exists()).toBe(true);
+      expect(byId(wrapper, "ios-ready-line").text()).toBe("Ready · broker.example.com · 1 phone online");
+      expect(byId(wrapper, "ios-ready").classes()).not.toContain("down");
+      expect(wrapper.get(".ios-ready .ios-dot").classes()).toContain("on");
+      expect(byId(wrapper, "ios-try").attributes("disabled")).toBeUndefined();
+      wrapper.unmount();
+    });
+
+    it("says in Chinese that the broker is not connected", async () => {
+      i18n.global.locale.value = "zh";
+      iosOp.mockResolvedValue({
+        kind: "state",
+        state: gateway({ connected: false, lastError: "connection lost" }),
+      });
+      const wrapper = mountCard();
+      await flushPromises();
+      expect(byId(wrapper, "ios-ready-line").text()).toBe("Broker 未连接 · broker.example.com");
       wrapper.unmount();
     });
 

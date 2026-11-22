@@ -864,6 +864,7 @@ export default {
         ready: {
           online: "Ready · {name} · {n} phone online | Ready · {name} · {n} phones online",
           offline: "Ready · {name} · No phone is online",
+          disconnected: "Broker not connected · {name}",
         },
         testQuestion: {
           idle: "Send a test question to check that your phone receives it and can answer.",

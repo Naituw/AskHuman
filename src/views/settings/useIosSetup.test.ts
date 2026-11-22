@@ -89,15 +89,24 @@ describe("the steps", () => {
     expect(s.ready).toBe(true);
   });
 
-  it("is ready only with both a connection and a phone", () => {
-    expect(setup({ phones: 2, gateway: { connected: false } }).ready).toBe(false);
-    expect(setup({ phones: 0 }).ready).toBe(false);
+  it("is ready with the settings filled in and a phone paired, whether or not the broker is up", () => {
     expect(setup({ phones: 1 }).ready).toBe(true);
+    expect(setup({ phones: 2, gateway: { connected: false } }).ready).toBe(true);
+    expect(setup({ phones: 1, gateway: { connected: false, lastError: "connection lost" } }).ready).toBe(true);
+  });
+
+  it("is not ready without a phone, with a field missing, or while the channel is off", () => {
+    expect(setup({ phones: 0 }).ready).toBe(false);
+    expect(setup({ phones: 1, host: "" }).ready).toBe(false);
+    expect(setup({ phones: 1, passwordFilled: false }).ready).toBe(false);
+    expect(setup({ phones: 1, enabled: false }).ready).toBe(false);
   });
 
   it("keeps the earlier open step current while a later one is already done", () => {
-    // A phone is paired, but the broker is down: the connection is the step that needs a look.
+    // A phone is paired, but the broker is down: the card stays ready, and the connection is the
+    // step that needs a look when the steps are opened again.
     const s = setup({ phones: 1, gateway: { connected: false } });
+    expect(s.ready).toBe(true);
     expect(s.done).toEqual([false, true, true]);
     expect(s.current).toBe(1);
   });

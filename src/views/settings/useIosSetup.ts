@@ -1,6 +1,7 @@
 // What the iOS App card shows is decided by facts the Mac already knows, never by a wizard position
-// (docs/specs/ios-setup-experience.md §3.3): the connection, the paired phones, and the one thing
-// only the person can say, that the app is installed. A pure function, so the rules can be tested.
+// (docs/specs/ios-setup-experience.md §3.3): the settings, the connection, the paired phones, and the
+// one thing only the person can say, that the app is installed. A pure function, so the rules can be
+// tested.
 import { channelState, channelTone, type ChannelState } from "../setup/channelDefs";
 
 export interface IosSetupInput {
@@ -32,7 +33,11 @@ export interface IosSetup {
   done: readonly [boolean, boolean, boolean];
   /** The first step that is not done; 4 when all are. */
   current: 1 | 2 | 3 | 4;
-  /** Connected and a phone is paired: the guide gives way to the usual sections. */
+  /**
+   * Fully set up and a phone is paired: the guide gives way to the usual sections. A broker that is
+   * down for now (the Mac woke up, the service restarted) does not take the card back to the guide:
+   * the phone stays paired, and the connection shows in the tag and in the box's status line.
+   */
   ready: boolean;
 }
 
@@ -58,7 +63,7 @@ export function deriveIosSetup(input: IosSetupInput): IosSetup {
     tone: channelTone(tag),
     done,
     current: (firstOpen === -1 ? 4 : firstOpen + 1) as IosSetup["current"],
-    ready: connected && phones,
+    ready: input.enabled && configured && phones,
   };
 }
 

@@ -1788,6 +1788,14 @@
   gap: var(--space-2);
   min-height: 24px;
 }
+/* The broker is down: the box stays, but it is not the green "all good" box. */
+.ios-ready.down {
+  border-color: var(--border);
+  background: var(--bg-elevated);
+}
+.ios-ready.down .ios-try {
+  border-top-color: var(--border);
+}
 /* Header lines that are not a `.row` still push their last item to the right. */
 .ios-card .spacer {
   flex: 1 1 auto;

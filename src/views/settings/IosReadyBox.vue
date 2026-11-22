@@ -1,6 +1,7 @@
 <script setup lang="ts">
-// A finished setup in two lines (docs/specs/ios-setup-experience.md §6.2, §9): what is connected,
-// with the way back to the steps, and the test question that proves the whole chain on demand.
+// A finished setup in two lines (docs/specs/ios-setup-experience.md §6.2, §9): what is connected
+// (or that the broker is not), with the way back to the steps, and the test question that proves
+// the whole chain on demand.
 import { computed } from "vue";
 import { useI18n } from "vue-i18n";
 import { injectIosChannel } from "./iosChannelContext";
@@ -14,10 +15,12 @@ defineProps<{
 const emit = defineEmits<{ toggleSteps: [] }>();
 
 const { t } = useI18n();
-const { activePhones } = injectIosChannel();
+const { activePhones, state } = injectIosChannel();
 const test = useIosTestQuestion();
 
 const online = computed(() => activePhones.value.filter((p) => p.online).length);
+// The broker can be down while the phones stay paired (the Mac woke up, the service restarted).
+const connected = computed(() => state.value?.connected === true);
 
 const testText = computed(() => {
   switch (test.state.value) {
@@ -40,13 +43,15 @@ const testText = computed(() => {
 </script>
 
 <template>
-  <div class="ios-ready" data-testid="ios-ready">
+  <div class="ios-ready" :class="{ down: !connected }" data-testid="ios-ready">
     <div class="ios-ready-line">
-      <span class="ios-dot on"></span>
+      <span class="ios-dot" :class="{ on: connected }"></span>
       <span data-testid="ios-ready-line">{{
-        online
-          ? t("settings.channels.ios.ready.online", { name, n: online }, online)
-          : t("settings.channels.ios.ready.offline", { name })
+        !connected
+          ? t("settings.channels.ios.ready.disconnected", { name })
+          : online
+            ? t("settings.channels.ios.ready.online", { name, n: online }, online)
+            : t("settings.channels.ios.ready.offline", { name })
       }}</span>
       <span class="spacer"></span>
       <a class="link" href="#" data-testid="ios-steps-toggle" @click.prevent="emit('toggleSteps')">
@@ -60,7 +65,7 @@ const testText = computed(() => {
       <button
         class="btn"
         type="button"
-        :disabled="test.state.value === 'sent'"
+        :disabled="!connected || test.state.value === 'sent'"
         data-testid="ios-try"
         @click="test.send"
       >

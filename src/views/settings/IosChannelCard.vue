@@ -3,8 +3,9 @@
 // working phone. What it shows follows facts the Mac already knows (useIosSetup.ts), in three forms:
 //   off     one line about the channel and the two ways to begin
 //   setup   a three-step guide: connect a broker, install the app, pair a phone
-//   ready   connected with a phone paired: the guide is one line plus a test question, and the
-//           usual sections follow
+//   ready   set up with a phone paired: the guide is one line plus a test question, and the
+//           usual sections follow (a broker that is down for now shows in the tag and that line,
+//           and does not take the card back to the steps)
 // The state of the gateway, the pairing and the form helpers live in useIosChannel.ts; the parts
 // of the card read it through iosChannelContext.ts.
 import { computed, ref, watch } from "vue";
@@ -186,7 +187,7 @@ const highlighted = computed(() => ctx.settingsTargetHighlight?.value === "chann
       <div class="ios-guide-head">
         <span class="ios-guide-title">{{ t("settings.channels.ios.stepsTitle") }}</span>
         <span class="ios-progress" data-testid="ios-progress">{{
-          setup.ready ? t("settings.channels.ios.stepsDone") : `${setup.current} / ${STEPS.length}`
+          setup.current === 4 ? t("settings.channels.ios.stepsDone") : `${setup.current} / ${STEPS.length}`
         }}</span>
         <span class="spacer"></span>
         <button
