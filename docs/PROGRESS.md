@@ -27,13 +27,16 @@ TestFlight 公共链接 + Pages 落地页、卡片顶部「设置步骤」清单
 - [x] 隐私政策（`docs/public/ios/privacy*.md`）两处措辞已改并经用户审阅：「邀请制内测」→「TestFlight 测试版」，「邀请邮箱」→ 按邮件邀请 / 仅公共链接区分（Apple 的说明：只通过公共链接加入时，开发者看不到邮箱和姓名）；联系方式一句与生效日期（2026-11-22）没动。**随 Pages 一起发布**（P5，见下面的外部依赖）。
 - [x] P4 本地部分：手机 App 里两处路径提示改成「设置 → 通信渠道 → iOS App」（模拟器构建通过，字符串目录由脚本重新生成、只差这两个键）；
   Beta 描述、审核备注草稿与 `ios-testflight` 技能参考里去掉「EMQX」「实验」字样。这一步本身没有出包、上传、送审。
-- [x] Apple 侧（用户 2026-11-22 逐项同意）的前两项已做：签名 helper 新增有界的 `public` / `public-off` 操作（已提交；检查全在模拟的 Apple 上跑，**还没装到本机**，
-  用户同意在 Build 29 交付之后、公共组那一步之前装）；出了 **0.1.0 (29)**（Internal 与 Friends，`submit` 读回即 `APPROVED`，
-  见 [Build 29 交付记录](plans/ios-channel.md#2026-11-22testflight-内部与外部构建-29)）。
+- [x] P4 的 Apple 侧三项（用户 2026-11-22 逐项同意）都做了：签名 helper 新增有界的 `public` / `public-off` 操作并装到本机（旧版是 `testflight-helper.previous`；
+  模拟 Apple 的检查 25 条通过，装后 `status` / `--check-signing` / `notes --mode read` 正常）；出了 **0.1.0 (29)**（Internal 与 Friends，`submit` 读回即 `APPROVED`，
+  见 [Build 29 交付记录](plans/ios-channel.md#2026-11-22testflight-内部与外部构建-29)）；建了公共组并开了公共链接（下一条）。
   用户定：不换版本号，继续在 0.1.0 上发新 Build，沿用已通过的 Beta 审核（规格 D23），所以不用给审核员附 Mac 预发布包，
   原先「审核备注与可见性提交」的顺序冲突不再存在；只有将来换版本号才会真正送审（那时 Mac 包必须已含可见性提交）。
-- [ ] **公共组**（用户已同意）：装新版 helper → `external-status` 只读现状 → `public` 加 `dryRun` 列差异 → 再写入：建「AskHuman Public」（上限 1,000）、分配构建 29、开公共链接，读回链接。
-  公共组加入同一构建是否同样直接可用，到那一步读回确认；不是的话停下来问。链接只在 Pages 那一步才写进 `docs/public/ios/testflight.json`。
+- [x] 公共组：`public` 先 `dryRun`（组不存在，差异是建组、分配构建、开链接、设上限）再写入，读回：组「AskHuman Public」、测试员上限 1,000、构建 29、公共链接已开；
+  匿名打开链接，页面是「Join the AskHuman Mobile beta」；Friends 与 Internal 读回没变。`docs/public/ios/testflight.json` 已加（本地提交，没推送，Pages 没发布）；
+  链接随时能用 `helper.py external-status` 读到。**链接已经开着，但没有任何地方公布。** 公共组不会自动拿到新构建：每个新构建要在 `start` 之后对它显式跑 `public`（幂等）。
+- [ ] 待用户决定：日常出包（Internal + Friends）要不要顺带更新公共组。不更新，公共链接就一直给构建 29，直到它在 2027-02-19 过期；
+  更新，则每个新构建都会到公共测试员手上（现在技能写的是日常出包从不碰公共组）。
 - [ ] 按计划继续：P5 放出（可见性只在 P5 的一个提交里翻）。每期做完在这里勾掉并记下卡点。
 - [ ] 放出前的外部依赖（每一项都要用户明确同意）：Pages 落地页与 TestFlight 公共链接（带新路径文案的 iOS 新构建已随 Build 29 出了）；
   具体放出时间由用户另行决定；放出后要**至少每 80 天出一次 TestFlight 包**（构建 90 天过期，公共链接才一直可用）。

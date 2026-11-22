@@ -1,6 +1,6 @@
 # iOS App 渠道设置体验：开发与交付计划
 
-日期：2026-11-22。状态：**设计已通过（第 3 轮）**；P0（原型与规格）、P1（卡片）、P2（后端）、P3（文档与落地页）已完成并提交，P4 的文案部分已完成，Apple 侧动作待逐项同意；碰 Apple / Pages / 公共链接 / 发版的步骤逐项另问用户。需求与决策见 [`docs/specs/ios-setup-experience.md`](../specs/ios-setup-experience.md)（全部文案在其 §14，实现以它为准），原型与截图在 `src/prototype/settings-ios.html` 一组文件与 `docs/assets/ios-setup-experience/`。
+日期：2026-11-22。状态：**设计已通过（第 3 轮）**；P0（原型与规格）、P1（卡片）、P2（后端）、P3（文档与落地页）、P4（iOS 文案与出包）已完成并提交（Apple 侧动作逐项取得了用户同意：helper 的公共链接操作、0.1.0 (29)、公共组与公共链接，2026-11-22）；P5 放出还没开始，碰 Pages / 发版的步骤逐项另问用户。需求与决策见 [`docs/specs/ios-setup-experience.md`](../specs/ios-setup-experience.md)（全部文案在其 §14，实现以它为准），原型与截图在 `src/prototype/settings-ios.html` 一组文件与 `docs/assets/ios-setup-experience/`。
 
 **工作位置：主工作区**（用户第 2 轮选定，沿用现有安装流程）。同一棵树里常有别的会话的未提交改动（现在有 `docs/PROGRESS.md`、`docs/specs/ios-traffic-reduction.md`、`docs/wiki/ios-setup*.md`、`src-tauri/src/app/attachment_owner.rs` 等），提交时只暂存自己的文件或自己的改动块（`git apply --cached` 一个只含自己改动块的补丁），不碰别人的。
 
@@ -66,7 +66,7 @@
 
 验证：构建脚本的测试；`site-dist` 里所有站内链接可达；文案与代码事实（路径、按钮名）逐条对一遍。
 
-## P4：iOS 文案与出包（Apple 侧动作逐项需要用户同意；第 1、2 项已完成）
+## P4：iOS 文案与出包（已完成；Apple 侧动作逐项取得了用户同意）
 
 1. **App 文案**：`ios/AskHuman/Views/Inbox/OnboardingView.swift:24`、`ios/AskHuman/Views/Pairing/PairingSheet.swift:80`，以及 `ios/Tools/make-catalog.py`（424、453 行）与 `Localizable.xcstrings`（用脚本重新生成）里的「设置 → 实验 → iOS App 渠道」改成「设置 → 通信渠道 → iOS App」。`xcodebuild` 模拟器编译；检查没有别的地方引用旧字符串（快照、测试）。
 2. **审核与测试材料**：`docs/release/ios-external-beta/*.txt`（审核备注、Beta 描述、What to Test）与 `ios-testflight` 技能里仍写「自备 EMQX」「实验」的字样，一并改成中立的新说法（`ios-open-access.md` P2 当时刻意留到这次出包）。
@@ -74,6 +74,11 @@
 4. **出包**：走 `ios-testflight` 技能，先列变更清单；新构建（仍是 0.1.0，沿用先前的 Beta 审核，规格 D23）进入公共组，审核状态读回应直接是 `APPROVED`，不是的话停下来问用户（那时才需要给审核员附 Mac 包，见 `docs/release/ios-external-beta/README.md`）；拿到公共链接，新增 `docs/public/ios/testflight.json`（P3 的脚本已能读它）。出包与送审另行取得用户指示（OA13）。
 
 验证：模拟器编译与 `swift test --filter AHStoreTests`；helper 的模拟 HTTP 测试覆盖「固定应用 / 组边界、请求字段、幂等、失败」；真实后台只做本次目标的必要变更并读回。
+
+实施记录（2026-11-22）：第 3 项在 `d90c25dc` 里给 helper 加了 `public` / `public-off`（模拟 Apple 的检查 25 条通过；`helper.py install` 装到本机后 `status`、`--check-signing`、`notes --mode read` 正常）。
+第 4 项出了 0.1.0 (29)（源码 `d90c25dc`，Internal 与 Friends，`submit` 读回直接 `APPROVED`，交付记录见 [ios-channel.md](ios-channel.md#2026-11-22testflight-内部与外部构建-29)）；
+公共组经 `public` 的 `dryRun`（只读现状，只有创建这一类差异）后写入，读回为：外部组「AskHuman Public」、测试员上限 1,000、构建 29、链接已开；匿名打开链接，页面是「Join the AskHuman Mobile beta」；
+Friends 与 Internal 读回没变。`docs/public/ios/testflight.json` 已加（本地提交，没推送，Pages 没发布）。
 
 ## P5：放出（翻可见性 + 发版）
 

@@ -1635,6 +1635,12 @@ Apple build `6296974d-adec-4bed-accc-62e6a966490b`，VALID / APP_STORE_ELIGIBLE 
 成员为 Internal 1 位 INSTALLED、1 位 INVITED，Friends 1 位 INSTALLED，Friends 公开链接关闭，没有新增或重新邀请。
 本地附注标签 `ios-testflight-29` 固定归档源码 `d90c25dc`，标签留在本地，不推送。
 
+交付之后，经用户另行同意，在同一天建了公共组并开了公共链接（[规格 D19](../specs/ios-setup-experience.md)）：先把新版签名 helper 装到本机（旧版是 `testflight-helper.previous`），
+`status`、`upload.py … --check-signing`、`notes --mode read` 都正常；再用 `public` 的 `dryRun` 读 Apple 的现状（外部组「AskHuman Public」不存在，差异是建组、分配构建、开链接、设上限），然后写入。
+读回：外部组「AskHuman Public」、测试员上限 1,000、只有构建 29、公共链接已开、没有测试员；Friends 的公开链接仍关、成员与构建没变，Internal 没变；
+匿名打开链接，页面是「Join the AskHuman Mobile beta」。公共组与 Friends 的构建各自分配，今后新构建不会自动进公共组。
+链接写在 `docs/public/ios/testflight.json`（本地提交，没推送），Pages 没发布，也没有别处公布这个链接。
+
 手机更新与原有 Mac 连接确认尚待用户反馈。真机上要看的就是测试说明里的三项。
 
 简体中文测试说明如下，中英文完整说明随交付报告提供。

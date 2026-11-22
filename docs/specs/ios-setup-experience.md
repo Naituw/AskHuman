@@ -1,7 +1,7 @@
 # 需求：iOS App 渠道的设置体验（设置进度、Broker 与 TestFlight 引导、Agent 代配置、移出「实验」）
 
 > 状态：设计已通过（2026-11-22，第 3 轮确认）。D1–D5 是用户经 AskHuman 第 1 轮定案的；D13、D18–D21 是第 2 轮定案的；D22 是实现后第 4 轮定案的；D23 是第 5 轮定案的；D6–D12、D14–D17 是设计者做原型时的派生决定，随整体设计在第 3 轮通过（§12）。
-> 原型已做完并截图（`docs/assets/ios-setup-experience/`；真实 `SettingsView` + mock 后端，代码在 `src/prototype/` 的 `settings-ios.html` 一组文件，不进产品）；**产品代码尚未改动**（除了把 EMQX 提醒里「作者所知」的措辞改掉：`src/i18n/zh.ts`、`en.ts` 各一行）。
+> 原型已做完并截图（`docs/assets/ios-setup-experience/`；真实 `SettingsView` + mock 后端，代码在 `src/prototype/` 的 `settings-ios.html` 一组文件，不进产品）；实现进度见[计划](../plans/ios-setup-experience.md)：P1–P4 已完成（2026-11-22，含 Apple 侧的出包与公共链接），P5 放出还没开始，卡片仍在「实验」里。
 > 依赖 / 复用：[`ios-channel.md`](ios-channel.md)（D22：内测期放「实验」，对外发行后转正）、[`ios-open-access.md`](ios-open-access.md)（OA2–OA6 Broker 并列与中立措辞、OA11 服务商目录、OA12 本文接手的可见性）、
 > [`docs/wiki/ios-broker.md`](../wiki/ios-broker.md)（Broker 事实的唯一出处）、[`onboarding.md`](onboarding.md)（`setup-probe` 探测）、
 > [`settings-agents-channels-cards.md`](settings-agents-channels-cards.md)（渠道卡片的徽标、状态标签与版式）、[`ios-external-testflight.md`](../plans/ios-external-testflight.md)（外部测试的资料与 Apple 侧约束）。
@@ -192,9 +192,9 @@
 
 - 公共链接挂在 TestFlight **外部组**上；构建要先过 Beta App Review：0.1.0 已通过，同版本的新 Build 沿用该结果（D23）。已有组与资料见 [`ios-external-testflight.md`](../plans/ios-external-testflight.md)。
 - 公共链接可以设测试员上限，上限只挡新加入的人，不影响已加入的人；随时可以关掉链接。
-- **TestFlight 构建 90 天后过期**（Apple 文档所述，本账号未实测）：公共链接要一直可用，就得**至少每 80 天出一次包**。这是个长期的维护承诺，随放出一起记入 `docs/PROGRESS.md`（§10.4）。
+- **TestFlight 构建 90 天后过期**（Apple 文档所述，本账号未实测）：公共链接要一直可用，就得**至少每 80 天出一次包，并把新构建分配进公共组**（新构建不会自动进去）。这是个长期的维护承诺，随放出一起记入 `docs/PROGRESS.md`（§10.4）。
 - 链接挂在新建的外部组「AskHuman Public」上，上限 1,000（D19）；中继成本按 `ios-open-access.md` §4 估算约每用户每月 ¥0.004，1,000 人约 ¥4。上限随时可调。
-- 现在的签名 helper 只支持 Friends 组（1–5 人、公共链接关）；公共链接需要给它新增「建组 / 开关公共链接 / 设上限」这一项**有界**操作（固定到本应用与这个组），且**只在用户明确同意之后**才对 App Store Connect 执行。
+- 签名 helper 的 `public` / `public-off` 是**有界**操作（固定到本应用与这个组：建组、分配构建、开关链接、设上限），**只在用户明确同意之后**才对 App Store Connect 执行；2026-11-22 已用它建了「AskHuman Public」、开了链接（上限 1,000，构建 29）。Friends 组仍只有 1–5 人、公共链接关，helper 的其余操作不变。
 
 ## 6. 步骤 3：配对手机与「已就绪」
 
