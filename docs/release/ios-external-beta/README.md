@@ -1,8 +1,9 @@
 # 首轮外测提交材料
 
-`description.en.txt` / `description.zh.txt` 是应用级 Beta 描述；`review-notes.en.txt` 是英文审核备注草稿。
-它们和每个构建的 What to Test 分开。**只有真正送审时才用**：0.1.0 的新 Build 沿用先前的 Beta 审核，提交即 `APPROVED`（规格 `ios-setup-experience.md` D23），不需要这些材料；
-将来换版本号时才会再送审。送审前补上可下载的兼容 Mac 包 / 固定源码点，删除草稿提醒。
+`description.en.txt` / `description.zh.txt` 是应用级 Beta 描述，**已于 2026-11-22 写入 App Store Connect**（`helper.py external` 的 `metadata` 操作，只改了这两段描述）：
+公共链接公开后，TestFlight 的公共页会显示它，旧的「邀请制 / EMQX」字样不能等到下次送审。以后改这两个文件，要再跑一次 `metadata` 才会生效。
+`review-notes.en.txt` 是英文审核备注草稿，和每个构建的 What to Test 分开，**只有真正送审时才用**：0.1.0 的新 Build 沿用先前的 Beta 审核，提交即 `APPROVED`（规格 `ios-setup-experience.md` D23），不需要它；
+将来换版本号时才会再送审。送审前补上可下载的兼容 Mac 包 / 固定源码点，删除草稿提醒。App Store Connect 里现有的审核备注仍是 2026-11-05 的旧稿（指向预览版 Mac 包和「实验」开关），只有审核员看得到。
 审核备注里的 Mac 路径是放出后的「设置 → 通信渠道 → iOS App」：补上的兼容 Mac 包必须已经包含把 iOS 渠道移出「实验」的提交，
 否则审核员在设置里找不到入口（见 `docs/plans/ios-setup-experience.md` P5 的顺序）。
 不要把带联系人或运行配置的最终 JSON 提交到 git。

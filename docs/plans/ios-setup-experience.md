@@ -1,8 +1,8 @@
 # iOS App 渠道设置体验：开发与交付计划
 
-日期：2026-11-22。状态：**设计已通过（第 3 轮）**；P0（原型与规格）、P1（卡片）、P2（后端）、P3（文档与落地页）、P4（iOS 文案与出包）已完成并提交（Apple 侧动作逐项取得了用户同意：helper 的公共链接操作、0.1.0 (29)、公共组与公共链接，2026-11-22）；P5 放出还没开始，碰 Pages / 发版的步骤逐项另问用户。需求与决策见 [`docs/specs/ios-setup-experience.md`](../specs/ios-setup-experience.md)（全部文案在其 §14，实现以它为准），原型与截图在 `src/prototype/settings-ios.html` 一组文件与 `docs/assets/ios-setup-experience/`。
+日期：2026-11-22。状态：**设计已通过（第 3 轮）**；P0（原型与规格）、P1（卡片）、P2（后端）、P3（文档与落地页）、P4（iOS 文案与出包）已完成并提交（Apple 侧动作逐项取得了用户同意：helper 的公共链接操作、0.1.0 (29)、公共组与公共链接，2026-11-22）；P5 放出已完成（Pages、公共组与公共链接、Mac v0.18.0，同日，见「发布记录」），放出后的检查记在 `docs/PROGRESS.md`。需求与决策见 [`docs/specs/ios-setup-experience.md`](../specs/ios-setup-experience.md)（全部文案在其 §14，实现以它为准），原型与截图在 `src/prototype/settings-ios.html` 一组文件与 `docs/assets/ios-setup-experience/`。
 
-**工作位置：主工作区**（用户第 2 轮选定，沿用现有安装流程）。同一棵树里常有别的会话的未提交改动（现在有 `docs/PROGRESS.md`、`docs/specs/ios-traffic-reduction.md`、`docs/wiki/ios-setup*.md`、`src-tauri/src/app/attachment_owner.rs` 等），提交时只暂存自己的文件或自己的改动块（`git apply --cached` 一个只含自己改动块的补丁），不碰别人的。
+**工作位置：主工作区**（用户第 2 轮选定，沿用现有安装流程）。同一棵树里常有别的会话的未提交改动（当时有 `docs/PROGRESS.md`、`docs/specs/ios-traffic-reduction.md`、`docs/wiki/ios-setup*.md`、`src-tauri/src/app/attachment_owner.rs` 等），提交时只暂存自己的文件或自己的改动块（`git apply --cached` 一个只含自己改动块的补丁），不碰别人的。
 
 顺序：P0 设计 → P1 卡片（前端，仍在「实验」里）→ P2 后端小改（探测、Agent 指南）→ P3 文档与落地页 → P4 iOS 文案与出包 → P5 放出（翻可见性 + 发版）。
 **可见性只在 P5 的一个提交里翻**：P1–P4 做的所有东西仍在隐蔽开关后面，随时推送到 `main` 也不会被别的发布顺带带出去（卡片一旦可见，步骤 2 的二维码就必须能用，见规格 §10.4）。
@@ -149,6 +149,16 @@ Friends 与 Internal 读回没变。`docs/public/ios/testflight.json` 已加（�
   （`gh release edit`，名称、标签、发布时间不变）同步，读回逐字一致（2983 字符）；tag 内容不变。
   同时发现 Dock 一条在说明里写成了既成事实，而 [`popup-request-inbox.md`](../specs/popup-request-inbox.md) §4.2 仍标「待验收」（Dock 点击没测过，Cmd+Tab 对照里补丁与基线没有差异）；
   用户只选了补 Windows 一句，这一条的措辞没改，验证状态只在 #31 的回复里说明。
+- **放出后核对对外渠道**（用户说「全部搞定，不要一个一个问」，2026-11-22）：npm、TestFlight、Pages 逐个对照当前 `main`。
+  npm 的 `latest` 是 0.18.0、与 tag 一致，tag 之后 `main` 上只有文档提交，没有要补发的东西。
+  构建 29 就是当前的 App：自它的源码 `d90c25dc` 以来 `ios/` 下只动了一处测试夹具（`e9c565b6`），Internal、Friends、Public 三个组里都是它，2027-02-19 过期。
+  Pages 的输入（`docs/public/ios/`、构建脚本、工作流）自上次发布 `e9c565b6` 起没有改过，线上五个页面与重新构建的结果逐字节相同。
+  **只有一处过期**：App Store Connect 里应用级的 Beta 描述（en-US、zh-Hans）还是 P4 之前的旧稿（`8398a3e3`：「邀请制」「EMQX broker」），
+  公共链接公开后它就显示在 TestFlight 的公共页上。已用 `helper.py external` 的 `metadata` 操作写成仓库里的新稿：
+  请求里联系人、反馈邮箱、两个 URL 与审核备注都按原值带回，所以只有两段 `description` 变了；helper 读回通过，更新前后的 `external-status` 逐项对照，
+  审核详情、三个组、构建 29（仍是 `IN_BETA_TESTING`）都没变。回退办法：用 `8398a3e3` 里的旧稿再跑同一个操作。
+  公共页有边缘缓存（`Cache-Control: max-age=396`，各节点更新时间不同）：加查询串立刻是新文案，不加的页面约 10 分钟内各节点陆续换上，之后连续多次采样都是新文案。
+  **没改**：审核备注（只有审核员看得到，仍是 2026-11-05 的旧稿，指向预览版 Mac 包和「实验」开关；新稿还缺兼容 Mac 包，按 D23 只在换版本号送审时才用）。
 
 ## 风险与回退
 
