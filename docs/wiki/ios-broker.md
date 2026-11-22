@@ -6,6 +6,8 @@ AskHuman 的 iOS 渠道用一个 MQTT broker 在 Mac 和 iPhone 之间中转消�
 
 下面先列对 broker 的**要求**，再并列三条**已经实测**的路径：EMQX Cloud Serverless、flespi、自建 Mosquitto。任何满足要求的 MQTT broker 都能用，拿仓库里的[兼容套件](#怎样自己验证)跑一遍就知道。
 
+设置 → 通信渠道 → iOS App 卡片里的 Broker 步骤，是下面各条路径的摘要。
+
 ## 对 broker 的要求
 
 | 要求 | 原因 |

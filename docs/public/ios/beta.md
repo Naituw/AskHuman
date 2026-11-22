@@ -1,14 +1,14 @@
 ---
-title: AskHuman Mobile Friends Beta
+title: AskHuman Mobile Beta
 lang: en
 ---
-# AskHuman Mobile Friends Beta
+# AskHuman Mobile Beta
 
 [简体中文](../beta-zh/) · [Privacy policy](../privacy/)
 
-Answer questions from agents on your own Mac using your iPhone. Follow these five steps for TestFlight; the optional self-hosted route is at the end.
+Answer questions from agents on your own Mac using your iPhone. Follow these five steps; the optional self-hosted route is at the end.
 
-**Before you start (TestFlight):** have your Mac, an iPhone running iOS 17 or later, and the **TestFlight email invitation and push relay URL** supplied by the maintainer.
+**Before you start:** have your Mac and an iPhone running iOS 17 or later.
 
 ## 1. Install AskHuman on your Mac
 
@@ -21,49 +21,30 @@ AskHuman setup
 
 Connect the agents you use in the wizard; you can skip other messaging tools. Restart any open agent sessions afterward to load the integration.
 
-## 2. Prepare your own broker
+## 2. Connect a broker
 
-The broker is the relay station between your Mac and your phone. You bring it, and AskHuman is not tied to any one service. Choose a path in **[Brokers: requirements, options and verification](https://github.com/Naituw/AskHuman/blob/main/docs/wiki/ios-broker.en.md)** and set it up: EMQX Cloud Serverless (hosted in China), flespi (hosted in Europe) or self-hosted Mosquitto. All three are tested, and each has step-by-step setup, its free allowance and its drawbacks.
+The broker is the relay station between your Mac and your phone. You bring it, and AskHuman is not tied to any one service.
 
-Write down the **host name**, the TLS port (default `8883`), the WSS port (default `8084`; flespi uses `443`), the **username** and the **password**. The account must only be able to read and write `ah/<username>/#`, so it cannot see anyone else's topics.
+Run `AskHuman --settings`, open **Channels → iOS App** and click **Start setup**. Step 1 of the card covers EMQX Cloud Serverless (hosted in China), flespi (hosted in Europe) and self-hosted brokers such as Mosquitto, with the setup steps for each. The same facts, with each service's free allowance and drawbacks, are in **[Brokers: requirements, options and verification](https://github.com/Naituw/AskHuman/blob/main/docs/wiki/ios-broker.en.md)**.
 
-## 3. Enter the Mac connection settings
+Enter the host, username and password, then click **Test connection**. The account must only be able to read and write `ah/<username>/#`, so it cannot see anyone else's topics. Optionally turn on **Keep this Mac reachable**, so the phone never shows this Mac as offline; keep the Mac online and awake while you use it.
 
-Run `AskHuman --settings` to open Settings:
+Prefer to let your agent do it? Click **Set up with an Agent** on the card and send it the text it copies.
 
-1. In **General**, enable experimental features.
-2. In **Experimental → iOS App channel**, enable the channel and enter:
+## 3. Install the iPhone app
 
-   | Field | Value |
-   |---|---|
-   | Broker host | The host name from the previous step, without a scheme, port or path |
-   | TLS port | The TLS port you wrote down, usually `8883` |
-   | WSS port | The WSS port you wrote down, usually `8084` (`443` for flespi) |
-   | Username | The username from the previous step (the token ID for flespi) |
-   | Password | The password from the previous step (the full token for flespi) |
-   | Push relay URL | The complete URL supplied separately by the maintainer |
+Step 2 of the card shows a QR code for [the join page](https://naituw.github.io/AskHuman/). On your iPhone, install [TestFlight](https://apps.apple.com/app/testflight/id899247664), open that page, join the beta, install AskHuman and allow notifications.
 
-3. Click **Test connection**. Both the **broker round trip and relay health check must pass**.
-4. In **Advanced → Daemon lifecycle**, choose **Keep alive**. Keep your Mac online and awake during use.
+## 4. Pair the phone
 
-## 4. Install and pair the iPhone app
-
-1. Install [TestFlight](https://apps.apple.com/app/testflight/id899247664) on your iPhone. Open your email invitation, install the latest AskHuman build and allow notifications.
-2. In the Mac's iOS channel settings, choose **Pair new phone**. On the phone, open **Macs → Add Mac** and scan the QR code.
-3. Compare the **six-digit codes** and approve on the Mac. QR codes expire after five minutes; generate a new one if needed.
+1. In step 3 of the card, click **Pair a new phone**. On the phone, open **Macs → Add Mac** and scan the QR code.
+2. Compare the **six-digit codes** and click **Allow** on the Mac. QR codes expire after five minutes; generate a new one if needed.
 
 ## 5. Test answers and notifications
 
-1. Keep AskHuman open on your phone and run this in your Mac terminal:
+When setup is complete, the card shows **Ready**. Click **Send test question** and answer it on your phone; this tests answering without making a model call.
 
-   ```bash
-   AskHuman -q "Phone test: please reply received"
-   ```
-
-2. Answer on the phone and check that the terminal receives it. This tests answering without making a model call.
-3. Temporarily set the Mac iOS channel's **Push timing** to **Immediately**. Lock your phone, run the command again, then open the notification and answer.
-
-If both tests pass, setup is complete. Restore your preferred push timing afterward. By default, push waits until the Mac has been idle for 15 minutes; inbox delivery does not wait.
+To test the notification, send it again while AskHuman is closed on the phone. A test question is pushed at once; other questions are pushed after your Mac has been idle for 15 minutes by default (**Push timing** on the card). Inbox delivery never waits.
 
 If something fails, send the maintainer a screenshot and both app versions. Hide passwords, connection strings and pairing codes.
 
@@ -73,7 +54,7 @@ Choose this route if you have **an Apple Developer account and Xcode** and want 
 
 1. Build and install the iOS app with your own team and bundle IDs, and create a matching APNs key.
 2. Deploy the repository's `relay/` to your Tencent Cloud function, configure that key and check `/v1/health`.
-3. Enter your relay URL on the Mac, test the connection and pair again with your own signed app.
+3. On the card, open **More settings**, choose **Use my own relay**, enter your relay URL, test the connection and pair again with your own signed app.
 
 See the **[complete self-hosting guide](https://github.com/Naituw/AskHuman/blob/main/docs/wiki/ios-setup.en.md)** for commands and settings.
-This route uses your own signed iOS app. The TestFlight route above uses the maintainer's app and relay.
+This route uses your own signed iOS app. The TestFlight route above uses the maintainer's app and the public relay.

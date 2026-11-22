@@ -3,7 +3,7 @@
 记录需要跨会话保留的未完成 / 延期事项和明确下一步。任务 / 需求完成后删除其 section
 （历史留在 git）。
 
-## 进行中：iOS 设置体验（设计已通过；P1 卡片、P2 后端已实现，P3 起）
+## 进行中：iOS 设置体验（设计已通过；P1 卡片、P2 后端、P3 文档与落地页已实现，P4 起）
 
 用户 2026-11-22 要求全面优化 iOS 渠道的设置界面：打开设置就能完成后续配置（Broker、TestFlight、配对），并能让 Agent 代配。
 规格 [ios-setup-experience.md](specs/ios-setup-experience.md)（全部文案在 §14），计划 [plans/ios-setup-experience.md](plans/ios-setup-experience.md)，
@@ -17,7 +17,14 @@ TestFlight 公共链接 + Pages 落地页、卡片顶部「设置步骤」清单
   `AskHuman channel ios --agent-guide`（`cli/ios_guide.rs`，中英、按当前状态写出下一步，读状态不拉起守护进程、不碰钥匙串）；
   `client::ios_op_if_running`。Rust 全量测试与 `clippy -D warnings` 通过；用隔离的 `ASKHUMAN_HOME` 跑过指南和速查表里的命令。
   没有对真实手机跑过「发一条测试问题」，也没有让 Agent 照指南完整走一遍（需要真实 Broker 与手机），放到装机后与 P5 前的真机一轮。
-- [ ] 按计划继续：P3 文档与落地页 → P4 iOS 文案（出包另问）→ P5 放出（可见性只在 P5 的一个提交里翻）。每期做完在这里勾掉并记下卡点。
+- [x] P3 文档与落地页：`scripts/build-ios-beta-site.mjs` 的根页改成中英双语 TestFlight 落地页（公共链接只读 `docs/public/ios/testflight.json`，
+  缺失时显示「仅限邀请」，所以 Pages 现状不变；`node --test` 校验链接格式与站内链接，截图 `docs/assets/ios-setup-experience/18–20`）；
+  `docs/public/ios/beta*.md` 改成公共链接版；`docs/wiki/ios-setup*.md` 的入口与步骤、`ios-broker*.md` 的一句摘要说明、README 中英各一节、
+  OA12 与 `overview-ios.md` 已回写。**这些文档已经按放出后的路径（设置 → 通信渠道 → iOS App）写成，而当前发布版里入口还在「实验」里：
+  在 P5 的可见性提交之前不要推送，也不要单独运行 `ios-beta-pages` 发布 Pages（隐私政策那一页也会带上新的内测指南）。**
+- [ ] **待用户决定**：隐私政策（`docs/public/ios/privacy*.md`）里还写着「邀请制内测」「TestFlight 邀请邮箱」，公共链接开通后这两处不再准确；
+  它是对外承诺的文字，我没有擅自改。要在公共链接开通同一批里改，还是现在先改？
+- [ ] 按计划继续：P4 iOS 文案（出包另问）→ P5 放出（可见性只在 P5 的一个提交里翻）。每期做完在这里勾掉并记下卡点。
 - [ ] **待用户决定**：Broker 暂时断开（Mac 唤醒、后台服务重启，更新时也会）时，按规格「已就绪 = 步骤 1 ∧ 步骤 3」，卡片会从管理项掉回「设置步骤」，
   手机列表、推送时机等管理项暂时看不到，连上后恢复。要不要改成：已有手机配对时保持「已就绪」形态，断开只体现在标签和提示行？（默认按规格，不动；放出前改都行。）
 - [ ] 放出前的外部依赖（每一项都要用户明确同意）：Pages 落地页与 TestFlight 公共链接、带新路径文案的 iOS 新构建与 Beta 审核；
@@ -545,7 +552,7 @@ Agents 列表 + 实时观看 + 关注 + 插话读取回执 + 完成横幅、任�
 - 隔离自检在真实 broker 上的验证：Mosquitto 2.1.2 已实测（`pattern readwrite ah/%u/#` 时没有警告，没有 ACL 时给出警告）；真实 EMQX（有 / 无「全部用户」的兜底 deny）与 flespi（ACL token）没有跑过，只对 Aedes 夹具与回环传输验证过。要紧的是配了 ACL 的账号不能被误报，所以第一次在真实 EMQX 上点「测试连接」时看一眼结果。
 - 真实 App 在 EMQX 的 WSS 上断开时是否多发一条遗嘱，没有实测（套件探针的结果见 `ios-broker.md`）；flespi 的跨用户互验只在 TLS 上跑过。
 - 端到端套件的真实服务模式（`AH_E2E_REAL_FROM`）没有用最终代码对 flespi、EMQX 再跑：要凭据，EMQX 还会吃 Owner 的流量额度；Mosquitto 跑不了（夹具不带 `insecureLocal`，要公共 CA 的 TLS）。本地 broker 模式用装机的最终二进制跑过（80 项、0 失败）。
-- 手机端改动随下一次 TestFlight 构建发布，出包由 Owner 另行指示；`docs/release/ios-external-beta/*.txt` 与 `ios-testflight` 技能里的 EMQX 字样随那次出包一起改。带默认中继的 Mac 版本发布后，朋友内测指南 `docs/public/ios/beta*.md` 里「推送中继地址由邀请人单独提供」的步骤改成保持「使用公共中继」。
+- 手机端改动随下一次 TestFlight 构建发布，出包由 Owner 另行指示；`docs/release/ios-external-beta/*.txt` 与 `ios-testflight` 技能里的 EMQX 字样随那次出包一起改。
 - 老配对（含 Owner 自己的手机）仍用配对时的旧函数 URL，控制台把它标为「仅供测试使用」（限速 / 下线条件未公开；3a 压测里没被限速或下线）。给手机下发新中继地址的通道不做（规格 §8）；真被限了，处理办法是重新配对，或让 Mac 改用默认中继（同一个函数、同一把句柄密钥；用合成 token 验过：旧 URL 上登记的句柄经自定义域名推送有效）。
 
 ## 进行中：Mac 互通（弹窗网）——需求与计划已评审通过，等 `ios-alert-timing` 合并后开工

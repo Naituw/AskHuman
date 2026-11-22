@@ -32,6 +32,10 @@ Agent 的提问会同时送达本地 GUI 弹窗与钉钉、飞书、Telegram、S
   <img src="assets/history.webp" alt="按项目查看消息与回复历史" width="680">
 </p>
 
+## iOS App
+
+不在电脑前，也能在 iPhone 上回答 Agent 的提问。提问会带着推送进入 App 收件箱，消息经你自备的 MQTT Broker 端到端加密传递。在 [AskHuman Mobile 页面](https://naituw.github.io/AskHuman/)加入 TestFlight 测试（需要 iOS 17 或更高版本），再按[设置指南](docs/wiki/ios-setup.md)配置；设置 → 通信渠道 → iOS App 里有分步引导。
+
 ## 安装
 
 ```bash

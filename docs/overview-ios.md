@@ -20,7 +20,7 @@ Agent / CLI ─► Daemon ── IosGateway（一个 actor）──► MQTT（TL
 - **端到端加密**：每个配对一对方向密钥（ChaCha20-Poly1305），broker 只见密文；配对用一次性票据 + 6 位校验码，由 Mac 用户在设置页或 CLI 上放行。推送预览同样加密，由手机上的通知扩展解密。
 - **Mac 不持有 APNs 密钥**：Mac 把加密后的信封和手机的不透明句柄交给中继，中继按固定白名单拼出提醒并转给 APNs。中继地址只经 `config::effective_relay_url` 取：`channels.ios.relayUrl` 为空 = 用内置的公共中继（`config::IOS_DEFAULT_RELAY_URL`，该常量为空的构建没有公共中继，必须自己填），二维码里的 `r`、推送、连接串、健康检查因此不会各自处理空值。Broker 不绑任何服务商：设置页的服务商目录只是向导（`docs/specs/ios-open-access.md`）。
 - 手机能做的事：回答问题 / 确认（含多题、推荐、附件；回答时还能从该项目的待办里选几条随回答发给 Agent，What's next 能看到完整队列，`docs/specs/special-replies.md` D28 / D29）、看 Agent 列表（App 里没有手动关注：手机新建任务或原会话接续的新一轮出结果时 Mac 会通知，列表行与详情页只读地标出）、实时观察（Watch，≤2 路、仅前台）、给 Agent 插话、新建 Agent 任务（Face ID 确认）、管理待办（「待办」标签：来源是某台 Mac 或「iCloud」，浏览项目、增 / 改 / 勾 / 删 / 排序、⚡ 自动执行、看执行历史；`docs/specs/ios-todos.md`）；请求页里出现的每一份待办清单（提问页「待办」卡、What's next 与 Stop 的队列行）都能完成 / 删除 / 添加：右滑完成、左滑删除（也有长按菜单与 VoiceOver 操作），清单末尾「＋ 添加待办」只有文字、写到该请求所在的那台 Mac（`docs/specs/todo-list-actions.md`，取代了请求页「⋯」→「添加待办…」的半屏页）；可选的开发者模式（Macs 标签里的开关，默认关）：全局浮动按钮，按住滑到条目松手，v1 只有「快速添加待办」，不用离开当前界面（`docs/specs/ios-developer-mode.md`）。
-- **投递与通知分开**（`docs/specs/ios-alert-timing.md`）：iOS 不参与 IM 的活跃槽，`attach_im_channels` / `confirm_im_candidates` 在选完 IM 候选后用 `with_ios` 把它并进来，每个提问 / 确认都挂给所有已配对手机，手机一连上就从 hello 快照（`request.get`）拉到。手机在看（在线 + 前台 + 已 hello）时经 MQTT 实时送达、不推送；不在看时只有系统推送能打扰人，而它要等 Mac 键盘 / 鼠标空闲满 `channels.ios.alertAfterSecs`（默认 900 秒，`0` = 立即）才发，每题每手机最多一条，没有提醒。
+- **投递与通知分开**（`docs/specs/ios-alert-timing.md`）：iOS 不参与 IM 的活跃槽，`attach_im_channels` / `confirm_im_candidates` 在选完 IM 候选后用 `with_ios` 把它并进来，每个提问 / 确认都挂给所有已配对手机，手机一连上就从 hello 快照（`request.get`）拉到。手机在看（在线 + 前台 + 已 hello）时经 MQTT 实时送达、不推送；不在看时只有系统推送能打扰人，而它要等 Mac 键盘 / 鼠标空闲满 `channels.ios.alertAfterSecs`（默认 900 秒，`0` = 立即）才发，每题每手机最多一条，没有提醒。设置里的「发一条测试问题」是 `setup_probe` 提问（目标 `ios`，即 `ImScope::Only("ios")`）：其它渠道的探测不会挂给手机（`reaches_ios`）；它不等空闲、立即推送，不占日常推送的节奏。
 
 
 生命周期结果与原会话控制见 [统一结果与接续](specs/agent-lifecycle-results-and-recovery.md)：
@@ -48,10 +48,10 @@ Agent / CLI ─► Daemon ── IosGateway（一个 actor）──► MQTT（TL
 | `idle.rs` | `secs_since_last_input()`：macOS 用 CoreGraphics `CGEventSourceSecondsSinceLastEventType`（合并会话状态、任意输入事件，无需任何权限）；其它平台返回 `None`（Gateway 把「读不到」当作「够久了」，照旧立即推） |
 | `daemon/runtime/task_launch.rs` | IM `/new` 与 iOS 共用的任务启动（门槛、冲突、终端 / Codex App 路径） |
 | `channels/ios.rs` | `Channel` 实现：请求交给 Gateway，首个终态获胜后撤销手机上的请求 |
-| `cli/ios_cmd.rs` | `AskHuman channel ios status / pair / allow / devices / revoke …` 与 `channel set ios …`（密码经 stdin / 文件 / 环境变量，从不进 argv） |
+| `cli/ios_cmd.rs` · `cli/ios_guide.rs` | `AskHuman channel ios status / pair / allow / devices / revoke …` 与 `channel set ios …`（密码经 stdin / 文件 / 环境变量，从不进 argv）；`channel ios --agent-guide` 输出给 Agent 的配置指南：编译进二进制的中英文本（按 `general.language`）加当前状态，状态来自不会拉起 Daemon 的 `client::ios_op_if_running` 与 `AppConfig::load_without_secrets()`，不含任何凭据；文中的事实与 `channel test ios` 的提示由测试对表 |
 | `commands.rs` | 设置页用的 Tauri 命令：`ios_op`（经 IPC 的 `ClientMsg::Ios`）、`ios_test`（broker 回声 + 隔离自检 + 中继检查，返回「消息 + 警告列表」，失败时带 `kind`；是 Tauri 命令返回值，不是 IPC 消息，不涉及 `PROTOCOL_VERSION`）、`ios_default_relay_url`（内置公共中继地址，空串 = 这个构建没有）、`ios_pair_qr`、`ios_connection_import` / `export` |
 
-前端：`src/views/settings/IosChannelCard.vue` + `useIosChannel.ts`（状态轮询、配对流程）、`iosTraffic.ts`（多设备报文流量统计与记录完整性，见 [流量统计](specs/ios-traffic.md)）、`iosAlertTiming.ts`（「推送时机」下拉的预设与时长显示）、`iosBrokers.ts`（Broker 服务商目录，纯数据：按主机后缀识别、要点与官方文档锚点；下拉、端口填写与测试失败时的针对性提示都从它来）。
+前端：`src/views/settings/IosChannelCard.vue` 是三步设置引导（连接 Broker、安装 iPhone App、配对手机；`useIosSetup.ts` 的 `deriveIosSetup` 由配置与网关状态推出每一步的状态与整体「已就绪」，「发一条测试问题」是 `useIosTestQuestion.ts` 对设置探测的复用；规格 `docs/specs/ios-setup-experience.md`），`iosFacts.test.ts` 把卡片文案里的关键事实（额度、端口、话题、iOS 版本）与 `docs/wiki/ios-broker*.md`、`ios/project.yml` 对照；`useIosChannel.ts`（状态轮询、配对流程）、`iosTraffic.ts`（多设备报文流量统计与记录完整性，见 [流量统计](specs/ios-traffic.md)）、`iosAlertTiming.ts`（「推送时机」下拉的预设与时长显示）、`iosBrokers.ts`（Broker 服务商目录，纯数据：按主机后缀识别、要点与官方文档锚点；下拉、端口填写与测试失败时的针对性提示都从它来）。
 
 ## 推送中继（`relay/`）
 
@@ -142,7 +142,9 @@ CI（`.github/workflows/build.yml`）只跑上表的「Swift 包」「中继」�
 [外测规格](specs/ios-external-testflight.md)，执行证据与待处理输入见[计划](plans/ios-external-testflight.md)。
 
 Macs 页「关于」提供隐私政策与内测接入指南，按 App 语言选中英文。
-公开材料仅来自 `docs/public/ios/` 的四个白名单页面，`scripts/build-ios-beta-site.mjs` 生成 `site-dist/`；
+公开材料仅来自 `docs/public/ios/` 的四个白名单页面，`scripts/build-ios-beta-site.mjs` 生成 `site-dist/`，另有一个根页，即中英双语的 TestFlight 落地页；
+公共链接只写在 `docs/public/ios/testflight.json` 的 `url` 里（缺失时根页显示「仅限邀请」，不露出没有去处的按钮；
+格式与站内链接由 `scripts/build-ios-beta-site.node-test.mjs` 校验）。
 GitHub Pages 工作流只允许手动触发。页面必须先上线、核实实际 URL 后才能交付带这些链接的 iOS 构建。
 审核联系人、朋友邮箱、连接串和中继运行配置不写进公开材料。
 

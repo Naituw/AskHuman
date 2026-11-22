@@ -1,14 +1,14 @@
 ---
-title: AskHuman Mobile 朋友内测
+title: AskHuman Mobile 内测
 lang: zh-Hans
 ---
-# AskHuman Mobile 朋友内测
+# AskHuman Mobile 内测
 
 [English](../beta/) · [隐私政策](../privacy-zh/)
 
-在 iPhone 上回答自己 Mac 上 Agent 的提问。TestFlight 方案按下面五步配置；可选自部署方案在文末。
+在 iPhone 上回答自己 Mac 上 Agent 的提问。按下面五步配置；可选自部署方案在文末。
 
-**开始前（TestFlight 方案）**：准备一台 Mac、iOS 17 或以上的 iPhone，以及邀请人发来的 **TestFlight 邮件邀请和推送中继地址**。
+**开始前**：准备一台 Mac 和 iOS 17 或以上的 iPhone。
 
 ## 1. 安装 Mac 端
 
@@ -21,51 +21,32 @@ AskHuman setup
 
 在向导里接入你使用的 Agent；其它聊天工具可以先跳过。完成后重启已打开的 Agent，让接入生效。
 
-## 2. 准备自己的 Broker
+## 2. 连接 Broker
 
-Broker 是 Mac 和手机之间的中转站，由你自备，AskHuman 不绑定某个服务。请按 **[Broker 的要求、选择与验证](https://github.com/Naituw/AskHuman/blob/main/docs/wiki/ios-broker.md)** 选一条路径并配好：EMQX Cloud Serverless（国内托管）、flespi（欧洲托管）或自建 Mosquitto。三条都已实测，每条都有逐步操作、免费额度和缺点。
+Broker 是 Mac 和手机之间的中转站，由你自备，AskHuman 不绑定某个服务。
 
-配好后记下：**连接地址**、TLS 端口（默认 `8883`）、WSS 端口（默认 `8084`；flespi 是 `443`）、**用户名**和**密码**。这个账号必须只能读写 `ah/<用户名>/#`，读不到别人的话题。
+终端执行 `AskHuman --settings` 打开设置，进入「通信渠道」→「iOS App」，点「开始设置」。卡片的第 1 步包含 EMQX Cloud Serverless（国内托管）、flespi（欧洲托管）和自建 Broker（如 Mosquitto），每种都有对应的操作步骤。相同的事实，以及各服务的免费额度和缺点，见 **[Broker 的要求、选择与验证](https://github.com/Naituw/AskHuman/blob/main/docs/wiki/ios-broker.md)**。
 
-## 3. 填写 Mac 连接信息
+填写主机、用户名和密码，点「测试连接」。这个账号必须只能读写 `ah/<用户名>/#`，读不到别人的话题。可以开启「保持这台 Mac 随时可连」，手机上就不会显示这台 Mac 离线；使用期间保持 Mac 在线、唤醒。
 
-终端执行 `AskHuman --settings` 打开设置：
+想让 Agent 帮你做？点卡片上的「让 Agent 帮我配置」，把复制的文字发给它。
 
-1. 「通用」→ 开启「实验性功能」。
-2. 「实验」→ 启用「iOS App 渠道」，填写：
+## 3. 安装手机 App
 
-   | 字段 | 填什么 |
-   |---|---|
-   | Broker 主机 | 上一步的连接地址，只填域名 |
-   | TLS 端口 | 上一步记下的 TLS 端口，通常是 `8883` |
-   | WSS 端口 | 上一步记下的 WSS 端口，通常是 `8084`（flespi 是 `443`） |
-   | 用户名 | 上一步的用户名（flespi 填 token 编号） |
-   | 密码 | 上一步的密码（flespi 填完整 token） |
-   | 推送中继地址 | 邀请人单独发来的完整地址 |
+卡片的第 2 步有一个二维码，对应[加入页面](https://naituw.github.io/AskHuman/)。在 iPhone 上安装 [TestFlight](https://apps.apple.com/app/testflight/id899247664)，打开这个页面，加入测试，安装 AskHuman，并允许通知。
 
-3. 点「测试连接」，确认 **broker 往返和中继检查都成功**。
-4. 「高级」→「守护进程生命周期」→ 选「保活」，让手机随时能连接。使用期间保持 Mac 在线、唤醒。
+## 4. 配对手机
 
-## 4. 安装手机 App 并配对
-
-1. iPhone 安装 [TestFlight](https://apps.apple.com/app/testflight/id899247664)，打开邮件邀请，安装最新 AskHuman，首次打开时允许通知。
-2. Mac 的 iOS App 渠道中点「配对新手机」。手机打开「Mac」页 →「添加 Mac」→ 扫描二维码。
-3. 核对两边的 **6 位确认码** 一致，在 Mac 点「允许」。二维码过期就重新生成，有效期 5 分钟。
+1. 在卡片的第 3 步点「配对新手机」。手机打开「Mac」页 →「添加 Mac」→ 扫描二维码。
+2. 核对两边的 **6 位确认码** 一致，在 Mac 点「允许」。二维码过期就重新生成，有效期 5 分钟。
 
 ## 5. 测试收答和通知
 
-1. 手机保持 AskHuman 在前台，在 Mac 终端执行：
+设置完成后，卡片显示「已就绪」。点「发一条测试问题」，在手机上回答；这是不调用模型的收答测试。
 
-   ```bash
-   AskHuman -q "手机测试：请回复收到"
-   ```
+想测通知，在手机上关闭 AskHuman 后再发一次。测试问题会立即推送；其它问题默认要等 Mac 空闲 15 分钟才推送（卡片上的「推送时机」可改），手机收件箱不受这个等待限制。
 
-2. 在手机回答，确认 Mac 终端收到结果。这条命令只测试收答，不调用模型。
-3. Mac 的 iOS App 渠道把「推送时机」暂改为「立即」。锁屏手机，再执行一次上面的命令，点通知进入并回答。
-
-两次都成功就配置好了。测试后可改回喜欢的推送时机；默认要等 Mac 空闲 15 分钟才推送，手机收件箱不受这个等待限制。
-
-遇到问题，把失败页面截图和两端版本号发给邀请人；遮住密码、连接串和配对码。
+遇到问题，把失败页面截图和两端版本号发给维护者；遮住密码、连接串和配对码。
 
 ## 可选：自己部署推送中继
 
@@ -73,7 +54,7 @@ Broker 是 Mac 和手机之间的中转站，由你自备，AskHuman 不绑定�
 
 1. 用自己的 Team 和 Bundle ID 编译、安装 iOS App，并创建匹配的 APNs 推送密钥。
 2. 将仓库的 `relay/` 部署到自己的腾讯云云函数，配置上述密钥，确认 `/v1/health` 检查通过。
-3. Mac 填入自己的中继地址，测试连接后，与自己签名的 App 重新配对。
+3. 在卡片的「更多设置」里选「使用自己的中继」，填入中继地址，测试连接后，与自己签名的 App 重新配对。
 
 具体命令和配置见 **[完整自部署指南](https://github.com/Naituw/AskHuman/blob/main/docs/wiki/ios-setup.md)**。
-这条路线使用自己签名的 iOS App；前面的 TestFlight 方案使用邀请人提供的 App 和中继。
+这条路线使用自己签名的 iOS App；前面的 TestFlight 方案使用维护者提供的 App 和公共中继。

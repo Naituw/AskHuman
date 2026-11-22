@@ -32,6 +32,10 @@ The tool automatically records the recent history of agent questions and human a
   <img src="assets/history.webp" alt="Browse message and reply history per project" width="680">
 </p>
 
+## iOS app
+
+Answer your agents' questions from your iPhone when you're away from your desk. Questions arrive in the app's inbox with push notifications, and messages are end-to-end encrypted through an MQTT broker you provide. Join the beta on the [AskHuman Mobile page](https://naituw.github.io/AskHuman/) (TestFlight, iOS 17 or later), then follow the [setup guide](docs/wiki/ios-setup.en.md); in Settings → Channels, the iOS App card walks you through it.
+
 ## Install
 
 ```bash

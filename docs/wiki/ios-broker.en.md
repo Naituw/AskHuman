@@ -6,6 +6,8 @@ The AskHuman iOS channel relays messages between your Mac and your iPhone throug
 
 This page lists the **requirements** first, then three **tested** paths side by side: EMQX Cloud Serverless, flespi and a self-hosted Mosquitto. Any MQTT broker that meets the requirements works; run the repository's [compatibility suite](#verify-a-broker-yourself) against it to find out.
 
+The broker steps on the iOS App card (Settings → Channels) summarize the paths below.
+
 ## What the broker must do
 
 | Requirement | Why |
