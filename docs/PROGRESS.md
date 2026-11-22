@@ -3,6 +3,18 @@
 记录需要跨会话保留的未完成 / 延期事项和明确下一步。任务 / 需求完成后删除其 section
 （历史留在 git）。
 
+## 进行中：iOS 设置体验（设计已通过；按计划 P1–P5 实现，P1 起）
+
+用户 2026-11-22 要求全面优化 iOS 渠道的设置界面：打开设置就能完成后续配置（Broker、TestFlight、配对），并能让 Agent 代配。
+规格 [ios-setup-experience.md](specs/ios-setup-experience.md)（全部文案在 §14），计划 [plans/ios-setup-experience.md](plans/ios-setup-experience.md)，
+原型 `src/prototype/settings-ios.html`，截图 `docs/assets/ios-setup-experience/`。设计经三轮确认（规格 §12）：
+TestFlight 公共链接 + Pages 落地页、卡片顶部「设置步骤」清单、`AskHuman channel ios --agent-guide`、保活开关 + 「发一条测试问题」、
+卡片移出「实验」并放在「本地弹窗」之下、公共组「AskHuman Public」上限 1,000、README 加一节；在主工作区做。
+
+- [ ] 按计划实现：P1 卡片 → P2 探测与 Agent 指南 → P3 文档与落地页 → P4 iOS 文案（出包另问）→ P5 放出（可见性只在 P5 的一个提交里翻）。每期做完在这里勾掉并记下卡点。
+- [ ] 放出前的外部依赖（每一项都要用户明确同意）：Pages 落地页与 TestFlight 公共链接、带新路径文案的 iOS 新构建与 Beta 审核；
+  具体放出时间由用户另行决定；放出后要**至少每 80 天出一次 TestFlight 包**（构建 90 天过期，公共链接才一直可用）。
+
 ## 进行中：Antigravity 深度集成（P1–P4 已实现并装为日常版，等用户验收）
 
 规格 [antigravity-deep-integration.md](specs/antigravity-deep-integration.md)，计划 [plans/antigravity-deep-integration.md](plans/antigravity-deep-integration.md)

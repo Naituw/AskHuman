@@ -1,0 +1,104 @@
+# iOS App 渠道设置体验：开发与交付计划
+
+日期：2026-11-22。状态：**设计已通过（第 3 轮）**；P0（原型与规格）已完成并提交，P1 起开工；碰 Apple / Pages / 公共链接 / 发版的步骤逐项另问用户。需求与决策见 [`docs/specs/ios-setup-experience.md`](../specs/ios-setup-experience.md)（全部文案在其 §14，实现以它为准），原型与截图在 `src/prototype/settings-ios.html` 一组文件与 `docs/assets/ios-setup-experience/`。
+
+**工作位置：主工作区**（用户第 2 轮选定，沿用现有安装流程）。同一棵树里常有别的会话的未提交改动（现在有 `docs/PROGRESS.md`、`docs/specs/ios-traffic-reduction.md`、`docs/wiki/ios-setup*.md`、`src-tauri/src/app/attachment_owner.rs` 等），提交时只暂存自己的文件或自己的改动块（`git apply --cached` 一个只含自己改动块的补丁），不碰别人的。
+
+顺序：P0 设计 → P1 卡片（前端，仍在「实验」里）→ P2 后端小改（探测、Agent 指南）→ P3 文档与落地页 → P4 iOS 文案与出包 → P5 放出（翻可见性 + 发版）。
+**可见性只在 P5 的一个提交里翻**：P1–P4 做的所有东西仍在隐蔽开关后面，随时推送到 `main` 也不会被别的发布顺带带出去（卡片一旦可见，步骤 2 的二维码就必须能用，见规格 §10.4）。
+
+提交约定：P1–P4 的提交带 `Release-Note: skip`；P5 的放出提交是唯一一个面向用户的 `feat(ios)`，写好 release note（见 P5）。
+
+## P0：设计（已完成）
+
+- 原型：`src/prototype/settings-ios.html`、`IosSetupProto.vue`、`IosProviderGuide.vue`、`IosConnForm.vue`、`IosPairBlock.vue`、`iosSetupState.ts`、`settings-ios-main.ts`、`settingsIos.css`、`assets/ios-*-qr.svg`；真实 `SettingsView` + mock 后端，`pnpm dev` 后打开 `http://localhost:5180/prototype/settings-ios.html?scene=<场景>`（场景 `off|agent|broker|emqx|emqx-filled|flespi|custom|app|pair-start|pair|confirm|try|try-sent|steps|ready`，另有 `theme=dark`、`w=480|560`、`focus=1`、`fold=0`）。
+- 截图 18 张在 `docs/assets/ios-setup-experience/`（浅色、深色、窄窗口）。
+- 规格与本计划。第 3 轮用户已通过（规格 §12），分两个提交：① `docs(ios)`：原型、截图、规格、计划、`PROGRESS.md` 里自己那一块（`Release-Note: skip`）；② `fix(ios)`：第 2 轮顺手改掉的措辞——`src/i18n/zh.ts`、`en.ts` 里 EMQX 的 `limits`、`docs/wiki/ios-broker*.md`、`docs/specs/ios-open-access.md` 的 OA6（只有隐蔽开关后面看得到，带 `Release-Note: skip`）。
+
+## P1：卡片（前端；仍放在「实验」里）
+
+目标：把 `IosChannelCard.vue`（473 行）重做成规格 §3–§9 的样子，行为沿用现有的配置读写、测试连接与配对，不改后端。
+
+1. **步骤判定**：新增 `src/views/settings/useIosSetup.ts`，纯函数 `deriveSetup({ ios, gateway, appAcked })` → `{ steps: [{ id, done }], current, ready, tag }`（规格 §3.2–§3.3），不碰 Vue 响应式，写单测：全空、已启用未填全、填全未连接、已连接无手机、`pendingConfirm` 的手机不算、有手机、`last_error` → 异常、`appAcked` 只影响步骤 2、已就绪的判定。
+2. **组件拆分**（原型 → 产品）：
+   - `IosChannelCard.vue`：壳、头部、三种形态；
+   - `IosSetupSteps.vue`：手风琴（同时只展开一步，当前步默认展开，点标题展开别的步）；
+   - `IosProviderGuide.vue`：三个磁贴 + 编号步骤 + 提示；**数据进 `iosBrokers.ts`**（每家的步骤键、官方入口链接、提示种类），文案进 i18n；`detectBroker` / `brokerFill` / 失败提示分类沿用；
+   - `IosConnectionForm.vue`：字段、测试连接、导入、「更多设置」；
+   - `IosPairing.vue`：配对块与设备列表（沿用现有的 `useIosChannel.ts` 逻辑）；
+   - `IosAgentBox.vue`：提示词框与复制；
+   - `IosReadyBox.vue`：已就绪框 + 测试问题行；
+   - `useIosTestQuestion.ts`：封装 `setup_probe_start("channel","ios")` / `setup_probe_cancel` 与 `setup-probe-result` 事件、四种结局、120 s 超时、窗口关闭时取消；
+   - 保活行：读写 `general.daemonLifecycle`，锁定判定复用 `useAgentTasks.ts` / `AgentTasksSwitchRow` 现有的逻辑，不新增配置。
+3. **步骤 2**：二维码用现有 Tauri 命令 `ios_pair_qr(text)`（名字是配对专用，实际接受任意文本）渲染落地页地址；落地页地址是一个常量（`iosBrokers.ts` 旁的 `iosLinks.ts`），**不放 TestFlight 链接**。「复制链接」「在浏览器中打开」用现有的 `openUrl`。
+4. **样式**：原型用 `ios2-` 前缀避免冲突；产品并回 `settings.css` 的 `ios-` 一组，删掉旧样式；只用设计令牌，深色、480 / 560 宽度都要看。
+5. **i18n**：新键放 `settings.channels.ios.*`（中英），文案逐字取自规格 §14（含提示词中英）；旧的 `settings.experimental.ios.*` 在 P5 随位置一起迁移，P1 先在新命名空间里写新文案并让新卡引用它，旧键留到 P5 删（避免 P1 一次改两处）。
+6. **事实一致性测试**（规格 §7.5）：`iosFacts.test.ts` 检查关键数字（100 万连接分钟、1 GB、¥100、8760 小时、8883 / 8084 / 443、`ah/<用户名>/#`）在 zh / en 卡片文案里都有；P2 的指南出来后，同一个测试把指南文本也纳入。
+7. **测试**：`useIosSetup` 单测；`IosChannelCard.test.ts` 重写（三种形态、手风琴、磁贴选择与填充、复制、保活锁定、测试问题四种结局、「我已装好」只改界面、已就绪后「查看设置步骤」）；`iosBrokers.test.ts` 补新数据。
+
+验证：`npx vitest run src/views/settings src/views/setup src/i18n`、`vue-tsc --noEmit`；把原型页的挂载换成真实的 `IosChannelCard` 在浏览器里用 mock 后端点一遍所有场景（浅 / 深、480 / 560），与规格截图逐张对照；`./scripts/install.sh` 前先 `node scripts/machine-health.mjs`。不改 IPC，不改配置字段，不需要 recovery 迁移。
+
+## P2：后端小改（探测、Agent 指南）
+
+1. **探测支持 iOS**（规格 §9.2）：
+   - `onboarding/probe.rs`：`ProbeTarget::parse` 接受 `ios`（不改 `channels::ORDER`）；把「`parse_probe_id("setup-probe:ios:abc") == None`」与「`Check::parse("channel", Some("ios")).is_err()`」两个测试改成相反的断言，并补 `policy(Some(ProbeTarget::Channel("ios")))` = 不弹窗 / `Only("ios")` / 无钩子 / 不改当前渠道；
+   - `onboarding/probe_run.rs`：`Check::parse` 放行 `ios`；
+   - `daemon/runtime/mod.rs`（约 3414 行）：直接挂载 iOS 的条件扩成 `All` 或 `Only("ios")`；顺带把 iOS 的挂载计入 `im_attached`（只影响日志 / 埋点）；
+   - `ios/gateway/requests.rs::flush_due_notifications`（约 634 行）：`immediate` 再加 `ask.setup_probe`；
+   - 测试：`daemon/request.rs` 里 `setup_probe` 对 `ios` 的断言；`ios/gateway/tests_requests.rs` 里「探测提问在 Mac 刚有输入（`idle < alert_after`）时也立即通知」；`daemon/runtime` 里按现有渠道探测测试的写法补一条 iOS 的（只挂 iOS、不弹窗、不触发 `ask-received` 钩子、不进回复历史）。
+2. **`channel ios --agent-guide`**（规格 §7.3–§7.4）：
+   - 新增 `src-tauri/src/cli/ios_guide.rs`：`render(&GuideState, Lang) -> String` 是纯函数，`GuideState` 只含**已去敏**的状态（启用、主机、用户名、服务商、密码「已填 / 未知」、网关状态、手机数与在线数、生命周期与是否被锁定）；因为输入里根本没有凭据，输出不可能带出凭据；
+   - 取状态：新增一个**不拉起守护进程**的读取（仿 `probe_run::watch_agent_ask` 用的 `client::connect_stream`），连不上就写「守护进程未运行」；配置只用 `AppConfig::load_without_secrets()`，不读钥匙串；
+   - `ios_cmd::dispatch` 增加 `--agent-guide` 分支；`channel ios help` 与 `channel --help` 的 ios 一节各提一行；
+   - 文本中英各一份，内容见规格 §7.3 的分节与 §7.4 的规则、命令分级；**所有给 Agent 的规则只写在这里**，卡片复制出去的提示词只有三行、不写规则（规格 D18）；EMQX 的额度与充值提示原样带上；
+   - 测试：每个状态 × 两种语言一份快照（未启用 / 已启用未填全 / 已连接无手机 / 有手机 / 守护进程未运行 / 断开带错误）；断言输出里**有**硬性规则与 EMQX 提示、**没有**命令分级里「只能用户运行」的命令被写成「可以直接运行」、**没有**任何哨兵凭据；P1 的一致性测试把本文本纳入。
+3. 保持 `ios_cmd::available()` 门控**不变**（P5 才去掉）：P2 的验证要在打开隐蔽开关的环境里做。
+
+验证：`node scripts/machine-health.mjs` 通过后跑 `cargo test` 里 `onboarding::`、`ios::`、`cli::`、`daemon::request`、`daemon::runtime` 相关项与 `cargo clippy -D warnings`；`./scripts/install.sh` 装机后，在隐蔽开关打开的机器上：卡片的「发一条测试问题」对真实手机（用户拿手机）跑一次，另用仓库的 iOS 网关测试夹具验证立即推送；`AskHuman channel ios --agent-guide` 在各状态下读一遍输出；**由我自己（不另起 Cursor 任务）按指南走一遍**，看指南是否足够、有没有诱导越界。IPC 与 `PROTOCOL_VERSION` 不变（规格 §9.2 的论证）。
+
+## P3：文档与落地页
+
+1. **落地页**（规格 §5.2）：`scripts/build-ios-beta-site.mjs` 的根页改成中英双语的 TestFlight 落地页；`docs/public/ios/testflight.json`（`{"url": "…"}`）由 P4 拿到真实公共链接后才新增，构建脚本读取并校验（存在但不是 `https://testflight.apple.com/join/…` 就失败）；**文件不存在时不显示按钮，保持现在「目前仅限邀请」的文案**，所以 P3 的改动不改变 Pages 现状，Pages 也可以先为别的原因（新的隐私政策）重新发布。给脚本加 `node:test` 校验（缺失、域名不对、通过三种）。本地 `node scripts/build-ios-beta-site.mjs` 后在浏览器里看 `site-dist/index.html`（有链接与没有链接两种、浅 / 深、窄屏）并留截图。
+2. **朋友内测指南** `docs/public/ios/beta.md`、`beta-zh.md`：改成公共链接版（去掉「邀请人发来的邮件邀请与中继地址」「打开实验性功能」，配置步骤改指向卡片，保留自部署一节）。
+3. **Wiki**：`docs/wiki/ios-setup.md`、`ios-setup.en.md` 的入口路径与步骤改成卡片的三步；`ios-broker.md` 的事实不动，只在开头加一句「卡片里的步骤是这里的摘要」。
+4. **规格与概览**（P3 只改不依赖可见性的部分）：`docs/specs/ios-open-access.md` 的 OA12 标「已由 ios-setup-experience 接手」；`docs/overview-ios.md` 只改变了的部分；`docs/specs/ios-channel.md` 的 D22 等放到 P5 与可见性同一提交。
+5. **README**（用户第 2 轮已同意，规格 D21）：中英各加一节 iOS App，保持简短：一句话介绍、落地页链接、设置指南链接。
+6. **`docs/PROGRESS.md`**：开工时加「进行中：iOS 设置体验」一节（下一步、卡点、等用户的事）；P5 放出时把 90 天构建刷新的承诺写进去；与本任务重叠的旧条目（「发行给朋友之前…」「带默认中继的 Mac 版本发布后改朋友内测指南」等）随各自完成删除。
+
+验证：构建脚本的测试；`site-dist` 里所有站内链接可达；文案与代码事实（路径、按钮名）逐条对一遍。
+
+## P4：iOS 文案与出包（Apple 侧动作逐项需要用户同意）
+
+1. **App 文案**：`ios/AskHuman/Views/Inbox/OnboardingView.swift:24`、`ios/AskHuman/Views/Pairing/PairingSheet.swift:80`，以及 `ios/Tools/make-catalog.py`（424、453 行）与 `Localizable.xcstrings`（用脚本重新生成）里的「设置 → 实验 → iOS App 渠道」改成「设置 → 通信渠道 → iOS App」。`xcodebuild` 模拟器编译；检查没有别的地方引用旧字符串（快照、测试）。
+2. **审核与测试材料**：`docs/release/ios-external-beta/*.txt`（审核备注、Beta 描述、What to Test）与 `ios-testflight` 技能里仍写「自备 EMQX」「实验」的字样，一并改成中立的新说法（`ios-open-access.md` P2 当时刻意留到这次出包）。
+3. **公共链接**（规格 §5.3）：给签名 helper（`ExternalTesting.swift`，现在封闭到 Friends 组 1–5 人、公共链接关）新增**有界**的「开 / 关公共链接、设测试员上限」操作，固定到本应用与新建的外部组「AskHuman Public」（上限 1,000，规格 D19），写入前先读现状并计算差异，不增加任意 API 调用能力；Friends 组保持原样。**只有用户明确同意后才对 App Store Connect 执行**，同意只对所申请的那一项有效。
+4. **出包**：走 `ios-testflight` 技能，先列变更清单；新构建进入公共组并过 Beta App Review；拿到公共链接，新增 `docs/public/ios/testflight.json`（P3 的脚本已能读它）。出包与送审另行取得用户指示（OA13）。
+
+验证：模拟器编译与 `swift test --filter AHStoreTests`；helper 的模拟 HTTP 测试覆盖「固定应用 / 组边界、请求字段、幂等、失败」；真实后台只做本次目标的必要变更并读回。
+
+## P5：放出（翻可见性 + 发版）
+
+顺序固定（规格 §10.4），**具体放出时间由用户另行决定**（规格 D20）；每一步都先确认上一步已真实生效：
+
+1. 发布 Pages（手动工作流 `ios-beta-pages`），打开落地页与 TestFlight 公共链接，**用一台没加过测试的手机从落地页走到 TestFlight 安装成功**；
+2. 带新文案的 iOS 构建已在公共组、审核通过；
+3. **一个提交**翻可见性（规格 §10.1）：
+   - 卡片移到 `ChannelsTab.vue` 的最上面（规格 D13）：模板里紧跟「本地弹窗」卡、排在「按需发送」提示之前，按 DOM 顺序，不用 CSS `order`；`id="channel-ios"`、`useSearch.ts` 与深链；`ExperimentalTab.vue` 空状态一行；`settings.experimental.ios.*` 迁到 `settings.channels.ios.*` 并删旧键；
+   - `AwayCard.vue`、`RemotePage.vue`（`showIos` 与 `openSettings("channel#channel-ios")`）；
+   - `ios_cmd::available()` 与 `channel_cmd.rs` 里四处门控去掉，`channel list` / `help` 与测试更新，`ios_cmd.rs` 帮助里的「(experimental)」去掉；
+   - 文档：`ios-channel.md`（D22、L97、L282、L284）、`overview-ios.md`、`docs/overview.md` 里提到「实验」的地方；
+   - 提交信息 `feat(ios): …`，**不带** `Release-Note: skip`，并写 `Release-Note:` 一行：「iOS App 渠道不再是实验功能：设置里有分步引导（Broker、TestFlight、配对）、一键测试，也可以让 Agent 帮你配置。」（先给用户看措辞）；
+4. 装机验证后发 Mac 新版（发布流程另行取得用户指示）；
+5. 把「每 80 天出一次 TestFlight 包」「公共链接与上限的现状」「一周后复核中继与链接的用量」记进 `docs/PROGRESS.md`。
+
+验证：`node scripts/machine-health.mjs` → `./scripts/install.sh`；真实窗口里 设置 → 通信渠道 看卡片三种形态、深链、搜索；`AskHuman channel list` 与 `channel ios --agent-guide` 对没打开隐蔽开关的环境可用；**用户在真机上从零走完整条链路**（新 Broker 账号 → 落地页 → TestFlight → 配对 → 测试问题）并让一个 Agent 按提示词配一遍（密码仍由用户输入）。
+
+## 风险与回退
+
+- 步骤 2 依赖 Apple 与 Pages：任何一步没准备好，P5 不进行；P1–P4 的内容在隐蔽开关后面，不影响现有用户。
+- 回退：P5 的翻转是一个提交，`git revert` 即回到「实验」；Pages 与公共链接可以单独关闭。
+- 测试问题的过渡期风险与 Agent 越界风险见规格 §11。
+
+## 不在本计划
+
+规格 §13 全部；以及：自动化 Broker 开户、非 macOS 的推送时机适配、iOS 内置引导页重做。

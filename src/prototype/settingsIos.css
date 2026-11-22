@@ -1,0 +1,472 @@
+/* Prototype styles for the redesigned iOS App card (docs/specs/ios-setup-experience.md). Built on the
+   settings vocabulary (.card / .row / .field / .input / .btn / .switch / .status-tag / .link); when the
+   design is approved these move into views/settings/settings.css. */
+
+/* `?focus=1` hides every other card on the Channels tab so one screenshot shows only the new one. */
+html.si-focus .settings-body > .card:not(.ios2-card) {
+  display: none;
+}
+
+.ios2-card .channel-head {
+  gap: var(--space-3);
+}
+.ios2-desc {
+  margin: var(--space-2) 0 0;
+}
+.ios2-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+  margin-top: var(--space-3);
+}
+
+/* "Ask an Agent to do it": a visible prompt with a copy button, never a hidden clipboard write. */
+.ios2-agent {
+  margin-top: var(--space-3);
+  padding: var(--space-3);
+  border: var(--hairline) solid var(--border);
+  border-radius: var(--radius-lg);
+  background: var(--bg-elevated);
+}
+.ios2-agent-head {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  margin-bottom: var(--space-2);
+}
+.ios2-agent-text {
+  font-size: 12.5px;
+  color: var(--text-secondary);
+}
+.ios2-prompt {
+  margin: 0;
+  padding: 8px 10px;
+  border-radius: var(--radius-md);
+  background: var(--control-bg);
+  border: var(--hairline) solid var(--control-border);
+  font-family: var(--font-mono);
+  font-size: 11.5px;
+  line-height: 1.55;
+  white-space: pre-wrap;
+  user-select: text;
+}
+
+/* Guide header and step list. */
+.ios2-guide-head {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  margin: var(--space-4) 0 var(--space-2);
+}
+.ios2-guide-title {
+  font-size: 12.5px;
+  font-weight: 600;
+}
+.ios2-progress {
+  font-size: 11.5px;
+  color: var(--text-secondary);
+  font-variant-numeric: tabular-nums;
+}
+.ios2-steps {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  border: var(--hairline) solid var(--border);
+  border-radius: var(--radius-lg);
+  overflow: hidden;
+}
+.ios2-step + .ios2-step {
+  border-top: var(--hairline) solid var(--border);
+}
+.ios2-step-head {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  width: 100%;
+  min-height: 40px;
+  padding: 8px 12px;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: default;
+}
+.ios2-step-head:hover {
+  background: var(--bg-elevated);
+}
+.ios2-num {
+  flex: 0 0 auto;
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  display: grid;
+  place-items: center;
+  font-size: 11.5px;
+  font-weight: 600;
+  background: var(--bg-elevated);
+  color: var(--text-secondary);
+}
+.ios2-step.current .ios2-num {
+  background: var(--accent);
+  color: #fff;
+}
+.ios2-step.done .ios2-num {
+  background: var(--accent-green);
+  color: #fff;
+}
+.ios2-num svg {
+  width: 11px;
+  height: 11px;
+}
+.ios2-step-title {
+  font-size: 13px;
+  font-weight: 600;
+}
+.ios2-step.upcoming .ios2-step-title {
+  color: var(--text-secondary);
+  font-weight: 500;
+}
+.ios2-step-sum {
+  margin-left: auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 12px;
+  color: var(--text-secondary);
+}
+.ios2-chevron {
+  flex: 0 0 auto;
+  width: 10px;
+  height: 10px;
+  color: var(--text-tertiary);
+  transition: transform 0.15s ease;
+}
+.ios2-step.open .ios2-chevron {
+  transform: rotate(180deg);
+}
+/* The body lines up under the title: padding + number + gap. */
+.ios2-step-body {
+  padding: 0 12px 14px 44px;
+}
+.ios2-lead {
+  margin: 0 0 var(--space-2);
+  font-size: 12.5px;
+  line-height: 1.55;
+  color: var(--text-secondary);
+}
+
+/* Broker choice. */
+.ios2-tiles {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: var(--space-2);
+  margin: var(--space-2) 0 var(--space-3);
+}
+.ios2-tile {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  justify-content: flex-start;
+  padding: 9px 10px;
+  border: 1px solid var(--control-border);
+  border-radius: var(--radius-md);
+  background: var(--control-bg);
+  box-shadow: var(--clickable-shadow);
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: default;
+}
+.ios2-tile:hover {
+  background: var(--control-hover-bg);
+}
+.ios2-tile.active {
+  border-color: var(--accent);
+  box-shadow: var(--focus-ring);
+}
+.ios2-tile b {
+  display: block;
+  font-size: 12.5px;
+  font-weight: 600;
+}
+.ios2-tile span {
+  display: block;
+  margin-top: 2px;
+  font-size: 11.5px;
+  line-height: 1.35;
+  color: var(--text-secondary);
+}
+
+/* Numbered provider instructions, copy chips and the notice. */
+.ios2-list {
+  margin: 0 0 var(--space-3);
+  padding-left: 18px;
+  font-size: 12.5px;
+  line-height: 1.7;
+}
+.ios2-list > li + li {
+  margin-top: 4px;
+}
+.ios2-list ul {
+  margin: 2px 0 0;
+  padding-left: 16px;
+  list-style: disc;
+}
+.ios2-list .link {
+  white-space: nowrap;
+}
+.ios2-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  margin: 0 1px;
+  padding: 0 6px;
+  border: var(--hairline) solid var(--control-border);
+  border-radius: 5px;
+  background: var(--control-bg);
+  color: var(--text-primary);
+  font-family: var(--font-mono);
+  font-size: 11.5px;
+  line-height: 18px;
+  cursor: default;
+}
+.ios2-chip:hover:not(:disabled) {
+  background: var(--control-hover-bg);
+}
+.ios2-chip:disabled {
+  opacity: 0.55;
+}
+.ios2-chip .ios2-copied {
+  font-family: var(--font-sans);
+  font-size: 11px;
+  color: var(--accent-green);
+}
+.ios2-notice {
+  margin: 0 0 var(--space-3);
+  padding: 8px 10px;
+  border: var(--hairline) solid color-mix(in srgb, var(--accent-orange) 40%, transparent);
+  border-radius: var(--radius-md);
+  background: color-mix(in srgb, var(--accent-orange) 12%, transparent);
+  font-size: 12px;
+  line-height: 1.6;
+  color: var(--text-primary);
+}
+.ios2-notice b {
+  font-weight: 600;
+}
+.ios2-notice.info {
+  border-color: var(--border);
+  background: var(--bg-elevated);
+  color: var(--text-secondary);
+}
+
+/* Connection form. */
+.ios2-form .field + .field {
+  margin-top: var(--space-3);
+}
+.ios2-ports {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: var(--space-3);
+  margin-top: var(--space-3);
+}
+.ios2-ports > .field + .field {
+  margin-top: 0;
+}
+.ios2-ports + .field {
+  margin-top: var(--space-3);
+}
+.ios2-form .ios2-form-actions {
+  margin-top: var(--space-3);
+}
+.ios2-more {
+  margin-top: var(--space-3);
+  font-size: 12px;
+}
+.ios2-more > summary {
+  cursor: default;
+  color: var(--text-secondary);
+}
+.ios2-more[open] > summary {
+  margin-bottom: var(--space-2);
+}
+/* The folded provider steps sit above the form, so they leave the gap below instead of above. */
+.ios2-more.ios2-guide-fold {
+  margin: 0 0 var(--space-3);
+}
+.ios2-result {
+  margin: var(--space-2) 0 0;
+  font-size: 12px;
+  line-height: 1.5;
+}
+.ios2-result.ok {
+  color: var(--accent-green);
+}
+.ios2-result.warn {
+  color: var(--accent-orange);
+}
+.ios2-keep {
+  margin-top: var(--space-4);
+  padding-top: var(--space-3);
+  border-top: var(--hairline) solid var(--border);
+}
+.ios2-keep .label {
+  font-size: 12.5px;
+}
+.ios2-next {
+  display: flex;
+  justify-content: flex-end;
+  margin-top: var(--space-3);
+}
+
+/* Step 2: the TestFlight join block. */
+.ios2-join {
+  display: flex;
+  gap: var(--space-4);
+  align-items: flex-start;
+}
+.ios2-qr {
+  flex: 0 0 auto;
+  width: 132px;
+  height: 132px;
+  border-radius: 8px;
+  overflow: hidden;
+  background: #fff;
+  border: var(--hairline) solid var(--border);
+}
+.ios2-qr svg {
+  display: block;
+  width: 100%;
+  height: 100%;
+}
+.ios2-join-side {
+  flex: 1;
+  min-width: 0;
+}
+.ios2-join-side .ios2-list {
+  margin-bottom: var(--space-2);
+}
+.ios2-links {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+  align-items: center;
+}
+
+/* Step 3 and the device list: same look as today's card. */
+.ios2-pair {
+  display: flex;
+  gap: var(--space-4);
+  align-items: flex-start;
+  margin: var(--space-3) 0;
+  padding: var(--space-3);
+  border: var(--hairline) solid var(--border);
+  border-radius: var(--radius-lg);
+}
+.ios2-pair .ios2-qr {
+  width: 156px;
+  height: 156px;
+}
+.ios2-sas {
+  margin: 0 0 var(--space-3);
+  font-family: var(--font-mono);
+  font-size: 28px;
+  letter-spacing: 0.12em;
+  font-variant-numeric: tabular-nums;
+}
+.ios2-devices {
+  list-style: none;
+  margin: var(--space-2) 0 0;
+  padding: 0;
+}
+.ios2-device {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  padding: 8px 0;
+}
+.ios2-device + .ios2-device {
+  border-top: var(--hairline) solid var(--border);
+}
+.ios2-dot {
+  flex: 0 0 auto;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--text-tertiary);
+}
+.ios2-dot.on {
+  background: var(--accent-green);
+}
+.ios2-device-main {
+  flex: 1;
+  min-width: 0;
+}
+.ios2-device-name {
+  margin: 0;
+  font-size: 13px;
+}
+.ios2-device-meta {
+  margin: 2px 0 0;
+  font-size: 11.5px;
+  color: var(--text-secondary);
+}
+
+/* Step 4. */
+/* Ready: one box for the guide (status line + the test question), then the management sections. */
+.ios2-ready {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  margin-top: var(--space-3);
+  padding: 9px 12px;
+  border: var(--hairline) solid color-mix(in srgb, var(--accent-green) 40%, transparent);
+  border-radius: var(--radius-lg);
+  background: color-mix(in srgb, var(--accent-green) 10%, transparent);
+  font-size: 12.5px;
+}
+.ios2-ready-line {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-height: 24px;
+}
+.ios2-ready .spacer {
+  flex: 1;
+}
+.ios2-try {
+  padding-top: var(--space-2);
+  border-top: var(--hairline) solid color-mix(in srgb, var(--accent-green) 28%, transparent);
+}
+.ios2-try-text {
+  min-width: 0;
+  color: var(--text-secondary);
+}
+.ios2-section {
+  margin: 0 0 var(--space-2);
+  font-size: 12.5px;
+  font-weight: 600;
+}
+.ios2-subdesc {
+  margin: 2px 0 0;
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--text-secondary);
+}
+.ios2-conn-summary {
+  font-size: 12.5px;
+}
+.ios2-conn-summary .ios2-subdesc {
+  display: inline;
+  margin-left: var(--space-2);
+}
+.ios2-conn-body {
+  margin-top: var(--space-3);
+}
+.ios2-traffic {
+  margin: 0;
+  font-size: 12px;
+  color: var(--text-secondary);
+}
