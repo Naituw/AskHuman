@@ -148,6 +148,14 @@ function openGuide() {
   void openPath(iosSetupGuideUrl(String(locale.value).startsWith("zh")));
 }
 
+// A link that ends in `#start` (`channel#channel-ios#start`, from the setup wizard's iOS tile) does
+// what a click on "Start setup" does, for a card that is still off. One that is on already is left as
+// it is: the link only brings it on screen.
+function onSettingsAction(event: Event) {
+  const action = (event as CustomEvent<{ action?: string }>).detail?.action;
+  if (action === "start" && !ios.value.enabled) void toggleEnabled(true);
+}
+
 const highlighted = computed(() => ctx.settingsTargetHighlight?.value === "channel-ios");
 </script>
 
@@ -157,6 +165,7 @@ const highlighted = computed(() => ctx.settingsTargetHighlight?.value === "chann
     class="card channel-card ios-card"
     :class="{ 'settings-target-highlight': highlighted }"
     data-testid="ios-card"
+    @settings-action="onSettingsAction"
   >
     <ChannelCardHead
       id="ios"

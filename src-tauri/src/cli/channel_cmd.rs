@@ -706,15 +706,23 @@ fn wizard_inner(name: &str, lang: Lang, enable_by_default: bool) -> Result<(), S
         &format!("{name} saved"),
         &format!("{name} 已保存"),
     ));
-    eprintln!(
-        "{}",
+    if let Some(tip) = saved_tip(name, lang) {
+        eprintln!("{tip}");
+    }
+    Ok(())
+}
+
+/// The hint printed under a saved wizard. `channel detect` fills in the user id of the IM
+/// channels, so it means nothing for the iOS App: no tip is printed for it, and the setup flow
+/// that follows the wizard says what comes next.
+fn saved_tip(name: &str, lang: Lang) -> Option<String> {
+    (name != "ios").then(|| {
         cfgio::t(
             lang,
             "Tip: run 'channel detect' to auto-fill the user id, and 'channel test' to verify.",
             "提示：可运行 'channel detect' 自动识别用户 id，'channel test' 验证连通。",
         )
-    );
-    Ok(())
+    })
 }
 
 /// 隐藏输入一个密钥；留空保留原值（向导用）。
@@ -897,6 +905,17 @@ mod tests {
         for lang in [Lang::Zh, Lang::En] {
             let error = canon("nope", lang).unwrap_err();
             assert!(error.contains("slack|ios"), "{lang:?}: {error}");
+        }
+    }
+
+    #[test]
+    fn the_wizard_tip_about_detect_is_for_the_im_channels_only() {
+        for lang in [Lang::Zh, Lang::En] {
+            for name in CHANNELS {
+                let tip = saved_tip(name, lang).unwrap_or_default();
+                assert!(tip.contains("channel detect"), "{name} {lang:?}: {tip}");
+            }
+            assert_eq!(saved_tip("ios", lang), None, "{lang:?}");
         }
     }
 

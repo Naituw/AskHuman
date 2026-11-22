@@ -16,7 +16,7 @@ import type { AgentKind, AgentTaskReadiness, AgentTaskWorkspace } from "../../li
 import { supportsAgentTasks } from "../../lib/platform";
 import type { SettingsCore } from "./context";
 import type { ReadinessIssue } from "./readiness";
-import { revealSettingsTarget } from "./reveal";
+import { actOnSettingsTarget, revealSettingsTarget } from "./reveal";
 
 /** Each Agent's official install guide: the readiness "CLI unavailable" link opens it, and the New Task window reuses it. */
 export const AGENT_INSTALL_DOCS: Record<AgentKind, string> = {
@@ -207,9 +207,10 @@ export function useAgentTasks(core: SettingsCore) {
    * highlight it briefly. Cross-window anchor jumps (`tab#elementId` of `open_settings`, spec
    * gui-agent-task-launch G5) reuse it. `fallback` is where to go when the target element does
    * not exist, e.g. only an integrated Agent card has a lifecycle row, so any other card falls
-   * back to the card itself.
+   * back to the card itself. `action` (`tab#elementId#action`) is handed to the element's owner
+   * once the jump is done.
    */
-  async function gotoSettingsTarget(target: string, fallback?: string) {
+  async function gotoSettingsTarget(target: string, fallback?: string, action?: string) {
     await nextTick();
     const id = fallback && !document.getElementById(target) ? fallback : target;
     settingsTargetHighlight.value = id;
@@ -222,6 +223,7 @@ export function useAgentTasks(core: SettingsCore) {
       settingsTargetHighlight.value = "";
       settingsTargetTimer = undefined;
     }, 2200);
+    if (action) actOnSettingsTarget(el, action);
   }
 
   async function openReadinessIssue(kind: AgentKind, issue: ReadinessIssue) {

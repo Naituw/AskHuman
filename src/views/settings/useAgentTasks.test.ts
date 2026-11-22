@@ -6,7 +6,7 @@ import { i18n } from "../../i18n";
 import type { AppConfig } from "../../lib/types";
 import type { SettingsCore } from "./context";
 import { AGENT_INSTALL_DOCS, useAgentTasks } from "./useAgentTasks";
-import { SETTINGS_REVEAL_EVENT } from "./reveal";
+import { SETTINGS_ACTION_EVENT, SETTINGS_REVEAL_EVENT } from "./reveal";
 
 const ipc = vi.hoisted(() => ({
   agentTaskReadiness: vi.fn(),
@@ -131,5 +131,65 @@ describe("useAgentTasks: readiness links", () => {
 
     vi.advanceTimersByTime(2300);
     expect(api.settingsTargetHighlight.value).toBe("");
+  });
+});
+
+describe("useAgentTasks: the action of a jump (tab#elementId#action)", () => {
+  beforeEach(() => {
+    document.body.innerHTML = "";
+  });
+
+  afterEach(() => {
+    document.body.innerHTML = "";
+  });
+
+  it("hands the action to the target only after the target is on screen", async () => {
+    const { api } = mountComposable();
+    const card = addTarget("channel-ios");
+    const order: string[] = [];
+    card.el.scrollIntoView = vi.fn(() => {
+      order.push("scroll");
+    });
+    card.el.addEventListener(SETTINGS_ACTION_EVENT, (event) => {
+      order.push(`act ${(event as CustomEvent<{ action: string }>).detail.action}`);
+    });
+
+    await api.gotoSettingsTarget("channel-ios", undefined, "start");
+
+    expect(order).toEqual(["scroll", "act start"]);
+  });
+
+  it("hands over nothing when the link has no action", async () => {
+    const { api } = mountComposable();
+    const card = addTarget("channel-ios");
+    const heard = vi.fn();
+    card.el.addEventListener(SETTINGS_ACTION_EVENT, heard);
+
+    await api.gotoSettingsTarget("channel-ios");
+
+    expect(heard).not.toHaveBeenCalled();
+    expect(card.scrollIntoView).toHaveBeenCalledTimes(1);
+  });
+
+  it("hands over nothing when the target is not there", async () => {
+    const { api } = mountComposable();
+    const heard = vi.fn();
+    document.addEventListener(SETTINGS_ACTION_EVENT, heard);
+
+    await api.gotoSettingsTarget("channel-nobody", undefined, "start");
+    document.removeEventListener(SETTINGS_ACTION_EVENT, heard);
+
+    expect(heard).not.toHaveBeenCalled();
+  });
+
+  it("hands the action to the fallback when that is what the jump landed on", async () => {
+    const { api } = mountComposable();
+    const card = addTarget("integration-pi");
+    const heard = vi.fn();
+    card.el.addEventListener(SETTINGS_ACTION_EVENT, heard);
+
+    await api.gotoSettingsTarget("lifecycle-pi", "integration-pi", "open");
+
+    expect(heard).toHaveBeenCalledTimes(1);
   });
 });

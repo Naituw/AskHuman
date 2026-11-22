@@ -1,10 +1,10 @@
 <script setup lang="ts">
 // Wizard page 2: remote answering (docs/specs/onboarding.md D10, D18, D19, D22). One tile per IM
-// channel with its state; one channel's detail form at a time. Leaving the page goes on to the
-// Agent-task offer when it applies (D25), else to Done.
-import { computed } from "vue";
+// channel with its state, then the iOS App tile (docs/specs/setup-ios-guidance.md); one IM channel's
+// detail form at a time. Leaving the page goes on to the Agent-task offer when it applies (D25), else
+// to Done.
+import { computed, onBeforeUnmount, onMounted } from "vue";
 import { useI18n } from "vue-i18n";
-import { openSettings } from "../../lib/ipc";
 import BrandBadge from "./BrandBadge.vue";
 import {
   CHANNEL_DEFS,
@@ -14,6 +14,7 @@ import {
   type ChannelDef,
   type ChannelState,
 } from "./channelDefs";
+import IosTile from "./IosTile.vue";
 import SetupChannelForm from "./SetupChannelForm.vue";
 import SetupHeader from "./SetupHeader.vue";
 import { useSetupContext } from "./useSetup";
@@ -23,12 +24,22 @@ const ctx = useSetupContext();
 const {
   channelRows,
   detail,
-  hasEnabledChannel,
+  hasRemoteChannel,
   channelIssueText,
   openChannel,
   skipRemote,
   leaveRemote,
+  refreshIos,
 } = ctx;
+
+// The iOS tile reads a channel the person sets up in another window: look when the page opens and
+// when this window gets focus back from it. No timer.
+const onFocus = () => void refreshIos();
+onMounted(() => {
+  void refreshIos();
+  window.addEventListener("focus", onFocus);
+});
+onBeforeUnmount(() => window.removeEventListener("focus", onFocus));
 
 const openDef = computed<ChannelDef | undefined>(() =>
   detail.value ? channelDef(detail.value) : undefined,
@@ -134,29 +145,11 @@ function needs(def: ChannelDef): string {
             </div>
           </div>
 
-          <!-- iOS is not a guided channel: its tile points at its card in Settings, which has its own steps. -->
-          <div class="channel-tile" data-testid="channel-row-ios">
-            <div class="tile-head">
-              <BrandBadge id="ios" :label="t('setup.remote.ios')" />
-              <span class="tile-id">
-                <span class="tile-name">{{ t("setup.remote.ios") }}</span>
-              </span>
-            </div>
-            <div class="tile-foot">
-              <span class="spacer"></span>
-              <button
-                class="btn"
-                type="button"
-                data-testid="channel-open-ios"
-                @click="openSettings('channel#channel-ios')"
-              >
-                {{ t("setup.remote.openInSettings") }}
-              </button>
-            </div>
-          </div>
+          <!-- iOS is set up in its card in Settings; the tile shows where the person stands and opens it. -->
+          <IosTile />
         </div>
 
-        <p v-if="!hasEnabledChannel" class="setup-note center" data-testid="remote-skip-note">
+        <p v-if="!hasRemoteChannel" class="setup-note center" data-testid="remote-skip-note">
           {{ t("setup.remote.skipNote") }}
         </p>
       </div>
@@ -165,7 +158,7 @@ function needs(def: ChannelDef): string {
     <footer class="setup-footer">
       <span class="spacer"></span>
       <button
-        v-if="hasEnabledChannel"
+        v-if="hasRemoteChannel"
         class="btn btn-primary btn-lg"
         type="button"
         data-testid="remote-continue"

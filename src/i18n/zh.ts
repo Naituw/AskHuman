@@ -229,7 +229,7 @@ export default {
     },
     setupHint: {
       remote: {
-        text: "配置 IM 渠道后，离开电脑也能在手机上收到并回复提问。",
+        text: "配置 IM 渠道或 iOS App 后，离开电脑也能在手机上收到并回复提问。",
         action: "去配置",
         dismiss: "不再提示",
       },
@@ -1234,7 +1234,7 @@ export default {
     remote: {
       title: "远程回答",
       optional: "可选",
-      lead: "离开电脑时，也能在手机的 IM 里收到 Agent 的提问并回复。选一个你常用的渠道配置即可，也可以先跳过。",
+      lead: "离开电脑时，也能在手机上收到 Agent 的提问并回复，IM 或 iOS App 均可。选一个你常用的配置，也可以先跳过。",
       needs: "需要 {items}",
       skipNote: "这一步可以跳过，之后随时在「设置 → 渠道」里添加。",
       prepare: "先在平台上准备",
@@ -1242,8 +1242,22 @@ export default {
       configure: "配置",
       edit: "编辑",
       back: "返回渠道列表",
-      openInSettings: "在设置页打开",
       ios: "iOS App",
+      // The iOS App tile: its three steps are the settings card's own (`settings.channels.ios.step.*`),
+      // so the words below only add the one-line hints and the labels the card does not have.
+      iosTile: {
+        needsItems: "MQTT Broker 账号 · iPhone（iOS 17+，通过 TestFlight 安装）",
+        cap: {
+          broker: "注册服务商账号并填入",
+          app: "通过 TestFlight 安装",
+          pair: "扫码并核对确认码",
+        },
+        await: "待配对手机",
+        paired: "已就绪 · {n} 台手机",
+        continue: "继续设置",
+        manage: "管理",
+        view: "查看",
+      },
       skip: "跳过",
       saveEnable: "保存并启用",
       missing: "请先填写所有必填项。",

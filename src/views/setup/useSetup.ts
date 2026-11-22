@@ -9,6 +9,7 @@ import {
   agentModeStatus,
   saveCollaborationStyle,
   getSettings,
+  iosOp,
   setupAgentsScan,
   setupApplyAgents,
   setupChannelStatus,
@@ -20,6 +21,7 @@ import {
 import type {
   AgentId,
   CollaborationStyle,
+  IosPhone,
   SettingsPayload,
   SetupAgentRow,
   SetupApplyResult,
@@ -263,6 +265,67 @@ export function createSetup(initialPage: SetupPage = "agents") {
   );
   const hasEnabledChannel = computed(() => enabledChannelIds.value.length > 0);
 
+  // The iOS app channel is not set up here: its tile opens the card in a Settings window of its own
+  // (docs/specs/setup-ios-guidance.md D1). What the tile shows is read, never written.
+  /**
+   * The iOS app channel is on. Only as current as the last `refreshIos()` or `adoptSavedConfig()`:
+   * the Settings window changes it, not this one.
+   */
+  const iosEnabled = computed(() => config.value?.channels?.ios?.enabled === true);
+  /** A remote channel of any kind: an IM channel or the iOS app. */
+  const hasRemoteChannel = computed(() => hasEnabledChannel.value || iosEnabled.value);
+  /** What the daemon's iOS gateway says; `null` while the channel is off, or the daemon cannot say. */
+  const iosGateway = ref<{ connected: boolean; lastError: string | null } | null>(null);
+  /** The paired phones in use. */
+  const iosPhones = ref<IosPhone[]>([]);
+  // Reads can overlap (a focus right after the page opens); only the newest may be applied.
+  let iosReads = 0;
+
+  /**
+   * Bring the iOS tile up to date: the saved iOS settings and, while the channel is on, the
+   * gateway's state and phones. Called when the remote page opens and when the window gets focus
+   * again (the person comes back from the Settings window); never on a timer.
+   *
+   * Only the `channels.ios` part of this window's copy is replaced. The rest of the copy may hold
+   * what the person is typing into an IM form, and every save of this window writes the whole copy
+   * back: a copy that still said "iOS off" would turn off a channel the person has just turned on
+   * in Settings.
+   */
+  async function refreshIos() {
+    const read = ++iosReads;
+    let saved: SettingsPayload | null = null;
+    try {
+      saved = await getSettings();
+    } catch {
+      /* keep what this window has */
+    }
+    if (read !== iosReads) return;
+    const cfg = core.config.value;
+    if (saved && cfg) {
+      cfg.channels.ios = saved.config.channels.ios;
+      core.secretsPresent.value = {
+        ...core.secretsPresent.value,
+        iosBrokerPassword: saved.secretsPresent.iosBrokerPassword,
+      };
+    }
+    if (!iosEnabled.value) {
+      iosGateway.value = null;
+      iosPhones.value = [];
+      return;
+    }
+    try {
+      const result = await iosOp({ op: "state" });
+      if (read !== iosReads) return;
+      const state = result.kind === "state" ? result.state : null;
+      iosGateway.value = state ? { connected: state.connected, lastError: state.lastError ?? null } : null;
+      iosPhones.value = (state?.phones ?? []).filter((phone) => phone.state === "active");
+    } catch {
+      if (read !== iosReads) return;
+      iosGateway.value = null;
+      iosPhones.value = [];
+    }
+  }
+
   function openChannel(id: ChannelId) {
     detail.value = id;
     channelSavedId.value = null;
@@ -394,14 +457,6 @@ export function createSetup(initialPage: SetupPage = "agents") {
   const agentProbeAvailable = computed(
     () => !readOnly.value && rows.value.some(isIntegrated),
   );
-
-  /**
-   * The iOS app channel is on. It is set up in a Settings window of its own (the remote page only
-   * links to it), so this is only right after `adoptSavedConfig()`.
-   */
-  const iosEnabled = computed(() => config.value?.channels?.ios?.enabled === true);
-  /** A remote channel of any kind: an IM channel or the iOS app. */
-  const hasRemoteChannel = computed(() => hasEnabledChannel.value || iosEnabled.value);
 
   /**
    * Switch B is offered once a remote channel is on, and also when the Agent-task choice (which
@@ -587,6 +642,9 @@ export function createSetup(initialPage: SetupPage = "agents") {
     channelSaveError,
     enabledChannelIds,
     hasEnabledChannel,
+    iosGateway,
+    iosPhones,
+    refreshIos,
     refreshChannelStatus,
     openChannel,
     closeChannel,

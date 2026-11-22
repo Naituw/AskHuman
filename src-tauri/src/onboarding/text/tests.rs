@@ -67,6 +67,17 @@ struct FakeDeps {
     codex_delivery: Option<&'static str>,
     configure_fails: bool,
     test_fails: bool,
+    /// The iOS App's broker settings are all there (host, user name, relay, password). Whether it
+    /// is enabled is `config.channels.ios.enabled`, as on the real machine.
+    ios_configured: bool,
+    /// What the iOS gateway reports; `None` when it cannot be asked.
+    ios_gateway: Option<IosGateway>,
+    /// The `channel set ios` wizard is left with the broker settings incomplete.
+    ios_incomplete: bool,
+    /// The person answers "no" to "Enable this channel?" in the `channel set ios` wizard.
+    ios_stays_off: bool,
+    /// Pairing a phone fails with this.
+    pair_error: Option<&'static str>,
     /// The platform can start Agent tasks from the phone or IM (off by default: most scripts are
     /// about something else, and this is what Linux looks like).
     tasks_supported: bool,
@@ -170,6 +181,11 @@ impl FakeDeps {
             codex_delivery: None,
             configure_fails: false,
             test_fails: false,
+            ios_configured: false,
+            ios_gateway: None,
+            ios_incomplete: false,
+            ios_stays_off: false,
+            pair_error: None,
             tasks_supported: false,
             daemon_login_item_error: None,
             calls: Vec::new(),
@@ -281,10 +297,24 @@ impl TextDeps for FakeDeps {
         self.channels.clone()
     }
 
+    fn ios_row(&mut self) -> IosRow {
+        IosRow {
+            enabled: self.config.channels.ios.enabled,
+            configured: self.ios_configured,
+            gateway: self.ios_gateway,
+        }
+    }
+
     fn configure_channel(&mut self, id: &str) -> Result<(), String> {
         self.calls.push(format!("configure {id}"));
         if self.configure_fails {
             return Err("the wizard could not save".to_string());
+        }
+        if id == "ios" {
+            // `channel set ios` writes the settings; the password goes to the keychain.
+            self.config.channels.ios.enabled = !self.ios_stays_off;
+            self.ios_configured = !self.ios_incomplete;
+            return Ok(());
         }
         let can_detect = channels::can_detect_user_id(id);
         let needs_id = self.missing_user_id.contains(id);
@@ -313,6 +343,20 @@ impl TextDeps for FakeDeps {
         } else {
             Ok(())
         }
+    }
+
+    fn pair_ios(&mut self) -> Result<(), String> {
+        self.calls.push("pair ios".to_string());
+        if let Some(error) = self.pair_error {
+            return Err(error.to_string());
+        }
+        // A phone that pairs shows up in the gateway's state from then on.
+        let phones = self.ios_gateway.map_or(0, |gateway| gateway.phones) + 1;
+        self.ios_gateway = Some(IosGateway {
+            connected: true,
+            phones,
+        });
+        Ok(())
     }
 
     fn tray_supported(&mut self) -> bool {
@@ -454,7 +498,8 @@ fn the_channel_list_lines_up_in_chinese() {
             line.trim_start().starts_with(|c: char| c.is_ascii_digit()) && line.contains("未配置")
         })
         .collect();
-    assert_eq!(lines.len(), channels::ORDER.len(), "{lines:?}");
+    // The four IM channels and, after them, the iOS App.
+    assert_eq!(lines.len(), channels::ORDER.len() + 1, "{lines:?}");
     // Where the state column starts, in terminal cells.
     let state_column = |line: &str| cells(&line[..line.find("未配置").unwrap()]);
     let first = state_column(lines[0]);
@@ -912,6 +957,7 @@ fn leaving_remote_answering_with_no_channel_enabled_counts_as_skipped() {
     assert!(said.contains("2) Slack"), "{said}");
     assert!(said.contains("3) DingTalk"), "{said}");
     assert!(said.contains("4) Feishu"), "{said}");
+    assert!(said.contains("5) iOS app"), "{said}");
     assert!(said.contains("not configured"));
 }
 
@@ -992,9 +1038,396 @@ fn a_failing_channel_wizard_returns_to_the_list() {
 
 #[test]
 fn an_unknown_channel_number_is_asked_again() {
+    // Five choices (the four IM channels and the iOS App): 0 and anything past 5 is not one.
+    for answer in ["0", "6", "7", "x"] {
+        let mut deps = FakeDeps::fresh();
+        let (_, io) = run_en(&mut deps, &["", "", answer, "s", ""]);
+        assert!(io.said().contains("not one of the choices"), "{answer}");
+        assert!(!deps.called("configure ios"), "{answer}");
+    }
+}
+
+// ——— step 2: the iOS App ———
+
+/// The iOS App's line of every channel list the flow printed, with the columns squeezed. (Step 1's
+/// Agent list has a fifth entry too.)
+fn ios_lines(io: &FakeIo) -> Vec<String> {
+    io.said
+        .iter()
+        .map(|line| squeezed(line))
+        .filter(|line| line.starts_with("5) iOS app"))
+        .collect()
+}
+
+/// What the list says about the iOS App's `row`, in `lang`.
+fn ios_state_in(lang: Lang, row: IosRow) -> String {
+    let mut io = FakeIo::new(&[]);
     let mut deps = FakeDeps::fresh();
-    let (_, io) = run_en(&mut deps, &["", "", "7", "s", ""]);
+    let flow = Flow {
+        lang,
+        io: &mut io,
+        deps: &mut deps,
+        env: EnvReport::empty(),
+    };
+    flow.ios_state(&row)
+}
+
+#[test]
+fn the_ios_row_says_what_the_gateway_reports_once_the_channel_is_enabled_and_complete() {
+    let gateway = |connected, phones| Some(IosGateway { connected, phones });
+    let cases: [(bool, bool, Option<IosGateway>, &str, &str); 11] = [
+        (false, false, None, "not configured", "未配置"),
+        (
+            false,
+            true,
+            None,
+            "configured, not enabled",
+            "已配置，未启用",
+        ),
+        (
+            true,
+            false,
+            None,
+            "enabled, incomplete",
+            "已启用，配置不完整",
+        ),
+        // The gateway cannot be asked (no daemon): the channel's own state, nothing more.
+        (true, true, None, "enabled", "已启用"),
+        (
+            true,
+            true,
+            gateway(true, 0),
+            "enabled, waiting for a phone",
+            "已启用，待配对手机",
+        ),
+        // Not connected says nothing about the phones: it is no reason to call it "waiting".
+        (true, true, gateway(false, 0), "enabled", "已启用"),
+        (
+            true,
+            true,
+            gateway(true, 1),
+            "enabled · 1 phone",
+            "已启用 · 1 台手机",
+        ),
+        (
+            true,
+            true,
+            gateway(false, 1),
+            "enabled · 1 phone",
+            "已启用 · 1 台手机",
+        ),
+        (
+            true,
+            true,
+            gateway(true, 3),
+            "enabled · 3 phones",
+            "已启用 · 3 台手机",
+        ),
+        // A gateway answer for a channel that is off or incomplete is not part of its state.
+        (
+            false,
+            true,
+            gateway(true, 2),
+            "configured, not enabled",
+            "已配置，未启用",
+        ),
+        (
+            true,
+            false,
+            gateway(true, 2),
+            "enabled, incomplete",
+            "已启用，配置不完整",
+        ),
+    ];
+    for (enabled, configured, gateway, en, zh) in cases {
+        let row = IosRow {
+            enabled,
+            configured,
+            gateway,
+        };
+        assert_eq!(ios_state_in(Lang::En, row), en, "{row:?}");
+        assert_eq!(ios_state_in(Lang::Zh, row), zh, "{row:?}");
+    }
+}
+
+#[test]
+fn choosing_the_ios_app_shows_the_path_then_configures_tests_and_pairs() {
+    let mut deps = FakeDeps::fresh();
+    // apply, style | iOS App, set it up here, test (yes), pair now (yes), leave | icon, keep-alive
+    let (code, io) = run_en(&mut deps, &["", "", "5", "1", "y", "y", "s", "", ""]);
+    assert_eq!(code, 0, "{:?}", io.noted);
+    let said = io.said();
+
+    // What the GUI tile shows, first: the three steps, what to prepare, the guide.
+    assert!(
+        said.contains("The iOS app takes three steps: ① connect a broker  ② install the app on your iPhone  ③ pair a phone"),
+        "{said}"
+    );
+    assert!(
+        said.contains(
+            "You need: an MQTT broker account · an iPhone (iOS 17+, installed via TestFlight)"
+        ),
+        "{said}"
+    );
+    assert!(
+        said.contains(
+            "Guide: https://github.com/Naituw/AskHuman/blob/main/docs/wiki/ios-setup.en.md"
+        ),
+        "{said}"
+    );
+
+    // Then the existing wizard, the test and the pairing, each once and in that order.
+    let configure = deps.position("configure ios");
+    let test = deps.position("test ios");
+    let pair = deps.position("pair ios");
+    assert!(configure < test && test < pair, "{:?}", deps.calls);
+    for call in ["configure ios", "test ios", "pair ios"] {
+        assert_eq!(
+            deps.calls.iter().filter(|c| *c == call).count(),
+            1,
+            "{:?}",
+            deps.calls
+        );
+    }
+
+    // Configuring was only the first step: the phone needs the app before it can pair.
+    let reminder = said
+        .find("Next: install AskHuman on your iPhone (open https://naituw.github.io/AskHuman/ on the phone and install it through TestFlight), then pair.")
+        .unwrap_or_else(|| panic!("no install reminder in {said}"));
+    assert!(
+        said.find("✓ The test went through.").unwrap() < reminder,
+        "{said}"
+    );
+    assert!(io.prompted("Pair a phone now?"));
+
+    // The list that follows shows the phone, and an enabled iOS App decides the remote domain.
+    assert_eq!(
+        ios_lines(&io).last().map(String::as_str),
+        Some("5) iOS app enabled · 1 phone")
+    );
+    assert!(!deps.called("skipped remote"), "{:?}", deps.calls);
+    assert!(said.contains("Remote answering: iOS app"), "{said}");
+}
+
+#[test]
+fn declining_the_test_and_the_pairing_says_where_to_pair_later() {
+    let mut deps = FakeDeps::fresh();
+    let (code, io) = run_en(&mut deps, &["", "", "5", "1", "n", "n", "s", "", ""]);
+    assert_eq!(code, 0, "{:?}", io.noted);
+    assert!(deps.called("configure ios"));
+    assert!(!deps.called("test ios"));
+    assert!(!deps.called("pair ios"));
+    let said = io.said();
+    // The reminder is about the phone, so it comes whether or not the pairing happens now.
+    assert!(
+        said.contains("Next: install AskHuman on your iPhone"),
+        "{said}"
+    );
+    assert!(
+        said.contains("Pair later with `AskHuman channel ios pair`, or in Settings → Channels."),
+        "{said}"
+    );
+    // The gateway cannot be asked: the row says no more than "enabled".
+    assert_eq!(
+        ios_lines(&io).last().map(String::as_str),
+        Some("5) iOS app enabled")
+    );
+}
+
+#[test]
+fn a_pairing_that_does_not_finish_is_reported_and_the_flow_goes_on() {
+    let mut deps = FakeDeps::fresh();
+    deps.pair_error = Some("pairing timed out");
+    let (code, io) = run_en(&mut deps, &["", "", "5", "1", "n", "y", "s", "", ""]);
+    assert_eq!(code, 0, "{:?}", io.noted);
+    let said = io.said();
+    assert!(
+        said.contains("✗ Pairing did not finish: pairing timed out"),
+        "{said}"
+    );
+    assert!(
+        said.contains("Try again any time with `AskHuman channel ios pair`."),
+        "{said}"
+    );
+    // The channel is on all the same.
+    assert!(!deps.called("skipped remote"), "{:?}", deps.calls);
+    assert!(said.contains("Remote answering: iOS app"), "{said}");
+}
+
+#[test]
+fn a_failing_ios_test_does_not_stop_the_pairing_offer() {
+    let mut deps = FakeDeps::fresh();
+    deps.test_fails = true;
+    let (code, io) = run_en(&mut deps, &["", "", "5", "1", "y", "y", "s", "", ""]);
+    assert_eq!(code, 0, "{:?}", io.noted);
+    let said = io.said();
+    assert!(
+        said.contains("✗ The test failed: no answer from the platform"),
+        "{said}"
+    );
+    assert!(io.prompted("Pair a phone now?"));
+    assert!(deps.called("pair ios"));
+}
+
+#[test]
+fn the_agent_option_prints_the_prompt_and_changes_nothing() {
+    let mut deps = FakeDeps::fresh();
+    // apply, style | iOS App, have an Agent set it up, leave | icon
+    let (code, io) = run_en(&mut deps, &["", "", "5", "2", "s", ""]);
+    assert_eq!(code, 0, "{:?}", io.noted);
+    // The prompt of the settings card, a line to a line, so it copies cleanly.
+    for line in [
+        "Please set up AskHuman's iOS App channel. First run:",
+        "AskHuman channel ios --agent-guide",
+        "Then follow the steps it prints.",
+    ] {
+        assert!(
+            io.said.iter().any(|said| said == line),
+            "{line}: {:?}",
+            io.said
+        );
+    }
+    assert!(io
+        .said()
+        .contains("You can follow its progress in Settings → Channels."));
+    // Nothing was configured, tested or paired; the iOS row is what it was.
+    for call in ["configure ios", "test ios", "pair ios"] {
+        assert!(!deps.called(call), "{call}: {:?}", deps.calls);
+    }
+    assert!(!deps.config.channels.ios.enabled);
+    assert_eq!(
+        ios_lines(&io),
+        ["5) iOS app not configured", "5) iOS app not configured"]
+    );
+    assert!(
+        deps.called("skipped remote"),
+        "nothing is enabled yet: the Agent has still to do it"
+    );
+}
+
+#[test]
+fn the_ios_app_step_speaks_chinese_when_asked_to() {
+    let mut deps = FakeDeps::fresh();
+    let mut io = FakeIo::new(&["", "", "5", "2", "s", ""]);
+    assert_eq!(run(Lang::Zh, &mut io, &mut deps), 0);
+    let said = io.said();
+    assert!(
+        said.contains("离开电脑时，也能在手机上收到 Agent 的提问并回复，IM 或 iOS App 均可。"),
+        "{said}"
+    );
+    assert!(
+        said.contains("iOS App 分三步：① 连接 Broker  ② 在 iPhone 上安装 App  ③ 配对手机"),
+        "{said}"
+    );
+    assert!(
+        said.contains("需要：MQTT Broker 账号 · iPhone（iOS 17+，通过 TestFlight 安装）"),
+        "{said}"
+    );
+    assert!(
+        said.contains("指南：https://github.com/Naituw/AskHuman/blob/main/docs/wiki/ios-setup.md"),
+        "{said}"
+    );
+    assert!(
+        said.contains("  2) 让 Agent 帮我配置（打印一段提示词，发给你的 Agent）"),
+        "{said}"
+    );
+    for line in [
+        "请帮我配置 AskHuman 的 iOS App 渠道。先运行：",
+        "AskHuman channel ios --agent-guide",
+        "然后按输出的步骤做。",
+    ] {
+        assert!(io.said.iter().any(|said| said == line), "{line}");
+    }
+    assert!(said.contains("之后可在「设置 → 渠道」里看进度。"), "{said}");
+    assert!(io.prompted("请选择 [1]: "));
+}
+
+#[test]
+fn backing_out_of_the_ios_app_changes_nothing_and_a_wrong_answer_asks_again() {
+    let mut deps = FakeDeps::fresh();
+    let (code, io) = run_en(&mut deps, &["", "", "5", "x", "b", "s", ""]);
+    assert_eq!(code, 0, "{:?}", io.noted);
     assert!(io.said().contains("not one of the choices"));
+    for call in ["configure ios", "test ios", "pair ios"] {
+        assert!(!deps.called(call), "{call}: {:?}", deps.calls);
+    }
+    // The path is shown once, not again for the wrong answer.
+    assert_eq!(
+        io.said
+            .iter()
+            .filter(|line| line.starts_with("The iOS app takes three steps"))
+            .count(),
+        1
+    );
+}
+
+#[test]
+fn a_failing_ios_wizard_returns_to_the_list() {
+    let mut deps = FakeDeps::fresh();
+    deps.configure_fails = true;
+    let (code, io) = run_en(&mut deps, &["", "", "5", "1", "s", ""]);
+    assert_eq!(code, 0, "{:?}", io.noted);
+    assert!(io.said().contains("✗ the wizard could not save"));
+    assert!(!io.prompted("Test the connection?"));
+    assert!(!io.prompted("Pair a phone now?"));
+    assert!(deps.called("skipped remote"), "nothing got enabled");
+}
+
+#[test]
+fn an_ios_app_left_incomplete_is_neither_tested_nor_paired() {
+    let mut deps = FakeDeps::fresh();
+    deps.ios_incomplete = true;
+    // apply, style | iOS App, set it up here, leave | icon, keep-alive (an enabled channel asks)
+    let (code, io) = run_en(&mut deps, &["", "", "5", "1", "s", "", ""]);
+    assert_eq!(code, 0, "{:?}", io.noted);
+    assert!(io
+        .said()
+        .contains("Not fully configured yet; finish it with `AskHuman channel set ios`."));
+    assert!(!io.prompted("Test the connection?"));
+    assert!(!io.prompted("Pair a phone now?"));
+    assert_eq!(
+        ios_lines(&io).last().map(String::as_str),
+        Some("5) iOS app enabled, incomplete")
+    );
+    assert!(!deps.called("skipped remote"), "it is enabled");
+}
+
+#[test]
+fn an_ios_app_the_person_leaves_off_is_tested_but_not_paired() {
+    let mut deps = FakeDeps::fresh();
+    deps.ios_stays_off = true;
+    // apply, style | iOS App, set it up here, test (no), leave | icon
+    let (code, io) = run_en(&mut deps, &["", "", "5", "1", "n", "s", ""]);
+    assert_eq!(code, 0, "{:?}", io.noted);
+    assert!(io.prompted("Test the connection?"));
+    assert!(
+        !io.prompted("Pair a phone now?"),
+        "there is nothing to pair while it is off"
+    );
+    assert!(io
+        .said()
+        .contains("turn it on with `AskHuman channel enable ios`"));
+    assert_eq!(
+        ios_lines(&io).last().map(String::as_str),
+        Some("5) iOS app configured, not enabled")
+    );
+    assert!(deps.called("skipped remote"), "nothing is enabled");
+}
+
+#[test]
+fn an_ios_app_enabled_earlier_keeps_the_remote_domain_from_being_skipped() {
+    let mut deps = FakeDeps::fresh();
+    deps.config.channels.ios.enabled = true;
+    deps.ios_configured = true;
+    deps.ios_gateway = Some(IosGateway {
+        connected: true,
+        phones: 2,
+    });
+    // apply, style | leave | icon, keep-alive
+    let (code, io) = run_en(&mut deps, &["", "", "s", "", ""]);
+    assert_eq!(code, 0, "{:?}", io.noted);
+    assert_eq!(ios_lines(&io), ["5) iOS app enabled · 2 phones"]);
+    assert!(!deps.called("skipped remote"), "{:?}", deps.calls);
 }
 
 // ——— step 3: background ———

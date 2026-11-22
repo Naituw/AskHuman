@@ -15,6 +15,7 @@ import {
   TABS,
   type Tab,
 } from "./settings/context";
+import { parseSettingsTarget } from "./settings/settingsTarget";
 import { tabLoads, type SettingsLoad } from "./settings/tabData";
 import GeneralTab from "./settings/GeneralTab.vue";
 import AdvancedTab from "./settings/AdvancedTab.vue";
@@ -126,8 +127,8 @@ onMounted(async () => {
     void ensureTabData(tab);
   });
   void ensureTabData(activeTab.value);
-  // Initial URLs can include an element anchor (for example integration#lifecycle-claude).
-  // Wait only for that tab's data before scrolling.
+  // Initial URLs can include an element anchor (for example integration#lifecycle-claude) and an
+  // action after it (channel#channel-ios#start). Wait only for that tab's data before scrolling.
   const rawTab = new URLSearchParams(window.location.search).get("tab");
   if (rawTab?.includes("#")) {
     await ensureTabData(activeTab.value);
@@ -135,14 +136,14 @@ onMounted(async () => {
   }
 });
 
-/** 解析 `tab[#elementId]` 并切 tab + 可选滚动定位（settings-goto-tab / 初始 URL 共用）。 */
+/** 解析 `tab[#elementId[#action]]` 并切 tab + 可选滚动定位与动作（settings-goto-tab / 初始 URL 共用）。 */
 function gotoTabTarget(raw: string) {
-  const [tab, target] = raw.split("#");
+  const { tab, element, action } = parseSettingsTarget(raw);
   if (!TABS.includes(tab as Tab)) return;
   activeTab.value = tab as Tab;
   void (async () => {
     await ensureTabData(tab as Tab);
-    if (target) await ctx.gotoSettingsTarget(target);
+    if (element) await ctx.gotoSettingsTarget(element, undefined, action);
   })();
 }
 </script>

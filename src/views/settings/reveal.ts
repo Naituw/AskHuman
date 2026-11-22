@@ -12,3 +12,15 @@ export async function revealSettingsTarget(el: Element | null | undefined): Prom
   el.dispatchEvent(new CustomEvent(SETTINGS_REVEAL_EVENT, { bubbles: true }));
   await nextTick();
 }
+
+export const SETTINGS_ACTION_EVENT = "settings-action";
+
+/**
+ * Tell the owner of `el` what the jump asked for besides showing it (`tab#elementId#action`, see
+ * settingsTarget.ts). Announced the same way as the reveal: the card that knows the action does it,
+ * anything else ignores the event.
+ */
+export function actOnSettingsTarget(el: Element | null | undefined, action: string): void {
+  if (!el || !action) return;
+  el.dispatchEvent(new CustomEvent(SETTINGS_ACTION_EVENT, { bubbles: true, detail: { action } }));
+}

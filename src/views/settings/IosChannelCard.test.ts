@@ -4,6 +4,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { i18n } from "../../i18n";
 import IosChannelCard from "./IosChannelCard.vue";
 import { IOS_JOIN_URL } from "./iosLinks";
+import { SETTINGS_ACTION_EVENT } from "./reveal";
 
 const iosOp = vi.hoisted(() => vi.fn());
 const iosPairQr = vi.hoisted(() => vi.fn());
@@ -160,6 +161,11 @@ describe("IosChannelCard", () => {
   }
 
   type Card = ReturnType<typeof mountCard>;
+  /** What a jump to the card (`channel#channel-ios#<action>`) tells it, as the Settings window does. */
+  const announce = (wrapper: Card, action: string) =>
+    wrapper
+      .get("#channel-ios")
+      .element.dispatchEvent(new CustomEvent(SETTINGS_ACTION_EVENT, { bubbles: true, detail: { action } }));
   const button = (wrapper: Card, text: string) => wrapper.findAll("button").find((b) => b.text() === text);
   const byId = (wrapper: Card, id: string) => wrapper.get(`[data-testid="${id}"]`);
   const tag = (wrapper: Card) => byId(wrapper, "channel-state-ios").text();
@@ -211,6 +217,25 @@ describe("IosChannelCard", () => {
       wrapper.unmount();
     });
 
+    it("starts the setup when a link says so, as the Start button does, and only then", async () => {
+      iosOp.mockResolvedValue({ kind: "state", state: null });
+      const wrapper = mountCard();
+      await flushPromises();
+
+      // Any other action is not this card's to take.
+      announce(wrapper, "somewhere-else");
+      await flushPromises();
+      expect(config.value.channels.ios.enabled).toBe(false);
+      expect(persist).not.toHaveBeenCalled();
+
+      announce(wrapper, "start");
+      await flushPromises();
+      expect(config.value.channels.ios.enabled).toBe(true);
+      expect(persist).toHaveBeenCalledTimes(1);
+      expect(wrapper.find('[data-testid="ios-steps"]').exists()).toBe(true);
+      wrapper.unmount();
+    });
+
     it("shows the prompt for an Agent in full and copies it only on a click", async () => {
       const wrapper = mountCard();
       await flushPromises();
@@ -245,6 +270,20 @@ describe("IosChannelCard", () => {
   });
 
   describe("setup", () => {
+    it("is only brought on screen by a link that says start when it is on already", async () => {
+      iosOp.mockResolvedValue({ kind: "state", state: null });
+      const wrapper = mountCard();
+      await flushPromises();
+      expect(config.value.channels.ios.enabled).toBe(true);
+
+      announce(wrapper, "start");
+      await flushPromises();
+      // Nothing is turned off and nothing is saved: "start" is for a card that is still off.
+      expect(config.value.channels.ios.enabled).toBe(true);
+      expect(persist).not.toHaveBeenCalled();
+      wrapper.unmount();
+    });
+
     it("starts at the connection while the gateway is not running", async () => {
       iosOp.mockResolvedValue({ kind: "state", state: null });
       const wrapper = mountCard();

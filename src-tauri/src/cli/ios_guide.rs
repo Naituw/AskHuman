@@ -10,14 +10,37 @@ use crate::i18n::Lang;
 use crate::ios::gateway::GatewayState;
 
 /// The page that gets a phone into the TestFlight beta; the settings card shows it as a QR code
-/// (`src/views/settings/iosLinks.ts`).
-const JOIN_URL: &str = "https://naituw.github.io/AskHuman/";
+/// (`src/views/settings/iosLinks.ts`), and the terminal setup flow prints it before pairing.
+pub(crate) const JOIN_URL: &str = "https://naituw.github.io/AskHuman/";
 
 /// The wiki page that carries the facts about the brokers, and the sections the self-hosted
 /// notes point at (`src/views/settings/iosBrokers.ts` links the same ones).
 const WIKI: &str = "https://github.com/Naituw/AskHuman/blob/main/docs/wiki";
 const WIKI_MOSQUITTO: (&str, &str) = ("路径三自建-mosquitto", "path-3-self-hosted-mosquitto");
 const WIKI_VERIFY: (&str, &str) = ("怎样自己验证", "verify-a-broker-yourself");
+
+/// The setup guide of the iOS App channel in the reader's language (`docs/wiki/ios-setup*.md`);
+/// the same address as `iosSetupGuideUrl` in `src/views/settings/iosLinks.ts`.
+pub(crate) fn setup_guide_url(lang: Lang) -> String {
+    match lang {
+        Lang::Zh => format!("{WIKI}/ios-setup.md"),
+        Lang::En => format!("{WIKI}/ios-setup.en.md"),
+    }
+}
+
+/// What a person gives their Agent to have it set the channel up: it starts from this command's
+/// guide. Word for word the settings card's `settings.channels.ios.agentPrompt`
+/// (`src/i18n`), which the setup wizard's tile shows too.
+pub(crate) fn agent_prompt(lang: Lang) -> &'static str {
+    match lang {
+        Lang::Zh => {
+            "请帮我配置 AskHuman 的 iOS App 渠道。先运行：\nAskHuman channel ios --agent-guide\n然后按输出的步骤做。"
+        }
+        Lang::En => {
+            "Please set up AskHuman's iOS App channel. First run:\nAskHuman channel ios --agent-guide\nThen follow the steps it prints."
+        }
+    }
+}
 
 // ——— what is known ———
 
@@ -1507,6 +1530,44 @@ mod tests {
                     );
                 }
             }
+        }
+    }
+
+    /// The terminal setup flow hands out what the settings card and the wizard's tile hand out:
+    /// the same prompt for an Agent, the same guide address.
+    #[test]
+    fn the_setup_flow_shares_the_cards_prompt_and_guide_address() {
+        for (lang, i18n) in [
+            (Lang::Zh, include_str!("../../../src/i18n/zh.ts")),
+            (Lang::En, include_str!("../../../src/i18n/en.ts")),
+        ] {
+            // A line break is the two characters `\n` in the source of the message.
+            let prompt = agent_prompt(lang).replace('\n', "\\n");
+            assert!(
+                i18n.contains(&format!("agentPrompt: \"{prompt}\",")),
+                "{lang:?}: the card words the Agent prompt differently"
+            );
+            assert!(agent_prompt(lang).contains("AskHuman channel ios --agent-guide"));
+        }
+
+        let links = include_str!("../../../src/views/settings/iosLinks.ts");
+        assert!(links.contains(WIKI), "the same wiki directory");
+        assert!(links.contains("\"ios-setup.md\""), "the Chinese page");
+        assert!(links.contains("\"ios-setup.en.md\""), "the English page");
+        assert_eq!(
+            setup_guide_url(Lang::Zh),
+            "https://github.com/Naituw/AskHuman/blob/main/docs/wiki/ios-setup.md"
+        );
+        assert_eq!(
+            setup_guide_url(Lang::En),
+            "https://github.com/Naituw/AskHuman/blob/main/docs/wiki/ios-setup.en.md"
+        );
+        // Both pages exist, so the address resolves.
+        for page in [
+            include_str!("../../../docs/wiki/ios-setup.md"),
+            include_str!("../../../docs/wiki/ios-setup.en.md"),
+        ] {
+            assert!(!page.trim().is_empty());
         }
     }
 

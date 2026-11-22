@@ -7,6 +7,8 @@ import en from "../i18n/en";
 import zh from "../i18n/zh";
 import { i18n } from "../i18n";
 import type {
+  IosGatewayState,
+  IosPhone,
   SetupAgentRow,
   SetupApplyResult,
   SetupChannelStatus,
@@ -35,6 +37,7 @@ const ipc = vi.hoisted(() => ({
   detectCancel: vi.fn(),
   openSettings: vi.fn(),
   openPath: vi.fn(),
+  iosOp: vi.fn(),
   telegramTest: vi.fn(),
   agentTaskWorkspaces: vi.fn(),
   agentTaskReadiness: vi.fn(),
@@ -69,6 +72,31 @@ vi.mock("tauri-plugin-liquid-glass-api", () => ({ isGlassSupported: vi.fn(async 
 
 const message = (path: string): string =>
   path.split(".").reduce<unknown>((node, key) => (node as Record<string, unknown>)[key], en) as string;
+
+/** What the daemon's iOS gateway answers: connected to the broker, no phone, unless said otherwise. */
+function gateway(over: Partial<IosGatewayState> = {}): IosGatewayState {
+  return { connected: true, macId: "mac-1", macName: "MacBook", phones: [], pendingRequests: 0, ...over };
+}
+
+function phone(name: string, over: Partial<IosPhone> = {}): IosPhone {
+  return {
+    phoneId: `phone-${name}`,
+    name,
+    state: "active",
+    online: true,
+    foreground: false,
+    createdAt: 1,
+    lastSeenAt: 2,
+    ...over,
+  };
+}
+
+/** A saved iOS setup with every broker fact in place (what the card in Settings calls configured). */
+const IOS_SET_UP = {
+  iosHost: "x1a2b3c4.ala.cn-hangzhou.emqxsl.cn",
+  iosUsername: "abc123",
+  secretsPresent: { iosBrokerPassword: true },
+};
 
 /** A mixed Agent list: every kind of row the first page has to treat differently. */
 function mixedRows(): SetupAgentRow[] {
@@ -107,6 +135,8 @@ describe("setup wizard", () => {
   let saves: { config: SettingsPayload["config"]; actions: Record<string, unknown> }[];
   // The optional checks the wizard asked the backend to start, in order.
   let probeStarts: { id: string; kind: string; channel?: string }[];
+  // What the daemon's iOS gateway answers; `null` is "not running".
+  let gatewayValue: IosGatewayState | null;
 
   beforeEach(() => {
     vi.resetAllMocks();
@@ -114,6 +144,9 @@ describe("setup wizard", () => {
     platform.isMac = false;
     platform.supportsAgentTasks = true;
     events.handlers.clear();
+    // jsdom has no layout, so it does not implement scrolling an element into view.
+    window.HTMLElement.prototype.scrollIntoView = vi.fn();
+    gatewayValue = null;
     payload = settings();
     statusValue = status();
     rowsValue = [row({ id: "claude", mode: "cli" })];
@@ -165,6 +198,7 @@ describe("setup wizard", () => {
     ipc.detectCancel.mockImplementation(async () => {});
     ipc.openSettings.mockImplementation(async () => {});
     ipc.openPath.mockImplementation(async () => {});
+    ipc.iosOp.mockImplementation(async () => ({ kind: "state", state: gatewayValue }));
     ipc.telegramTest.mockImplementation(async () => "Message delivered");
     win.close.mockImplementation(async () => {
       order.push("close");
@@ -783,11 +817,411 @@ describe("setup wizard", () => {
       expect(text(w, "channel-row-feishu")).toContain("auth failed");
     });
 
-    it("lists iOS next to the IM channels, and opens its card in the Channels settings", async () => {
-      const w = await mountWizard("remote");
-      expect(find(w, "channel-row-ios").exists()).toBe(true);
-      await click(w, "channel-open-ios");
-      expect(ipc.openSettings).toHaveBeenCalledWith("channel#channel-ios");
+    describe("the iOS App tile", () => {
+      const tile = (w: VueWrapper) => get(w, "channel-row-ios");
+      const stepClasses = (w: VueWrapper, n: number) => get(w, `ios-tile-step-${n}`).classes();
+      const stepText = (w: VueWrapper, n: number) => text(w, `ios-tile-step-${n}`);
+      /** Another window saved the iOS channel, and the wizard window gets its focus back. */
+      const comeBack = async () => {
+        window.dispatchEvent(new Event("focus"));
+        await flushPromises();
+      };
+      const setUp = (over: Parameters<typeof settings>[0] = {}) => {
+        payload = settings({ ios: true, ...IOS_SET_UP, ...over });
+      };
+
+      const displays: {
+        name: string;
+        arrange: () => void;
+        kind: string;
+        state: string;
+        button: string;
+      }[] = [
+        { name: "nothing set up", arrange: () => {}, kind: "off", state: "Not set up", button: "Start setup" },
+        {
+          name: "on, with the broker settings not all there",
+          arrange: () => {
+            payload = settings({ ios: true });
+          },
+          kind: "incomplete",
+          state: "Incomplete",
+          button: "Continue setup",
+        },
+        {
+          name: "set up, turned off",
+          arrange: () => {
+            payload = settings(IOS_SET_UP);
+          },
+          kind: "stopped",
+          state: "Set up (off)",
+          button: "Continue setup",
+        },
+        {
+          name: "on and complete, the daemon not saying more",
+          arrange: () => setUp(),
+          kind: "configured",
+          state: "Set up",
+          button: "Continue setup",
+        },
+        {
+          name: "connected to the broker, no phone",
+          arrange: () => {
+            setUp();
+            gatewayValue = gateway();
+          },
+          kind: "await",
+          state: "Waiting for a phone",
+          button: "Continue setup",
+        },
+        {
+          name: "refused by the broker",
+          arrange: () => {
+            setUp();
+            gatewayValue = gateway({ connected: false, lastError: "authentication failed" });
+          },
+          kind: "issue",
+          state: "Problem",
+          button: "View",
+        },
+        {
+          name: "a phone paired",
+          arrange: () => {
+            setUp();
+            gatewayValue = gateway({ phones: [phone("Alice's iPhone")] });
+          },
+          kind: "paired",
+          state: "Ready · 1 phone",
+          button: "Manage",
+        },
+      ];
+
+      it.each(displays)("shows $name as “$state”", async ({ arrange, kind, state, button }) => {
+        arrange();
+        const w = await mountWizard("remote");
+        expect(tile(w).attributes("data-kind")).toBe(kind);
+        expect(text(w, "channel-state-ios")).toBe(state);
+        expect(text(w, "channel-open-ios")).toBe(button);
+      });
+
+      it("lays the road out for a fresh setup: what to prepare, the guide, the three steps", async () => {
+        const w = await mountWizard("remote");
+        expect(text(w, "ios-tile-needs")).toContain(
+          "Needs an MQTT broker account · an iPhone (iOS 17+, installed via TestFlight)",
+        );
+        expect(text(w, "ios-tile-guide")).toContain("Setup guide");
+        expect(stepClasses(w, 1)).toContain("current");
+        expect(stepClasses(w, 2)).toContain("upcoming");
+        expect(stepClasses(w, 3)).toContain("upcoming");
+        expect(stepText(w, 1)).toContain(message("settings.channels.ios.step.broker"));
+        expect(stepText(w, 1)).toContain("Create an account");
+        expect(stepText(w, 2)).toContain(message("settings.channels.ios.step.app"));
+        expect(stepText(w, 2)).toContain("Install via TestFlight");
+        expect(stepText(w, 3)).toContain(message("settings.channels.ios.step.pair"));
+        expect(stepText(w, 3)).toContain("Scan, compare codes");
+      });
+
+      it("names what is still missing while the setup is incomplete", async () => {
+        payload = settings({ ios: true });
+        const w = await mountWizard("remote");
+        expect(find(w, "ios-tile-needs").exists()).toBe(true);
+        expect(stepClasses(w, 1)).toContain("current");
+      });
+
+      it("says how far the person got: the broker done, naming it, and the phone next", async () => {
+        setUp();
+        gatewayValue = gateway();
+        const w = await mountWizard("remote");
+        expect(stepClasses(w, 1)).toContain("done");
+        expect(stepText(w, 1)).toContain("EMQX Cloud · Connected");
+        expect(stepClasses(w, 2)).toContain("current");
+        expect(stepText(w, 2)).toContain("Install via TestFlight");
+        expect(stepClasses(w, 3)).toContain("upcoming");
+        // Once it is set up there is nothing left to prepare.
+        expect(find(w, "ios-tile-needs").exists()).toBe(false);
+      });
+
+      it("names a self-hosted broker by its host", async () => {
+        setUp({ iosHost: "mqtt.example.com" });
+        gatewayValue = gateway();
+        const w = await mountWizard("remote");
+        expect(stepText(w, 1)).toContain("mqtt.example.com · Connected");
+      });
+
+      it("shows the broker's error under the steps", async () => {
+        setUp();
+        gatewayValue = gateway({ connected: false, lastError: "authentication failed" });
+        const w = await mountWizard("remote");
+        expect(text(w, "ios-tile-issue")).toBe("Broker not connected: authentication failed");
+        expect(stepClasses(w, 1)).toContain("current");
+      });
+
+      it("shows no error while the broker has not answered yet", async () => {
+        setUp();
+        gatewayValue = gateway({ connected: false });
+        const w = await mountWizard("remote");
+        expect(find(w, "ios-tile-issue").exists()).toBe(false);
+        expect(text(w, "channel-state-ios")).toBe("Set up");
+      });
+
+      it("shrinks to the phones' names once a phone is paired, counting only the ones in use", async () => {
+        setUp();
+        gatewayValue = gateway({
+          phones: [
+            phone("Alice's iPhone"),
+            phone("Alice's iPad", { aliasName: "Desk iPad" }),
+            phone("Not confirmed", { state: "pendingConfirm" }),
+          ],
+        });
+        const w = await mountWizard("remote");
+        expect(text(w, "channel-state-ios")).toBe("Ready · 2 phones");
+        expect(text(w, "ios-tile-phones")).toBe("Alice's iPhone · Desk iPad");
+        expect(find(w, "ios-tile-steps").exists()).toBe(false);
+        expect(find(w, "ios-tile-needs").exists()).toBe(false);
+        // Nothing left to hand to an Agent.
+        expect(find(w, "ios-tile-agent").exists()).toBe(false);
+        expect(tile(w).classes()).toContain("ok");
+      });
+
+      it("is a plain colour for the states that need a look and for the ones that do not", async () => {
+        const off = await mountWizard("remote");
+        expect(tile(off).classes()).not.toContain("warn");
+        expect(tile(off).classes()).not.toContain("ok");
+        off.unmount();
+        wrappers.length = 0;
+
+        setUp();
+        gatewayValue = gateway();
+        const waiting = await mountWizard("remote");
+        expect(tile(waiting).classes()).toContain("warn");
+      });
+
+      it("does not ask the daemon while the channel is off, and asks it once it is on", async () => {
+        const off = await mountWizard("remote");
+        expect(ipc.iosOp).not.toHaveBeenCalled();
+        off.unmount();
+        wrappers.length = 0;
+
+        setUp();
+        await mountWizard("remote");
+        expect(ipc.iosOp).toHaveBeenCalledWith({ op: "state" });
+      });
+
+      it("shows a daemon that cannot answer as set up, without a connection to speak of", async () => {
+        setUp();
+        ipc.iosOp.mockRejectedValue(new Error("daemon unavailable"));
+        const w = await mountWizard("remote");
+        expect(text(w, "channel-state-ios")).toBe("Set up");
+        expect(find(w, "ios-tile-issue").exists()).toBe(false);
+      });
+
+      describe("the buttons", () => {
+        it.each([
+          ["off", () => {}, "channel#channel-ios#start"],
+          ["stopped", () => { payload = settings(IOS_SET_UP); }, "channel#channel-ios#start"],
+          ["incomplete", () => { payload = settings({ ios: true }); }, "channel#channel-ios"],
+          ["configured", () => setUp(), "channel#channel-ios"],
+          ["await", () => { setUp(); gatewayValue = gateway(); }, "channel#channel-ios"],
+          [
+            "issue",
+            () => { setUp(); gatewayValue = gateway({ connected: false, lastError: "refused" }); },
+            "channel#channel-ios",
+          ],
+          [
+            "paired",
+            () => { setUp(); gatewayValue = gateway({ phones: [phone("Alice's iPhone")] }); },
+            "channel#channel-ios",
+          ],
+        ])(
+          "open the iOS card in Settings from the %s state; only a card that is off is started",
+          async (_kind, arrange, target) => {
+            arrange();
+            const w = await mountWizard("remote");
+            await click(w, "channel-open-ios");
+            expect(ipc.openSettings).toHaveBeenCalledTimes(1);
+            expect(ipc.openSettings).toHaveBeenCalledWith(target);
+            // The tile only reads: opening the card saves nothing from this window.
+            expect(saves).toHaveLength(0);
+          },
+        );
+
+        it("open the setup guide in the interface language", async () => {
+          const en = await mountWizard("remote");
+          await click(en, "ios-tile-guide");
+          expect(ipc.openPath).toHaveBeenLastCalledWith(
+            "https://github.com/Naituw/AskHuman/blob/main/docs/wiki/ios-setup.en.md",
+          );
+          en.unmount();
+          wrappers.length = 0;
+
+          // The window takes its language from the saved settings.
+          payload = settings();
+          payload.config.general.language = "zh";
+          const zhWizard = await mountWizard("remote");
+          await click(zhWizard, "ios-tile-guide");
+          expect(ipc.openPath).toHaveBeenLastCalledWith(
+            "https://github.com/Naituw/AskHuman/blob/main/docs/wiki/ios-setup.md",
+          );
+        });
+
+        it("show the prompt for an Agent in full, bring it into view, and fold it away again", async () => {
+          const w = await mountWizard("remote");
+          expect(find(w, "ios-agent-box").exists()).toBe(false);
+          await click(w, "ios-tile-agent");
+          expect(text(w, "ios-agent-prompt")).toBe(message("settings.channels.ios.agentPrompt"));
+          expect(window.HTMLElement.prototype.scrollIntoView).toHaveBeenCalledTimes(1);
+          // Handing over the prompt asks nothing of the daemon and changes nothing.
+          expect(ipc.openSettings).not.toHaveBeenCalled();
+          expect(saves).toHaveLength(0);
+
+          await click(w, "ios-tile-agent");
+          expect(find(w, "ios-agent-box").exists()).toBe(false);
+        });
+
+        it("copy only the prompt that is on screen, and only on a click", async () => {
+          const writeText = vi.fn(async () => {});
+          Object.defineProperty(navigator, "clipboard", { value: { writeText }, configurable: true });
+          const w = await mountWizard("remote");
+          await click(w, "ios-tile-agent");
+          expect(writeText).not.toHaveBeenCalled();
+          await click(w, "ios-agent-copy");
+          expect(writeText).toHaveBeenCalledWith(message("settings.channels.ios.agentPrompt"));
+        });
+      });
+
+      describe("the footer", () => {
+        it("offers Skip while nothing is on, with the note about adding one later", async () => {
+          const w = await mountWizard("remote");
+          expect(find(w, "remote-skip").exists()).toBe(true);
+          expect(find(w, "remote-continue").exists()).toBe(false);
+          expect(find(w, "remote-skip-note").exists()).toBe(true);
+        });
+
+        it("offers Continue for the iOS app alone, as for an IM channel, and records no skip", async () => {
+          setUp();
+          gatewayValue = gateway();
+          const w = await mountWizard("remote");
+          expect(find(w, "remote-skip").exists()).toBe(false);
+          expect(find(w, "remote-skip-note").exists()).toBe(false);
+          await click(w, "remote-continue");
+          expect(ipc.setupSkip).not.toHaveBeenCalled();
+        });
+
+        it("counts a channel that is on without being complete or working, as an IM one does", async () => {
+          payload = settings({ ios: true });
+          const incomplete = await mountWizard("remote");
+          expect(find(incomplete, "remote-continue").exists()).toBe(true);
+          incomplete.unmount();
+          wrappers.length = 0;
+
+          setUp();
+          gatewayValue = gateway({ connected: false, lastError: "refused" });
+          const issue = await mountWizard("remote");
+          expect(find(issue, "remote-continue").exists()).toBe(true);
+        });
+
+        it("does not count a channel that is set up but off", async () => {
+          payload = settings(IOS_SET_UP);
+          const w = await mountWizard("remote");
+          expect(find(w, "remote-skip").exists()).toBe(true);
+        });
+      });
+
+      describe("coming back from Settings", () => {
+        it("reads the saved channel again when the window gets focus, and the footer follows", async () => {
+          const w = await mountWizard("remote");
+          expect(text(w, "channel-state-ios")).toBe("Not set up");
+          expect(find(w, "remote-skip").exists()).toBe(true);
+
+          // The person turned the channel on in Settings and got the broker connected.
+          setUp();
+          gatewayValue = gateway();
+          await comeBack();
+
+          expect(text(w, "channel-state-ios")).toBe("Waiting for a phone");
+          expect(stepClasses(w, 1)).toContain("done");
+          expect(find(w, "remote-continue").exists()).toBe(true);
+          expect(find(w, "remote-skip").exists()).toBe(false);
+        });
+
+        it("follows a phone that was paired meanwhile, and a channel that was turned off", async () => {
+          setUp();
+          gatewayValue = gateway();
+          const w = await mountWizard("remote");
+          expect(text(w, "channel-state-ios")).toBe("Waiting for a phone");
+
+          gatewayValue = gateway({ phones: [phone("Alice's iPhone")] });
+          await comeBack();
+          expect(text(w, "channel-state-ios")).toBe("Ready · 1 phone");
+
+          payload = settings(IOS_SET_UP);
+          await comeBack();
+          expect(text(w, "channel-state-ios")).toBe("Set up (off)");
+          // Off again: the old answer of the daemon must not linger.
+          expect(find(w, "ios-tile-phones").exists()).toBe(false);
+          expect(find(w, "remote-skip").exists()).toBe(true);
+        });
+
+        it("leaves what is typed into an IM form alone, and saves the iOS channel as Settings left it", async () => {
+          const w = await mountWizard("remote");
+          await click(w, "channel-open-telegram");
+          await get(w, "field-telegram-botToken").setValue("123:abc");
+          await get(w, "field-telegram-chatId").setValue("42");
+
+          setUp();
+          await comeBack();
+          expect((get(w, "field-telegram-botToken").element as HTMLInputElement).value).toBe("123:abc");
+          expect((get(w, "field-telegram-chatId").element as HTMLInputElement).value).toBe("42");
+
+          // This window's save writes its whole copy: the iOS part must not turn the channel off.
+          await click(w, "channel-save");
+          expect(saves).toHaveLength(1);
+          expect(saves[0].config.channels.telegram).toMatchObject({ enabled: true, botToken: "123:abc", chatId: "42" });
+          expect(saves[0].config.channels.ios).toMatchObject({
+            enabled: true,
+            host: IOS_SET_UP.iosHost,
+            username: IOS_SET_UP.iosUsername,
+          });
+          expect(saves[0].actions.iosBrokerPassword).toEqual({ kind: "unchanged" });
+        });
+
+        it("keeps the stored password known, so the tile still counts the setup as complete", async () => {
+          const w = await mountWizard("remote");
+          expect(text(w, "channel-state-ios")).toBe("Not set up");
+          setUp();
+          await comeBack();
+          expect(text(w, "channel-state-ios")).not.toBe("Incomplete");
+          expect(tile(w).attributes("data-kind")).toBe("configured");
+        });
+
+        it("applies only the newest of two reads that overlap", async () => {
+          const w = await mountWizard("remote");
+          let release!: (value: SettingsPayload) => void;
+          const slow = new Promise<SettingsPayload>((resolve) => {
+            release = resolve;
+          });
+          setUp();
+          gatewayValue = gateway();
+          ipc.getSettings.mockImplementationOnce(() => slow).mockImplementation(async () => payload);
+
+          window.dispatchEvent(new Event("focus")); // the first read waits
+          window.dispatchEvent(new Event("focus")); // the second answers at once
+          await flushPromises();
+          expect(text(w, "channel-state-ios")).toBe("Waiting for a phone");
+
+          // The first answer finally arrives, from before the channel was set up.
+          release(settings());
+          await flushPromises();
+          expect(text(w, "channel-state-ios")).toBe("Waiting for a phone");
+        });
+
+        it("stops reading when the page is left", async () => {
+          const w = await mountWizard("remote");
+          await click(w, "step-done");
+          const reads = ipc.getSettings.mock.calls.length;
+          await comeBack();
+          expect(ipc.getSettings.mock.calls.length).toBe(reads);
+        });
+      });
     });
 
     it("offers only Skip while no channel is on, and Skip records the decision and moves on", async () => {

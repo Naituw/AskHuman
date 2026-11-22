@@ -9,7 +9,7 @@
 //! (end of input, Ctrl-C) keeps whatever was already applied.
 
 use crate::agents::AgentKind;
-use crate::cli::{cfgio, channel_cmd};
+use crate::cli::{cfgio, channel_cmd, ios_cmd, ios_guide};
 use crate::config::{AppConfig, CollaborationStyle, DaemonLifecycleMode, MenuBarIconMode};
 use crate::i18n::Lang;
 use crate::integrations::agent_mode::Mode;
@@ -22,6 +22,9 @@ use crate::onboarding::state::{self, DOMAIN_AGENTS, DOMAIN_REMOTE};
 use std::io::Write;
 use std::path::Path;
 
+/// The iOS App's number in step 2's list: the four IM channels (`channels::ORDER`) come first.
+const IOS_CHOICE: usize = channels::ORDER.len() + 1;
+
 /// The terminal: normal output, hints, and one line of input.
 pub trait TextIo {
     /// A line of the flow itself (stdout).
@@ -31,6 +34,27 @@ pub trait TextIo {
     /// Show `prompt` and read one line. End of input is an error: a flow that cannot be answered
     /// must stop, never loop.
     fn ask(&mut self, prompt: &str) -> Result<String, String>;
+}
+
+/// What the daemon's iOS gateway reports, as far as the channel list shows it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct IosGateway {
+    /// The gateway holds a live connection to the broker.
+    pub connected: bool,
+    /// Phones that are paired and active.
+    pub phones: usize,
+}
+
+/// The iOS App as step 2 lists it. It is not one of the IM channels (`channels::ORDER`): it has a
+/// gateway that can be asked how it is doing.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct IosRow {
+    pub enabled: bool,
+    /// Host, user name, relay and the broker password are all there.
+    pub configured: bool,
+    /// `None` when the gateway cannot be asked: the daemon is not running, or the channel is off
+    /// or incomplete.
+    pub gateway: Option<IosGateway>,
 }
 
 /// Everything the flow does to the machine.
@@ -45,11 +69,18 @@ pub trait TextDeps {
     fn apply_style_to_integrations(&mut self) -> Result<(), String>;
     fn apply_agents(&mut self, selections: &[Selection]) -> Vec<ApplyResult>;
     fn channel_rows(&mut self) -> Vec<ChannelStatus>;
-    /// The existing interactive `channel` wizard, with "enable" as the default answer.
+    /// The iOS App's row; reading it never starts the daemon.
+    fn ios_row(&mut self) -> IosRow;
+    /// The existing interactive `channel` wizard, with "enable" as the default answer. It knows
+    /// the iOS App too (`channel set ios`).
     fn configure_channel(&mut self, id: &str) -> Result<(), String>;
     fn user_id_missing(&mut self, id: &str) -> bool;
     fn detect_user_id(&mut self, id: &str) -> Result<(), String>;
+    /// `channel test <id>`; the iOS App included.
     fn test_channel(&mut self, id: &str) -> Result<(), String>;
+    /// `channel ios pair`: the QR code and pairing code, then the confirmation code to compare.
+    /// Returns once the phone is paired or the attempt ended.
+    fn pair_ios(&mut self) -> Result<(), String>;
     fn tray_supported(&mut self) -> bool;
     fn login_item(&mut self, install: bool) -> Result<(), String>;
     /// Whether this platform can start Agent tasks from the phone or IM (a supported terminal).
@@ -769,11 +800,39 @@ impl Flow<'_> {
     // ——— step 2: remote answering ———
 
     fn channel_state(&self, row: &ChannelStatus) -> String {
-        match (row.enabled, row.configured) {
+        self.state_words(row.enabled, row.configured)
+    }
+
+    fn state_words(&self, enabled: bool, configured: bool) -> String {
+        match (enabled, configured) {
             (true, true) => self.t("enabled", "已启用"),
             (true, false) => self.t("enabled, incomplete", "已启用，配置不完整"),
             (false, true) => self.t("configured, not enabled", "已配置，未启用"),
             (false, false) => self.t("not configured", "未配置"),
+        }
+    }
+
+    /// The iOS App's name wherever the flow lists it.
+    fn ios_title(&self) -> String {
+        self.t("iOS app", "iOS App")
+    }
+
+    /// The iOS App's state: the channel's own, and, once it is enabled and complete, what the
+    /// gateway says about the phones. A gateway that cannot be asked adds nothing
+    /// (`docs/specs/setup-ios-guidance.md` §4).
+    fn ios_state(&self, row: &IosRow) -> String {
+        let gateway = row.gateway.filter(|_| row.enabled && row.configured);
+        let Some(gateway) = gateway else {
+            return self.state_words(row.enabled, row.configured);
+        };
+        match gateway.phones {
+            0 if gateway.connected => self.t("enabled, waiting for a phone", "已启用，待配对手机"),
+            0 => self.t("enabled", "已启用"),
+            1 => self.t("enabled · 1 phone", "已启用 · 1 台手机"),
+            count => self.t(
+                &format!("enabled · {count} phones"),
+                &format!("已启用 · {count} 台手机"),
+            ),
         }
     }
 
@@ -784,8 +843,8 @@ impl Flow<'_> {
             "[2/3] 远程回答（可选，可跳过）",
         );
         self.say(
-            "Answer your Agents' questions from your phone or IM when you are away from the computer.",
-            "离开电脑时，也能在手机 / IM 里回答 Agent 的提问。",
+            "When you're away, answer an Agent's question on your phone, in an IM app or the iOS app.",
+            "离开电脑时，也能在手机上收到 Agent 的提问并回复，IM 或 iOS App 均可。",
         );
         loop {
             let rows = self.deps.channel_rows();
@@ -802,6 +861,14 @@ impl Flow<'_> {
                 );
                 self.io.say(&line);
             }
+            // The iOS App comes after the IM channels and is not one of them (`channels::ORDER`).
+            let ios = self.deps.ios_row();
+            let line = format!(
+                "  {IOS_CHOICE}) {} {}",
+                pad_cells(&self.ios_title(), 9),
+                self.ios_state(&ios)
+            );
+            self.io.say(&line);
             self.say("  s) skip", "  s) 跳过");
             let answer = self.ask("Choose [s]: ", "请选择 [s]: ")?;
             let lowered = answer.to_lowercase();
@@ -812,23 +879,25 @@ impl Flow<'_> {
                 Ok(number) if (1..=channels::ORDER.len()).contains(&number) => {
                     self.configure_channel(channels::ORDER[number - 1])?;
                 }
+                Ok(IOS_CHOICE) => self.ios_app()?,
                 _ => self.say(
                     "That is not one of the choices; try again.",
                     "没有这个选项，请重新输入。",
                 ),
             }
         }
-        if !self.deps.channel_rows().iter().any(|row| row.enabled) {
+        if !self.deps.channel_rows().iter().any(|row| row.enabled) && !self.deps.ios_row().enabled {
             self.deps.mark_skipped(DOMAIN_REMOTE);
         }
         Ok(())
     }
 
-    /// Run the existing channel wizard, then offer to detect the user id and to test.
-    fn configure_channel(&mut self, id: &str) -> Result<(), String> {
+    /// Run the existing channel wizard, then offer to detect the user id and to test. Returns
+    /// whether the channel ended up fully configured.
+    fn configure_channel(&mut self, id: &str) -> Result<bool, String> {
         if let Err(error) = self.deps.configure_channel(id) {
             self.say(&format!("  ✗ {error}"), &format!("  ✗ {error}"));
-            return Ok(());
+            return Ok(false);
         }
         if channels::can_detect_user_id(id)
             && self.deps.user_id_missing(id)
@@ -842,17 +911,20 @@ impl Flow<'_> {
                 self.say(&format!("  ✗ {error}"), &format!("  ✗ {error}"));
             }
         }
-        let configured = self
-            .deps
-            .channel_rows()
-            .iter()
-            .any(|row| row.id == id && row.configured);
+        let configured = if id == "ios" {
+            self.deps.ios_row().configured
+        } else {
+            self.deps
+                .channel_rows()
+                .iter()
+                .any(|row| row.id == id && row.configured)
+        };
         if !configured {
             self.say(
                 &format!("  Not fully configured yet; finish it with `AskHuman channel set {id}`."),
                 &format!("  还没有配置完整；可用 `AskHuman channel set {id}` 补全。"),
             );
-            return Ok(());
+            return Ok(false);
         }
         if self.yes_no("Test the connection?", "测试连接？", false)? {
             match self.deps.test_channel(id) {
@@ -863,7 +935,98 @@ impl Flow<'_> {
                 ),
             }
         }
+        Ok(true)
+    }
+
+    /// The iOS App: three steps rather than one form, so the path comes first (what the GUI tile
+    /// shows), then how to go about it (`docs/specs/setup-ios-guidance.md` §4).
+    fn ios_app(&mut self) -> Result<(), String> {
+        self.say(
+            "The iOS app takes three steps: ① connect a broker  ② install the app on your iPhone  ③ pair a phone",
+            "iOS App 分三步：① 连接 Broker  ② 在 iPhone 上安装 App  ③ 配对手机",
+        );
+        self.say(
+            "You need: an MQTT broker account · an iPhone (iOS 17+, installed via TestFlight)",
+            "需要：MQTT Broker 账号 · iPhone（iOS 17+，通过 TestFlight 安装）",
+        );
+        let guide = ios_guide::setup_guide_url(self.lang);
+        self.say(&format!("Guide: {guide}"), &format!("指南：{guide}"));
+        self.say("  1) Set it up here", "  1) 在这里配置");
+        self.say(
+            "  2) Have an Agent set it up (prints a prompt to give your Agent)",
+            "  2) 让 Agent 帮我配置（打印一段提示词，发给你的 Agent）",
+        );
+        self.say("  b) Back", "  b) 返回");
+        loop {
+            let answer = self.ask("Choose [1]: ", "请选择 [1]: ")?;
+            match answer.to_lowercase().as_str() {
+                "" | "1" => return self.ios_here(),
+                "2" => {
+                    self.ios_agent_prompt();
+                    return Ok(());
+                }
+                "b" | "back" => return Ok(()),
+                _ => self.say(
+                    "That is not one of the choices; try again.",
+                    "没有这个选项，请重新输入。",
+                ),
+            }
+        }
+    }
+
+    /// "Set it up here": the `channel set ios` wizard, a test, and then pairing a phone.
+    fn ios_here(&mut self) -> Result<(), String> {
+        if !self.configure_channel("ios")? {
+            return Ok(());
+        }
+        if !self.deps.ios_row().enabled {
+            self.say(
+                "  The iOS app is not enabled, so there is nothing to pair yet: turn it on with `AskHuman channel enable ios`.",
+                "  iOS App 渠道还没有启用，暂时无法配对：可用 `AskHuman channel enable ios` 启用。",
+            );
+            return Ok(());
+        }
+        // Configuring was the first step; the phone needs the app before it can pair.
+        let join = ios_guide::JOIN_URL;
+        self.say(
+            &format!("Next: install AskHuman on your iPhone (open {join} on the phone and install it through TestFlight), then pair."),
+            &format!("下一步：在 iPhone 上安装 AskHuman（用手机打开 {join}，经 TestFlight 安装），再配对。"),
+        );
+        if self.yes_no("Pair a phone now?", "现在配对手机？", false)? {
+            // A pairing that does not finish, like a failed test, never stops the flow.
+            if let Err(error) = self.deps.pair_ios() {
+                self.say(
+                    &format!("  ✗ Pairing did not finish: {error}"),
+                    &format!("  ✗ 配对未完成：{error}"),
+                );
+                self.say(
+                    "  Try again any time with `AskHuman channel ios pair`.",
+                    "  之后可用 `AskHuman channel ios pair` 重试。",
+                );
+            }
+        } else {
+            self.say(
+                "  Pair later with `AskHuman channel ios pair`, or in Settings → Channels.",
+                "  之后可用 `AskHuman channel ios pair` 配对，或在「设置 → 渠道」里操作。",
+            );
+        }
         Ok(())
+    }
+
+    /// "Have an Agent set it up": the prompt the settings card offers, printed for the person to
+    /// give their Agent. Nothing is configured here, so the list that follows is unchanged.
+    fn ios_agent_prompt(&mut self) {
+        self.say(
+            "Give your Agent this prompt:",
+            "把下面这段话发给你的 Agent：",
+        );
+        for line in ios_guide::agent_prompt(self.lang).lines() {
+            self.io.say(line);
+        }
+        self.say(
+            "You can follow its progress in Settings → Channels.",
+            "之后可在「设置 → 渠道」里看进度。",
+        );
     }
 
     // ——— step 3: background and startup ———
@@ -875,7 +1038,7 @@ impl Flow<'_> {
         // The phone app first (it is the one with a "New task" button), then the IM channels.
         let mut ready_channels = Vec::new();
         let mut later_channels = Vec::new();
-        let ios = self.t("iOS app", "iOS App");
+        let ios = self.ios_title();
         if config.channels.ios.enabled {
             ready_channels.push(ios);
         } else {
@@ -1121,7 +1284,7 @@ impl Flow<'_> {
             .map(|id| channels::title(id, self.lang).to_string())
             .collect();
         if config.channels.ios.enabled {
-            enabled.push(self.t("iOS app", "iOS App"));
+            enabled.push(self.ios_title());
         }
         let style = match config.general.collaboration_style {
             CollaborationStyle::Aligned => self.t("aligned", "对齐"),
@@ -1271,6 +1434,30 @@ impl TextDeps for RealDeps {
         channels::status(&AppConfig::load_without_secrets(), None)
     }
 
+    fn ios_row(&mut self) -> IosRow {
+        let config = AppConfig::load_without_secrets();
+        let enabled = config.channels.ios.enabled;
+        let configured = channel_cmd::is_configured(&config, "ios");
+        // The gateway is asked only when there is one, and only a daemon that is already running
+        // is asked: listing the channels must not start anything (`channel list` does the same).
+        let gateway = (enabled && configured && cfgio::daemon_status().is_some())
+            .then(|| ios_cmd::fetch_state().ok().flatten())
+            .flatten()
+            .map(|state| IosGateway {
+                connected: state.connected,
+                phones: state
+                    .phones
+                    .iter()
+                    .filter(|phone| phone.state == "active")
+                    .count(),
+            });
+        IosRow {
+            enabled,
+            configured,
+            gateway,
+        }
+    }
+
     fn configure_channel(&mut self, id: &str) -> Result<(), String> {
         channel_cmd::wizard_for_setup(id, self.lang)
     }
@@ -1285,6 +1472,10 @@ impl TextDeps for RealDeps {
 
     fn test_channel(&mut self, id: &str) -> Result<(), String> {
         channel_cmd::test(&[id.to_string()], self.lang)
+    }
+
+    fn pair_ios(&mut self) -> Result<(), String> {
+        ios_cmd::dispatch(&["pair".to_string()], self.lang)
     }
 
     fn tray_supported(&mut self) -> bool {

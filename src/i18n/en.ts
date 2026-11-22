@@ -239,7 +239,7 @@ export default {
     },
     setupHint: {
       remote: {
-        text: "Set up an IM channel to receive and answer prompts on your phone when away.",
+        text: "Set up an IM channel or the iOS app to receive and answer prompts on your phone when away.",
         action: "Set up",
         dismiss: "Don't show again",
       },
@@ -1256,7 +1256,7 @@ export default {
     remote: {
       title: "Remote answers",
       optional: "Optional",
-      lead: "Away from your computer, you can still receive an Agent's question in your phone's IM app and answer it. Set up the channel you use most, or skip for now.",
+      lead: "When you're away, answer an Agent's question on your phone, in an IM app or the iOS app. Set up the one you use most, or skip for now.",
       needs: "Needs {items}",
       skipNote: "You can skip this and add a channel any time under Settings → Channels.",
       prepare: "Prepare on the platform first",
@@ -1264,8 +1264,22 @@ export default {
       configure: "Set up",
       edit: "Edit",
       back: "Back to channels",
-      openInSettings: "Open in Settings",
       ios: "iOS App",
+      // The iOS App tile: its three steps are the settings card's own (`settings.channels.ios.step.*`),
+      // so the words below only add the one-line hints and the labels the card does not have.
+      iosTile: {
+        needsItems: "an MQTT broker account · an iPhone (iOS 17+, installed via TestFlight)",
+        cap: {
+          broker: "Create an account",
+          app: "Install via TestFlight",
+          pair: "Scan, compare codes",
+        },
+        await: "Waiting for a phone",
+        paired: "Ready · {n} phone | Ready · {n} phones",
+        continue: "Continue setup",
+        manage: "Manage",
+        view: "View",
+      },
       skip: "Skip",
       saveEnable: "Save and enable",
       missing: "Fill in every required field first.",

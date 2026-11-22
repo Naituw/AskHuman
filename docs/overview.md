@@ -512,7 +512,7 @@ Daemon 里的又一个渠道：手机上的 AskHuman App 回答问题、看 / �
 > 需求 `docs/specs/cli-config.md`，计划 `docs/plans/cli-config.md`。
 
 - headless/SSH 可用 `channel`、`agents`、`config`、`doctor` 完成渠道配置与 Agent 集成；各子命令提供 help 和 JSON 输出。
-- 新用户从 `AskHuman setup [--text]` 起步（需求 `docs/specs/onboarding.md`，计划 `docs/plans/onboarding.md`）：有图形会话时打开三页向导（GUI Host 的 `setup` 窗口），无图形会话或带 `--text` 时在终端走同一流程；两者共用 `onboarding/` 与 `agents` / `channel` 的同一批写入函数，不另有一套逻辑。向导按 Agent / 远程渠道 / 后台三个域各自记「已决定」（Agent 域驱动设置页横幅、托盘项与无参 `AskHuman` 的欢迎语，远程域只驱动弹窗底部提示条，后台域不驱动提示）；可选验证用带 `setup-probe:` 前缀的原生请求 ID 标记一次普通提问（`AskRequest.setup_probe`，可选字段、不抬协议号），Daemon 对它不记历史、渠道可限定为一家。
+- 新用户从 `AskHuman setup [--text]` 起步（需求 `docs/specs/onboarding.md`，计划 `docs/plans/onboarding.md`）：有图形会话时打开三页向导（GUI Host 的 `setup` 窗口），无图形会话或带 `--text` 时在终端走同一流程；两者共用 `onboarding/` 与 `agents` / `channel` 的同一批写入函数，不另有一套逻辑。远程回答一页同时引导四个 IM 渠道和 iOS App（iOS 要三步而不是一张表单：GUI 里是显示状态与准备项的磁贴，按钮打开设置页的 iOS 卡片继续；终端版是列表第 5 项，走 `channel set ios` → 测试 → `channel ios pair`，细节见 `docs/specs/setup-ios-guidance.md`）。向导按 Agent / 远程渠道 / 后台三个域各自记「已决定」（Agent 域驱动设置页横幅、托盘项与无参 `AskHuman` 的欢迎语，远程域只驱动弹窗底部提示条——任一 IM 渠道或 iOS App 渠道已启用即算已决定，后台域不驱动提示）；可选验证用带 `setup-probe:` 前缀的原生请求 ID 标记一次普通提问（`AskRequest.setup_probe`，可选字段、不抬协议号），Daemon 对它不记历史、渠道可限定为一家。
 - `channel set` 无 flag 走交互向导，有 flag 走脚本；密钥只从 env/file/stdin 或隐藏输入读取，不进 argv。
 - `agents mode` 维护 None/CLI/MCP 整包；permission/stop 的 preference 独立保存，但只有集成 mode
   才安装交互接管产物，None 隐藏对应设置并卸载其 active 能力。Lifecycle 也是 mode 拥有的可选

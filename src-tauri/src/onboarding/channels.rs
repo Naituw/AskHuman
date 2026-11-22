@@ -1,7 +1,10 @@
 //! The remote-answering channels the setup wizard offers, in the order it shows them, and their
 //! current state. Shared by the GUI wizard (`setup_channel_status`) and the terminal flow.
 //!
-//! iOS is not part of the wizard (spec D22); popup is the local window and needs no setup.
+//! The iOS App is not one of these IM channels (it has no entry in [`ORDER`]): the GUI wizard has a
+//! tile of its own for it and the terminal flow a row of its own, because it is set up in three
+//! steps rather than one form (`docs/specs/setup-ios-guidance.md`). Popup is the local window and
+//! needs no setup.
 
 use crate::cli::channel_cmd;
 use crate::config::AppConfig;

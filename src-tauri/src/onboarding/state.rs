@@ -7,8 +7,9 @@
 //!   welcome line): decided when any Agent is integrated, the step was skipped, or the history
 //!   holds a reply that came from a real Agent.
 //! - **Remote** (optional; drives only the popup footer strip that replaced the old IM tip):
-//!   decided when any IM channel is enabled, the step was skipped, or the legacy
-//!   `im_tip_dismissed` flag is set. Identical to the old tip's condition.
+//!   decided when any IM channel or the iOS App channel is enabled, the step was skipped, or the
+//!   legacy `im_tip_dismissed` flag is set. The old tip's condition plus iOS, which the wizard
+//!   guides like an IM channel (`docs/specs/setup-ios-guidance.md` §5).
 //! - **Background** (optional; drives no prompt): decided when the GUI Host login item exists or
 //!   the user made a choice. It only gates whether `menuBarIcon = always` may write the login item.
 
@@ -33,8 +34,8 @@ pub struct Evidence {
     pub any_agent_integrated: bool,
     /// The reply history holds an entry whose `agent_kind` is set.
     pub history_has_agent_origin: bool,
-    /// Telegram, DingTalk, Feishu or Slack is enabled (popup and iOS do not count).
-    pub any_channel_enabled: bool,
+    /// Telegram, DingTalk, Feishu, Slack or the iOS App is enabled (the popup does not count).
+    pub any_remote_channel_enabled: bool,
     pub login_item_present: bool,
     pub background_decided: bool,
 }
@@ -56,7 +57,7 @@ pub fn derive(evidence: &Evidence) -> Decided {
         agents: evidence.any_agent_integrated
             || skipped(evidence, DOMAIN_AGENTS)
             || evidence.history_has_agent_origin,
-        remote: evidence.any_channel_enabled
+        remote: evidence.any_remote_channel_enabled
             || skipped(evidence, DOMAIN_REMOTE)
             || evidence.legacy_im_tip_dismissed,
         background: evidence.login_item_present || evidence.background_decided,
@@ -71,13 +72,15 @@ fn any_agent_integrated() -> bool {
         .any(|def| matches!(agents::current_mode(def), Ok(Mode::Cli | Mode::Mcp)))
 }
 
-/// Whether any IM channel the wizard configures is enabled.
-pub fn any_channel_enabled(config: &AppConfig) -> bool {
+/// Whether any remote channel the wizard configures is enabled: an IM channel or the iOS App.
+/// The popup is the channel that is always there, so it never counts.
+pub fn any_remote_channel_enabled(config: &AppConfig) -> bool {
     let channels = &config.channels;
     channels.telegram.enabled
         || channels.dingding.enabled
         || channels.feishu.enabled
         || channels.slack.enabled
+        || channels.ios.enabled
 }
 
 /// Read the real machine. Does not touch the keychain.
@@ -88,7 +91,7 @@ pub fn gather() -> Evidence {
         legacy_im_tip_dismissed: ui.im_tip_dismissed,
         any_agent_integrated: any_agent_integrated(),
         history_has_agent_origin: crate::history::has_agent_origin(),
-        any_channel_enabled: any_channel_enabled(&AppConfig::load_without_secrets()),
+        any_remote_channel_enabled: any_remote_channel_enabled(&AppConfig::load_without_secrets()),
         login_item_present: login_item::instance_has_login_item(),
         background_decided: ui.onboarding.background_decided,
     }
@@ -111,7 +114,7 @@ pub fn remote_decided() -> bool {
     let ui = uistate::load();
     ui.onboarding.is_skipped(DOMAIN_REMOTE)
         || ui.im_tip_dismissed
-        || any_channel_enabled(&AppConfig::load_without_secrets())
+        || any_remote_channel_enabled(&AppConfig::load_without_secrets())
 }
 
 /// Whether the user turned the wizard's phone-task offer down ("Not now").
@@ -188,7 +191,7 @@ mod tests {
     fn each_remote_evidence_decides_only_the_remote_domain() {
         for evidence in [
             Evidence {
-                any_channel_enabled: true,
+                any_remote_channel_enabled: true,
                 ..ev()
             },
             Evidence {
@@ -268,14 +271,40 @@ mod tests {
     }
 
     #[test]
-    fn channel_counting_excludes_popup_and_ios() {
+    fn channel_counting_includes_ios_and_excludes_popup() {
         let mut config = AppConfig::default();
-        assert!(!any_channel_enabled(&config));
+        assert!(!any_remote_channel_enabled(&config));
         config.channels.popup.enabled = true;
+        assert!(
+            !any_remote_channel_enabled(&config),
+            "the popup is always there and never counts"
+        );
         config.channels.ios.enabled = true;
-        assert!(!any_channel_enabled(&config), "popup and iOS do not count");
+        assert!(
+            any_remote_channel_enabled(&config),
+            "iOS counts like an IM channel"
+        );
+        config.channels.ios.enabled = false;
         config.channels.slack.enabled = true;
-        assert!(any_channel_enabled(&config));
+        assert!(any_remote_channel_enabled(&config));
+    }
+
+    #[test]
+    fn an_enabled_ios_channel_alone_decides_the_remote_domain() {
+        let mut config = AppConfig::default();
+        config.channels.ios.enabled = true;
+        let evidence = Evidence {
+            any_remote_channel_enabled: any_remote_channel_enabled(&config),
+            ..ev()
+        };
+        assert_eq!(
+            derive(&evidence),
+            Decided {
+                agents: false,
+                remote: true,
+                background: false
+            }
+        );
     }
 
     #[cfg(unix)]
@@ -351,5 +380,18 @@ mod tests {
             !uistate::load().onboarding.is_skipped("remote"),
             "never rewritten"
         );
+
+        // An enabled iOS channel decides the remote domain on its own, like an IM channel; a
+        // disabled one (configured or not) does not.
+        std::fs::write(state_dir.join("ui-state.json"), b"{}").unwrap();
+        assert!(!remote_decided());
+        let mut config = AppConfig::default();
+        config.channels.ios.host = "broker.example.com".to_string();
+        config.save_to(&crate::paths::config_file()).unwrap();
+        assert!(!remote_decided(), "an iOS channel that is set up but off");
+        config.channels.ios.enabled = true;
+        config.save_to(&crate::paths::config_file()).unwrap();
+        assert!(remote_decided());
+        assert!(derive(&gather()).remote);
     }
 }

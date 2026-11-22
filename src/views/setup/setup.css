@@ -656,6 +656,111 @@
   flex: 1 1 auto;
 }
 
+/* ---------- The iOS App tile (docs/specs/setup-ios-guidance.md §3) ---------- */
+/* A whole row: its three steps need the width, and the IM tiles above keep theirs. Name and buttons
+   sit on one line and wrap, not shrink, when a language or a state makes them long. */
+.setup-ios-tile {
+  grid-column: 1 / -1;
+  gap: 12px;
+}
+.setup-ios-head {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+}
+.setup-ios-badge {
+  flex: 0 0 auto;
+}
+.setup-ios-main {
+  flex: 1 1 0;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+.setup-ios-line {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px 10px;
+}
+.setup-ios-name {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 30px;
+  white-space: nowrap;
+}
+.setup-ios-actions {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  margin-left: auto;
+}
+.setup-ios-steps {
+  list-style: none;
+  margin: 0;
+  padding: 10px 0 0;
+  border-top: var(--hairline) solid var(--border);
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: var(--space-3);
+}
+.setup-ios-step {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  min-width: 0;
+}
+.setup-ios-num {
+  flex: 0 0 auto;
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  display: grid;
+  place-items: center;
+  font-size: 11.5px;
+  font-weight: 600;
+  background: var(--bg-elevated);
+  color: var(--text-secondary);
+}
+.setup-ios-num svg {
+  width: 11px;
+  height: 11px;
+}
+.setup-ios-step.current .setup-ios-num {
+  background: var(--accent);
+  color: #fff;
+}
+.setup-ios-step.done .setup-ios-num {
+  background: var(--accent-green);
+  color: #fff;
+}
+.setup-ios-text {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+.setup-ios-title {
+  font-size: 12.5px;
+  font-weight: 600;
+  line-height: 1.3;
+}
+.setup-ios-step.upcoming .setup-ios-title {
+  color: var(--text-secondary);
+  font-weight: 500;
+}
+.setup-ios-cap {
+  font-size: 11.5px;
+  line-height: 1.4;
+  color: var(--text-secondary);
+}
+/* The prompt box is the settings card's own; inside the tile the tile's gap already spaces it. */
+.setup-ios-tile .ios-agent {
+  margin-top: 0;
+}
+
 /* ---------- Files that applying would touch ---------- */
 .setup-files-card {
   padding: 4px 12px;
