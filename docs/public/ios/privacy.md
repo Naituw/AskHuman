@@ -8,7 +8,7 @@ Effective date: November 22, 2026
 
 [简体中文](../privacy-zh/) · [Beta setup guide](../beta/)
 
-AskHuman Mobile is a companion to AskHuman on your own Mac. This policy describes the iOS app and the push relay provided by the AskHuman project maintainer for the invitation-only beta. Your chosen MQTT provider, Apple, your agent provider and any service you operate have their own privacy terms.
+AskHuman Mobile is a companion to AskHuman on your own Mac. This policy describes the iOS app and the push relay provided by the AskHuman project maintainer for the TestFlight beta. Your chosen MQTT provider, Apple, your agent provider and any service you operate have their own privacy terms.
 
 ## What stays on your devices
 
@@ -24,7 +24,7 @@ The mobile todo view reads and changes todos on a paired Mac. Optional iCloud sy
 - **Our push relay:** your Apple push device token, application identifier, push environment, an opaque device handle and encrypted notification content. The service turns these into Apple push requests. Handles contain encrypted routing information and expire after 180 days; the app can register again. The relay does not maintain a user-account or message-content database.
 - **Apple Push Notification service:** routing information and encrypted notification content. The notification extension decrypts a preview on the receiving device; previews may be visible on the lock screen according to your iOS settings.
 - **Infrastructure providers:** hosting and network providers can process IP addresses, request timing and operational metadata. The relay application's own log records request method, status and duration, not message bodies, tokens or handles; to limit abuse it keeps short-lived counters by request network address in memory only, which are neither logged nor stored. Provider access logs and retention depend on the hosting configuration; end-to-end encryption does not hide all metadata.
-- **TestFlight and feedback:** Apple automatically collects beta crash logs and usage information and shares them with the developer; feedback you submit is also shared, as described in [TestFlight & Privacy](https://www.apple.com/legal/privacy/data/en/test-flight/). This can include your invitation email and test device/version information. If you email us or submit a screenshot or issue, we receive what you send and use it to investigate and respond.
+- **TestFlight and feedback:** Apple automatically collects beta crash logs and usage information and shares them with the developer; feedback you submit is also shared, as described in [TestFlight & Privacy](https://www.apple.com/legal/privacy/data/en/test-flight/). This can include your test device and app version, and your name and email address if you were invited by email; they are not visible to us if you join only through the public link. If you email us or submit a screenshot or issue, we receive what you send and use it to investigate and respond.
 
 AskHuman Mobile does not contain advertising or an added third-party analytics SDK. We do not sell your questions, answers or attachments. End-to-end encryption does not protect content once displayed on an unlocked device or sent to an agent/provider you have chosen.
 
