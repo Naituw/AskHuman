@@ -69,9 +69,14 @@ async fn counts(fx: &Fixture) -> Counts {
     }
 }
 
-/// The wire bytes of what the phone was sent after `mark`.
-fn wire_bytes_since(phone: &TestPhone, mark: usize) -> u64 {
-    phone.received[mark..].iter().map(|r| r.bytes as u64).sum()
+/// The wire bytes of the chunks the phone was sent after `mark`. Other frames can come in between (the Mac's periodic
+/// snapshots); the Mac counts chunks, so only chunks are summed.
+fn chunk_wire_bytes_since(phone: &TestPhone, mark: usize) -> u64 {
+    phone.received[mark..]
+        .iter()
+        .filter(|received| received.ty == t::ASSET_CHUNK)
+        .map(|received| received.bytes as u64)
+        .sum()
 }
 
 fn file_of(chunks: usize, seed: u8) -> Vec<u8> {
@@ -94,14 +99,14 @@ async fn the_parts_of_the_chunks_add_up_to_what_the_type_says_each_byte_in_one_o
     let mark = phone.received.len();
     phone.send(&preview_of(&picture.asset_id)).await;
     chunks_of(&mut phone, 2).await;
-    let preview_bytes = wire_bytes_since(&phone, mark);
+    let preview_bytes = chunk_wire_bytes_since(&phone, mark);
 
     let mark = phone.received.len();
     phone.send(&ask_for(&picture.asset_id, 0, 8, None)).await;
     chunks_of(&mut phone, 3).await;
     phone.send(&ask_for(&file.asset_id, 0, 8, None)).await;
     chunks_of(&mut phone, 2).await;
-    let original_bytes = wire_bytes_since(&phone, mark);
+    let original_bytes = chunk_wire_bytes_since(&phone, mark);
 
     let counted = counts(&fx).await;
     assert_eq!(
