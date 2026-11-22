@@ -521,7 +521,7 @@ export default {
         relayOwn: "Use my own relay",
         relayOwnPlaceholder: "Address of the relay you deployed (HTTPS)",
         relayPublicNote:
-          "The public relay is run by the author: free, best effort, no availability guarantee. It stores nothing; it only handles the device token when the phone registers for pushes and when a push is sent, and it cannot read questions or answers. An app you built yourself with a different Bundle ID cannot use it: choose \"Use my own relay\".",
+          "The public relay only forwards pushes: it stores nothing and cannot read questions or answers. An app you build yourself with a different Bundle ID cannot use it; choose \"Use my own relay\".",
         macName: "Name on the phone",
         macNamePlaceholder: "Leave empty to use the computer name",
         importLabel: "Reuse another Mac's settings",

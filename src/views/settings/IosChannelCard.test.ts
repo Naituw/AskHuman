@@ -667,7 +667,7 @@ describe("IosChannelCard", () => {
       expect(relaySelect(wrapper).element.value).toBe("public");
       expect(relayInput(wrapper).exists()).toBe(false);
       const note = wrapper.get(".ios-relay-note").text();
-      expect(note).toContain("free, best effort, no availability guarantee");
+      expect(note).toContain("only forwards pushes");
       expect(note).toContain("stores nothing");
       expect(note).toContain("cannot read questions or answers");
       // The card's introduction agrees: only the broker is the user's to bring.

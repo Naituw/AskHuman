@@ -509,7 +509,7 @@ export default {
         relayOwn: "使用自己的中继",
         relayOwnPlaceholder: "自己部署的中继地址（HTTPS）",
         relayPublicNote:
-          "公共中继由作者提供：免费，尽力而为，不保证可用性。它不保存任何数据，只在手机登记推送和发送推送时经手设备 token，看不到问题和答案的内容。自己编译、换了 Bundle ID 的 App 不能用它，请选「使用自己的中继」。",
+          "公共中继只转发推送：不保存任何数据，也看不到问题和答案的内容。自己编译、Bundle ID 不同的 App 不能使用它，请选「使用自己的中继」。",
         macName: "本机显示名",
         macNamePlaceholder: "留空使用电脑名称",
         importLabel: "沿用另一台 Mac 的设置",
