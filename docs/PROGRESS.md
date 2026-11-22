@@ -3,7 +3,7 @@
 记录需要跨会话保留的未完成 / 延期事项和明确下一步。任务 / 需求完成后删除其 section
 （历史留在 git）。
 
-## 进行中：iOS 设置体验（已全部放出：Pages、公共组、Mac v0.18.0；剩手机走查与放出后的检查）
+## 进行中：iOS 设置体验（已全部放出：Pages、公共组、Mac v0.18.0；剩放出后的检查）
 
 用户 2026-11-22 要求全面优化 iOS 渠道的设置界面：打开设置就能完成后续配置（Broker、TestFlight、配对），并能让 Agent 代配。
 规格 [ios-setup-experience.md](specs/ios-setup-experience.md)（全部文案在 §14），计划 [plans/ios-setup-experience.md](plans/ios-setup-experience.md)，
@@ -48,11 +48,9 @@ TestFlight 公共链接 + Pages 落地页、卡片顶部「设置步骤」清单
   真实的 `SettingsView`（浏览器 + mock 后端）里看过卡片的三种形态、深链、搜索结果跳转。可见性随 Mac v0.18.0 对用户生效。
 - [x] 推送与 Pages（用户 2026-11-22 同意）：23 个本地提交已推送（`955e8924..e9c565b6`），Pages 工作流成功，线上五个页面与本地构建逐字节相同，
   落地页上的 TestFlight 公共链接可打开（匿名读到「Join the AskHuman Mobile beta」）。**公共链接从此是公开的**；公共组里是构建 29，已带新路径文案。
-- [ ] 用一台没加过测试的手机从落地页走到 TestFlight 安装成功（要用户的手机，或另一个 Apple ID），再把整条链路走一遍
-  （新 Broker 账号 → 落地页 → TestFlight → 配对 → 测试问题）。Pages 与链接我只读回过页面和链接本身，没有用手机走。
 - [x] 发 Mac 新版 [v0.18.0](https://github.com/Naituw/AskHuman/releases/tag/v0.18.0)（用户 2026-11-22 定了版本号、选手写发布说明并在 CI 全绿后点头；发布工作流约 12 分钟）：
   卡片对用户可见，README、落地页与指南写的路径与已发布的版本一致；CI 里 `cargo audit` 的红灯随这次推送修好（`url` 2.5.9）。发布记录与核验见[计划](plans/ios-setup-experience.md)的「发布记录」。
-- [ ] 放出后（2026-11-22 已全部放出）：**至少每 80 天出一次 TestFlight 包**（构建 90 天过期，公共链接才一直可用；现在公共组里的构建 29 在 2027-02-19 过期）；一周后复核中继与公共链接的用量。
+- [ ] 放出后（2026-11-22 已全部放出）：**至少每 80 天出一次 TestFlight 包**（构建 90 天过期，公共链接才一直可用；现在公共组里的构建 29 在 2027-02-19 过期）；一周后复核中继与公共链接的用量（公共组里有没有测试员加入，也是「全新 Apple ID 经落地页装上」这条路径的首次间接证据：用户 2026-11-22 决定不做手机走查，没人用手机走过它）。
 
 ## 进行中：Antigravity 深度集成（P1–P4 已实现并装为日常版，等用户验收）
 
@@ -83,13 +81,14 @@ TestFlight 公共链接 + Pages 落地页、卡片顶部「设置步骤」清单
 - 诊断（只加信息，没改任何行为）：飞书的网络错误文本带上 reqwest 的 `source()` 链；取 endpoint 阶段在 `ASKHUMAN_FEISHU_DEBUG=1` 时
   写 `feishu-debug.log`。用装好的二进制验过：经 launchd 拉起的隔离 daemon，`daemon.log` 里的 `feishu router connect failed`
   现在带 `client error (Connect): tcp connect error: Connection refused (os error 61)`；成功路径只记耗时，wss 地址（带 ticket）不落日志。
-- 这条诊断已随 [v0.18.0](https://github.com/Naituw/AskHuman/releases/tag/v0.18.0)（2026-11-22）发布，报告者升级后日志里会带上原因；还没有在 issue 里告诉他。
+- 这条诊断已随 [v0.18.0](https://github.com/Naituw/AskHuman/releases/tag/v0.18.0)（2026-11-22）发布，报告者升级后日志里会带上原因；已在 [issue 里告诉他](https://github.com/Naituw/AskHuman/issues/32#issuecomment-7078582598)（2026-11-22），
+  请他升级后把新日志里的那一行贴上来，并补上 launchd 下的 curl 结果。
 - 在本机（macOS 27.2.1、0.17.3）走同一条 launchd 路径（CLI 触发的 `spawn_via_gui_launchd`、隔离 `ASKHUMAN_HOME`、假飞书服务）**没有复现**，
   日常 daemon 也由 launchd 管理且飞书正常；所以本机的 launchd 路径没问题，原因可能在报告者的环境里。
 - 已[回复](https://github.com/Naituw/AskHuman/issues/32#issuecomment-7045289814)，请报告者在 launchd 里用 curl 对照访问他的飞书域名、
   `registry.npmjs.org` 和 `http://127.0.0.1:8099/`。
 
-等报告者的 curl 结果，之后：
+等报告者的新日志和 curl 结果，之后：
 
 - [ ] launchd 里的 curl 也失败：系统层面（常见是安全软件 / 防火墙按进程过滤网络），不是 AskHuman 的缺陷；回复并说明排查方向后关闭。
 - [ ] launchd 里的 curl 成功而 AskHuman 失败：回到 AskHuman。先看新版错误文本里的原因（`Connect` / DNS / 代理 / 超时指向不同方向）再定位；
@@ -416,7 +415,8 @@ macOS：相关 325 条测试、提交前 clippy、Dev 正式转送、日常二�
 下一步：
 - [ ] 日常使用里遇到 Claude 起后台子 Agent（`Agent` 工具 `run_in_background`）时核对：Agent 控制台一直显示「运行中」，
   直到子 Agent 的结果回来、最终 `Stop` 才变空闲并弹确认卡。不必专门造场景。
-- [ ] 留意 #30 反馈者的确认：修复已随 [v0.18.0](https://github.com/Naituw/AskHuman/releases/tag/v0.18.0)（2026-11-22）发布；issue 已关闭，他若仍能复现会在里面回复，到时重新打开。
+- [ ] 留意 #30 反馈者的确认：修复已随 [v0.18.0](https://github.com/Naituw/AskHuman/releases/tag/v0.18.0)（2026-11-22）发布，已在 [issue 里告诉他](https://github.com/Naituw/AskHuman/issues/30#issuecomment-7078582134)
+  并请他用原复现步骤确认；issue 已关闭，他若仍能复现会在里面回复，到时重新打开。
 - [ ] 已知取舍，等用户决定要不要处理：子 Agent 被手动终止、之后再没有最终 `Stop` 时，会话要等 30 分钟兜底才变空闲，
   期间不弹确认卡。
 

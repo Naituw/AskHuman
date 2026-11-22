@@ -401,7 +401,7 @@ iOS 渠道代码平台无关，但只在 macOS 验证过。非 macOS 读不到 M
 
 分期与实施步骤见 [`docs/plans/ios-setup-experience.md`](../plans/ios-setup-experience.md)：P1 卡片（前端，仍在「实验」里）→ P2 后端小改（探测、Agent 指南）→ P3 文档与落地页 → P4 iOS 文案与出包 → P5 放出（一个提交翻可见性：卡片移位、门控解除；随后发 Mac 新版）。
 
-验证（详细见计划）：步骤判定的纯函数单测；卡片组件测试（三种形态、手风琴、磁贴、复制、保活锁定、测试问题四种结局）；Rust：探测对 iOS 的策略与立即推送、`--agent-guide` 的各状态输出（含「输出里没有任何凭据」的断言）、门控解除后的 `channel` 帮助；前后端的事实一致性测试（§7.5）；`./scripts/install.sh` 装机后在真实窗口里走一遍；最后由用户在真机上从零走完整条链路（新 Broker 账号 → TestFlight → 配对 → 测试问题）。
+验证（详细见计划）：步骤判定的纯函数单测；卡片组件测试（三种形态、手风琴、磁贴、复制、保活锁定、测试问题四种结局）；Rust：探测对 iOS 的策略与立即推送、`--agent-guide` 的各状态输出（含「输出里没有任何凭据」的断言）、门控解除后的 `channel` 帮助；前后端的事实一致性测试（§7.5）；`./scripts/install.sh` 装机后在真实窗口里走一遍；最后由用户在真机上从零走完整条链路（新 Broker 账号 → TestFlight → 配对 → 测试问题；2026-11-22 用户决定不再做这一步，见第 12 轮）。
 
 风险：
 
@@ -423,6 +423,7 @@ iOS 渠道代码平台无关，但只在 macOS 验证过。非 macOS 读不到 M
 - 第 9 轮（2026-11-22，P5 的可见性提交）：用户选「做可见性提交，只提交到本地，不推送、不发布 Pages、不发 Mac 版」，所以 §10.4 的放出顺序不变，只是第 3 步（本节 §10.1 的清单）先做了。提交信息的 `Release-Note` 经用户确认：「The iOS App channel is no longer experimental: it now lives under Settings → Channels with step-by-step setup (broker, TestFlight, pairing), a test question you can send to the phone, and a guide your Agent can follow to set it up for you.」（更新日志里只显示这一句，英文，与此前的条目一致）。走查留下的测试环境（EMQX 里的 `AskHumanIOS` 部署、测试 App 里的「走查 Mac」）用户定为不清理、不再追踪，已从 `PROGRESS.md` 删掉。
 - 第 10 轮（2026-11-22，P5 之后）：用户选了三件事。① 发布说明草稿：用项目的 git-cliff 对 `v0.17.3` 之后的提交跑出的结果给用户看过，没有改措辞，也不发布。② 同意推送这 23 个本地提交并发布 Pages，发布后读回线上页面核对（Pages 工作流在 GitHub 上构建 `main`，所以必须先推送）；已做：推送 `955e8924..e9c565b6`，工作流成功，线上五个页面与本地构建逐字节相同，落地页上的 TestFlight 公共链接可打开。这一步让 §10.4 的第 1 项完成；Mac 新版还没发，README 与指南写的新路径要等它发出才与已发布的版本一致。③ D26：日常出包也更新公共组。
 - 第 11 轮（2026-11-22，发 Mac 新版）：用户选了三件事：修 CI 的 `cargo audit` 红灯、把本地的公共组规则提交推上去、开始发布流程。① audit：`url` 2.5.8 有 RUSTSEC-2026-0592（嵌套 `blob:` URL 上 `Url::origin()` 栈溢出，2026-11-20 公布），升到 2.5.9（只改 `Cargo.lock`，连带 `form_urlencoded` 1.2.3）；我们自己的代码只在 `channels/http_error.rs` 对失败的 IM 请求地址调一次 `Url::origin()`，所以只是依赖卫生，不是已知可利用的路径。② 用户定版本号 **v0.18.0**（3 条新功能，iOS 渠道转正是头条），发布说明选**手写**（英文，沿用 v0.17.x 的分组，不写手机 App 独有的改动）；其中「没填中继地址就走公共中继」一句是行为变化（旧版没填就没有推送），用户看过措辞，不写「免费」「尽力而为」（照 11-22 对设置页文案的决定）。③ CI 全绿后用户点头打 tag，发布与核验见[计划 P5 的「发布记录」](../plans/ios-setup-experience.md)。这让 §10.4 的第 3 步完成。
+- 第 12 轮（2026-11-22，v0.18.0 之后）：用户选了两件事。① 在 #29–#32 里告知修复 / 诊断已随 v0.18.0 发布：措辞逐条给用户看过，原样发布（见[计划 P5 的「发布记录」](../plans/ios-setup-experience.md)）。写 #29 的回复时核对发现，v0.18.0 说明里 Windows 一条漏了「升级后要点一次更新」（hook 脚本只在更新时重写），用户同意补上，Release 页与 `docs/release-notes/v0.18.0.md` 已同步；Dock 一条写成了既成事实、而 `popup-request-inbox.md` §4.2 仍标「待验收」，用户没有选改措辞，验证状态只在 #31 的回复里说明。② 手机走查（落地页 → TestFlight 安装 → 配对 → 测试问题）：用户决定不做，现在没有合适的手机（要一部 Apple ID 没加入过任何测试组的），也不想再重测配对流程（已测过一次）。所以 §11 的「用户从零走完整条链路」没有按原样完成：各段分别验过，没人验过的是「全新 Apple ID 从落地页经公共链接装上 TestFlight 构建」；已从 `PROGRESS.md` 删掉这条待办，一周后复核公共链接用量时，公共组里有没有测试员加入是它的首次间接证据。
 
 ## 13. 不做
 
