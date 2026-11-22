@@ -520,6 +520,7 @@ export default {
         relayPublic: "Use the public relay",
         relayOwn: "Use my own relay",
         relayOwnPlaceholder: "Address of the relay you deployed (HTTPS)",
+        relayOwnEmpty: "No address yet: the public relay is used until you enter one.",
         relayPublicNote:
           "The public relay only forwards pushes: it stores nothing and cannot read questions or answers. An app you build yourself with a different Bundle ID cannot use it; choose \"Use my own relay\".",
         macName: "Name on the phone",

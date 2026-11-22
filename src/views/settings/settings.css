@@ -1405,6 +1405,10 @@
 .ios-relay-note {
   margin: var(--space-2) 0 0;
 }
+.ios-relay .ios-relay-pending {
+  margin: var(--space-2) 0 0;
+  color: #ff9f0a;
+}
 .ios-test-hint {
   margin: var(--space-1) 0 0;
   font-size: 12px;

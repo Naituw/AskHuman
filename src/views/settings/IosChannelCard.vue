@@ -280,6 +280,10 @@ function pushWarning(phone: IosPhone): string {
           :placeholder="defaultRelayUrl ? t('settings.experimental.ios.relayOwnPlaceholder') : ''"
           @change="persist"
         />
+        <!-- An empty address still means the public relay, so say so while "own" has none yet. -->
+        <p v-if="defaultRelayUrl && relayMode === 'own' && !ios.relayUrl.trim()" class="card-desc ios-relay-pending">
+          {{ t("settings.experimental.ios.relayOwnEmpty") }}
+        </p>
       </div>
       <div class="field">
         <label>{{ t("settings.experimental.ios.macName") }}</label>

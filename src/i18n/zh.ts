@@ -508,6 +508,7 @@ export default {
         relayPublic: "使用公共中继",
         relayOwn: "使用自己的中继",
         relayOwnPlaceholder: "自己部署的中继地址（HTTPS）",
+        relayOwnEmpty: "还没填地址，暂时仍使用公共中继。",
         relayPublicNote:
           "公共中继只转发推送：不保存任何数据，也看不到问题和答案的内容。自己编译、Bundle ID 不同的 App 不能使用它，请选「使用自己的中继」。",
         macName: "本机显示名",

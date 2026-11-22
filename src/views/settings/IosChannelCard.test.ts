@@ -707,16 +707,37 @@ describe("IosChannelCard", () => {
       expect(relaySelect(wrapper).element.value).toBe("own");
       expect(relayInput(wrapper).element.value).toBe("");
       expect(persist).not.toHaveBeenCalled();
+      // An empty address still means the public relay: the card says so rather than staying silent.
+      expect(wrapper.get(".ios-relay-pending").text()).toContain("the public relay is used until you enter one");
 
       await relayInput(wrapper).setValue("https://mine.example.com");
       await relayInput(wrapper).trigger("change");
       expect(config.value.channels.ios.relayUrl).toBe("https://mine.example.com");
       expect(persist).toHaveBeenCalled();
+      expect(wrapper.find(".ios-relay-pending").exists()).toBe(false);
 
-      // Clearing the field while editing does not yank the field away.
+      // Clearing the field while editing does not yank the field away, and the hint is back.
       await relayInput(wrapper).setValue("");
       expect(relaySelect(wrapper).element.value).toBe("own");
+      expect(wrapper.find(".ios-relay-pending").exists()).toBe(true);
       wrapper.unmount();
+    });
+
+    it("says nothing about a missing address when the public relay is chosen or this build has none", async () => {
+      iosDefaultRelayUrl.mockResolvedValue(PUBLIC);
+      config.value.channels.ios.relayUrl = "";
+      const withPublic = mountCard();
+      await flushPromises();
+      expect(relaySelect(withPublic).element.value).toBe("public");
+      expect(withPublic.find(".ios-relay-pending").exists()).toBe(false);
+      withPublic.unmount();
+
+      iosDefaultRelayUrl.mockResolvedValue("");
+      config.value.channels.ios.relayUrl = "";
+      const withoutPublic = mountCard();
+      await flushPromises();
+      expect(withoutPublic.find(".ios-relay-pending").exists()).toBe(false);
+      withoutPublic.unmount();
     });
 
     it("follows an imported connection string: an empty relay in it means the public one", async () => {

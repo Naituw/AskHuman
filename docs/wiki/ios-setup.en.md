@@ -4,7 +4,7 @@
 
 The AskHuman iOS app is a communication channel next to Feishu and Slack: your Agent asks on the Mac, you answer on your iPhone. You can also see what your Agents are doing, watch one live, send it a message and start new tasks. **Several Macs can pair with one phone** (home and office, say); all their questions land in one inbox.
 
-> This is an **experimental feature** and you bring one thing yourself: an MQTT broker (the free tier of a hosted service or one you run yourself, see [Brokers: requirements, options and verification](./ios-broker.en.md)). Pushes go through the **public push relay** run by the author by default: free, best effort, no availability guarantee, and it stores nothing (see below). Only if you build the app yourself (with a different bundle ID) or want to control the relay do you need your own Apple developer account, push key and a relay you deploy (sections 2 and 3). The steps below cover all of it.
+> This is an **experimental feature** and you bring one thing yourself: an MQTT broker (the free tier of a hosted service or one you run yourself, see [Brokers: requirements, options and verification](./ios-broker.en.md)). Pushes go through the **public push relay** by default; it only forwards pushes and stores nothing (see below). Only if you build the app yourself (with a different bundle ID) or want to control the relay do you need your own Apple developer account, push key and a relay you deploy (sections 2 and 3). The steps below cover all of it.
 
 ## How it works, and who can see what
 
