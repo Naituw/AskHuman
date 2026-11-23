@@ -14,8 +14,9 @@ final class AskHumanLargeScreenUITests: XCTestCase {
     /// the request and is put away once a request was picked.
     private var isTiled: Bool { app.windows.firstMatch.frame.width >= 700 }
 
+    /// `phoneSized` lets a phone-sized window through, for a test whose subject is how the app fills such a window.
     private func launch(request: String? = nil, scenario: String = "demo", autoAdvance: Bool = false,
-                        extra: [String] = []) throws {
+                        extra: [String] = [], phoneSized: Bool = false) throws {
         let app = XCUIApplication()
         var arguments = ["-AHMock", "YES", "-AHLatency", "0.05", "-AHScenario", scenario,
                          "-AHWebMarkdown", "NO", "-AHAutoAdvance", autoAdvance ? "YES" : "NO",
@@ -24,7 +25,7 @@ final class AskHumanLargeScreenUITests: XCTestCase {
         app.launchArguments = arguments + extra
         app.launch()
         self.app = app
-        try XCTSkipIf(app.windows.firstMatch.frame.width < 600, "A phone-sized window keeps the stack.")
+        if !phoneSized { try XCTSkipIf(app.windows.firstMatch.frame.width < 600, "A phone-sized window keeps the stack.") }
     }
 
     /// Keeps what the screen shows: with the test results, and in the folder named by `AH_UI_SHOTS` when
@@ -571,5 +572,49 @@ final class AskHumanLargeScreenUITests: XCTestCase {
         becomes(office, "isHittable == true", timeout: 20)
         if isTiled { require("detail-placeholder") }
         shot("macs-unpaired")
+    }
+
+    // MARK: the margins of the pages
+
+    /// The lists of the app are the system's, and keep the margin the system keeps for its own pages (the cards of
+    /// Settings): a phone has 16 pt, the outer screen of a folding phone 20 pt on the left and none on the right, where
+    /// its vertical bar is. The pages, the bars and the strips are not lists and used to keep a 16 of their own, so
+    /// that on such a screen they stood 4 pt off the list on the left and 16 pt off on the right. They take the
+    /// system's margin now (`pageMargins()`), and have to stand where the cards of the list do.
+    ///
+    /// Only a window whose margin is not the 16 they used to write in can tell the two apart, and only one whose list
+    /// is the whole window can be measured against (the list beside the page, or over it, is another column).
+    func testPagesBarsAndStripsStandWhereTheCardsOfTheSystemsListDo() throws {
+        guard #available(iOS 27.1, *) else { throw XCTSkip("Before iOS 27.1 the app keeps the margins it wrote in.") }
+        try launch(scenario: "awayOn", phoneSized: true)
+        let card = require("inbox-row-req-permission").frame
+        let window = app.windows.firstMatch.frame
+        try XCTSkipIf(isTiled || card.width < window.width / 2, "The list is not the whole window to measure against.")
+        try XCTSkipIf(abs(card.minX - 16) < 1 && abs(window.maxX - card.maxX - 16) < 1,
+                      "The margin of this window is the 16 the app used to write in: nothing to tell apart.")
+
+        func standsWhereTheCardsDo(_ id: String, left: Bool = true, right: Bool = true,
+                                   file: StaticString = #filePath, line: UInt = #line) {
+            let frame = require(id, file: file, line: line).frame
+            if left {
+                XCTAssertEqual(frame.minX, card.minX, accuracy: 1, "\(id) starts where the cards of the list do", file: file, line: line)
+            }
+            if right {
+                XCTAssertEqual(frame.maxX, card.maxX, accuracy: 1, "\(id) ends where the cards of the list do", file: file, line: line)
+            }
+        }
+
+        standsWhereTheCardsDo("away-strip")
+        shot("margins-inbox")
+
+        require("inbox-row-req-permission").tap()
+        for id in ["choice-0", "choice-2", "submit-button"] { standsWhereTheCardsDo(id) }
+        shot("margins-confirm")
+
+        // The bar of a form with questions: its buttons end where the cards do.
+        app.terminate()
+        try launch(request: "req-migration", scenario: "awayOn", phoneSized: true)
+        standsWhereTheCardsDo("next-button", left: false)
+        shot("margins-answer")
     }
 }

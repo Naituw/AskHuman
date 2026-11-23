@@ -48,7 +48,8 @@ struct ConfirmScreen: View {
                         if !ended { ExpiryLabel(date: composer.expiresAt) }
                     }
                     .readableWidth()
-                    .padding()
+                    .pageMargins()
+                    .padding(.vertical)
                     .background(RequestReadingAnchor(name: "request-top"))
                     .background(RequestScrollPosition(id: item.id, store: store, ready: detailReady || confirm.detail.bodyMd.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty, intent: history?.thread.intent ?? 0))
                     .requestRoom(history)
@@ -115,7 +116,7 @@ struct ConfirmScreen: View {
                 .accessibilityIdentifier("submit-button")
             }
         }
-        .padding(.horizontal, 16)
+        .pageMargins()
         .padding(.vertical, 10)
         .classicBarBacking()
     }

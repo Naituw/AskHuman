@@ -401,7 +401,7 @@ private struct TodoAddBar: View {
                     }
                 }
             }
-            .padding(.horizontal, BottomBar.floats ? 16 : 12)
+            .pageMargins(fallback: BottomBar.floats ? 16 : 12)
             .padding(.vertical, 8)
             .classicBarBacking(hairline: false)
             #if DEBUG
@@ -414,7 +414,7 @@ private struct TodoAddBar: View {
                 .multilineTextAlignment(BottomBar.floats ? .center : .leading)
                 .barStatusChip(compact: true)
                 .frame(maxWidth: .infinity)
-                .padding(.horizontal, 16)
+                .pageMargins()
                 .padding(.vertical, BottomBar.floats ? 8 : 12)
                 .classicBarBacking(hairline: false)
                 .accessibilityIdentifier("todo-add-unavailable")

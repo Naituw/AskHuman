@@ -32,6 +32,33 @@ extension View {
     func widthCapped(_ width: CGFloat) -> some View {
         frame(maxWidth: width).frame(maxWidth: .infinity)
     }
+
+    /// Insets the content at its left and right by the margins the system keeps for its own pages: the ones the cards
+    /// of Settings, and of the lists of this app, stand by. They are not a constant. A phone has 16 to 20 pt; the outer
+    /// screen of a folding phone has 20 pt on the left and none on the right, where its vertical bar is. A written-in
+    /// 16 leaves a gap on the right that the system's pages do not have, and is 4 pt short on the left.
+    ///
+    /// From iOS 27.1 the system hands the margins out (`ContentMarginGuide.container`; its documentation says to
+    /// apply the guide instead of writing the values into a layout). Before that there is no vertical bar, and
+    /// `fallback`, the margin the page had, stands in for it.
+    ///
+    /// Put it where the padding at the sides of a page, a bar or a strip was. On a page, put it outside
+    /// `readableWidth()`, so that the margins are taken from the container's edges.
+    func pageMargins(fallback: CGFloat = 16) -> some View {
+        modifier(PageMargins(fallback: fallback))
+    }
+}
+
+private struct PageMargins: ViewModifier {
+    let fallback: CGFloat
+
+    func body(content: Content) -> some View {
+        if #available(iOS 27.1, *) {
+            content.contentMargins(for: .container, edges: .horizontal)
+        } else {
+            content.padding(.horizontal, fallback)
+        }
+    }
 }
 
 // MARK: two columns

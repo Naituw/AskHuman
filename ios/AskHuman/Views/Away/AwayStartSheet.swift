@@ -85,7 +85,8 @@ struct AwayStartSheet: View {
                     }
                 }
                 .readableWidth()
-                .padding()
+                .pageMargins()
+                .padding(.vertical)
             }
             .background(Color(.systemGroupedBackground))
             .scrollDismissesKeyboard(.interactively)
@@ -108,7 +109,7 @@ struct AwayStartSheet: View {
                 }
                 .barPrimaryButton()
                 .disabled(picked.isEmpty || sending)
-                .padding(.horizontal, 16)
+                .pageMargins()
                 .padding(.vertical, 10)
                 .accessibilityIdentifier("away-start")
             }

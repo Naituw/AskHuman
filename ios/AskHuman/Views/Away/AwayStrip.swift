@@ -80,7 +80,7 @@ struct AwayStrip: View {
         .padding(.trailing, 10)
         .padding(.vertical, 8)
         .modifier(AwayStripBackground())
-        .padding(.horizontal, 16)
+        .pageMargins()
         .padding(.bottom, 6)
         .accessibilityElement(children: .contain)
         .accessibilityIdentifier("away-strip")

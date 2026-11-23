@@ -76,7 +76,8 @@ struct AnswerScreen: View {
                             .endedDimming(ended)
                         }
                         .readableWidth()
-                        .padding([.horizontal, .top])
+                        .pageMargins()
+                        .padding(.top)
                         .padding(.bottom, 8)
                         .background(RequestReadingAnchor(name: "request-top"))
                         .background(RequestScrollPosition(id: item.id, store: store, ready: messageReady || !MessageCard.drawnByWebPage(ask, launch: launch), intent: history?.thread.intent ?? 0))
@@ -824,7 +825,7 @@ private struct SendBar: View {
                 .allowsHitTesting(false)
             }
         }
-        .padding(.horizontal, 16)
+        .pageMargins()
         .padding(.vertical, 10)
         .classicBarBacking()
         .animation(.snappy(duration: 0.25), value: composer.hasReachedEnd)

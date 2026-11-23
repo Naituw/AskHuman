@@ -348,7 +348,8 @@ private struct MissingRequestPage: View {
                     status(missing)
                 }
                 .readableWidth()
-                .padding()
+                .pageMargins()
+                .padding(.vertical)
             }
             .background(Color(.systemGroupedBackground))
             .accessibilityIdentifier("request-placeholder")
@@ -415,7 +416,8 @@ private struct LoadingRequest: View {
                 status
             }
             .readableWidth()
-            .padding()
+            .pageMargins()
+            .padding(.vertical)
         }
         .background(Color(.systemGroupedBackground))
     }

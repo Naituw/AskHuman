@@ -18,16 +18,28 @@ struct SessionThreadView: View {
         if history.showsThread {
             let newest = thread.items.last?.id
             let state = history.stateRow
-            VStack(alignment: .leading, spacing: 12) {
-                if let state { SessionStateRow(kind: state) { Task { await history.retry() } } }
-                ForEach(thread.items) { exchange in
-                    SessionExchangeCard(exchange: exchange, macId: history.macId)
-                        .background { if exchange.id == newest { SessionThreadAnchor(name: "thread-newest") } }
+            VStack(spacing: 12) {
+                // The row is centred on the page's width, as the header of the pull is (`PullHeaderView` lies across the
+                // scroll view's safe area): the words must not move sideways when the row replaces the header. The margins
+                // of the cards below are not symmetric on every screen (none on the right of a folding phone's outer
+                // screen, where its vertical bar is), so the row keeps to the page and not to them.
+                if let state {
+                    SessionStateRow(kind: state) { Task { await history.retry() } }
+                        .readableWidth()
+                        .padding(.horizontal)
                 }
-                if !thread.items.isEmpty { CurrentRequestDivider() }
+                if !thread.items.isEmpty {
+                    VStack(alignment: .leading, spacing: 12) {
+                        ForEach(thread.items) { exchange in
+                            SessionExchangeCard(exchange: exchange, macId: history.macId)
+                                .background { if exchange.id == newest { SessionThreadAnchor(name: "thread-newest") } }
+                        }
+                        CurrentRequestDivider()
+                    }
+                    .readableWidth()
+                    .pageMargins()
+                }
             }
-            .readableWidth()
-            .padding(.horizontal)
             // The row at the top is the margin there: it stands where the room of the pull's header was, and as tall.
             .padding(.top, state == nil ? 16 : 0)
             // With nothing but the row, the thread is exactly the room that was held for the load.

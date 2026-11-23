@@ -86,7 +86,7 @@ struct AnnotationEditorSheet: View {
                             .accessibilityIdentifier("annotation-delete")
                     }
                 }
-                .padding(.horizontal)
+                .pageMargins()
                 .padding(.top, 8)
             }
             .scrollDismissesKeyboard(.never)

@@ -194,3 +194,30 @@ UIHostingController，按 [.intrinsicContentSize](https://developer.apple.com/do
 [排查记录](../investigations/ios-duo-fold-navigation.md)，不把独立程序通过当成产品回归通过。
 More 菜单提供含标题和符号的 `Label("More", systemImage: "ellipsis")`，让系统竖向栏与
 溢出菜单有完整项目标签，遵循 [Apple 的 Duo 工具栏指导](https://developer.apple.com/videos/play/tech-talks/111462/)。
+
+## 9. 页面、底栏与条带的横向边距
+
+2026-11-23 补充。用户在 Duo 外屏发现：系统设置里卡片的右缘贴着右侧竖条，我们的页面在竖条边上又空出一截。
+
+**根因**：系统的 `List` / 分组表（五个列表页与系统设置）的内容边距是「安全区 ＋ 系统最小布局边距」，后者随屏变化：
+iPhone 16–20pt；Duo 外屏左 20、右 0（右边是竖条，安全区已让开）；内屏竖屏 20 / 20；内屏横屏的详情栏 20 / 0、侧栏 20 / 20。
+我们的 `ScrollView` 页面、底栏、条带与 sheet 内容拿不到这个边距，一直写死 16（`.padding()`）：外屏左边比系统少 4pt，
+右边在竖条旁多空 16pt，同一屏里列表卡片与页面卡片左右都对不齐。
+
+| 项 | 决定 | 来源 |
+|---|---|---|
+| 写法 | `Views/Common/ListDetail.swift` 的 `pageMargins(fallback:)`：iOS 27.1+ 用系统给的 `contentMargins(for: .container, edges: .horizontal)`（`ContentMarginGuide.container`；文档说它就是系统的布局边距，Duo 上可以不对称，要求读它而不是把数值写进布局），更早的系统用 `fallback`（原来写的 16 / 12 / 20）。不自己算 `max(安全区, 常量)`，不读私有 `layoutMargins`，不往容器外层注入（27.1 以前走 SwiftUI `TabView`，注入覆盖不到）。`scenePadding` 在外屏给 16，不能用 | agent 设计 |
+| 范围 | 页面（提问、确认、请求的加载与缺失、Agent 详情、任务进度、历史详情、会话回看、引导页）、底栏与条带（回答栏、确认栏、插话栏、待办添加栏、离开条、已结束条）、sheet 内容（离开模式、配对、批注编辑、Markdown 预览）。约 20 处一次改完，保证同一屏内各处互相对齐 | 用户定 |
+| 位置 | 页面上放在 `readableWidth()` **外面**：边距按容器边缘取。放进去的话，宽窗口里被限宽居中的一栏不挨着容器边缘，系统会给对称的 16，竖条旁又会空出来。纵向仍是原来的 `.padding(.vertical)` | agent 设计 |
+| 旧系统 | iOS < 27.1 保持常量（16 / 12），零变化。已知限制：iPad、Pro Max 这类系统边距为 20 的机型在旧系统上仍是 16 | 用户定 |
+| 不改 | 浮动胶囊与应用内横幅（有自己的间距）；`DiffView` 与二维滚动的文本预览（整行底色通栏、横向可滚，边距不是页面边距）；玻璃胶囊与输入框的内部间距 | agent 设计 |
+| 回归 | 加一条只在 Duo 外屏有意义的 UI 测试（见下） | 用户定 |
+
+**实测**（iOS 27.1 的 Duo 模拟器）：外屏的页面、底栏、条带与 sheet 内容都对齐到 20…382，与收件箱列表卡片和设置一致；
+sheet 本身的左缘在 8pt，里面左 24、右 382。内屏竖屏 20 / 20，内屏横屏的详情栏左 20、右贴竖条（侧栏 20 / 20）。iPhone 17 Pro（iOS 26.2）走回落，
+仍是 16 / 16，与原来的常量一致。
+
+**回归**：`AskHumanLargeScreenUITests.testPagesBarsAndStripsStandWhereTheCardsOfTheSystemsListDo` 把页面卡片、底栏按钮、
+离开条的左右缘与收件箱列表卡片比。只有系统边距不是 16 的、列表占满窗口的手机尺寸窗口（Duo 外屏）才能分出新旧，其余窗口与
+iOS 27.1 以前跳过；`pageMargins()` 改回写死 16 时它在外屏上会红（`away-strip` 16 ≠ 20）。新写 `ScrollView` 页面、底栏、条带或
+sheet 内容时，左右边距用 `pageMargins()`，不要写 `.padding()` / `.padding(.horizontal, 16)`；`List` 自己拿系统边距，不用加。

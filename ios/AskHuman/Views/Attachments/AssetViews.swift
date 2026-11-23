@@ -243,7 +243,7 @@ private struct AssetContent: View {
             EmptyView()
         case .markdown:
             TextFile(url: url) { text in
-                ScrollView { MarkdownView(text: text).padding() }
+                ScrollView { MarkdownView(text: text).pageMargins().padding(.vertical) }
             }
         case .diff:
             TextFile(url: url) { text in DiffView(text: text) }

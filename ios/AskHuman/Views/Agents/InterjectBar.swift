@@ -60,7 +60,7 @@ struct InterjectBar: View {
                 }
             }
         }
-        .padding(.horizontal, BottomBar.floats ? 16 : 12)
+        .pageMargins(fallback: BottomBar.floats ? 16 : 12)
         .padding(.vertical, 8)
         .classicBarBacking(hairline: false)
     }

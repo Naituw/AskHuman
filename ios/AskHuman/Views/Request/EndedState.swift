@@ -309,7 +309,7 @@ private struct EndedStripSlot: View {
             if let finished {
                 EndedStrip(id: id, finished: finished)
                     .readableWidth()
-                    .padding(.horizontal, 16)
+                    .pageMargins()
                     .padding(.top, 6)
                     .padding(.bottom, 8)
                     .frame(maxWidth: .infinity)

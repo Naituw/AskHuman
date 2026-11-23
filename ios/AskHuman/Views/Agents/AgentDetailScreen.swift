@@ -62,7 +62,8 @@ private struct AgentDetailContent: View {
                 WatchCard(item: item, watch: watch, live: live)
             }
             .readableWidth()
-            .padding()
+            .pageMargins()
+            .padding(.vertical)
             .padding(.bottom, 8)
         }
         .background(Color(.systemGroupedBackground))
@@ -119,7 +120,7 @@ private struct AgentDetailContent: View {
                 .multilineTextAlignment(.center)
                 .barStatusChip(compact: true)
                 .frame(maxWidth: .infinity)
-                .padding(.horizontal, 16)
+                .pageMargins()
                 .padding(.vertical, BottomBar.floats ? 8 : 12)
                 .classicBarBacking(hairline: false)
                 .accessibilityIdentifier("interject-unavailable")

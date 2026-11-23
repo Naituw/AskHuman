@@ -36,7 +36,8 @@ struct OnboardingView: View {
                 .accessibilityIdentifier("pair-a-mac")
             }
             .widthCapped(Columns.focusedWidth)
-            .padding(20)
+            .pageMargins(fallback: 20)
+            .padding(.vertical, 20)
         }
         .background(Color(.systemGroupedBackground))
     }

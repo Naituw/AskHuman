@@ -115,7 +115,8 @@ private struct PairingInput: View {
                     .font(.footnote)
                     .foregroundStyle(.secondary)
             }
-            .padding()
+            .pageMargins()
+            .padding(.vertical)
         }
         .background(Color(.systemGroupedBackground))
         .fullScreenCover(isPresented: $scanning) {

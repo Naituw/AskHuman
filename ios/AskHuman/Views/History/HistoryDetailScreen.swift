@@ -26,7 +26,8 @@ struct HistoryDetailScreen: View {
                 }
             }
             .readableWidth()
-            .padding()
+            .pageMargins()
+            .padding(.vertical)
         }
         .background(Color(.systemGroupedBackground))
         .navigationTitle(entry.request.agent.label)

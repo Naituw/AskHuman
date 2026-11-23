@@ -41,7 +41,8 @@ struct TaskProgressScreen: View {
                 StageList(task: task)
                 outcome(task)
             }
-            .padding()
+            .pageMargins()
+            .padding(.vertical)
         }
         .background(Color(.systemGroupedBackground))
         .accessibilityIdentifier("task-progress")
