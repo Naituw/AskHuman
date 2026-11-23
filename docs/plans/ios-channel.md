@@ -1658,3 +1658,55 @@ Apple build `6296974d-adec-4bed-accc-62e6a966490b`，VALID / APP_STORE_ELIGIBLE 
 • 同一张图出现在另一个提问里，应当直接打开，不再下载。
 • Mac 离线时：三个入口都能「暂时移除」，Mac 回来后提问仍在等的会重新出现。
 ```
+
+## 2026-11-23：TestFlight 内部与外部构建 30
+
+版本 **0.1.0 (30)**，干净主工作树归档源码 `bfe94f8c2041f2b2a6498a329bbe7c13aa327c81`，
+基线 `ios-testflight-29` → `d90c25dcb958a264ccd8c52d76f03781b745ce05`。
+起因是用户在 iPhone Duo 外屏边距的修复提交（`bfe94f8c`）之后写下「装到我 JJu」：这句没读懂（仓库与本机设备列表里都没有「JJu」），
+经 AskHuman 问清后用户选「走 TestFlight，按项目默认：内部 + Friends + Public 三个组」。按技能的规定没有先把清单与说明交给用户确认。本节时间均为北京时间。
+自基线以来 `ios/` 下的 2 条提交如下（19 个文件，+126 / −34）。
+
+- `bfe94f8c`（2026-11-23）页面、底栏、顶部条与 sheet 的左右边距改用系统给「设置」的边距：Duo 外屏左边 20、右边贴着竖栏（原来写死 16，竖栏旁多出一截空白）。
+  做法是共享的 `pageMargins()`（`ListDetail.swift`）：iOS 27.1 起取 `contentMargins(for: .container)`，更早的系统保持原来写死的 16 / 12 / 20；
+  会话历史页的状态行与下拉头一样，居中在页面上而不是边距框里。规格见 [ios-large-screen.md](../specs/ios-large-screen.md) §9，
+  回归用例 `testPagesBarsAndStripsStandWhereTheCardsOfTheSystemsListDo`。
+
+只有测试的 1 条：`e9c565b6`（2026-11-22，端到端夹具不再预置 `experimental.enabled`；这条提交的其余部分是 Mac 端，不在这个包里）。
+没有用户说过「先不出」的 iOS 改动（查了 `PROGRESS.md` 与相关文档）。
+
+出包前的验证是在提交这批改动之前、同一份代码上做的：Duo 外屏（iOS 27.2）与内屏的竖屏、横屏逐屏量过，页面、底栏、条带与 sheet 的两侧和系统「设置」的卡片边对齐
+（外屏内容区 20…382，右边即竖栏；内屏竖屏 20 / 20；内屏横屏详情栏 20 / 0、侧栏 20 / 20）；iPhone 17 Pro（iOS 26.2）上仍是原来的 16 / 16。
+新的 UI 用例在外屏通过、换回旧写法时失败；会话历史类 39 项（iPhone 17 Pro / iOS 26.2）0 失败、4 项跳过；大屏类（Duo 内屏横屏）17 项通过、10 项按条件跳过（含新用例）、
+1 项失败：`testThePickThatMovedWhileTheListWasOutOfSightIsTintedWhenTheListIsBack`，在没有这次改动的 HEAD 上同样失败（`git stash` 对照过），没有碰它。
+**没有跑的**：`swift test`（`AskHumanKit` 的产品代码没改，包内只动了端到端夹具）、真实 daemon 端到端、iPad、iOS 27.1 及以后的普通 iPhone（本机 27.x 的模拟器运行时只带 iPhone Duo）；
+**真机一项都没有验过**（本机认识的三台真机当时都离线）。
+
+上传前确认了 Apple 的构建列表里最新是 29、`changes.mjs` 建议 30（归档前又查了一遍），隐私政策与接入指南的 4 个公开网址（中英文各两个）和落地页不登录都返回 200。
+从干净的 HEAD 做 Release 归档（构建号 30）成功（23:01:51–23:02:44，开始与结束时 HEAD 都是 `bfe94f8c`、工作树干净），上传脚本的预检通过（版本 0.1.0、构建号 30、外部受众、非仅内部、凭据来自 Keychain）。
+上传执行一次，23:07:19 得到 `Upload succeeded` / EXPORT SUCCEEDED；Apple 记的上传时间 23:08:35，23:11:47 读到 VALID（之前 23:07:51、23:08:46、23:10:09 三次还没列出）。
+Apple build `b4664f5b-ef1d-4dc1-b950-9fee884f77ca`，VALID / APP_STORE_ELIGIBLE / 未过期（至 2027-02-21），加密申报已解析（不含非豁免加密）。
+中英文测试说明（中文 440、英文 1338 字符）写入并读回一致。`update` 把 build 30 加入 Friends（自动通知关闭，读回 verified），
+`submit` 之后直接读回 `APPROVED`（与 D23 的预期一致，没有真的送审），`start` 之后读回 Internal 与 Friends 均为 IN_BETA_TESTING。
+公共组按 D26：先 `public` 的 `dryRun`（`wouldChange` 只有「assign build」），再用组现有的上限 1,000 写入，`changed` 同样只有「assign build」，读回 verified。
+最终读回：Internal 与 Friends 的构建列表里都有 30，成员没变（Internal 1 位 INSTALLED、1 位 INVITED，Friends 1 位 INSTALLED），Friends 公开链接仍关；
+AskHuman Public 里是 30 与 29，公共链接仍开、上限 1,000、**70 位测试员（INSTALLED）**，交付前后相同；没有新增或重新邀请任何人。
+公共组里已有 70 位已安装的测试员，是「全新 Apple ID 经落地页装上」这条路径的第一份间接证据（`PROGRESS.md` 里一周后复核的那一条仍开着）。
+本地附注标签 `ios-testflight-30` 固定归档源码 `bfe94f8c`，标签留在本地，不推送。
+
+手机更新与原有 Mac 连接确认尚待用户反馈。真机上要看的就是测试说明里的三项。
+
+简体中文测试说明如下，中英文完整说明随交付报告提供。
+
+```text
+构建 30 · 源码 bfe94f8
+
+• 修复：iPhone Duo 外屏（以及窗口一侧有竖栏的其他屏幕）上，页面、底栏和顶部条两侧的边距现在与系统「设置」一致：左边约 20 pt，右边直接贴着竖栏，不再在竖栏之外多出一截空白。
+• 涉及收件箱、提问与确认页、Agents、历史、待办、离开模式条带，以及配对、离开模式等弹出的面板；同一屏里各处的左右边缘互相对齐。
+• iOS 27.1 及以后，其他设备也取系统给「设置」的边距（具体数值随机型而定）；更早的系统保持原来的边距。
+
+请重点看
+• Duo 外屏：打开收件箱、一个提问和 Agents，与「设置」对照：卡片右边到竖栏的距离是否一样近，左边是否一样宽；底栏（发送、插话、添加待办）和离开模式条带的左右边是否与上方的卡片对齐。
+• Duo 内屏的竖屏与横屏、普通 iPhone：页面两侧的边距看起来是否正常，下拉加载历史时那行字是否仍在页面中间。
+• 配对、离开模式等弹出的面板：两侧没有被裁掉，边距与面板里的列表一致。
+```
