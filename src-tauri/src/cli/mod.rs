@@ -271,6 +271,20 @@ pub fn dispatch() {
                     exit(1);
                 }
             };
+            if let Some(reason) = crate::agents::t3_host::env_delegated_reason() {
+                let agent = caller_agent_hint()
+                    .or_else(crate::agents::detect::detect_invoking_agent)
+                    .map(|k| k.as_str());
+                crate::agents::t3_host::log_suppressed(
+                    "cli_show_last",
+                    agent,
+                    None,
+                    Some("show_last"),
+                    reason,
+                );
+                eprintln!("{}", crate::agents::t3_host::DELEGATED_MESSAGE);
+                exit(2);
+            }
             if CALLER_AGENT_HINT.get() == Some(&CallerHint::Unidentified) {
                 eprintln!("AskHuman: conflicting caller markers; refusing history recovery without a trustworthy caller");
                 exit(1);
@@ -662,6 +676,25 @@ pub fn dispatch() {
         }
         _ => match parse_ask_with_stdin(&argv[1..], lang) {
             Ok(parsed) => {
+                if let Some(reason) = crate::agents::t3_host::env_delegated_reason() {
+                    let agent = caller_agent_hint()
+                        .or_else(crate::agents::detect::detect_invoking_agent)
+                        .map(|k| k.as_str());
+                    let tool = if parsed.whats_next {
+                        "whats_next"
+                    } else {
+                        "ask"
+                    };
+                    crate::agents::t3_host::log_suppressed(
+                        "cli_ask",
+                        agent,
+                        None,
+                        Some(tool),
+                        reason,
+                    );
+                    eprintln!("{}", crate::agents::t3_host::DELEGATED_MESSAGE);
+                    exit(2);
+                }
                 // 解析 Message 的展示附件（-f 始终归 Message）。
                 let files = match file_attachment::resolve(&parsed.message_files, lang) {
                     Ok(files) => files,

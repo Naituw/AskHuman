@@ -79,8 +79,77 @@ describe("hasUpdate", () => {
         askQuestion: { supported: true, enabled: true, installed: true, outdated: true },
       },
     ],
+    [
+      "an enabled extra profile needing update",
+      {
+        profiles: [
+          {
+            id: "antigravity-1234",
+            agent: "antigravity",
+            root: "/tmp/t3-ag",
+            label: "T3 Code (ac0a3dfd)",
+            source: "t3_discovered",
+            enabled: true,
+            state: "outdated",
+            mode: "mcp",
+            needsUpdate: true,
+            error: null,
+            hostPluginDisabled: false,
+            mcpGrant: null,
+          },
+        ],
+      },
+    ],
   ])("is true for %s", (_name, status) => {
     expect(hasUpdate(modeStatus(status))).toBe(true);
+  });
+
+  it("ignores disabled extra profiles when checking updates and profile issues", () => {
+    const disabled = input({
+      profiles: [
+        {
+          id: "antigravity-1234",
+          agent: "antigravity",
+          root: "/tmp/t3-ag",
+          label: "T3 Code (ac0a3dfd)",
+          source: "t3_discovered",
+          enabled: false,
+          state: "conflict",
+          mode: "none",
+          needsUpdate: true,
+          error: "conflict",
+          hostPluginDisabled: false,
+          mcpGrant: null,
+        },
+      ],
+    });
+    expect(hasUpdate(disabled.status)).toBe(false);
+    expect(keys(disabled)).toEqual(["integrated"]);
+  });
+
+  it("surfaces profileIssue tag and needsAction when an enabled extra profile conflicts or is missing", () => {
+    for (const state of ["conflict", "rootMissing"] as const) {
+      const card = input({
+        profiles: [
+          {
+            id: "codex-1",
+            agent: "codex",
+            root: "/tmp/codex-alt",
+            label: "Work",
+            source: "manual",
+            enabled: true,
+            state,
+            mode: "none",
+            needsUpdate: false,
+            error: "issue",
+            hostPluginDisabled: false,
+            mcpGrant: null,
+          },
+        ],
+      });
+      expect(keys(card)).toEqual(["integrated", "profileIssue"]);
+      expect(needsAction(card)).toBe(true);
+    }
   });
 
   it("ignores a stale flag on a row the Agent does not have", () => {

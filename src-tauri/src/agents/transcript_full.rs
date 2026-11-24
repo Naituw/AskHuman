@@ -676,8 +676,7 @@ fn push_antigravity(
             let Some(content) = v.get("content").and_then(Value::as_str) else {
                 return;
             };
-            let request = super::title::unwrap_tag(content, "USER_REQUEST")
-                .unwrap_or_else(|| content.to_string());
+            let request = strip_host_wrappers(content);
             let request = request.trim();
             if !request.is_empty() {
                 out.push(TranscriptEvent::UserText {
@@ -1922,16 +1921,21 @@ pub(super) fn clean_user(text: &str) -> (String, Option<String>) {
     let t = t.trim();
     // Prefer real user payload when wrapped.
     if let Some(inner) = extract_tag(t, "user_query") {
-        let inner = inner.trim();
-        if !inner.is_empty() {
-            return (strip_system_reminders(inner), cursor_label);
+        let cleaned = strip_host_wrappers(&inner);
+        if !cleaned.is_empty() {
+            return (cleaned, cursor_label);
         }
-    }
-    // Skip pure injection / system-instruction blobs (not agent behaviour).
-    if is_injected_or_system_blob(t) {
         return (String::new(), cursor_label);
     }
-    (strip_system_reminders(t), cursor_label)
+    let stripped = strip_host_wrappers(t);
+    if stripped.is_empty() {
+        return (String::new(), cursor_label);
+    }
+    // Skip pure injection / system-instruction blobs (not agent behaviour).
+    if is_injected_or_system_blob(&stripped) {
+        return (String::new(), cursor_label);
+    }
+    (stripped, cursor_label)
 }
 
 fn is_injected_or_system_blob(t: &str) -> bool {
@@ -2002,16 +2006,49 @@ fn extract_cursor_timestamp(text: &str) -> (String, Option<String>) {
     }
 }
 
-/// Strip trailing/leading system-reminder blocks while keeping the real ask.
-fn strip_system_reminders(t: &str) -> String {
-    let mut s = t.to_string();
-    // Remove <system-reminder>…</system-reminder> chunks.
-    while let Some(start) = s.find("<system-reminder>") {
-        if let Some(rel) = s[start..].find("</system-reminder>") {
-            let end = start + rel + "</system-reminder>".len();
+/// Paired host-injected metadata tags stripped before displaying titles or transcript turns.
+/// Kept as an explicit allowlist so arbitrary user-written HTML/XML snippets are never touched.
+const HOST_METADATA_TAGS: &[&str] = &[
+    "t3_code_instructions",
+    "t3_code_orchestration",
+    "runtime_info",
+    "ADDITIONAL_METADATA",
+    "system-reminder",
+];
+
+fn strip_paired_tag(input: &str, tag: &str) -> String {
+    let open = format!("<{tag}>");
+    let close = format!("</{tag}>");
+    let mut s = input.to_string();
+    while let Some(start) = s.find(&open) {
+        if let Some(rel) = s[start + open.len()..].find(&close) {
+            let end = start + open.len() + rel + close.len();
             s.replace_range(start..end, "");
         } else {
             break;
+        }
+    }
+    s
+}
+
+/// Remove known host wrappers (Antigravity `<USER_REQUEST>`, Cursor/Grok `<user_query>`, T3 Code
+/// `<t3_code_instructions>` / `<t3_code_orchestration>` / `<runtime_info>` /
+/// `<ADDITIONAL_METADATA>` / nested `<user_request>`, and `<system-reminder>`).
+pub(super) fn strip_host_wrappers(t: &str) -> String {
+    let mut s = t.trim().to_string();
+    if let Some(inner) = extract_tag(&s, "USER_REQUEST") {
+        s = inner;
+    }
+    if let Some(inner) = extract_tag(&s, "user_query") {
+        s = inner;
+    }
+    for tag in HOST_METADATA_TAGS {
+        s = strip_paired_tag(&s, tag);
+    }
+    if let Some(inner) = extract_tag(&s, "user_request") {
+        s = inner;
+        for tag in HOST_METADATA_TAGS {
+            s = strip_paired_tag(&s, tag);
         }
     }
     s.trim().to_string()
@@ -2969,5 +3006,24 @@ mod tests {
                 .is_some_and(|p| p.text.contains("ASKHUMAN_PAGINATED_PROBE_20260820")),
             "show_last User Prompt should still resolve via response_item, got {prompt:?}"
         );
+    }
+
+    #[test]
+    fn strip_host_wrappers_cleans_t3_antigravity_and_cursor_envelopes() {
+        let antigravity_wrapped = "<USER_REQUEST>\n<t3_code_instructions>\n## T3 Code\nLots of rules\n</t3_code_instructions>\n\n<user_request>\n帮我调研支持方案\n</user_request><runtime_info>cwd=/tmp</runtime_info>\n</USER_REQUEST>";
+        assert_eq!(strip_host_wrappers(antigravity_wrapped), "帮我调研支持方案");
+
+        let cursor_wrapped = "<timestamp>Tue, Nov 24, 2026</timestamp>\n<user_query>\n<t3_code_orchestration>delegate info</t3_code_orchestration>\n\nFix the login bug\n</user_query>";
+        let (cleaned, label) = clean_user(cursor_wrapped);
+        assert_eq!(cleaned, "Fix the login bug");
+        assert_eq!(label.as_deref(), Some("Tue, Nov 24, 2026"));
+
+        let claude_wrapped = "<t3_code_instructions>mode: default</t3_code_instructions>\n<ADDITIONAL_METADATA>meta</ADDITIONAL_METADATA>\nRefactor `<div>hello</div>`";
+        let (cleaned, _) = clean_user(claude_wrapped);
+        assert_eq!(cleaned, "Refactor `<div>hello</div>`");
+
+        let injected_only = "<t3_code_instructions>only metadata</t3_code_instructions><runtime_info>x</runtime_info>";
+        let (cleaned, _) = clean_user(injected_only);
+        assert!(cleaned.is_empty());
     }
 }

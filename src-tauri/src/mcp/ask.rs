@@ -269,6 +269,30 @@ fn codex_thread_guard_with(
     (action == "suppressed").then(|| CallToolResult::error(vec![ContentBlock::text(message)]))
 }
 
+/// Runtime guard silencing MCP calls from T3 Code delegated child threads across all agents
+/// (spec `t3-code-and-multi-profile`, L3 / P6). Checks both the MCP server's own environment
+/// (`T3CODE_THREAD_ID`) and the session-keyed marker written by hooks (for shared MCP processes).
+fn t3_delegated_guard(
+    binding: Option<&crate::context_binding::AgentBinding>,
+    tool: &str,
+) -> Option<CallToolResult> {
+    let reason = crate::agents::t3_host::env_delegated_reason().or_else(|| {
+        let binding = binding?;
+        let kind = crate::agents::AgentKind::parse(&binding.agent_kind)?;
+        crate::agents::t3_host::marker_silenced(kind, &binding.session_id)
+    })?;
+    crate::agents::t3_host::log_suppressed(
+        "mcp_tool",
+        binding.map(|b| b.agent_kind.as_str()),
+        binding.map(|b| b.session_id.as_str()),
+        Some(tool),
+        reason,
+    );
+    Some(CallToolResult::error(vec![ContentBlock::text(
+        crate::agents::t3_host::DELEGATED_MESSAGE,
+    )]))
+}
+
 // Old clients can still send a bool; expose only strings in the model-facing schema. A legacy
 // true is forwarded without a reason so the daemon can guide it and retain anti-lockout counting.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -570,6 +594,9 @@ earlier answer — follow its instructions). Answers to multiple questions come 
                 &public_arguments,
             )
             .await;
+        if let Some(blocked) = t3_delegated_guard(binding.as_ref(), "ask") {
+            return Ok(blocked);
+        }
         let argv = build_argv(&params);
         let command = self.child_command(&argv, binding.as_ref())?;
         let call_cancel = cancel.child_token();
@@ -657,6 +684,9 @@ Cursor has one user-enabled exception: an automatic status receipt beginning wit
                 &public_arguments,
             )
             .await;
+        if let Some(blocked) = t3_delegated_guard(binding.as_ref(), "whats_next") {
+            return Ok(blocked);
+        }
         let argv = build_whats_next_argv(&params);
         let command = self.child_command(&argv, binding.as_ref())?;
         let call_cancel = cancel.child_token();
@@ -736,6 +766,9 @@ summarization/compaction, or whenever prior AskHuman details are uncertain. Opti
                 &public_arguments,
             )
             .await;
+        if let Some(blocked) = t3_delegated_guard(binding.as_ref(), "show_last") {
+            return Ok(blocked);
+        }
         let transcript = binding.as_ref().map(|b| crate::show_last::TranscriptHint {
             agent_kind: b.agent_kind.clone(),
             session_id: b.session_id.clone(),
@@ -781,14 +814,18 @@ stable todo ID, 1-based index, stored text, and attachment IDs on success.",
                 None,
             ));
         }
-        let project = self
-            .bound_project(
+        let binding = self
+            .resolve_binding(
                 &context.meta,
                 params.session_token.as_deref(),
                 "todo_add",
                 &todo_arguments_value(&params),
             )
             .await;
+        if let Some(blocked) = t3_delegated_guard(binding.as_ref(), "todo_add") {
+            return Ok(blocked);
+        }
+        let project = self.project_for_binding(binding).await;
         if project.is_empty() {
             return Err(McpError::internal_error(
                 "cannot determine project (cwd unavailable)",
@@ -907,14 +944,18 @@ required.",
                 None,
             ));
         }
-        let project = self
-            .bound_project(
+        let binding = self
+            .resolve_binding(
                 &context.meta,
                 params.session_token.as_deref(),
                 "todo_update",
                 &todo_arguments_value(&params),
             )
             .await;
+        if let Some(blocked) = t3_delegated_guard(binding.as_ref(), "todo_update") {
+            return Ok(blocked);
+        }
+        let project = self.project_for_binding(binding).await;
         let add_files = params.add_files.unwrap_or_default();
         let remove_ids = params.remove_attachment_ids.unwrap_or_default();
         if add_files.is_empty() && remove_ids.is_empty() {
@@ -974,6 +1015,13 @@ required.",
         arguments: &Value,
     ) -> String {
         let binding = self.resolve_binding(meta, token, tool, arguments).await;
+        self.project_for_binding(binding).await
+    }
+
+    async fn project_for_binding(
+        &self,
+        binding: Option<crate::context_binding::AgentBinding>,
+    ) -> String {
         let fallback = self.project.clone();
         tokio::task::spawn_blocking(move || {
             binding
@@ -1142,6 +1190,7 @@ fn show_last_scope(
 /// model cannot influence them.
 const ANTIGRAVITY_META_CONVERSATION: &str = "antigravity.google/conversation_id";
 const ANTIGRAVITY_META_ROOT_CONVERSATION: &str = "antigravity.google/root_conversation_id";
+const ANTIGRAVITY_META_ARTIFACTS_DIR: &str = "antigravity.google/artifacts_dir";
 
 /// The Antigravity session of a tool call. The session is the root conversation: a sub-agent's
 /// conversation reports its root, so everything the sub-agents ask belongs to the one session
@@ -1154,8 +1203,27 @@ fn antigravity_binding(meta: &RequestMetaObject) -> Option<crate::context_bindin
             .map(str::trim)
             .and_then(|value| uuid::Uuid::parse_str(value).ok())
     };
-    let session_id = uuid_at(ANTIGRAVITY_META_ROOT_CONVERSATION)
-        .or_else(|| uuid_at(ANTIGRAVITY_META_CONVERSATION))?;
+    let conversation_id = uuid_at(ANTIGRAVITY_META_CONVERSATION);
+    let session_id = uuid_at(ANTIGRAVITY_META_ROOT_CONVERSATION).or(conversation_id)?;
+    // Register the artifacts directory's transcript path (when present and structurally valid) so
+    // `show_last` can locate transcripts in isolated ACP homes even if lifecycle hooks are off.
+    if let (Some(conv), Some(artifacts_dir)) = (
+        conversation_id,
+        meta.0
+            .get(ANTIGRAVITY_META_ARTIFACTS_DIR)
+            .and_then(Value::as_str)
+            .map(str::trim)
+            .filter(|value| !value.is_empty()),
+    ) {
+        let candidate =
+            Path::new(artifacts_dir).join(".system_generated/logs/transcript_full.jsonl");
+        let _ = crate::agents::session_paths::register(
+            crate::agents::AgentKind::Antigravity,
+            &conv.hyphenated().to_string(),
+            &candidate.to_string_lossy(),
+            None,
+        );
+    }
     Some(crate::context_binding::AgentBinding {
         agent_kind: "antigravity".into(),
         session_id: session_id.hyphenated().to_string(),

@@ -6,6 +6,7 @@ import { isMac } from "../../lib/platform";
 import type { AgentId } from "../../lib/types";
 import BrandBadge from "../setup/BrandBadge.vue";
 import AntigravityDesktopSettings from "./AntigravityDesktopSettings.vue";
+import AgentProfilesSection from "./AgentProfilesSection.vue";
 import CodexDesktopSettings from "./CodexDesktopSettings.vue";
 import CursorDesktopSettings from "./CursorDesktopSettings.vue";
 import CollaborationStyleEditor from "./CollaborationStyleEditor.vue";
@@ -52,6 +53,12 @@ const {
   updateSummary,
   updateAllBusy,
   updateAll,
+  addProfile,
+  toggleProfile,
+  removeProfile,
+  syncProfile,
+  dismissDiscoveredProfile,
+  revealProfile,
   openMenuKey,
   toggleOpenMenu,
   closeOpenMenu,
@@ -231,6 +238,14 @@ const messageUnderHeader = (id: AgentId) =>
               >·</span
             >{{ t("settings.integration.mcpConfigLabel") }} ×{{
               updateSummary.mcp
+            }}</template
+          ><template v-if="updateSummary.profiles > 0"
+            ><span
+              v-if="updateSummary.rule > 0 || updateSummary.hook > 0 || updateSummary.mcp > 0"
+              class="sep"
+              >·</span
+            >{{ t("settings.integration.profiles.title") }} ×{{
+              updateSummary.profiles
             }}</template
           >
         </p>
@@ -932,6 +947,19 @@ const messageUnderHeader = (id: AgentId) =>
       <CodexDesktopSettings v-if="isMac && a.id === 'codex'" />
       <CursorDesktopSettings v-if="a.id === 'cursor'" />
       <AntigravityDesktopSettings v-if="a.id === 'antigravity'" />
+
+      <AgentProfilesSection
+        :agent="a.id"
+        :profiles="modes[a.id].profiles ?? []"
+        :discovered="modes[a.id].discoveredProfiles ?? []"
+        :busy="modeBusy[a.id]"
+        @add="(root, label, source) => addProfile(a.id, root, label, source)"
+        @toggle="(id, enabled, detach) => toggleProfile(a.id, id, enabled, detach)"
+        @remove="(id, detach) => removeProfile(a.id, id, detach)"
+        @sync="(id) => syncProfile(a.id, id)"
+        @dismiss="(root) => dismissDiscoveredProfile(a.id, root)"
+        @reveal="(id) => revealProfile(a.id, id)"
+      />
 
       <p
         v-if="modeMessage[a.id] && agentExpanded[a.id]"

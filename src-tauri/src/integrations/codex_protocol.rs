@@ -374,7 +374,13 @@ pub fn delivery() -> Delivery {
 
 pub fn apply_collaboration_style() -> Result<()> {
     let _lock = super::mutation_lock::IntegrationMutationLock::acquire()?;
-    refresh_legacy_block_at(&ProtocolFiles::real())
+    refresh_legacy_block_at(&ProtocolFiles::real())?;
+    for root in super::agent_profiles::enabled_roots(crate::agents::AgentKind::Codex) {
+        crate::paths::with_agent_root(crate::agents::AgentKind::Codex, &root, || {
+            let _ = refresh_legacy_block_at(&ProtocolFiles::real());
+        });
+    }
+    Ok(())
 }
 
 /// File shown (and revealed / opened) for the Codex "Rules" row: the hooks file that carries the

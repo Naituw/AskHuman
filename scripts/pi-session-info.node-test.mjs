@@ -35,13 +35,15 @@ function fixture(flags, control = {}) {
     return child;
   };
   const exports = {};
-  vm.runInNewContext(compiled.outputText, { exports, require(name) { if (name === "node:crypto") return { randomUUID }; assert.equal(name, "node:child_process"); return { spawn: fakeSpawn }; }, process: { env: {}, pid: 123 }, setTimeout: timerSet, clearTimeout: timerClear });
+  const procEnv = control.env ?? {};
+  const procArgv = control.argv ?? ["node", "pi"];
+  vm.runInNewContext(compiled.outputText, { exports, require(name) { if (name === "node:crypto") return { randomUUID }; assert.equal(name, "node:child_process"); return { spawn: fakeSpawn }; }, process: { env: procEnv, argv: procArgv, pid: 123 }, setTimeout: timerSet, clearTimeout: timerClear });
   let reasoning = "high", usage = { tokens: 12345, contextWindow: 200000, percent: 6.1725 };
   const ctx = { cwd: "/project/a", model: { id: "native-model", name: "Display name" }, sessionManager: { getSessionId: () => "exact-session", getSessionFile: () => "/sessions/exact.jsonl" }, getContextUsage: () => usage, isIdle: () => idle, hasPendingMessages: () => false };
   exports.default({ on: (event, handler) => handlers.set(event, handler), getThinkingLevel: () => reasoning,
     async sendUserMessage(text) { sent.push(text); await handlers.get("agent_start")?.({}, ctx); }
   });
-  return { calls, ctx, sent, async poll() {
+  return { calls, ctx, sent, timers, async poll() {
     const entry = [...timers].find(([, value]) => value.ms === 250 || value.ms === 1500);
     assert.ok(entry, "idle control poll is scheduled"); timers.delete(entry[0]); entry[1].fn();
     await new Promise(setImmediate);
@@ -130,4 +132,30 @@ test("Pi error confirmation observes errors and supports control with full lifec
   assert.equal(f.calls.filter(call => call.args[0] === "__stop-hook").length, 0);
   await f.poll(); assert.ok(f.calls.some(call => call.args[0] === "__agent-control"));
   await f.emit("session_shutdown");
+});
+
+test("Pi disables idle control polling and Stop continuation under --mode rpc and T3CODE_THREAD_ID", async () => {
+  for (const hostControl of [
+    { argv: ["node", "pi", "--mode", "rpc"] },
+    { argv: ["node", "pi", "--mode=rpc"] },
+    { argv: ["node", "pi"], env: { T3CODE_THREAD_ID: "thread-123" } },
+  ]) {
+    const f = fixture(
+      { lifecycle: true, stop: true, cli: true },
+      { manual: true, ...hostControl, operation: { id: "op-1", text: "Hello", files: [] }, stopReply: { followup_message: "Keep going" } },
+    );
+    await f.emit("session_start");
+    // No idle control timer scheduled when externally controlled.
+    assert.equal(f.timers.size, 0);
+    await f.emit("agent_start");
+    await f.emit("agent_end", { messages: [{ role: "assistant", stopReason: "stop", content: [{ type: "text", text: "Done" }] }] });
+    await f.emit("agent_settled");
+    await new Promise(setImmediate);
+    // Does not invoke __stop-hook or sendUserMessage; reports turn-end directly.
+    assert.equal(f.sent.length, 0);
+    assert.equal(f.calls.filter(call => call.args[0] === "__stop-hook").length, 0);
+    assert.equal(f.calls.filter(call => call.args[0] === "__agent-control").length, 0);
+    assert.ok(f.calls.some(call => call.args[0] === "__agent-hook" && call.args[2] === "turn-end"));
+    await f.emit("session_shutdown");
+  }
 });

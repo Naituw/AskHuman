@@ -328,15 +328,16 @@ pub(crate) fn set_with_env(
     }
     ensure_protocol_deliverable(target, mode)?;
     let lock = mutation_lock::IntegrationMutationLock::acquire()?;
-    set_unlocked_with_env(target, mode, env)?;
+    set_single_unlocked_with_env(target, mode, env)?;
+    let extra_result = super::agent_profiles::reconcile_enabled_unlocked(target, mode, env);
     drop(lock);
     if target == AgentTarget::Cursor {
         crate::cursor_desktop::integration_changed()?;
     }
-    Ok(())
+    extra_result
 }
 
-fn set_unlocked_with_env(
+pub(crate) fn set_single_unlocked_with_env(
     target: AgentTarget,
     mode: Mode,
     env: &std::collections::BTreeMap<String, String>,
@@ -547,7 +548,9 @@ pub fn update(target: AgentTarget) -> Result<()> {
     if target == AgentTarget::Antigravity {
         let _lock = mutation_lock::IntegrationMutationLock::acquire()?;
         let mode = mode_for_update(target)?;
-        return set_unlocked_with_env(target, mode, &std::collections::BTreeMap::new());
+        let empty = std::collections::BTreeMap::new();
+        set_single_unlocked_with_env(target, mode, &empty)?;
+        return super::agent_profiles::reconcile_enabled_unlocked(target, mode, &empty);
     }
     agent_rules::validate_status(target)?;
     set(target, current(target))
@@ -568,20 +571,22 @@ pub fn update_artifact(target: AgentTarget, artifact: Artifact) -> Result<()> {
     let _lock = mutation_lock::IntegrationMutationLock::acquire()?;
     agent_rules::validate_status(target)?;
     let mode = mode_for_update(target)?;
+    let empty = std::collections::BTreeMap::new();
     if target == AgentTarget::Antigravity {
         // The rules, the MCP declaration and the hooks are files of one plugin: refreshing any
         // of them refreshes all of it.
-        return set_antigravity(mode);
+        set_antigravity(mode)?;
+        return super::agent_profiles::reconcile_enabled_unlocked(target, mode, &empty);
     }
     ensure_protocol_deliverable(target, mode)?;
     match (mode, artifact) {
         (Mode::Cli, Artifact::Rule) => {
             agent_rules::install_variant_unlocked(target, Variant::Cli)?;
-            agent_subagent_guard::reconcile_unlocked(target, mode)
+            agent_subagent_guard::reconcile_unlocked(target, mode)?;
         }
         (Mode::Mcp, Artifact::Rule) => {
             agent_rules::install_variant_unlocked(target, Variant::Mcp)?;
-            agent_subagent_guard::reconcile_unlocked(target, mode)
+            agent_subagent_guard::reconcile_unlocked(target, mode)?;
         }
         (Mode::Cli, Artifact::Hook) => {
             if timeout_hook_supported(target) {
@@ -589,19 +594,20 @@ pub fn update_artifact(target: AgentTarget, artifact: Artifact) -> Result<()> {
             }
             agent_context_recovery::reconcile_unlocked(target, mode)?;
             agent_lifecycle::reconcile_unlocked(kind_for_target(target), mode, true)?;
-            agent_permission::reconcile_unlocked(target, mode)
+            agent_permission::reconcile_unlocked(target, mode)?;
         }
         (Mode::Mcp, Artifact::Hook) | (Mode::None, Artifact::Hook) => {
             agent_context_recovery::reconcile_unlocked(target, mode)?;
             agent_lifecycle::reconcile_unlocked(kind_for_target(target), mode, true)?;
-            agent_permission::reconcile_unlocked(target, mode)
+            agent_permission::reconcile_unlocked(target, mode)?;
         }
         (Mode::Mcp, Artifact::Mcp) => {
             mcp_config::install(target)?;
-            agent_context_recovery::reconcile_unlocked(target, mode)
+            agent_context_recovery::reconcile_unlocked(target, mode)?;
         }
-        _ => Ok(()),
+        _ => {}
     }
+    super::agent_profiles::reconcile_enabled_unlocked(target, mode, &empty)
 }
 
 /// 卸载当前 / 全部模式产物（Rule + Guard + 超时 Hook + MCP 配置），保留用户其它内容。

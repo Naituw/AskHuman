@@ -32,6 +32,7 @@ pub mod result;
 pub mod session_info;
 pub mod session_paths;
 pub mod stop;
+pub mod t3_host;
 pub mod task_options;
 pub mod title;
 pub mod transcript_full;

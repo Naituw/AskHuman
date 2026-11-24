@@ -125,6 +125,17 @@ function report(ctx: ExtensionContext, event: string, extra: JsonObject = {}): v
   void command.result;
 }
 
+function isExternallyControlled(): boolean {
+  if (process.env?.T3CODE_THREAD_ID) return true;
+  const argv = Array.isArray(process.argv) ? process.argv : [];
+  for (let i = 0; i < argv.length; i += 1) {
+    const arg = argv[i];
+    if (arg === "--mode=rpc") return true;
+    if (arg === "--mode" && argv[i + 1] === "rpc") return true;
+  }
+  return false;
+}
+
 function stopControlPolling(): void {
   if (controlTimer) clearTimeout(controlTimer);
   controlTimer = undefined;
@@ -135,6 +146,9 @@ function stopControlPolling(): void {
 
 function startControlPolling(pi: ExtensionAPI, ctx: ExtensionContext): void {
   stopControlPolling();
+  // Never poll __agent-control or inject background user messages when Pi is driven by an
+  // external RPC host such as T3 Code (spec t3-code-and-multi-profile D5).
+  if (isExternallyControlled()) return;
   if (!CONFIG.lifecycle && !CONFIG.stop) return;
   const lease = controlGeneration;
   const signal = (extra: JsonObject = {}) => sessionPayload(ctx, {
@@ -338,7 +352,13 @@ export default function askHumanExtension(pi: ExtensionAPI) {
     const settledGeneration = generation, run = lastRun;
     await reportNative(pi, ctx);
     if (settledGeneration !== generation) return;
-    if (!CONFIG.stop || !run || run.generation !== generation || run.stopReason !== "stop") {
+    if (
+      !CONFIG.stop ||
+      isExternallyControlled() ||
+      !run ||
+      run.generation !== generation ||
+      run.stopReason !== "stop"
+    ) {
       // Tell AskHuman why the turn ended so a failed run is not announced as finished.
       const reason = run && run.generation === generation ? run.stopReason : undefined;
       if (CONFIG.lifecycle || CONFIG.stop) report(ctx, "turn-end", reason ? { stop_reason: reason, error_details: reason === "error" ? run?.errorDetails : undefined } : {});

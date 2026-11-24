@@ -135,14 +135,20 @@ fn cursor_session_name(session_id: &str) -> Option<String> {
     if let Some(t) = super::cursor_vscdb::resolve_title(session_id) {
         return Some(t);
     }
-    // 1) ~/.cursor/chats/*/<sid>/meta.json 的 title
-    let chats = paths::cursor_dir().join("chats");
-    if let Ok(entries) = fs::read_dir(&chats) {
-        for e in entries.flatten() {
-            let meta = e.path().join(session_id).join("meta.json");
-            if let Some(t) = read_json_field(&meta, "title") {
-                if !t.trim().is_empty() {
-                    return Some(t);
+    // 1) ~/.cursor/chats/*/<sid>/meta.json (and enabled extra Cursor profiles)
+    let mut roots = vec![paths::cursor_dir()];
+    roots.extend(crate::integrations::agent_profiles::enabled_roots(
+        AgentKind::Cursor,
+    ));
+    for root in roots {
+        let chats = root.join("chats");
+        if let Ok(entries) = fs::read_dir(&chats) {
+            for e in entries.flatten() {
+                let meta = e.path().join(session_id).join("meta.json");
+                if let Some(t) = read_json_field(&meta, "title") {
+                    if !t.trim().is_empty() {
+                        return Some(t);
+                    }
                 }
             }
         }
@@ -154,21 +160,9 @@ fn cursor_title(session_id: &str) -> Option<String> {
     if let Some(title) = cursor_session_name(session_id) {
         return Some(title);
     }
-    // Fall back to the first user message in the transcript.
-    // ~/.cursor/projects/*/agent-transcripts/<sid>/<sid>.jsonl
-    let projects = paths::cursor_dir().join("projects");
-    if let Ok(entries) = fs::read_dir(&projects) {
-        for e in entries.flatten() {
-            let f = e
-                .path()
-                .join("agent-transcripts")
-                .join(session_id)
-                .join(format!("{session_id}.jsonl"));
-            if f.is_file() {
-                if let Some(t) = first_user_message(&f) {
-                    return Some(t);
-                }
-            }
+    if let Some(path) = transcript_path(AgentKind::Cursor, session_id) {
+        if let Some(t) = first_user_message(&path) {
+            return Some(t);
         }
     }
     None
@@ -177,9 +171,7 @@ fn cursor_title(session_id: &str) -> Option<String> {
 // ── Codex ──
 
 fn codex_title(session_id: &str) -> Option<String> {
-    let sessions = paths::codex_dir().join("sessions");
-    let needle = format!("-{session_id}.jsonl");
-    let file = find_file_recursive(&sessions, &needle, 4)?;
+    let file = transcript_path(AgentKind::Codex, session_id)?;
     // 优先：`event_msg{payload.type=="user_message"}` 的 message——这是用户真正键入的内容，
     // 绕开会话开头作为 role=user 注入的 AGENTS.md 指令块与 `<environment_context>` 等。
     if let Some(t) = codex_user_message(&file) {
@@ -217,9 +209,9 @@ fn codex_user_message(path: &Path) -> Option<String> {
         match payload.get("type").and_then(|t| t.as_str()) {
             Some("user_message") => {
                 if let Some(msg) = payload.get("message").and_then(|m| m.as_str()) {
-                    let t = msg.trim();
-                    if !t.is_empty() {
-                        return Some(t.to_string());
+                    let cleaned = super::transcript_full::strip_host_wrappers(msg);
+                    if !cleaned.is_empty() {
+                        return Some(cleaned);
                     }
                 }
             }
@@ -232,7 +224,10 @@ fn codex_user_message(path: &Path) -> Option<String> {
                 {
                     if let Some(text) = item.and_then(super::transcript_full::codex_turn_item_text)
                     {
-                        return Some(text);
+                        let cleaned = super::transcript_full::strip_host_wrappers(&text);
+                        if !cleaned.is_empty() {
+                            return Some(cleaned);
+                        }
                     }
                 }
             }
@@ -245,9 +240,20 @@ fn codex_user_message(path: &Path) -> Option<String> {
 // ── Claude ──
 
 fn claude_session_file(session_id: &str) -> Option<PathBuf> {
-    let projects = paths::claude_dir().join("projects");
+    if let Some(path) = super::session_paths::get(AgentKind::Claude, session_id) {
+        return Some(path);
+    }
     let target = format!("{session_id}.jsonl");
-    find_file_recursive(&projects, &target, 3)
+    let mut roots = vec![paths::claude_dir()];
+    roots.extend(crate::integrations::agent_profiles::enabled_roots(
+        AgentKind::Claude,
+    ));
+    for root in roots {
+        if let Some(found) = find_file_recursive(&root.join("projects"), &target, 3) {
+            return Some(found);
+        }
+    }
+    None
 }
 
 fn claude_title(session_id: &str) -> Option<String> {
@@ -270,15 +276,29 @@ fn grok_title(session_id: &str) -> Option<String> {
 }
 
 pub(super) fn grok_session_dir(session_id: &str) -> Option<PathBuf> {
-    let sessions = paths::grok_sessions_dir();
-    // 遍历各 cwd 目录，定位含本 session_id 子目录者（量小、best-effort）。
-    let entries = fs::read_dir(&sessions).ok()?;
-    for e in entries.flatten() {
-        let dir = e.path().join(session_id);
-        if !dir.is_dir() {
-            continue;
-        }
+    if let Some(dir) = super::session_paths::get(AgentKind::Grok, session_id)
+        .and_then(|path| path.parent().map(Path::to_path_buf))
+        .filter(|dir| dir.is_dir())
+    {
         return Some(dir);
+    }
+    let mut session_roots = vec![paths::grok_sessions_dir()];
+    session_roots.extend(
+        crate::integrations::agent_profiles::enabled_roots(AgentKind::Grok)
+            .into_iter()
+            .map(|root| root.join("sessions")),
+    );
+    for sessions in session_roots {
+        // 遍历各 cwd 目录，定位含本 session_id 子目录者（量小、best-effort）。
+        let Ok(entries) = fs::read_dir(&sessions) else {
+            continue;
+        };
+        for e in entries.flatten() {
+            let dir = e.path().join(session_id);
+            if dir.is_dir() {
+                return Some(dir);
+            }
+        }
     }
     None
 }
@@ -338,9 +358,9 @@ fn pi_first_user(path: &Path) -> Option<String> {
             && value.pointer("/message/role").and_then(Value::as_str) == Some("user")
         {
             if let Some(text) = value.pointer("/message/content").and_then(content_to_text) {
-                let text = text.trim();
-                if !text.is_empty() && !is_injected_block(text) {
-                    first_user = Some(text.to_string());
+                let cleaned = super::transcript_full::strip_host_wrappers(&text);
+                if !cleaned.is_empty() && !is_injected_block(&cleaned) {
+                    first_user = Some(cleaned);
                 }
             }
         }
@@ -351,7 +371,18 @@ fn pi_first_user(path: &Path) -> Option<String> {
 fn pi_session_file(session_id: &str) -> Option<PathBuf> {
     super::session_paths::get(AgentKind::Pi, session_id).or_else(|| {
         let mut remaining = MAX_PI_SESSION_FILES;
-        find_file_by_header(&paths::pi_sessions_dir(), session_id, 5, &mut remaining)
+        let mut roots = vec![paths::pi_sessions_dir()];
+        roots.extend(
+            crate::integrations::agent_profiles::enabled_roots(AgentKind::Pi)
+                .into_iter()
+                .map(|root| root.join("sessions")),
+        );
+        for root in roots {
+            if let Some(found) = find_file_by_header(&root, session_id, 5, &mut remaining) {
+                return Some(found);
+            }
+        }
+        None
     })
 }
 
@@ -424,19 +455,16 @@ fn grok_first_query(path: &Path) -> Option<String> {
         let Some(text) = extract_text(&v) else {
             continue;
         };
-        let t = text.trim();
-        if let Some(inner) = unwrap_tag(t, "user_query") {
-            if !inner.trim().is_empty() {
-                return Some(inner.trim().to_string());
-            }
-        } else if !is_injected_block(t) {
-            return Some(t.to_string());
+        let t = super::transcript_full::strip_host_wrappers(&text);
+        if !t.is_empty() && !is_injected_block(&t) {
+            return Some(t);
         }
     }
     None
 }
 
 /// 提取 `<tag>…</tag>` 之间的内层文本（找不到成对标签返回 `None`）。
+#[cfg(test)]
 pub(super) fn unwrap_tag(text: &str, tag: &str) -> Option<String> {
     let open = format!("<{tag}>");
     let close = format!("</{tag}>");
@@ -450,20 +478,22 @@ pub(super) fn unwrap_tag(text: &str, tag: &str) -> Option<String> {
 /// Antigravity has no title the console can read, so a conversation is named after what the person
 /// first asked.
 fn antigravity_title(session_id: &str) -> Option<String> {
-    let path = antigravity_transcript_in(&paths::integration_home(), session_id)?;
+    let path = transcript_path(AgentKind::Antigravity, session_id)?;
     antigravity_first_request(&path)
 }
 
-/// Where the App (`antigravity`) and `agy` (`antigravity-cli`) keep a conversation's step log:
-/// `~/.gemini/<surface>/brain/<conversation id>/.system_generated/logs/transcript_full.jsonl`.
-/// The id arrives from a hook or from MCP metadata, so only its canonical UUID form is ever joined
-/// into a path.
-pub(crate) fn antigravity_transcript_in(home: &Path, session_id: &str) -> Option<PathBuf> {
+/// Where the App (`antigravity`), `agy` (`antigravity-cli`), and ACP (`antigravity-acp`) keep a
+/// conversation's step log under one Gemini root:
+/// `<gemini_root>/<surface>/brain/<conversation id>/.system_generated/logs/transcript_full.jsonl`.
+pub(crate) fn antigravity_transcript_in_root(
+    gemini_root: &Path,
+    session_id: &str,
+) -> Option<PathBuf> {
     let id = uuid::Uuid::parse_str(session_id)
         .ok()?
         .hyphenated()
         .to_string();
-    paths::antigravity_brain_dirs_in(home)
+    paths::antigravity_brain_dirs_in_root(gemini_root)
         .into_iter()
         .map(|brain| {
             brain
@@ -473,9 +503,17 @@ pub(crate) fn antigravity_transcript_in(home: &Path, session_id: &str) -> Option
         .find(|path| path.is_file())
 }
 
+/// Where the App (`antigravity`), `agy` (`antigravity-cli`), and ACP (`antigravity-acp`) keep a
+/// conversation's step log below a home directory.
+/// The id arrives from a hook or from MCP metadata, so only its canonical UUID form is ever joined
+/// into a path.
+pub(crate) fn antigravity_transcript_in(home: &Path, session_id: &str) -> Option<PathBuf> {
+    antigravity_transcript_in_root(&home.join(".gemini"), session_id)
+}
+
 /// The first request the person typed: the first `USER_INPUT` step the user wrote, with the
-/// `<USER_REQUEST>` wrapper the host puts around it removed. A conversation started by another
-/// one (a subagent) begins with a system message instead and has no such step.
+/// `<USER_REQUEST>` and T3 Code wrappers removed. A conversation started by another one (a
+/// subagent) begins with a system message instead and has no such step.
 fn antigravity_first_request(path: &Path) -> Option<String> {
     let file = fs::File::open(path).ok()?;
     let reader = BufReader::new(file.take(MAX_ANTIGRAVITY_HEAD_BYTES));
@@ -498,9 +536,9 @@ fn antigravity_first_request(path: &Path) -> Option<String> {
         let Some(content) = step.get("content").and_then(Value::as_str) else {
             continue;
         };
-        let request = unwrap_tag(content, "USER_REQUEST").unwrap_or_else(|| content.to_string());
-        if !request.trim().is_empty() {
-            return Some(request.trim().to_string());
+        let request = super::transcript_full::strip_host_wrappers(content);
+        if !request.is_empty() {
+            return Some(request);
         }
     }
     None
@@ -517,48 +555,63 @@ pub(crate) fn transcript_path(kind: AgentKind, session_id: &str) -> Option<PathB
     if session_id.is_empty() || crate::development::session::requires_test_profile() {
         return None;
     }
+    if let Some(path) = super::session_paths::get(kind, session_id) {
+        return Some(path);
+    }
     match kind {
-        // The conversation log of the App or of `agy`, found by the id a hook or MCP reported;
-        // the activity, latest-text and transcript views all read it.
-        AgentKind::Antigravity => antigravity_transcript_in(&paths::integration_home(), session_id),
-        // ~/.cursor/projects/*/agent-transcripts/<sid>/<sid>.jsonl
+        // The conversation log of the App, `agy`, or enabled extra profiles (such as T3 Code ACP),
+        // found by the id a hook or MCP reported; the activity, latest-text and transcript views
+        // all read it.
+        AgentKind::Antigravity => antigravity_transcript_in(&paths::integration_home(), session_id)
+            .or_else(|| {
+                crate::integrations::agent_profiles::enabled_roots(AgentKind::Antigravity)
+                    .into_iter()
+                    .find_map(|root| antigravity_transcript_in_root(&root, session_id))
+            }),
+        // ~/.cursor/projects/*/agent-transcripts/<sid>/<sid>.jsonl (and enabled extra profiles)
         AgentKind::Cursor => {
-            let projects = paths::cursor_dir().join("projects");
-            let entries = fs::read_dir(&projects).ok()?;
-            for e in entries.flatten() {
-                let f = e
-                    .path()
-                    .join("agent-transcripts")
-                    .join(session_id)
-                    .join(format!("{session_id}.jsonl"));
-                if f.is_file() {
-                    return Some(f);
+            let mut roots = vec![paths::cursor_dir()];
+            roots.extend(crate::integrations::agent_profiles::enabled_roots(
+                AgentKind::Cursor,
+            ));
+            for root in roots {
+                let projects = root.join("projects");
+                let Ok(entries) = fs::read_dir(&projects) else {
+                    continue;
+                };
+                for e in entries.flatten() {
+                    let f = e
+                        .path()
+                        .join("agent-transcripts")
+                        .join(session_id)
+                        .join(format!("{session_id}.jsonl"));
+                    if f.is_file() {
+                        return Some(f);
+                    }
                 }
             }
             None
         }
-        // ~/.codex/sessions/**/rollout-*-<sid>.jsonl
+        // ~/.codex/sessions/**/rollout-*-<sid>.jsonl (and enabled extra profiles)
         AgentKind::Codex => {
-            let sessions = paths::codex_dir().join("sessions");
-            find_file_recursive(&sessions, &format!("-{session_id}.jsonl"), 4)
-        }
-        // ~/.claude/projects/*/<sid>.jsonl
-        AgentKind::Claude => {
-            let projects = paths::claude_dir().join("projects");
-            find_file_recursive(&projects, &format!("{session_id}.jsonl"), 3)
-        }
-        // ~/.grok/sessions/<url编码 cwd>/<sid>/chat_history.jsonl
-        AgentKind::Grok => {
-            let sessions = paths::grok_sessions_dir();
-            let entries = fs::read_dir(&sessions).ok()?;
-            for e in entries.flatten() {
-                let f = e.path().join(session_id).join("chat_history.jsonl");
-                if f.is_file() {
-                    return Some(f);
+            let needle = format!("-{session_id}.jsonl");
+            let mut roots = vec![paths::codex_dir()];
+            roots.extend(crate::integrations::agent_profiles::enabled_roots(
+                AgentKind::Codex,
+            ));
+            for root in roots {
+                if let Some(found) = find_file_recursive(&root.join("sessions"), &needle, 4) {
+                    return Some(found);
                 }
             }
             None
         }
+        // ~/.claude/projects/*/<sid>.jsonl (and enabled extra profiles)
+        AgentKind::Claude => claude_session_file(session_id),
+        // ~/.grok/sessions/<url编码 cwd>/<sid>/chat_history.jsonl (and enabled extra profiles)
+        AgentKind::Grok => grok_session_dir(session_id)
+            .map(|dir| dir.join("chat_history.jsonl"))
+            .filter(|f| f.is_file()),
         AgentKind::Pi => pi_session_file(session_id),
     }
 }
@@ -1198,7 +1251,8 @@ mod tests {
                 .join("\n"),
         )
         .unwrap();
-        super::super::session_paths::register_pi(
+        super::super::session_paths::register(
+            AgentKind::Pi,
             "pi-title-test",
             &path.to_string_lossy(),
             Some(&dir.path().to_string_lossy()),
@@ -1265,7 +1319,8 @@ mod tests {
                 .join("\n"),
         )
         .unwrap();
-        super::super::session_paths::register_pi(
+        super::super::session_paths::register(
+            AgentKind::Pi,
             "pi-long-title-test",
             &path.to_string_lossy(),
             Some(&dir.path().to_string_lossy()),

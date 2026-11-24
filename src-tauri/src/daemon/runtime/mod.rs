@@ -2327,17 +2327,15 @@ async fn control_loop(reader: &mut Reader, w: &mut Writer, state: &Arc<ServerSta
                                     .and_then(|operation| operation.started_control())
                             })
                             .flatten();
-                        if kind == AgentKind::Pi {
-                            if let Some(path) = transcript_path.as_deref().and_then(|path| {
-                                crate::agents::session_paths::register_pi(
-                                    &session_id,
-                                    path,
-                                    event_cwd.as_deref(),
-                                )
-                            }) {
-                                changed |=
-                                    state.agents.set_transcript_path(kind, &session_id, path);
-                            }
+                        if let Some(path) = transcript_path.as_deref().and_then(|path| {
+                            crate::agents::session_paths::register(
+                                kind,
+                                &session_id,
+                                path,
+                                event_cwd.as_deref(),
+                            )
+                        }) {
+                            changed |= state.agents.set_transcript_path(kind, &session_id, path);
                         }
                         if let Some(launch_id) = launch_id.as_deref() {
                             changed |= state.agents.set_launch_id(&session_id, launch_id);

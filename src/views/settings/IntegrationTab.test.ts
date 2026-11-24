@@ -14,6 +14,7 @@ const useSettingsContext = vi.hoisted(() => vi.fn());
 vi.mock("./context", () => ({ useSettingsContext }));
 vi.mock("./CursorDesktopSettings.vue", () => ({ default: { template: '<div class="cursor-desktop-settings-stub" />' } }));
 vi.mock("./AntigravityDesktopSettings.vue", () => ({ default: { template: '<div class="antigravity-desktop-settings-stub" />' } }));
+vi.mock("./AgentProfilesSection.vue", () => ({ default: { template: '<div class="agent-profiles-section-stub" />' } }));
 
 function agentDefinition(id: AgentId, hasTimeoutHook: boolean) {
   const recommended: AgentMode = id === "cursor" || id === "claude" || id === "pi" ? "cli" : "mcp";
@@ -69,9 +70,15 @@ function settingsContext(
     toggleAskQuestion: vi.fn(),
     permissionBlockedText: vi.fn(() => ""),
     updateArtifact: vi.fn(),
-    updateSummary: ref({ total: 0, rule: 0, hook: 0, mcp: 0 }),
+    updateSummary: ref({ total: 0, rule: 0, hook: 0, mcp: 0, profiles: 0 }),
     updateAllBusy: ref(false),
     updateAll: vi.fn(),
+    addProfile: vi.fn(),
+    toggleProfile: vi.fn(),
+    removeProfile: vi.fn(),
+    syncProfile: vi.fn(),
+    dismissDiscoveredProfile: vi.fn(),
+    revealProfile: vi.fn(),
     openMenuKey: ref(null),
     toggleOpenMenu: vi.fn(),
     closeOpenMenu: vi.fn(),
@@ -915,6 +922,31 @@ describe("IntegrationTab", () => {
       await toggleOf(wrapper, "claude").trigger("click");
       expect(card.text().match(/Saved/g)).toHaveLength(1);
       expect(card.get("#agent-details-claude").text()).toContain("Saved");
+    });
+
+    it("keeps unintegrated and folded Antigravity cards free of outside discovered-profile hints", () => {
+      const discovered = [
+        {
+          agent: "antigravity",
+          root: "/Users/test/.t3/userdata/providers/antigravity/ac0a3dfd",
+          displayRoot: "~/.t3/userdata/providers/antigravity/ac0a3dfd",
+          label: "T3 Code (antigravity)",
+          source: "t3_discovered" as const,
+        },
+      ];
+      const unintegrated = mountAgent(
+        agentDefinition("antigravity", false),
+        modeStatus({ mode: "none", discoveredProfiles: discovered }),
+      );
+      expect(unintegrated.wrapper.find('[data-testid="antigravity-discovered-hint"]').exists()).toBe(false);
+      expect(unintegrated.wrapper.find("#agent-details-antigravity").exists()).toBe(false);
+
+      const folded = mountAgent(
+        agentDefinition("antigravity", false),
+        modeStatus({ mode: "mcp", discoveredProfiles: discovered }),
+      );
+      expect(folded.wrapper.find('[data-testid="antigravity-discovered-hint"]').exists()).toBe(false);
+      expect(hidden(folded.wrapper, "antigravity")).toBe(true);
     });
   });
 

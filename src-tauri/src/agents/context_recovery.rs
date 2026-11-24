@@ -28,6 +28,17 @@ pub fn run(args: &[String]) {
         return;
     }
     let input = super::report::read_stdin_json();
+    let session_id = super::report::resolve_session_id(kind, &env, input.as_ref());
+    if let Some(reason) = super::t3_host::classify_and_record_hook(kind, &session_id) {
+        super::t3_host::log_suppressed(
+            "protocol_hook",
+            Some(kind.as_str()),
+            (!session_id.is_empty()).then_some(session_id.as_str()),
+            None,
+            reason,
+        );
+        return;
+    }
     if let Some(input) = &input {
         super::session_info::capture_hook(kind, input, &env);
     }
@@ -98,11 +109,23 @@ struct CodexEnv<'a> {
     audit: &'a dyn Fn(&'static str, &str, &str),
 }
 
+fn codex_has_legacy_block() -> bool {
+    if let Ok(codex_home) = std::env::var("CODEX_HOME") {
+        let path = Path::new(codex_home.trim());
+        if path.is_absolute() && path.is_dir() {
+            return crate::paths::with_agent_root(AgentKind::Codex, path, || {
+                crate::integrations::codex_protocol::has_legacy_block()
+            });
+        }
+    }
+    crate::integrations::codex_protocol::has_legacy_block()
+}
+
 impl CodexEnv<'static> {
     fn real() -> Self {
         Self {
             probes: &delegated::System,
-            legacy_block: &crate::integrations::codex_protocol::has_legacy_block,
+            legacy_block: &codex_has_legacy_block,
             protocol: &crate::prompts::codex_protocol,
             injected_before: &injected_since_last_compaction,
             audit: &audit_protocol_hook,

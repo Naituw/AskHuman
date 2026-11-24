@@ -332,14 +332,13 @@ impl AgentRegistry {
         }
         inner.next_seq = seq;
         for record in inner.active.iter().chain(inner.ended.iter()) {
-            if record.kind == AgentKind::Pi {
-                if let Some(path) = record.transcript_path.as_deref() {
-                    let _ = super::session_paths::register_pi(
-                        &record.session_id,
-                        path,
-                        record.cwd.as_deref(),
-                    );
-                }
+            if let Some(path) = record.transcript_path.as_deref() {
+                let _ = super::session_paths::register(
+                    record.kind,
+                    &record.session_id,
+                    path,
+                    record.cwd.as_deref(),
+                );
             }
         }
         drop(inner);
@@ -3476,7 +3475,8 @@ mod tests {
                 .join("\n"),
         )
         .unwrap();
-        crate::agents::session_paths::register_pi(
+        crate::agents::session_paths::register(
+            AgentKind::Pi,
             session_id,
             &path.to_string_lossy(),
             Some(&dir.to_string_lossy()),

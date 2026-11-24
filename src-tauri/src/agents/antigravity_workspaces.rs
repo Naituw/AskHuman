@@ -18,10 +18,23 @@ const MAX_ROWS: usize = 300;
 /// A summary row's folder list is a short JSON array; anything bigger is not one.
 const MAX_FOLDERS_BYTES: usize = 16 * 1024;
 
-/// The folders of the recent conversations of both products, with the time each was last used (Unix
-/// seconds).
+/// The folders of the recent conversations of both products (plus enabled extra Antigravity
+/// profiles such as T3 Code ACP homes, spec P8), with the time each was last used (Unix seconds).
 pub(crate) fn recent_workspaces() -> Vec<(PathBuf, u64)> {
-    recent_workspaces_in(&crate::paths::integration_home())
+    let mut latest = HashMap::<PathBuf, u64>::new();
+    for (folder, used) in recent_workspaces_in(&crate::paths::integration_home()) {
+        let slot = latest.entry(folder).or_insert(0);
+        *slot = (*slot).max(used);
+    }
+    for root in crate::integrations::agent_profiles::enabled_roots(super::AgentKind::Antigravity) {
+        for database in crate::paths::antigravity_summary_dbs_in_root(&root) {
+            for (folder, used) in read(&database) {
+                let slot = latest.entry(folder).or_insert(0);
+                *slot = (*slot).max(used);
+            }
+        }
+    }
+    latest.into_iter().collect()
 }
 
 fn recent_workspaces_in(home: &Path) -> Vec<(PathBuf, u64)> {

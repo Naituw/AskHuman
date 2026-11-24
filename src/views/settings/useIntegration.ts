@@ -7,6 +7,12 @@ import {
   agentModeSet,
   agentModeUpdate,
   agentModeUpdateArtifact,
+  agentProfileAdd,
+  agentProfileSetEnabled,
+  agentProfileRemove,
+  agentProfileSync,
+  agentProfileDismissDiscovered,
+  agentProfileReveal,
   agentPermissionSet,
   agentAskQuestionSet,
   agentStopSet,
@@ -149,6 +155,8 @@ export function useIntegration(
     versionSupported: true,
     hostPluginDisabled: false,
     mcpGrant: null,
+    profiles: [],
+    discoveredProfiles: [],
   });
   const modes = ref<Record<AgentId, AgentModeStatus>>({
     cursor: emptyMode(),
@@ -417,19 +425,115 @@ export function useIntegration(
     }
   }
 
-  // 跨所有 Agent 的「待更新」概览统计：分别数出有多少家 Rule / Hook / MCP 配置过期或缺失。
+  // 跨所有 Agent 的「待更新」概览统计：分别数出有多少家 Rule / Hook / MCP 配置或额外目录过期或缺失。
   const updateSummary = computed(() => {
     let rule = 0;
     let hook = 0;
     let mcp = 0;
+    let profiles = 0;
     for (const a of AGENTS) {
       const m = modes.value[a.id];
       if (m.ruleNeedsUpdate) rule++;
       if (m.hookNeedsUpdate) hook++;
       if (m.mcpNeedsUpdate) mcp++;
+      if (m.profiles?.some((p) => p.enabled && p.needsUpdate)) profiles++;
     }
-    return { rule, hook, mcp, total: rule + hook + mcp };
+    return { rule, hook, mcp, profiles, total: rule + hook + mcp + profiles };
   });
+
+  async function addProfile(
+    agent: AgentId,
+    root: string,
+    label?: string,
+    source?: "t3_discovered" | "manual",
+  ) {
+    if (modeBusy.value[agent]) return;
+    modeBusy.value[agent] = true;
+    modeMessage.value[agent] = null;
+    try {
+      await agentProfileAdd(agent, root, label, source, true);
+      modeError.value[agent] = false;
+    } catch (e) {
+      modeMessage.value[agent] = String(e);
+      modeError.value[agent] = true;
+    } finally {
+      modeBusy.value[agent] = false;
+      await refreshMode(agent);
+    }
+  }
+
+  async function toggleProfile(
+    agent: AgentId,
+    id: string,
+    enabled: boolean,
+    detach = false,
+  ) {
+    if (modeBusy.value[agent]) return;
+    modeBusy.value[agent] = true;
+    modeMessage.value[agent] = null;
+    try {
+      await agentProfileSetEnabled(agent, id, enabled, detach);
+      modeError.value[agent] = false;
+    } catch (e) {
+      modeMessage.value[agent] = String(e);
+      modeError.value[agent] = true;
+    } finally {
+      modeBusy.value[agent] = false;
+      await refreshMode(agent);
+    }
+  }
+
+  async function removeProfile(agent: AgentId, id: string, detach = false) {
+    if (modeBusy.value[agent]) return;
+    modeBusy.value[agent] = true;
+    modeMessage.value[agent] = null;
+    try {
+      await agentProfileRemove(agent, id, detach);
+      modeError.value[agent] = false;
+    } catch (e) {
+      modeMessage.value[agent] = String(e);
+      modeError.value[agent] = true;
+    } finally {
+      modeBusy.value[agent] = false;
+      await refreshMode(agent);
+    }
+  }
+
+  async function syncProfile(agent: AgentId, id: string) {
+    if (modeBusy.value[agent]) return;
+    modeBusy.value[agent] = true;
+    modeMessage.value[agent] = null;
+    try {
+      await agentProfileSync(agent, id);
+      modeError.value[agent] = false;
+    } catch (e) {
+      modeMessage.value[agent] = String(e);
+      modeError.value[agent] = true;
+    } finally {
+      modeBusy.value[agent] = false;
+      await refreshMode(agent);
+    }
+  }
+
+  async function dismissDiscoveredProfile(agent: AgentId, root: string) {
+    if (modeBusy.value[agent]) return;
+    modeBusy.value[agent] = true;
+    modeMessage.value[agent] = null;
+    try {
+      await agentProfileDismissDiscovered(agent, root);
+      modeError.value[agent] = false;
+    } catch (e) {
+      modeMessage.value[agent] = String(e);
+      modeError.value[agent] = true;
+    } finally {
+      modeBusy.value[agent] = false;
+      await refreshMode(agent);
+    }
+  }
+
+  function revealProfile(agent: AgentId, id: string) {
+    void agentProfileReveal(agent, id);
+  }
 
   const updateAllBusy = ref(false);
 
@@ -678,6 +782,12 @@ tool_timeout_sec = 86400`,
     updateSummary,
     updateAllBusy,
     updateAll,
+    addProfile,
+    toggleProfile,
+    removeProfile,
+    syncProfile,
+    dismissDiscoveredProfile,
+    revealProfile,
     openMenuKey,
     toggleOpenMenu,
     closeOpenMenu,

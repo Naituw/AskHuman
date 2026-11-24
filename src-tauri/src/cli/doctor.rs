@@ -10,7 +10,7 @@ use crate::i18n::Lang;
 use crate::integrations::agent_rules::AgentTarget;
 use crate::integrations::codex_protocol::{self, Delivery};
 use crate::integrations::{
-    agent_delegated, agent_lifecycle, agent_mode, agent_permission, agent_rules,
+    agent_delegated, agent_lifecycle, agent_mode, agent_permission, agent_profiles, agent_rules,
     agent_subagent_guard, antigravity_plugin, claude_hook, cursor_hook, mcp_config,
 };
 
@@ -333,6 +333,57 @@ fn render_text(
                 ));
             }
         }
+        let extra_profiles = agent_profiles::statuses_for_agent(target, mode);
+        for p in &extra_profiles {
+            if !p.enabled {
+                continue;
+            }
+            if matches!(p.state.as_str(), "conflict" | "rootMissing") {
+                had_errors = true;
+                out.push_str(&format!(
+                    "  ! {name} profile {} [{}]: {} ({})\n",
+                    p.label,
+                    super::agents_cmd::profile_state_label(&p.state, lang),
+                    p.error.as_deref().unwrap_or(""),
+                    p.root
+                ));
+            } else if p.needs_update {
+                out.push_str(&format!(
+                    "  ! {name} profile {} [{}] — {} ({})\n",
+                    p.label,
+                    super::agents_cmd::profile_state_label(&p.state, lang),
+                    cfgio::t(
+                        lang,
+                        &format!("fix: AskHuman agents profile sync {name} {}", p.id),
+                        &format!("修复：AskHuman agents profile sync {name} {}", p.id),
+                    ),
+                    p.root
+                ));
+            }
+            if p.host_plugin_disabled {
+                out.push_str(&format!(
+                    "  ! {name} profile {}: {}\n",
+                    p.label,
+                    cfgio::t(
+                        lang,
+                        "plugin switched off in Antigravity",
+                        "插件在该 Antigravity 目录内已停用",
+                    )
+                ));
+            }
+        }
+        let discovered = agent_profiles::discover_for_agent(kind);
+        if !discovered.is_empty() {
+            out.push_str(&format!(
+                "  · {name}: {} {}\n",
+                discovered.len(),
+                cfgio::t(
+                    lang,
+                    "discovered T3 profile(s) not yet enabled — run: AskHuman agents profile list antigravity",
+                    "个自动发现的 T3 目录尚未启用 —— 查看：AskHuman agents profile list antigravity",
+                )
+            ));
+        }
     }
 
     out.push_str(&cfgio::t(lang, "\nIM Agent tasks\n", "\nIM Agent 任务\n"));
@@ -560,6 +611,14 @@ fn render_json(
             let lc = agent_lifecycle::status(kind);
             let permission = agent_permission::status(target);
             let guard = agent_subagent_guard::status(target);
+            let profiles = agent_profiles::statuses_for_agent(target, mode);
+            if profiles
+                .iter()
+                .any(|p| p.enabled && matches!(p.state.as_str(), "conflict" | "rootMissing"))
+            {
+                had_errors = true;
+            }
+            let discovered_profiles = agent_profiles::discover_for_agent(kind);
             serde_json::json!({
                 "name": name,
                 "mode": mode.as_str(),
@@ -599,6 +658,8 @@ fn render_json(
                     "cleanupRequired": lc.cleanup_required,
                     "supported": lc.supported
                 },
+                "profiles": profiles,
+                "discoveredProfiles": discovered_profiles,
             })
         })
         .collect();

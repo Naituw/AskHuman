@@ -5,6 +5,7 @@ pub mod agent_launch;
 pub mod agent_lifecycle;
 pub mod agent_mode;
 pub mod agent_permission;
+pub mod agent_profiles;
 pub mod agent_rules;
 pub mod agent_start;
 pub mod agent_stop;

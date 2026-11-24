@@ -252,6 +252,60 @@ pub fn uninstall() -> Result<()> {
     uninstall_at(&Layout::current())
 }
 
+/// A read-only look at the plugin in an extra Antigravity root (`GEMINI_HOME`).
+pub(crate) fn snapshot_for_root(gemini_root: &Path, profile_id: &str) -> Result<Snapshot> {
+    require_platform()?;
+    let executable = executable().ok();
+    snapshot_at(
+        &Layout::for_antigravity_root(gemini_root, &crate::paths::config_dir(), profile_id),
+        executable.as_deref(),
+        &super::agent_rules::antigravity_rule_bytes,
+    )
+}
+
+/// Publish the plugin into an extra Antigravity root (`GEMINI_HOME`).
+pub(crate) fn install_for_root(
+    gemini_root: &Path,
+    profile_id: &str,
+    request: Request,
+) -> Result<()> {
+    let executable = executable()?;
+    install_at(
+        &Layout::for_antigravity_root(gemini_root, &crate::paths::config_dir(), profile_id),
+        request.into(),
+        &executable,
+        &super::agent_rules::antigravity_rule_bytes,
+    )
+}
+
+/// Remove the managed plugin from an extra Antigravity root (`GEMINI_HOME`).
+pub(crate) fn uninstall_for_root(gemini_root: &Path, profile_id: &str) -> Result<()> {
+    uninstall_at(&Layout::for_antigravity_root(
+        gemini_root,
+        &crate::paths::config_dir(),
+        profile_id,
+    ))
+}
+
+/// Remove only AskHuman's ownership ledger for an extra profile without touching disk files
+/// (used when detaching a conflicting profile explicitly).
+pub(crate) fn detach_ledger_for_root(profile_id: &str) -> Result<()> {
+    let askhuman = super::agent_rules::physical_root(crate::paths::config_dir());
+    let ledger = crate::paths::antigravity_extra_plugin_ledger_in(&askhuman, profile_id);
+    match std::fs::remove_file(&ledger) {
+        Err(error) if error.kind() != std::io::ErrorKind::NotFound => {
+            Err(error).with_context(|| format!("cannot remove {}", ledger.display()))
+        }
+        _ => Ok(()),
+    }
+}
+
+/// The host view of an extra Antigravity root (`<gemini_root>/config/config.json`).
+pub(crate) fn host_view_for_root(gemini_root: &Path) -> HostView {
+    let root = super::agent_rules::physical_root(gemini_root.to_path_buf());
+    host_view_at(&root.join("config").join("config.json"))
+}
+
 /// Turn the lifecycle hooks on or off. Without a plugin there is nothing to carry them, so this
 /// is then a no-op: the plugin belongs to an integration mode, never to this switch.
 pub fn set_lifecycle(enabled: bool) -> Result<()> {
@@ -520,6 +574,19 @@ impl Layout {
             config: crate::paths::antigravity_config_dir_in(home),
             dir: crate::paths::antigravity_plugin_dir_in(home),
             ledger: crate::paths::antigravity_plugin_ledger_in(askhuman_config),
+        }
+    }
+
+    fn for_antigravity_root(gemini_root: &Path, askhuman_config: &Path, profile_id: &str) -> Self {
+        let root = super::agent_rules::physical_root(gemini_root.to_path_buf());
+        let askhuman = super::agent_rules::physical_root(askhuman_config.to_path_buf());
+        let config = root.join("config");
+        let dir = config.join("plugins").join(PLUGIN_NAME);
+        let ledger = crate::paths::antigravity_extra_plugin_ledger_in(&askhuman, profile_id);
+        Layout {
+            config,
+            dir,
+            ledger,
         }
     }
 

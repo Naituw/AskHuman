@@ -687,6 +687,7 @@ pub(super) fn observe(state: &Arc<ServerState>, kind: AgentKind, sid: &str, even
     if !enabled(kind, sid)
         || !crate::development::session::native_binding_allowed(kind, sid)
         || kind == AgentKind::Codex && crate::agents::delegated::marker_silenced(sid).is_some()
+        || crate::agents::t3_host::marker_silenced(kind, sid).is_some()
     {
         return;
     }

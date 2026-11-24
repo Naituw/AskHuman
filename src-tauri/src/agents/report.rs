@@ -55,6 +55,18 @@ pub fn run(args: &[String]) {
     if session_id.is_empty() {
         return;
     }
+    if let Some(reason) = super::t3_host::classify_and_record_hook(intended, &session_id) {
+        if event == super::LifecycleEvent::SessionStart {
+            super::t3_host::log_suppressed(
+                "lifecycle_hook",
+                Some(intended.as_str()),
+                Some(&session_id),
+                None,
+                reason,
+            );
+        }
+        return;
+    }
     // 不在 hook 侧 walk 进程树（~280ms），改发 ppid 给 daemon 缓存解析。
     let hint_pid = detect::parent_pid(std::process::id());
     let cwd = resolve_cwd(&env, stdin.as_ref());
@@ -169,11 +181,9 @@ pub(super) fn report_simple_event(
         return;
     }
     let hint_pid = detect::parent_pid(std::process::id());
-    crate::development::session::bind_native(
-        intended,
-        &session_id,
-        std::env::var("PI_SESSION_FILE").ok().as_deref(),
-    );
+    let env = detect::env_snapshot();
+    let transcript_path = resolve_transcript_path(&env, Some(input));
+    crate::development::session::bind_native(intended, &session_id, transcript_path.as_deref());
     crate::client::report_agent_event(ClientMsg::AgentEvent {
         agent: intended.as_str().to_string(),
         event: event.as_str().to_string(),
@@ -181,9 +191,7 @@ pub(super) fn report_simple_event(
         pid: None,
         hint_pid,
         cwd,
-        transcript_path: std::env::var("PI_SESSION_FILE")
-            .ok()
-            .filter(|value| !value.trim().is_empty()),
+        transcript_path,
         launch_id: std::env::var(crate::integrations::agent_launch::LAUNCH_ID_ENV).ok(),
         prompt_sha256: None,
         ts: 0,

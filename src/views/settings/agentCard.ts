@@ -13,6 +13,7 @@ export type AgentTagKey =
   | "cleanup"
   | "unsupportedVersion"
   | "blocked"
+  | "profileIssue"
   | "unreadable";
 
 export interface AgentTag {
@@ -55,13 +56,26 @@ export function hasUpdate(status: AgentModeStatus): boolean {
     status.permissionNeedsUpdate ||
     status.lifecycle.needsUpdate ||
     (status.stop.supported && status.stop.outdated) ||
-    (status.askQuestion.supported && status.askQuestion.outdated)
+    (status.askQuestion.supported && status.askQuestion.outdated) ||
+    (status.profiles?.some((p) => p.enabled && p.needsUpdate) ?? false)
   );
 }
 
-/** Something inside the details is waiting for the user: an update to apply, or an Agent too old. */
+/** Whether any enabled extra profile has a conflict or missing root directory. */
+export function hasProfileIssue(status: AgentModeStatus): boolean {
+  return (
+    status.profiles?.some(
+      (p) => p.enabled && (p.state === "conflict" || p.state === "rootMissing"),
+    ) ?? false
+  );
+}
+
+/** Something inside the details is waiting for the user: an update to apply, an Agent too old, or a profile issue. */
 export function needsAction(input: AgentCardInput): boolean {
-  return hasDetails(input) && (hasUpdate(input.status) || versionProblem(input));
+  return (
+    hasDetails(input) &&
+    (hasUpdate(input.status) || versionProblem(input) || hasProfileIssue(input.status))
+  );
 }
 
 /** The Agent's own policy keeps the managed hooks from running (a red line in the permission row). */
@@ -83,6 +97,7 @@ export function agentTags(input: AgentCardInput): AgentTag[] {
     if (hasUpdate(status)) tags.push({ key: "needsUpdate", tone: "warn" });
     if (versionProblem(input)) tags.push({ key: "unsupportedVersion", tone: "warn" });
     if (hooksBlocked(input)) tags.push({ key: "blocked", tone: "warn" });
+    if (hasProfileIssue(status)) tags.push({ key: "profileIssue", tone: "warn" });
     return tags;
   }
   // Not integrated: only leftovers of an earlier integration are worth a tag.

@@ -88,6 +88,14 @@ pub fn set_enabled(kind: AgentKind, value: bool) -> Result<()> {
         let _ = save_preferences(&original);
         return Err(error);
     }
+    // P4: Primary succeeded; keep preference and sync enabled extra profiles independently.
+    let target = target_for_kind(kind);
+    let primary_mode = super::agent_mode::current(target);
+    super::agent_profiles::reconcile_enabled_unlocked(
+        target,
+        primary_mode,
+        &std::collections::BTreeMap::new(),
+    )?;
     Ok(())
 }
 
@@ -289,6 +297,9 @@ pub fn migrate_outdated() -> Vec<AgentKind> {
                 if reconcile_current_mode_unlocked(kind).is_ok() {
                     migrated.push(kind);
                 }
+                super::agent_profiles::reconcile_outdated_best_effort_unlocked(target_for_kind(
+                    kind,
+                ));
             }
         }
     }

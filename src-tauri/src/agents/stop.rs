@@ -59,6 +59,16 @@ fn run_inner(args: &[String]) -> Option<Value> {
     if session_id.is_empty() {
         return None;
     }
+    if let Some(reason) = super::t3_host::classify_and_record_hook(kind, &session_id) {
+        super::t3_host::log_suppressed(
+            "stop_confirmation",
+            Some(kind.as_str()),
+            Some(&session_id),
+            None,
+            reason,
+        );
+        return None;
+    }
     let cwd = stop_cwd(kind, &env, &input);
 
     // A Stop that leaves a background sub-agent running ends no turn: the session is still working
@@ -360,11 +370,22 @@ fn normalize_last_assistant_message(raw: Option<&str>) -> LastAssistantMessage {
     }
 }
 
-/// The agent's last reply, read from the conversation log found by the id the payload names. The
-/// payload carries no message of its own, and the log is looked up by id rather than by the path it
-/// reports, so a payload cannot point the card at an arbitrary file.
+/// The agent's last reply, read from the conversation log. Prefers a structurally validated
+/// `transcriptPath` from the hook payload (covering isolated ACP homes such as T3 Code even inside
+/// this short-lived hook process), and falls back to looking up the log by conversation id.
 fn antigravity_last_message(input: &Value) -> Option<String> {
     antigravity_last_message_with(input, &|id| {
+        if let Some(raw) = input
+            .get("transcriptPath")
+            .or_else(|| input.get("transcript_path"))
+            .and_then(Value::as_str)
+        {
+            if let Some(path) =
+                super::session_paths::validate_path(AgentKind::Antigravity, id, raw, None)
+            {
+                return Some(path);
+            }
+        }
         super::title::transcript_path(AgentKind::Antigravity, id)
     })
 }
@@ -380,7 +401,13 @@ fn antigravity_last_message_with(
 }
 
 fn cursor_last_message(input: &Value) -> Option<String> {
-    cursor_last_message_under(input, &crate::paths::cursor_dir())
+    let mut roots = vec![crate::paths::cursor_dir()];
+    roots.extend(crate::integrations::agent_profiles::enabled_roots(
+        AgentKind::Cursor,
+    ));
+    roots
+        .into_iter()
+        .find_map(|root| cursor_last_message_under(input, &root))
 }
 
 fn cursor_last_message_under(input: &Value, root: &Path) -> Option<String> {
@@ -1285,5 +1312,36 @@ mod tests {
         let message = normalize_last_assistant_message(raw.as_deref());
         assert!(message.user_confirmed_end_turn);
         assert_eq!(message.display.unwrap().matches('你').count(), 2_000);
+    }
+
+    #[test]
+    fn antigravity_last_message_reads_validated_acp_transcript_path() {
+        let dir = tempfile::tempdir().unwrap();
+        let uuid = "4e200329-9002-48ef-9a74-faf0704f25d4";
+        let transcript = dir
+            .path()
+            .join("providers/antigravity/hash/antigravity-acp/brain")
+            .join(uuid)
+            .join(".system_generated/logs/transcript_full.jsonl");
+        std::fs::create_dir_all(transcript.parent().unwrap()).unwrap();
+        let step = json!({
+            "type": "PLANNER_RESPONSE",
+            "status": "DONE",
+            "content": "ACP final reply"
+        });
+        std::fs::write(&transcript, format!("{step}\n")).unwrap();
+
+        let text = antigravity_last_message(&json!({
+            "conversationId": uuid,
+            "transcriptPath": transcript,
+        }));
+        assert_eq!(text.as_deref(), Some("ACP final reply"));
+
+        // Mismatched conversation id cannot read another conversation's log via transcriptPath.
+        let rejected = antigravity_last_message(&json!({
+            "conversationId": "11111111-1111-4111-8111-111111111111",
+            "transcriptPath": transcript,
+        }));
+        assert!(rejected.is_none());
     }
 }

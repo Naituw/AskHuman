@@ -303,10 +303,51 @@ struct IntegrationState {
 
 #[derive(Debug, Default, Serialize, Deserialize)]
 #[serde(default)]
+struct CodexProfileState {
+    direct_only_namespace_added_by_askhuman: bool,
+}
+
+#[derive(Debug, Default, Serialize, Deserialize)]
+#[serde(default)]
 struct CodexIntegrationState {
     direct_only_namespace_added_by_askhuman: bool,
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    extra_profiles: BTreeMap<String, CodexProfileState>,
     #[serde(flatten)]
     extra: BTreeMap<String, Value>,
+}
+
+impl CodexIntegrationState {
+    fn direct_only_owned(&self, profile_key: Option<&str>) -> bool {
+        match profile_key {
+            Some(key) => self
+                .extra_profiles
+                .get(key)
+                .is_some_and(|p| p.direct_only_namespace_added_by_askhuman),
+            None => self.direct_only_namespace_added_by_askhuman,
+        }
+    }
+
+    fn set_direct_only_owned(&mut self, profile_key: Option<&str>, owned: bool) {
+        match profile_key {
+            Some(key) => {
+                if owned {
+                    self.extra_profiles
+                        .entry(key.to_string())
+                        .or_default()
+                        .direct_only_namespace_added_by_askhuman = true;
+                } else {
+                    self.extra_profiles.remove(key);
+                }
+            }
+            None => self.direct_only_namespace_added_by_askhuman = owned,
+        }
+    }
+}
+
+fn active_codex_profile_key() -> Option<String> {
+    paths::active_agent_root(crate::agents::AgentKind::Codex)
+        .map(|root| root.to_string_lossy().to_string())
 }
 
 #[derive(Debug)]
@@ -562,11 +603,14 @@ fn install_codex_toml_with_state_env(
 ) -> Result<()> {
     // 安装前必须能读取所有权账本。损坏时中止，避免误认领用户的同名配置。
     let mut state = load_integration_state(state_path)?;
+    let profile_key = active_codex_profile_key();
     let outcome = apply_install_toml_outcome_env(AgentTarget::Codex, original, command, env)?;
 
     write_text(path, &outcome.text)?;
-    if outcome.direct_only_added && !state.codex.direct_only_namespace_added_by_askhuman {
-        state.codex.direct_only_namespace_added_by_askhuman = true;
+    if outcome.direct_only_added && !state.codex.direct_only_owned(profile_key.as_deref()) {
+        state
+            .codex
+            .set_direct_only_owned(profile_key.as_deref(), true);
         if let Err(error) = save_integration_state(state_path, &state) {
             rollback_text(path, &outcome.text, original, original_exists)
                 .with_context(|| format!("保存集成所有权失败（{error}），且回滚 Codex 配置失败"))?;
@@ -583,17 +627,20 @@ fn uninstall_codex_toml(path: &Path, original: &str) -> Result<()> {
 }
 
 fn uninstall_codex_toml_with_state(path: &Path, state_path: &Path, original: &str) -> Result<()> {
+    let profile_key = active_codex_profile_key();
     let loaded = load_integration_state(state_path);
     let owned = loaded
         .as_ref()
-        .map(|state| state.codex.direct_only_namespace_added_by_askhuman)
+        .map(|state| state.codex.direct_only_owned(profile_key.as_deref()))
         .unwrap_or(false);
     let updated = apply_uninstall_toml(original, owned)?;
     write_text(path, &updated)?;
 
     if let Ok(mut state) = loaded {
         if owned {
-            state.codex.direct_only_namespace_added_by_askhuman = false;
+            state
+                .codex
+                .set_direct_only_owned(profile_key.as_deref(), false);
             if let Err(error) = save_integration_state(state_path, &state) {
                 rollback_text(path, &updated, original, true).with_context(|| {
                     format!("清除集成所有权失败（{error}），且回滚 Codex 配置失败")
@@ -607,11 +654,14 @@ fn uninstall_codex_toml_with_state(path: &Path, state_path: &Path, original: &st
 
 /// Codex 配置已不存在时 direct-only 也不存在，可安全清除旧所有权；损坏账本仍不覆盖。
 fn clear_codex_ownership_without_config(state_path: &Path) -> Result<()> {
+    let profile_key = active_codex_profile_key();
     let Ok(mut state) = load_integration_state(state_path) else {
         return Ok(());
     };
-    if state.codex.direct_only_namespace_added_by_askhuman {
-        state.codex.direct_only_namespace_added_by_askhuman = false;
+    if state.codex.direct_only_owned(profile_key.as_deref()) {
+        state
+            .codex
+            .set_direct_only_owned(profile_key.as_deref(), false);
         save_integration_state(state_path, &state)?;
     }
     Ok(())

@@ -444,6 +444,46 @@ export const agentModeUpdateArtifact = (
   artifact: "rule" | "hook" | "mcp",
 ) => invoke<void>("agent_mode_update_artifact", { agent, artifact });
 
+export const agentProfileAdd = (
+  agent: AgentId,
+  root: string,
+  label?: string,
+  source?: "t3_discovered" | "manual",
+  enabled = true,
+) =>
+  invoke<import("./types").ExtraProfileStatus>("agent_profile_add", {
+    agent,
+    root,
+    label: label ?? null,
+    source: source ?? null,
+    enabled,
+  });
+
+export const agentProfileSetEnabled = (
+  agent: AgentId,
+  id: string,
+  enabled: boolean,
+  detach = false,
+) =>
+  invoke<import("./types").ExtraProfileStatus>("agent_profile_set_enabled", {
+    agent,
+    id,
+    enabled,
+    detach,
+  });
+
+export const agentProfileRemove = (agent: AgentId, id: string, detach = false) =>
+  invoke<void>("agent_profile_remove", { agent, id, detach });
+
+export const agentProfileSync = (agent: AgentId, id: string) =>
+  invoke<import("./types").ExtraProfileStatus>("agent_profile_sync", { agent, id });
+
+export const agentProfileDismissDiscovered = (agent: AgentId, root: string) =>
+  invoke<void>("agent_profile_dismiss_discovered", { agent, root });
+
+export const agentProfileReveal = (agent: AgentId, id: string) =>
+  invoke<void>("agent_profile_reveal", { agent, id });
+
 export const agentPermissionSet = (agent: AgentId, enabled: boolean) =>
   invoke<void>("agent_permission_set", { agent, enabled });
 

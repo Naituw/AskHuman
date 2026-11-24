@@ -3867,7 +3867,7 @@ pub fn agent_rule_open(agent: String) -> Result<(), String> {
 
 use crate::integrations::{
     agent_ask_question, agent_context_recovery, agent_delegated, agent_mode, agent_permission,
-    agent_stop, antigravity_plugin, mcp_config,
+    agent_profiles, agent_stop, antigravity_plugin, mcp_config,
 };
 
 /// 某家 Agent 的模式聚合状态（驱动设置页三态分段控件 + 产物清单）。
@@ -3917,6 +3917,10 @@ pub struct AgentModeStatus {
     /// Antigravity MCP mode only: whether the user's "always allow" list covers the MCP tool
     /// (`None` when the question does not apply). A hint, since the host's format is private.
     mcp_grant: Option<bool>,
+    /// Configured extra config directories for this agent (spec `t3-code-and-multi-profile`, L2).
+    profiles: Vec<agent_profiles::ExtraProfileStatus>,
+    /// Un-enrolled directories discovered on disk (currently T3 Code Antigravity homes).
+    discovered_profiles: Vec<agent_profiles::DiscoveredProfile>,
 }
 
 #[tauri::command]
@@ -3945,9 +3949,12 @@ fn agent_mode_status_sync(agent: &str) -> Result<AgentModeStatus, String> {
     let mcp_supported = mcp_config::supported(a);
     let host = (a == agent_rules::AgentTarget::Antigravity && mode != agent_mode::Mode::None)
         .then(antigravity_plugin::host_view);
+    let profiles = agent_profiles::statuses_for_agent(a, mode);
+    let discovered_profiles = agent_profiles::discover_for_agent(stop_kind);
+    let any_profile_update = profiles.iter().any(|p| p.enabled && p.needs_update);
     Ok(AgentModeStatus {
         mode: mode.as_str().to_string(),
-        needs_update: updates.rule || updates.hook || updates.mcp,
+        needs_update: updates.rule || updates.hook || updates.mcp || any_profile_update,
         rule_needs_update: updates.rule,
         hook_needs_update: updates.hook,
         mcp_needs_update: updates.mcp,
@@ -3986,7 +3993,104 @@ fn agent_mode_status_sync(agent: &str) -> Result<AgentModeStatus, String> {
         mcp_grant: host
             .filter(|_| mode == agent_mode::Mode::Mcp)
             .map(|host| host.mcp_allowed),
+        profiles,
+        discovered_profiles,
     })
+}
+
+#[tauri::command]
+pub async fn agent_profile_add(
+    app: tauri::AppHandle,
+    agent: String,
+    root: String,
+    label: Option<String>,
+    source: Option<String>,
+    enabled: Option<bool>,
+) -> Result<agent_profiles::ExtraProfileStatus, String> {
+    let status = tokio::task::spawn_blocking(move || {
+        let target = parse_agent(&agent)?;
+        let src = match source.as_deref() {
+            Some("t3_discovered") => agent_profiles::ProfileSource::T3Discovered,
+            _ => agent_profiles::ProfileSource::Manual,
+        };
+        agent_profiles::add(
+            target,
+            std::path::Path::new(&root),
+            label.as_deref(),
+            src,
+            enabled.unwrap_or(true),
+        )
+        .map_err(|e| format!("{e:#}"))
+    })
+    .await
+    .map_err(|e| e.to_string())??;
+    crate::app::gui_host::refresh_integration_updates(&app);
+    Ok(status)
+}
+
+#[tauri::command]
+pub async fn agent_profile_set_enabled(
+    app: tauri::AppHandle,
+    agent: String,
+    id: String,
+    enabled: bool,
+    detach: Option<bool>,
+) -> Result<agent_profiles::ExtraProfileStatus, String> {
+    let status = tokio::task::spawn_blocking(move || {
+        let target = parse_agent(&agent)?;
+        agent_profiles::set_enabled(target, &id, enabled, detach.unwrap_or(false))
+            .map_err(|e| format!("{e:#}"))
+    })
+    .await
+    .map_err(|e| e.to_string())??;
+    crate::app::gui_host::refresh_integration_updates(&app);
+    Ok(status)
+}
+
+#[tauri::command]
+pub async fn agent_profile_remove(
+    app: tauri::AppHandle,
+    agent: String,
+    id: String,
+    detach: Option<bool>,
+) -> Result<(), String> {
+    tokio::task::spawn_blocking(move || {
+        let target = parse_agent(&agent)?;
+        agent_profiles::remove(target, &id, detach.unwrap_or(false)).map_err(|e| format!("{e:#}"))
+    })
+    .await
+    .map_err(|e| e.to_string())??;
+    crate::app::gui_host::refresh_integration_updates(&app);
+    Ok(())
+}
+
+#[tauri::command]
+pub async fn agent_profile_sync(
+    app: tauri::AppHandle,
+    agent: String,
+    id: String,
+) -> Result<agent_profiles::ExtraProfileStatus, String> {
+    let status = tokio::task::spawn_blocking(move || {
+        let target = parse_agent(&agent)?;
+        agent_profiles::sync_one(target, &id).map_err(|e| format!("{e:#}"))
+    })
+    .await
+    .map_err(|e| e.to_string())??;
+    crate::app::gui_host::refresh_integration_updates(&app);
+    Ok(status)
+}
+
+#[tauri::command]
+pub fn agent_profile_dismiss_discovered(agent: String, root: String) -> Result<(), String> {
+    let target = parse_agent(&agent)?;
+    agent_profiles::dismiss_discovered(target, std::path::Path::new(&root))
+        .map_err(|e| format!("{e:#}"))
+}
+
+#[tauri::command]
+pub fn agent_profile_reveal(agent: String, id: String) -> Result<(), String> {
+    let target = parse_agent(&agent)?;
+    agent_profiles::reveal(target, &id).map_err(|e| format!("{e:#}"))
 }
 
 #[tauri::command]

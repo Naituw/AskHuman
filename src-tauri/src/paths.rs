@@ -253,6 +253,75 @@ pub fn agent_launch_dir() -> PathBuf {
     state_dir().join("agent-launches")
 }
 
+/// Extra agent config directory registry (`~/.askhuman/agent-profiles.json`).
+pub fn agent_profiles_file() -> PathBuf {
+    config_dir().join("agent-profiles.json")
+}
+
+/// Cached T3 Code thread delegation lookups (`~/.askhuman/state/t3-threads`).
+pub fn t3_threads_cache_dir() -> PathBuf {
+    state_dir().join("t3-threads")
+}
+
+/// Session-keyed T3 Code delegated child thread markers (`~/.askhuman/state/t3-delegated`).
+pub fn t3_delegated_marker_dir() -> PathBuf {
+    state_dir().join("t3-delegated")
+}
+
+/// T3 Code's per-provider Antigravity userdata root (`~/.t3/userdata/providers/antigravity`).
+pub fn t3_antigravity_providers_dir_in(home_dir: &Path) -> PathBuf {
+    home_dir
+        .join(".t3")
+        .join("userdata")
+        .join("providers")
+        .join("antigravity")
+}
+
+thread_local! {
+    static AGENT_ROOT_OVERRIDE: std::cell::RefCell<Option<(crate::agents::AgentKind, PathBuf)>> =
+        const { std::cell::RefCell::new(None) };
+}
+
+struct AgentRootGuard {
+    previous: Option<(crate::agents::AgentKind, PathBuf)>,
+}
+
+impl Drop for AgentRootGuard {
+    fn drop(&mut self) {
+        AGENT_ROOT_OVERRIDE.with(|slot| {
+            *slot.borrow_mut() = self.previous.take();
+        });
+    }
+}
+
+/// Temporarily redirect `kind`'s configuration root on the current thread to `root` (canonicalized
+/// via physical root). Strictly subordinate to `development::session::directory_for(kind)`, so
+/// isolated Dev test profiles can never be redirected.
+pub(crate) fn with_agent_root<T>(
+    kind: crate::agents::AgentKind,
+    root: &Path,
+    f: impl FnOnce() -> T,
+) -> T {
+    let resolved = crate::integrations::agent_rules::physical_root(root.to_path_buf());
+    let previous = AGENT_ROOT_OVERRIDE.with(|slot| slot.borrow_mut().replace((kind, resolved)));
+    let _guard = AgentRootGuard { previous };
+    f()
+}
+
+/// Active thread-local extra-profile root override for `kind`, if any (and not overridden by a
+/// Dev test profile).
+pub(crate) fn active_agent_root(kind: crate::agents::AgentKind) -> Option<PathBuf> {
+    if crate::development::session::directory_for(kind).is_some() {
+        return None;
+    }
+    AGENT_ROOT_OVERRIDE.with(|slot| {
+        slot.borrow()
+            .as_ref()
+            .filter(|(active_kind, _)| *active_kind == kind)
+            .map(|(_, path)| path.clone())
+    })
+}
+
 /// GUI 宿主进程的 IPC socket `~/.askhuman/gui-host.sock`（与 daemon socket 解耦，
 /// 使 daemon 未运行时也能打开设置/历史窗口，spec D13）。
 #[cfg(unix)]
@@ -268,6 +337,7 @@ pub fn gui_host_lock() -> PathBuf {
 /// Cursor 目录 `~/.cursor`。
 pub fn cursor_dir() -> PathBuf {
     crate::development::session::directory_for(crate::agents::AgentKind::Cursor)
+        .or_else(|| active_agent_root(crate::agents::AgentKind::Cursor))
         .unwrap_or_else(|| integration_home().join(".cursor"))
 }
 
@@ -308,6 +378,7 @@ pub fn cursor_mcp_json() -> PathBuf {
 /// Claude Code 配置目录 `~/.claude`。
 pub fn claude_dir() -> PathBuf {
     crate::development::session::directory_for(crate::agents::AgentKind::Claude)
+        .or_else(|| active_agent_root(crate::agents::AgentKind::Claude))
         .unwrap_or_else(|| integration_home().join(".claude"))
 }
 
@@ -323,8 +394,10 @@ pub fn claude_settings_json() -> PathBuf {
 
 /// Claude Code 用户级主配置文件 `~/.claude.json`（top-level `mcpServers` 写于此；
 /// 文件通常很大、含大量项目历史，必须最小化编辑、绝不整写）。
+/// Under custom `CLAUDE_CONFIG_DIR`, Claude Code reads `<CLAUDE_CONFIG_DIR>/.claude.json`.
 pub fn claude_json() -> PathBuf {
     crate::development::session::directory_for(crate::agents::AgentKind::Claude)
+        .or_else(|| active_agent_root(crate::agents::AgentKind::Claude))
         .map(|path| path.join(".claude.json"))
         .unwrap_or_else(|| integration_home().join(".claude.json"))
 }
@@ -341,6 +414,7 @@ pub fn claude_hook_script() -> PathBuf {
 /// Codex 配置目录 `~/.codex`。
 pub fn codex_dir() -> PathBuf {
     crate::development::session::directory_for(crate::agents::AgentKind::Codex)
+        .or_else(|| active_agent_root(crate::agents::AgentKind::Codex))
         .unwrap_or_else(|| integration_home().join(".codex"))
 }
 
@@ -362,6 +436,7 @@ pub fn codex_hooks_json() -> PathBuf {
 /// Grok 配置目录 `~/.grok`。
 pub fn grok_dir() -> PathBuf {
     crate::development::session::directory_for(crate::agents::AgentKind::Grok)
+        .or_else(|| active_agent_root(crate::agents::AgentKind::Grok))
         .unwrap_or_else(|| integration_home().join(".grok"))
 }
 
@@ -398,6 +473,7 @@ pub fn grok_sessions_dir() -> PathBuf {
 /// Pi coding-agent user directory `~/.pi/agent`.
 pub fn pi_agent_dir() -> PathBuf {
     crate::development::session::directory_for(crate::agents::AgentKind::Pi)
+        .or_else(|| active_agent_root(crate::agents::AgentKind::Pi))
         .unwrap_or_else(|| integration_home().join(".pi").join("agent"))
 }
 
@@ -438,11 +514,19 @@ pub fn antigravity_config_dir_in(home_dir: &Path) -> PathBuf {
     home_dir.join(".gemini/config")
 }
 
-/// The directories in which the App (`antigravity`) and `agy` (`antigravity-cli`) keep their
-/// conversations, one subdirectory per conversation id.
-pub fn antigravity_brain_dirs_in(home_dir: &Path) -> [PathBuf; 2] {
-    ["antigravity", "antigravity-cli"]
-        .map(|surface| home_dir.join(".gemini").join(surface).join("brain"))
+/// The directories in which the App (`antigravity`), `agy` (`antigravity-cli`), and ACP servers
+/// (`antigravity-acp`) keep their conversations under one Gemini root, one subdirectory per
+/// conversation id.
+pub fn antigravity_brain_dirs_in_root(gemini_root: &Path) -> [PathBuf; 3] {
+    ["antigravity", "antigravity-cli", "antigravity-acp"]
+        .map(|surface| gemini_root.join(surface).join("brain"))
+}
+
+/// The summary databases below one Gemini root (`antigravity`, `antigravity-cli`,
+/// `antigravity-acp`).
+pub fn antigravity_summary_dbs_in_root(gemini_root: &Path) -> [PathBuf; 3] {
+    ["antigravity", "antigravity-cli", "antigravity-acp"]
+        .map(|surface| gemini_root.join(surface).join("conversation_summaries.db"))
 }
 
 /// The files in which the App (`antigravity`) and `agy` (`antigravity-cli`) summarize their
@@ -474,6 +558,13 @@ pub fn antigravity_plugin_mcp_config_json() -> PathBuf {
 /// This instance's ownership record of the AskHuman plugin, below its configuration directory.
 pub fn antigravity_plugin_ledger_in(config_dir: &Path) -> PathBuf {
     config_dir.join("antigravity-plugin.json")
+}
+
+/// Ownership record for an extra Antigravity profile's plugin, keyed by stable profile ID.
+pub fn antigravity_extra_plugin_ledger_in(config_dir: &Path, profile_id: &str) -> PathBuf {
+    config_dir
+        .join("antigravity-plugin-profiles")
+        .join(format!("{profile_id}.json"))
 }
 
 #[cfg(test)]

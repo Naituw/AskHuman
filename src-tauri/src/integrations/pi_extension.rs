@@ -246,6 +246,9 @@ mod tests {
         }
         assert!(text.contains("input.timeout = 86400"));
         assert!(text.contains("pi.sendUserMessage"));
+        assert!(text.contains("isExternallyControlled()"));
+        assert!(text.contains("T3CODE_THREAD_ID"));
+        assert!(text.contains("--mode=rpc"));
     }
 
     #[test]

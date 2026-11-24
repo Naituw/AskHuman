@@ -558,7 +558,7 @@ fn installed_antigravity_variant() -> Variant {
 /// (`/home -> /var/home`, `/tmp -> /private/tmp`, a relocated or automounted home, a
 /// dotfiles-managed `~/.askhuman`). Only the root is resolved here: `.gemini/config/rules` below
 /// it stays strict, so a link planted inside the managed tree is still refused.
-pub(super) fn physical_root(path: PathBuf) -> PathBuf {
+pub(crate) fn physical_root(path: PathBuf) -> PathBuf {
     #[cfg(unix)]
     {
         // An unresolved `HOME` (".") must keep failing validation instead of anchoring in the cwd.

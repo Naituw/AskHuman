@@ -186,6 +186,48 @@ fn is_shared_app_server(entry: &ProcEntry) -> bool {
     })
 }
 
+/// Identifies a shared `agy acp` process (such as T3 Code's Antigravity provider) that can host
+/// multiple `session/new` conversations under a single PID. Returning `None` from `walk_agent_pid`
+/// avoids same-PID eviction across concurrent ACP sessions.
+fn is_shared_agy_acp(entry: &ProcEntry) -> bool {
+    let command = entry.command.to_ascii_lowercase();
+    let tokens: Vec<&str> = command.split_whitespace().collect();
+    tokens
+        .iter()
+        .enumerate()
+        .any(|(i, tok)| basename(tok) == "agy" && agy_subcommand(&tokens[i + 1..]) == Some("acp"))
+}
+
+const AGY_VALUE_OPTS: &[&str] = &[
+    "--gemini-dir",
+    "--app-data-dir",
+    "--workspace",
+    "--model",
+    "-m",
+    "--config",
+    "-c",
+];
+
+fn agy_subcommand<'a>(args: &[&'a str]) -> Option<&'a str> {
+    let mut i = 0;
+    while i < args.len() {
+        let t = args[i];
+        if !t.starts_with('-') {
+            return Some(t);
+        }
+        if t.contains('=') {
+            i += 1;
+            continue;
+        }
+        if AGY_VALUE_OPTS.contains(&t) {
+            i += 2;
+            continue;
+        }
+        i += 1;
+    }
+    None
+}
+
 /// Codex CLI 在 argv0（或包装路径中的 `…/codex`）之后、**子命令之前**常见的取值型全局选项。
 /// 命中时需连同下一 token（选项值）一起跳过，才能正确定位子命令（D27 / ChatGPT Desktop）。
 const CODEX_VALUE_OPTS: &[&str] = &[
@@ -278,6 +320,9 @@ pub fn walk_agent_pid(kind: AgentKind, start_pid: u32) -> Option<u32> {
     if kind == AgentKind::Codex && is_shared_app_server(&matched) {
         return None;
     }
+    if kind == AgentKind::Antigravity && is_shared_agy_acp(&matched) {
+        return None;
+    }
     Some(matched.pid)
 }
 
@@ -304,6 +349,9 @@ pub fn walk_any_agent(start_pid: u32) -> Option<(AgentKind, u32)> {
             // spec D25/D27：跳过 Codex 共享 app-server（返回 None 让 find_map 继续上溯；其上通常即
             // PID 1，最终返回 None → 不按共享 pid 做 by-pid 刷新，规避跨 session 串味）。
             if kind == AgentKind::Codex && is_shared_app_server(&e) {
+                return None;
+            }
+            if kind == AgentKind::Antigravity && is_shared_agy_acp(&e) {
                 return None;
             }
             Some((kind, e.pid))
@@ -1216,6 +1264,40 @@ mod tests {
             command: "node my-app-server app-server".to_string(),
         };
         assert!(!is_shared_app_server(&e));
+    }
+
+    #[test]
+    fn shared_agy_acp_is_detected_without_flagging_interactive_agy() {
+        let acp = ProcEntry {
+            pid: 100,
+            ppid: 1,
+            comm: "agy".to_string(),
+            command: "/Users/u/.local/bin/agy acp --gemini-dir /Users/u/.t3/userdata/providers/antigravity/abc --app-data-dir antigravity-acp".to_string(),
+        };
+        assert!(is_shared_agy_acp(&acp));
+
+        let with_opts = ProcEntry {
+            pid: 101,
+            ppid: 1,
+            comm: "agy".to_string(),
+            command: "agy --gemini-dir /tmp/g acp".to_string(),
+        };
+        assert!(is_shared_agy_acp(&with_opts));
+
+        for cmd in [
+            "agy",
+            "/Users/u/.local/bin/agy --workspace /tmp/repo",
+            "agy chat \"talk about acp\"",
+            "node acp-tool acp",
+        ] {
+            let e = ProcEntry {
+                pid: 102,
+                ppid: 1,
+                comm: "agy".to_string(),
+                command: cmd.to_string(),
+            };
+            assert!(!is_shared_agy_acp(&e), "should not flag: {cmd}");
+        }
     }
 
     fn entry(pid: u32, ppid: u32, command: &str) -> ProcEntry {

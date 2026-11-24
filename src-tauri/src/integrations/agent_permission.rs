@@ -62,10 +62,15 @@ pub fn set_enabled(target: AgentTarget, value: bool) -> Result<()> {
     save_preferences(&preferences)?;
     let mode = super::agent_mode::current(target);
     if mode == super::agent_mode::Mode::None || !value {
-        uninstall_unlocked(target)
+        uninstall_unlocked(target)?;
     } else {
-        install_unlocked(target)
+        install_unlocked(target)?;
     }
+    super::agent_profiles::reconcile_enabled_unlocked(
+        target,
+        mode,
+        &std::collections::BTreeMap::new(),
+    )
 }
 
 pub fn status(target: AgentTarget) -> PermissionStatus {

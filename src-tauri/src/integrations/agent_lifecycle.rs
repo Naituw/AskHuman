@@ -440,6 +440,12 @@ pub fn set_enabled(kind: AgentKind, value: bool) -> Result<String> {
         let _ = save_preferences(&original);
         return Err(error);
     }
+    // P4: Primary succeeded; keep preference and sync enabled extra profiles independently.
+    super::agent_profiles::reconcile_enabled_unlocked(
+        target_for_kind(kind),
+        mode,
+        &std::collections::BTreeMap::new(),
+    )?;
     Ok(message(if value {
         "cmd.lifecycleInstalled"
     } else {

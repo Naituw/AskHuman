@@ -1617,6 +1617,44 @@ export interface AgentModeStatus {
   hostPluginDisabled: boolean;
   /** Antigravity MCP mode only: whether the "always allow" list covers the MCP tool; null = n/a. */
   mcpGrant: boolean | null;
+  /** Configured extra config directories for this agent. */
+  profiles?: ExtraProfileStatus[];
+  /** Un-enrolled directories discovered on disk (currently T3 Code Antigravity homes). */
+  discoveredProfiles?: DiscoveredProfileInfo[];
+}
+
+export type ProfileSource = "t3_discovered" | "manual";
+
+export type ExtraProfileState =
+  | "synced"
+  | "outdated"
+  | "notInstalled"
+  | "conflict"
+  | "rootMissing"
+  | "disabled";
+
+export interface ExtraProfileStatus {
+  id: string;
+  agent: string;
+  root: string;
+  displayRoot?: string;
+  label: string;
+  source: ProfileSource;
+  enabled: boolean;
+  state: ExtraProfileState;
+  mode: AgentMode;
+  needsUpdate: boolean;
+  error: string | null;
+  hostPluginDisabled: boolean;
+  mcpGrant: boolean | null;
+}
+
+export interface DiscoveredProfileInfo {
+  agent: string;
+  root: string;
+  displayRoot?: string;
+  label: string;
+  source: ProfileSource;
 }
 
 /** 接管 Claude 内置 AskUserQuestion 的开关状态（仅 Claude Code 支持）。 */

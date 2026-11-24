@@ -76,6 +76,19 @@ fn run_inner(agent: Option<&str>) -> Option<String> {
         .and_then(Value::as_str)
         .filter(|value| !value.trim().is_empty())
         .map(str::to_string);
+    if let Some(reason) = crate::agents::t3_host::classify_and_record_hook(
+        crate::agents::AgentKind::Claude,
+        session_id.as_deref().unwrap_or(""),
+    ) {
+        crate::agents::t3_host::log_suppressed(
+            "ask_question_hook",
+            Some("claude"),
+            session_id.as_deref(),
+            Some("AskUserQuestion"),
+            reason,
+        );
+        return None;
+    }
     // The user turned AskHuman off for this session: leave Claude's own picker alone, like every
     // other case where the human cannot be asked (`docs/specs/special-replies.md` D6).
     if session_id

@@ -66,6 +66,8 @@ pub enum Surface {
     App,
     /// The `agy` command line (`~/.gemini/antigravity-cli/…`).
     Cli,
+    /// An ACP server (`<gemini_root>/antigravity-acp/…`, such as T3 Code).
+    Acp,
     /// The IDE and its extension (`~/.gemini/antigravity-ide/…`); not supported.
     Ide,
     Unknown,
@@ -75,11 +77,30 @@ pub fn surface(transcript_path: Option<&str>) -> Surface {
     let Some(path) = transcript_path else {
         return Surface::Unknown;
     };
+    let components: Vec<&str> = path.split(['/', '\\']).filter(|c| !c.is_empty()).collect();
+    // Prefer the component directly before `brain`, because an outer provider path (such as
+    // `~/.t3/userdata/providers/antigravity/<hash>/antigravity-acp/brain/...`) can also contain
+    // `"antigravity"` as a parent folder name.
+    if let Some(brain_idx) = components
+        .iter()
+        .rposition(|component| *component == "brain")
+    {
+        if brain_idx > 0 {
+            match components[brain_idx - 1] {
+                "antigravity-acp" => return Surface::Acp,
+                "antigravity-cli" => return Surface::Cli,
+                "antigravity-ide" => return Surface::Ide,
+                "antigravity" => return Surface::App,
+                _ => {}
+            }
+        }
+    }
     let mut found = Surface::Unknown;
-    for component in path.split(['/', '\\']) {
+    for component in components {
         match component {
-            "antigravity-cli" => return Surface::Cli,
             "antigravity-ide" => return Surface::Ide,
+            "antigravity-acp" => return Surface::Acp,
+            "antigravity-cli" => return Surface::Cli,
             "antigravity" => found = Surface::App,
             _ => {}
         }
@@ -319,6 +340,22 @@ pub fn run(args: &[String]) {
     let Some(input) = super::report::read_stdin_json() else {
         return;
     };
+    if let Some(session_id) = text(&input, "conversationId") {
+        if let Some(reason) =
+            super::t3_host::classify_and_record_hook(AgentKind::Antigravity, session_id)
+        {
+            if event == HookEvent::SessionStart {
+                super::t3_host::log_suppressed(
+                    "lifecycle_hook",
+                    Some(AgentKind::Antigravity.as_str()),
+                    Some(session_id),
+                    None,
+                    reason,
+                );
+            }
+            return;
+        }
+    }
     if event == HookEvent::PreInvocation {
         if let Some(output) = pre_invocation(&input) {
             println!("{output}");
@@ -423,6 +460,27 @@ mod tests {
                 Surface::App
             );
         }
+    }
+
+    #[test]
+    fn t3_antigravity_acp_path_is_classified_as_acp_and_reported() {
+        let path = "/Users/u/.t3/userdata/providers/antigravity/ac0a3dfd/antigravity-acp/brain/4e200329-9002-48ef-9a74-faf0704f25d4/.system_generated/logs/transcript_full.jsonl";
+        assert_eq!(surface(Some(path)), Surface::Acp);
+        let payload = json!({
+            "conversationId": "4e200329-9002-48ef-9a74-faf0704f25d4",
+            "transcriptPath": path,
+            "cwd": "/tmp/repo",
+            "hookEventName": "SessionStart",
+        });
+        let report = report_for(HookEvent::SessionStart, &payload).unwrap();
+        assert_eq!(report.event, LifecycleEvent::SessionStart);
+        assert_eq!(report.transcript_path.as_deref(), Some(path));
+        assert_eq!(
+            surface(Some(
+                "/Users/u/.gemini/antigravity-ide/brain/1/logs/transcript_full.jsonl"
+            )),
+            Surface::Ide
+        );
     }
 
     #[test]

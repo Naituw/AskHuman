@@ -8,8 +8,8 @@ use crate::i18n::{err_prefix, Lang};
 use crate::integrations::agent_rules::AgentTarget;
 use crate::integrations::codex_protocol::{self, Delivery};
 use crate::integrations::{
-    agent_delegated, agent_lifecycle, agent_mode, agent_permission, agent_rules, agent_stop,
-    antigravity_plugin, claude_hook, cursor_hook, mcp_config,
+    agent_delegated, agent_lifecycle, agent_mode, agent_permission, agent_profiles, agent_rules,
+    agent_stop, antigravity_plugin, claude_hook, cursor_hook, mcp_config,
 };
 use serde_json::Value;
 use std::process::exit;
@@ -37,6 +37,7 @@ pub fn dispatch(args: &[String], lang: Lang) {
         "stop" => stop_cmd(rest, lang),
         "delegated" => delegated_cmd(rest, lang),
         "lifecycle" => lifecycle_cmd(rest, lang),
+        "profile" | "profiles" => profile_cmd(rest, lang),
         "cleanup" => cleanup_cmd(rest, lang),
         "sidecars" => super::antigravity_sidecars::run(rest, lang),
         "install" | "uninstall" => Err(legacy_write_error(sub, lang)),
@@ -346,14 +347,20 @@ fn update_cmd(args: &[String], lang: Lang) -> Result<(), String> {
         vec![(agent.clone(), parse_target(agent, lang)?)]
     } else {
         let plan = plan_aggregate_updates(aggregate_agents(), |target| {
-            if target == AgentTarget::Antigravity {
+            let (mode, any_primary_update) = if target == AgentTarget::Antigravity {
                 let (mode, updates, _) =
                     agent_mode::antigravity_status().map_err(|error| error.to_string())?;
-                Ok(mode != agent_mode::Mode::None || updates.rule || updates.hook || updates.mcp)
+                (mode, updates.rule || updates.hook || updates.mcp)
             } else {
-                Ok(agent_mode::current(target) != agent_mode::Mode::None
-                    || agent_mode::needs_update(target))
-            }
+                (
+                    agent_mode::current(target),
+                    agent_mode::needs_update(target),
+                )
+            };
+            let any_profile_update = agent_profiles::statuses_for_agent(target, mode)
+                .into_iter()
+                .any(|p| p.enabled && p.needs_update);
+            Ok(mode != agent_mode::Mode::None || any_primary_update || any_profile_update)
         });
         for (name, error) in plan.failures {
             print_line(&format!(
@@ -861,8 +868,391 @@ fn show(args: &[String], lang: Lang) -> Result<(), String> {
             lc
         ));
         print_antigravity_notes(target, mode, lang);
+        print_profiles_summary(target, kind, mode, lang);
         print_line("");
     }
+    Ok(())
+}
+
+fn print_profiles_summary(
+    target: AgentTarget,
+    kind: AgentKind,
+    mode: agent_mode::Mode,
+    lang: Lang,
+) {
+    let profiles = agent_profiles::statuses_for_agent(target, mode);
+    let discovered = agent_profiles::discover_for_agent(kind);
+    if !profiles.is_empty() {
+        print_line(&format!(
+            "  {}:",
+            cfgio::t(lang, "extra config directories", "额外配置目录")
+        ));
+        for p in &profiles {
+            let state = profile_state_label(&p.state, lang);
+            print_line(&format!(
+                "    - [{}] {} ({}) — {}",
+                p.id, p.label, state, p.root
+            ));
+            if let Some(error) = &p.error {
+                print_line(&format!("      ! {error}"));
+            }
+            if p.host_plugin_disabled {
+                print_line(&cfgio::t(
+                    lang,
+                    "      ! Plugin is switched off in this Antigravity profile.",
+                    "      ! 此 Antigravity 目录内插件已被停用。",
+                ));
+            }
+        }
+    }
+    if !discovered.is_empty() {
+        print_line(&format!(
+            "  {}:",
+            cfgio::t(
+                lang,
+                "discovered T3 directories (not yet enabled)",
+                "发现的 T3 目录（尚未启用）"
+            )
+        ));
+        for d in &discovered {
+            print_line(&format!("    - {} — {}", d.label, d.root));
+        }
+        print_line(&format!(
+            "    {}",
+            cfgio::t(
+                lang,
+                "Enable with: AskHuman agents profile enable antigravity <path>",
+                "启用方式: AskHuman agents profile enable antigravity <路径>"
+            )
+        ));
+    }
+}
+
+pub(super) fn profile_state_label(state: &str, lang: Lang) -> String {
+    match state {
+        "synced" => cfgio::t(lang, "synced", "已同步"),
+        "outdated" => cfgio::t(lang, "needs update", "需更新"),
+        "notInstalled" => cfgio::t(lang, "not installed", "未安装"),
+        "conflict" => cfgio::t(lang, "conflict", "冲突"),
+        "rootMissing" => cfgio::t(lang, "directory missing", "目录不存在"),
+        "disabled" => cfgio::t(lang, "disabled", "已停用"),
+        other => other.to_string(),
+    }
+}
+
+// ——— profile（多目录 / Extra Profiles）———
+
+fn profile_cmd(args: &[String], lang: Lang) -> Result<(), String> {
+    let sub = args.first().map(String::as_str).unwrap_or("list");
+    let rest = &args[args.len().min(1)..];
+    match sub {
+        "list" => profile_list_cmd(rest, lang),
+        "add" => profile_add_cmd(rest, lang),
+        "enable" => profile_toggle_cmd(rest, true, lang),
+        "disable" => profile_toggle_cmd(rest, false, lang),
+        "remove" | "rm" => profile_remove_cmd(rest, lang),
+        "sync" => profile_sync_cmd(rest, lang),
+        "dismiss" => profile_dismiss_cmd(rest, lang),
+        "help" | "-h" | "--help" => {
+            print_line(&profile_help(lang));
+            Ok(())
+        }
+        other => Err(cfgio::t(
+            lang,
+            &format!(
+                "unknown profile subcommand: {other}\n\n{}",
+                profile_help(lang)
+            ),
+            &format!("未知 profile 子命令: {other}\n\n{}", profile_help(lang)),
+        )),
+    }
+}
+
+fn profile_help(lang: Lang) -> String {
+    cfgio::t(
+        lang,
+        "AskHuman agents profile — manage extra agent config directories\n\
+\n\
+  agents profile list [<agent>] [--json]              List configured and discovered directories\n\
+  agents profile add <agent> <path> [--label <name>] [--disabled]  Enroll a custom config directory\n\
+  agents profile enable <agent> <id|path>             Enable and sync a saved or discovered directory\n\
+  agents profile disable <agent> <id|path> [--detach] Uninstall managed files and disable\n\
+  agents profile remove <agent> <id|path> [--detach]  Uninstall (or detach) and remove entry\n\
+  agents profile sync <agent> [<id|path>]             Reconcile one or all enabled extra directories\n\
+  agents profile dismiss <agent> <path>               Ignore a discovered T3 directory",
+        "AskHuman agents profile —— 管理额外 Agent 配置目录\n\
+\n\
+  agents profile list [<agent>] [--json]              列出已配置与自动发现的目录\n\
+  agents profile add <agent> <路径> [--label <名称>] [--disabled]  添加自定义配置目录\n\
+  agents profile enable <agent> <id|路径>             启用并同步已保存或自动发现的目录\n\
+  agents profile disable <agent> <id|路径> [--detach] 卸载托管产物并停用\n\
+  agents profile remove <agent> <id|路径> [--detach]  卸载（或仅取消托管）并删除条目\n\
+  agents profile sync <agent> [<id|路径>]             同步单个或全部已启用额外目录\n\
+  agents profile dismiss <agent> <路径>               忽略已发现的 T3 目录",
+    )
+}
+
+fn profile_list_cmd(args: &[String], lang: Lang) -> Result<(), String> {
+    let mut json = false;
+    let mut agent_arg: Option<&str> = None;
+    for arg in args {
+        if arg == "--json" {
+            json = true;
+        } else if arg.starts_with('-') {
+            return Err(format!("unknown option: {arg}"));
+        } else if agent_arg.is_none() {
+            agent_arg = Some(arg.as_str());
+        } else {
+            return Err(cfgio::t(lang, "too many arguments", "参数过多"));
+        }
+    }
+    let names: Vec<&str> = if let Some(agent) = agent_arg {
+        let _ = parse_target(agent, lang)?;
+        vec![agent]
+    } else {
+        aggregate_agents()
+    };
+
+    let mut rows = Vec::new();
+    for name in names {
+        let target = AgentTarget::parse(name).unwrap();
+        let kind = AgentKind::parse(name).unwrap();
+        let mode = if target == AgentTarget::Antigravity {
+            agent_mode::antigravity_status()
+                .map(|(m, _, _)| m)
+                .unwrap_or(agent_mode::Mode::None)
+        } else {
+            agent_mode::current(target)
+        };
+        let profiles = agent_profiles::statuses_for_agent(target, mode);
+        let discovered = agent_profiles::discover_for_agent(kind);
+        rows.push((name, kind, mode, profiles, discovered));
+    }
+
+    if json {
+        let payload: Vec<Value> = rows
+            .into_iter()
+            .map(|(name, _, mode, profiles, discovered)| {
+                serde_json::json!({
+                    "agent": name,
+                    "mode": mode.as_str(),
+                    "profiles": profiles,
+                    "discovered": discovered,
+                })
+            })
+            .collect();
+        print_line(&serde_json::to_string_pretty(&payload).unwrap_or_default());
+        return Ok(());
+    }
+
+    let mut any = false;
+    for (_, kind, mode, profiles, discovered) in rows {
+        if profiles.is_empty() && discovered.is_empty() {
+            continue;
+        }
+        any = true;
+        print_line(&format!("[{}] ({})", kind.label(), mode_label(mode, lang)));
+        for p in &profiles {
+            print_line(&format!(
+                "  {}  [{}] {} — {}",
+                p.id,
+                profile_state_label(&p.state, lang),
+                p.label,
+                if p.display_root.is_empty() {
+                    &p.root
+                } else {
+                    &p.display_root
+                }
+            ));
+            if let Some(error) = &p.error {
+                print_line(&format!("    ! {error}"));
+            }
+        }
+        for d in &discovered {
+            print_line(&format!(
+                "  ({}) {} — {}",
+                cfgio::t(lang, "discovered", "新发现"),
+                d.label,
+                if d.display_root.is_empty() {
+                    &d.root
+                } else {
+                    &d.display_root
+                }
+            ));
+        }
+    }
+    if !any {
+        print_line(&cfgio::t(
+            lang,
+            "No extra agent config directories configured or discovered.",
+            "暂无已配置或自动发现的额外 Agent 配置目录。",
+        ));
+    }
+    Ok(())
+}
+
+fn profile_add_cmd(args: &[String], lang: Lang) -> Result<(), String> {
+    if args.len() < 2 {
+        return Err(cfgio::t(
+            lang,
+            "usage: agents profile add <agent> <path> [--label <name>] [--disabled]",
+            "用法: agents profile add <agent> <路径> [--label <名称>] [--disabled]",
+        ));
+    }
+    let target = parse_target(&args[0], lang)?;
+    let path = std::path::PathBuf::from(&args[1]);
+    let mut label: Option<String> = None;
+    let mut enable = true;
+    let mut iter = args[2..].iter();
+    while let Some(arg) = iter.next() {
+        match arg.as_str() {
+            "--label" => {
+                let value = iter
+                    .next()
+                    .ok_or_else(|| cfgio::t(lang, "--label requires a value", "--label 需要值"))?;
+                label = Some(value.clone());
+            }
+            "--disabled" => enable = false,
+            other => return Err(format!("unknown option: {other}")),
+        }
+    }
+    let status = agent_profiles::add(
+        target,
+        &path,
+        label.as_deref(),
+        agent_profiles::ProfileSource::Manual,
+        enable,
+    )
+    .map_err(|e| format!("{e:#}"))?;
+    print_line(&format!(
+        "[{}] {} ({}) — {}",
+        status.id,
+        status.label,
+        profile_state_label(&status.state, lang),
+        status.root
+    ));
+    Ok(())
+}
+
+fn profile_toggle_cmd(args: &[String], enable: bool, lang: Lang) -> Result<(), String> {
+    if args.len() < 2 {
+        return Err(cfgio::t(
+            lang,
+            if enable {
+                "usage: agents profile enable <agent> <id|path>"
+            } else {
+                "usage: agents profile disable <agent> <id|path> [--detach]"
+            },
+            if enable {
+                "用法: agents profile enable <agent> <id|路径>"
+            } else {
+                "用法: agents profile disable <agent> <id|路径> [--detach]"
+            },
+        ));
+    }
+    let target = parse_target(&args[0], lang)?;
+    let id_or_path = &args[1];
+    let mut detach = false;
+    for arg in &args[2..] {
+        if !enable && arg == "--detach" {
+            detach = true;
+        } else {
+            return Err(format!("unknown option: {arg}"));
+        }
+    }
+    let status = agent_profiles::set_enabled(target, id_or_path, enable, detach)
+        .map_err(|e| format!("{e:#}"))?;
+    print_line(&format!(
+        "[{}] {} ({}) — {}",
+        status.id,
+        status.label,
+        profile_state_label(&status.state, lang),
+        status.root
+    ));
+    Ok(())
+}
+
+fn profile_remove_cmd(args: &[String], lang: Lang) -> Result<(), String> {
+    if args.len() < 2 {
+        return Err(cfgio::t(
+            lang,
+            "usage: agents profile remove <agent> <id|path> [--detach]",
+            "用法: agents profile remove <agent> <id|路径> [--detach]",
+        ));
+    }
+    let target = parse_target(&args[0], lang)?;
+    let id_or_path = &args[1];
+    let mut detach = false;
+    for arg in &args[2..] {
+        if arg == "--detach" {
+            detach = true;
+        } else {
+            return Err(format!("unknown option: {arg}"));
+        }
+    }
+    agent_profiles::remove(target, id_or_path, detach).map_err(|e| format!("{e:#}"))?;
+    print_line(&cfgio::t(
+        lang,
+        "Extra profile removed.",
+        "已移除该额外配置目录。",
+    ));
+    Ok(())
+}
+
+fn profile_sync_cmd(args: &[String], lang: Lang) -> Result<(), String> {
+    let agent = args.first().ok_or_else(|| {
+        cfgio::t(
+            lang,
+            "usage: agents profile sync <agent> [<id|path>]",
+            "用法: agents profile sync <agent> [<id|路径>]",
+        )
+    })?;
+    let target = parse_target(agent, lang)?;
+    if let Some(id_or_path) = args.get(1) {
+        if args.len() > 2 {
+            return Err(cfgio::t(lang, "too many arguments", "参数过多"));
+        }
+        let status = agent_profiles::sync_one(target, id_or_path).map_err(|e| format!("{e:#}"))?;
+        print_line(&format!(
+            "[{}] {} ({}) — {}",
+            status.id,
+            status.label,
+            profile_state_label(&status.state, lang),
+            status.root
+        ));
+    } else {
+        let statuses = agent_profiles::sync_all(target).map_err(|e| format!("{e:#}"))?;
+        print_line(&cfgio::t(
+            lang,
+            &format!(
+                "Synced {} extra profile(s).",
+                statuses.iter().filter(|s| s.enabled).count()
+            ),
+            &format!(
+                "已同步 {} 个额外配置目录。",
+                statuses.iter().filter(|s| s.enabled).count()
+            ),
+        ));
+    }
+    Ok(())
+}
+
+fn profile_dismiss_cmd(args: &[String], lang: Lang) -> Result<(), String> {
+    if args.len() != 2 {
+        return Err(cfgio::t(
+            lang,
+            "usage: agents profile dismiss <agent> <path>",
+            "用法: agents profile dismiss <agent> <路径>",
+        ));
+    }
+    let target = parse_target(&args[0], lang)?;
+    agent_profiles::dismiss_discovered(target, std::path::Path::new(&args[1]))
+        .map_err(|e| format!("{e:#}"))?;
+    print_line(&cfgio::t(
+        lang,
+        "Discovered directory ignored.",
+        "已忽略该发现目录。",
+    ));
     Ok(())
 }
 
@@ -887,6 +1277,7 @@ fn help(lang: Lang) -> String {
   agents stop <claude|codex|cursor|grok|pi|antigravity> [on|off]  Query or set completion/error confirmation\n\
   agents delegated codex [on|off]    Query or set whether delegated Codex runs (codex exec, review, plugins) may use AskHuman (on = allow; default off = silent)\n\
   agents lifecycle <agent> [on|off]  Query or set lifecycle tracking inside an active integration\n\
+  agents profile <list|add|enable|disable|remove|sync|dismiss> ...  Manage extra config directories (e.g. T3 Code Antigravity, custom CODEX_HOME)\n\
   agents cleanup                     Remove every AskHuman-managed Agent artifact\n\
   agents sidecars [list [--json]|remove <id>|remove --all]  The Antigravity App sidecars AskHuman keeps for starting tasks\n\
   agents show [<agent>]              Manual-integration prompt + paste paths + install status\n\
@@ -907,6 +1298,7 @@ fn help(lang: Lang) -> String {
   agents stop <claude|codex|cursor|grok|pi|antigravity> [on|off]  查询或设置结束／出错确认\n\
   agents delegated codex [on|off]    查询或设置被委派的 Codex 运行（codex exec、review、插件等）是否可使用 AskHuman（on = 允许；默认 off = 静默）\n\
   agents lifecycle <agent> [on|off]  查询或设置已启用集成内的生命周期追踪\n\
+  agents profile <list|add|enable|disable|remove|sync|dismiss> ...  管理额外配置目录（如 T3 Code Antigravity、自定义 CODEX_HOME）\n\
   agents cleanup                     移除全部由 AskHuman 托管的 Agent 产物\n\
   agents sidecars [list [--json]|remove <id>|remove --all]  AskHuman 为启动任务在 Antigravity App 里保留的 sidecar\n\
   agents show [<agent>]              手动集成提示词 + 粘贴位置 + 安装状态\n\
