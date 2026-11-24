@@ -3,12 +3,17 @@
 记录需要跨会话保留的未完成 / 延期事项和明确下一步。任务 / 需求完成后删除其 section
 （历史留在 git）。
 
-## 待办：发版时用通用说法改写「外部宿主兼容」那条更新日志
+## 待决定：远端多出一个 `ios-testflight-21` 标签
 
-提交 `731630b1`（`feat(agents,settings)`，已推送，不改历史）的标题含该宿主的产品名（`git show -s 731630b1` 可见），git-cliff 会把它原样写进下一版的更新日志。
-用户 2026-11-24 定：代码、文案、文档都不直接引用这个产品（它只是「外部宿主」的一个例子，见[规格](specs/agent-profiles-and-host-guards.md)）。
-下一次发 Mac 新版时，用 `docs/release-notes/v<版本>.md` 覆盖该版本的更新日志：先用 git-cliff 生成，再把这一条改成通用说法
-（如「兼容在外部宿主里运行 Agent：额外配置目录、委派子会话静默」）；该文件会整份取代自动生成的日志（[self-update.md](specs/self-update.md) D17）。发完后删除本节。
+2026-11-25 发 v0.18.2 后发现 `origin` 上有标签 `ios-testflight-21`（附注标签对象 `fbacef02`，指向 `a5379ab0`）；这类 TestFlight 基线标签本应只留本地（见 `docs/development.md` 的 Release 与 ios-testflight 技能），
+不是这次推送带上去的（这次只推了 `v0.18.2`），来历没查。删除是对远端的写操作，要用户点头：`git push origin :refs/tags/ios-testflight-21`（本地的同名标签不受影响）。
+
+## 待观察：CI 的 `broker-probe` keepalive 用例偶发失败
+
+2026-11-24 发版提交的 [CI 45462154650](https://github.com/Naituw/AskHuman/actions/runs/45462154650) 里，`ios/Tools/broker-probe` 的 job 第一次失败：compliant-broker 套件的四个用例同时报
+`tcp keepalive: no PINGRESP after 1 s idle (keepalive 1 s)`（`checks.cjs` 的 `checkKeepalive`，`ping()` 最多等 5 秒）。该目录自 `955e8924`（11-22）起没改过，同一天较早的一次运行和这次的重跑都通过。
+根因没查；猜测是 runner 一时卡顿，但没有证据。再出现时：取该 job 的日志，在 `ios/Tools/broker-probe` 里 `npm test` 加 CPU 负载复现，看是不是 1 秒 keepalive 与测试夹具的时间余量太小，要修就修测试本身的时间假设。
+连续多次 CI 都没再出现、或找到根因后删除本节。
 
 ## 进行中：iOS 设置体验（已全部放出：Pages、公共组、Mac v0.18.0；剩放出后的检查）
 

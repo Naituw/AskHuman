@@ -147,3 +147,35 @@
    - Update `docs/PROGRESS.md` if any follow-up (e.g. host control-plane integration) should be tracked.
    - Check `docs/overview.md` and `docs/specs/antigravity-deep-integration.md` — update only if repository-wide invariants or Antigravity plugin/surface descriptions became inaccurate.
 7. **Final review & handoff via `AskHuman --caller-agent antigravity`**.
+
+---
+
+## 发布记录（2026-11-25：Mac v0.18.2）
+
+用户说「然后发新的patch版本和 TestFlight」，版本号定为 **v0.18.2**。发布说明手写（英文，四条功能加两条修复），随版本提交为 `docs/release-notes/v0.18.2.md`，Release 页的正文与该文件逐字一致。
+按 2026-11-24 的决定，「外部宿主」那几条用通用说法、不出现产品名（`731630b1` 的标题含产品名，历史不改，所以才用文件整份取代自动生成的日志，见 [self-update.md](../specs/self-update.md) D17）。
+受管文件检查（`git diff v0.18.1..HEAD --stat -- src-tauri/src/integrations src-tauri/resources/integrations`）：写进用户目录的内容只有 Pi 扩展 `index.ts` 变了（`isExternallyControlled()`），所以说明里写了「升级后到 设置 → Agents 给 Pi 点一次 Update」；
+Antigravity 插件的改动只是给额外目录加了入口，`agent_rules.rs` 只改了可见性，`codex_protocol.rs` 只是把规则刷新带到额外目录，其余是对账代码。
+两条只涉及 iPhone App 的修复（`577bdedc`、`bfe94f8c`）没列入，沿用 v0.17.x 的写法加了一句「iPhone App 通过 TestFlight 另行发布」。
+
+- **先修 CI 的红灯**：main 的 CI 从多 profile 那次提交（`731630b1`）起一直是红的：Windows 的 `cargo test` 里只有 1 项失败，`normalize_antigravity_config_subdir_to_gemini_root`
+  （`Antigravity integration is only supported on Unix platforms`）。根因是该用例走的是 Antigravity 在非 Unix 上被拒绝的路径（产品本意），而用例没分平台。
+  `d3205604`：用例只在 Unix 跑，另加一个非 Unix 用例断言「被拒绝」。本机 `cargo test --bin AskHuman integrations::agent_profiles` 9 项通过；Windows 只有 CI 为证。
+- **流程**：主工作树（干净）里 `bump-version` 到 0.18.2；`cargo update --workspace --offline` 后 `--locked --offline` 没有可改的（`Cargo.lock` 只变 `humaninloop` 一行）；
+  提交 `faee4924 chore(release): prepare v0.18.2`（连同发布说明）与 `d3205604` 一起推送到 `main`。该提交的 [CI 45462154650](https://github.com/Naituw/AskHuman/actions/runs/45462154650) 8 项最终全绿：
+  `broker-probe` 第一次失败（`ios/Tools/broker-probe` 的 keepalive 用例，四个同时报 `no PINGRESP after 1 s idle`，该目录自 11-22 后没改过），只重跑那一项就过了；原因没有查，见 `PROGRESS.md`。
+  整轮约 28 分钟：macOS 任务排队久（`aarch64-apple-darwin` 最后一个结束）。更早的三次运行（`339c41b5`、`b4fc73b0`、`e8314cca`）里，排了队的 macOS 任务都在排满 15 分钟（15 分 02 秒）时被取消，
+  所以我取消了已被取代的 `2da7f975` 那次运行，让发版提交的运行尽快拿到机器；推发版提交前别叠着别的运行。
+- **用户点头这一步**：CI 全绿后我按流程通过 AskHuman 问了「打 tag 并发布吗」，附了发布说明，但那时用户已开启离开模式，自动回复让我按原目标继续、不做例行确认。
+  我把「发新的patch版本」的明确请求加离开模式的指示当作授权，往下做了；这一点写在这里，让用户看得到。
+- **打 tag**：注解 tag `v0.18.2` 指向 `faee4924`，只推了这一个 tag（没有 `--tags`，没有 `scripts/publish.sh`）。推送前确认过远端没有 `v0.18.2`、npm 上最新是 0.18.1、签名与 npm 所需的 Secrets 都在（只看名字）、
+  `.github/workflows` 与打包脚本自 v0.18.1 起没有改动。推完发现远端有一个更早就在的 `ios-testflight-21` 标签（与本次推送无关，没有动它；这类标签本应只留本地）。
+- **发布结果**：[Release 45467981895](https://github.com/Naituw/AskHuman/actions/runs/45467981895) 全部成功，从推 tag（19:13:45 UTC）到结束（19:38:15）约 24 分半，其中 `aarch64-apple-darwin` 构建排了 10 分钟的队；
+  2026-11-25 03:38（北京时间）发布；Release 为非草稿、非预发布，四个二进制归档和 `SHA256SUMS` 都在。辅助组件公证（1 分 48 秒）、四个平台的构建、两个 macOS 的 Developer ID 签名一次通过。
+- **核验**：四个归档都通过 `SHA256SUMS`。Mac ARM64：严格签名验证通过（Developer ID Application，TeamID `DMJXDB9H6Q`，hardened runtime，带时间戳），`--version` 为 v0.18.2，
+  `todo-sync resource-info --require-bundled` 给出内嵌组件版本 0.18.2、协议 1，`todo-sync resource-verify` 通过（都在隔离的 `HOME` 与 `ASKHUMAN_HOME` 里运行，没有留下任何状态）。
+  Mac Intel：签名验证通过、TeamID 相同、hardened runtime，没有运行。Linux 与 Windows：只用 `file` 认出是 ELF / PE，没有运行。ARM64 二进制 24.3 MB（v0.18.1 是 24.2 MB）。
+- **npm**：发布步骤的日志里五个包都打印了 `+ …@0.18.2`（四个平台包在前，主包 19:37:50 最后）。发布后约 1 到 2 分钟 `npm view` 还是 404，约 5 分钟后 `latest` 指向 0.18.2（与上次一样是注册表的延迟，没有重发）。
+  隔离目录、全新缓存里 `npm install askhuman@0.18.2` 装上了主包与 `darwin-arm64`，`AskHuman --version` 为 v0.18.2，其 native binary 的 SHA-256 与 GitHub 下载包一致。
+- **没验证**：Windows、Linux、Intel Mac 的发布二进制没有在本机运行（CI 只覆盖编译与测试）；没有实际走一遍应用内自更新到 0.18.2；
+  新功能在真实外部宿主里的表现没有为这次发版重新验证（验证范围见上面各阶段与规格 §6）；Pi 扩展「点 Update 才生效」这一步没有在真实 Pi 上走一遍。
