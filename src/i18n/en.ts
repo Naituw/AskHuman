@@ -1460,6 +1460,7 @@ export default {
     projectFilter: "Project",
     sessionFilter: "Session",
     scopeFilter: "History scope",
+    scopeClear: "Clear scope, show everything",
     allSessions: "All sessions",
     allProjectsAllSessions: "All sessions",
     thisProjectAllSessions: "Everything in this project",

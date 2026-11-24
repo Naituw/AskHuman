@@ -78,6 +78,7 @@ const scopeMenuOpen = ref(false);
 const scopeMenuProject = ref(ALL);
 // The session column's element: where the pointer is heading while it crosses project rows.
 const scopeSessionPane = ref<HTMLElement | null>(null);
+const scopeBtn = ref<HTMLButtonElement | null>(null);
 // True while a project switch is deferred because the pointer is on its way to the session column.
 const scopeMenuGuarding = ref(false);
 const pendingDeleteScopeKind = ref<null | "search" | "session" | "project">(null);
@@ -291,6 +292,10 @@ const scopeButtonTooltip = computed(() =>
     selectedProjectOption.value.title || selectedProjectOption.value.compactLabel,
     selectedSessionOption.value.title || selectedSessionOption.value.compactLabel,
   ].join(" · ")
+);
+// Anything narrower than "all projects · all sessions"; only then is there a scope to clear.
+const scopeNarrowed = computed(
+  () => selected.value !== ALL || selectedSession.value !== ALL_HISTORY_SESSIONS
 );
 
 const sessionEntries = computed(() =>
@@ -597,6 +602,15 @@ function selectScope(projectToken: string, sessionToken: string) {
   activeId.value = filteredEntries.value[0]?.id ?? null;
 }
 
+// One step back to everything. The window opens on the asking session, but what is wanted is often an earlier answer
+// from another one. Keywords and attachment conditions have clear controls of their own and stay.
+function clearScope(event: MouseEvent) {
+  const hadFocus = event.currentTarget === document.activeElement;
+  selectScope(ALL, ALL_HISTORY_SESSIONS);
+  // The button that was just used is gone: focus moves to the scope control instead of falling to the page.
+  if (hadFocus) scopeBtn.value?.focus();
+}
+
 function toggleCleanupMenu() {
   scopeMenuOpen.value = false;
   menuOpen.value = !menuOpen.value;
@@ -837,8 +851,12 @@ onBeforeUnmount(() => {
           <span v-if="deleteNotice" class="hist-notice" role="status">{{ deleteNotice }}</span>
           <div class="scope-wrap">
             <button
+              ref="scopeBtn"
               class="scope-btn"
-              :class="{ 'session-scoped': selectedSession !== ALL_HISTORY_SESSIONS }"
+              :class="{
+                'session-scoped': selectedSession !== ALL_HISTORY_SESSIONS,
+                clearable: scopeNarrowed,
+              }"
               type="button"
               :title="scopeButtonTooltip"
               :aria-label="t('history.scopeFilter')"
@@ -849,6 +867,17 @@ onBeforeUnmount(() => {
               <svg class="scope-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 5h18M6 12h12M10 19h4" /></svg>
               <span class="scope-btn-label">{{ scopeButtonLabel }}</span>
               <svg class="scope-chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m6 9 6 6 6-6" /></svg>
+            </button>
+            <!-- A button of its own (a button cannot sit inside a button), drawn over the right end of the scope button. -->
+            <button
+              v-if="scopeNarrowed"
+              type="button"
+              class="scope-clear"
+              :title="t('history.scopeClear')"
+              :aria-label="t('history.scopeClear')"
+              @click="clearScope"
+            >
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6 6 18M6 6l12 12" /></svg>
             </button>
             <div
               v-if="scopeMenuOpen"
@@ -1247,6 +1276,39 @@ onBeforeUnmount(() => {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+/* The clear button is drawn over the right end of the scope button, just left of the chevron: the label stops short of it. */
+.scope-btn.clearable .scope-btn-label {
+  margin-right: 22px;
+}
+.scope-clear {
+  position: absolute;
+  top: 50%;
+  /* The scope button's right padding, the chevron and the gap between them. */
+  right: 27px;
+  display: grid;
+  place-items: center;
+  width: 18px;
+  height: 18px;
+  margin-top: -9px;
+  padding: 0;
+  border: none;
+  border-radius: 50%;
+  background: transparent;
+  color: var(--text-secondary);
+  cursor: pointer;
+}
+.scope-clear:hover {
+  background: color-mix(in srgb, var(--text-primary) 14%, transparent);
+  color: var(--text-primary);
+}
+.scope-clear:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring);
+}
+.scope-clear svg {
+  width: 10px;
+  height: 10px;
 }
 .scope-menu {
   position: absolute;

@@ -1438,6 +1438,7 @@ export default {
     projectFilter: "项目",
     sessionFilter: "会话",
     scopeFilter: "历史范围",
+    scopeClear: "清除范围，显示全部",
     allSessions: "全部会话",
     allProjectsAllSessions: "所有会话",
     thisProjectAllSessions: "本项目全部",
