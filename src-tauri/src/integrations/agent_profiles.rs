@@ -1082,6 +1082,7 @@ mod tests {
         assert!(id.chars().all(|c| c.is_ascii_alphanumeric() || c == '-'));
     }
 
+    #[cfg(unix)]
     #[test]
     fn normalize_antigravity_config_subdir_to_gemini_root() {
         let dir = tempfile::tempdir().unwrap();
@@ -1098,6 +1099,19 @@ mod tests {
 
         let direct = normalize_root_for_add(AgentKind::Antigravity, &provider_root).unwrap();
         assert_eq!(direct, normalized);
+    }
+
+    // The Antigravity integration is Unix-only, so enrolling one of its directories is refused
+    // on every other platform before the path is even looked at.
+    #[cfg(not(unix))]
+    #[test]
+    fn an_antigravity_directory_is_refused_off_unix() {
+        let dir = tempfile::tempdir().unwrap();
+        let error = normalize_root_for_add(AgentKind::Antigravity, dir.path()).unwrap_err();
+        assert!(
+            error.to_string().contains("only supported on Unix"),
+            "unexpected refusal: {error}"
+        );
     }
 
     #[test]
