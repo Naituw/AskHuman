@@ -1710,3 +1710,45 @@ AskHuman Public 里是 30 与 29，公共链接仍开、上限 1,000、**70 位�
 • Duo 内屏的竖屏与横屏、普通 iPhone：页面两侧的边距看起来是否正常，下拉加载历史时那行字是否仍在页面中间。
 • 配对、离开模式等弹出的面板：两侧没有被裁掉，边距与面板里的列表一致。
 ```
+
+## 2026-11-25：TestFlight 内部与外部构建 31
+
+版本 **0.1.0 (31)**，干净主工作树归档源码 `faee49249eaa6aa43eeca70bf0f337e88fc68298`（Mac v0.18.2 的发版准备提交，`ios/` 内容与 `577bdedc` 之后的 HEAD 相同），
+基线 `ios-testflight-30` → `bfe94f8c2041f2b2a6498a329bbe7c13aa327c81`。
+起因是用户在 Mac 端发版准备时写下「然后发新的patch版本和 TestFlight」；按技能的规定没有先把清单与说明交给用户确认。本节时间均为北京时间。
+自基线以来 `ios/` 下的 1 条提交如下（4 个文件，+148 / −3）：
+
+- `577bdedc`（2026-11-25）提问页里较长、会折行的选项不再有时被截成一行加省略号。原因是页面把一叠题目卡片放进一个只拿着「量过的内容高度」的 ZStack，
+  高度按「最不灵活的先让」分给能收缩的卡片，更高却没有行可让的那张分到的比需要的少；只在某些屏宽与选项文字下出现。
+  现在页面按内容需要的高度排版，多出来的空间只用来把页面垫满一屏，答题页与确认页用同一个修饰符。
+  规格见 [ios-session-history.md](../specs/ios-session-history.md) §7.3，回归用例 `AskHumanOptionLayoutUITests`（带显式换行的 `optionWrap` Mock 场景；去掉修复后在 iPhone 17 Pro 与 Duo 上失败）。
+
+没有只有测试的独立提交（这条提交自带测试与 Mock 夹具）。没有用户说过「先不出」的 iOS 改动（查了 `PROGRESS.md`）。
+
+出包前的验证是这条修复提交时在同一份 `ios/` 源码上做的（上面的 UI 用例，iPhone 17 Pro 与 Duo）；CI 的 `iOS Swift package (swift test)` 在含这条提交的 `e8314cca` 与发版提交上都通过。
+**这次出包前没有重跑**：UI 用例与 `swift test`。**没有跑的**：真实 daemon 端到端、iPad、其他系统版本；**真机一项都没有验过**。
+
+上传前确认了 Apple 的构建列表里最新是 30、`changes.mjs` 建议 31（上传前又读了一遍 `status.mjs`）。
+隐私政策与接入指南的 4 个公开网址（中英文各两个）和落地页不登录都返回 200，**但这一步是上传之后才补查的**，没有放在出包前；这些页面本次没有改动。
+从干净的 HEAD 做 Release 归档（构建号 31）成功（02:42:36–02:43:36，开始与结束时 HEAD 都是 `faee4924`、工作树干净），上传脚本的预检通过（版本 0.1.0、构建号 31、外部受众、非仅内部、凭据来自 Keychain）。
+上传执行一次，02:46:09 得到 `Upload succeeded` / EXPORT SUCCEEDED；Apple 记的上传时间 02:47:23，02:47 前后第一次读还没列出，02:48:34 读到 VALID。
+Apple build `ec54b11b-bafa-4a6b-85b3-9a619a7ed245`，VALID / APP_STORE_ELIGIBLE / 未过期（至 2027-02-22），加密申报已解析（不含非豁免加密）。
+中英文测试说明（中文 184、英文 567 字符）写入并读回一致（两种语言的条目都已由 Apple 预先建好，动作都是 updated）。`update` 把 build 31 加入 Friends（自动通知关闭，读回 verified），
+`submit` 之后直接读回 `APPROVED`（`submittedDate` 为空，与 D23 的预期一致，没有真的送审），`start` 之后读回 Internal 与 Friends 均为 IN_BETA_TESTING（外部 1 位、内部 2 位测试员）。
+公共组按 D26：先 `public` 的 `dryRun`（`wouldChange` 只有「assign build」），再用组现有的上限 1,000 写入，`changed` 同样只有「assign build」，读回 verified。
+最终读回：Internal 与 Friends 的构建列表里都有 31，成员没变（Internal 1 位 INSTALLED、1 位 INVITED，Friends 1 位 INSTALLED），Friends 公开链接仍关；
+AskHuman Public 里是 31、30 与 29，公共链接仍开、上限 1,000、测试员 77 位（76 位 INSTALLED、1 位 ACCEPTED；构建 30 交付时是 70 位 INSTALLED），没有新增或重新邀请任何人。
+本地附注标签 `ios-testflight-31` 固定归档源码 `faee4924`，标签留在本地，不推送。
+
+手机更新与原有 Mac 连接确认尚待用户反馈。真机上要看的就是测试说明里的一项。
+
+简体中文测试说明如下，中英文完整说明随交付报告提供。
+
+```text
+构建 31 · 源码 faee492
+
+• 修复：提问页里较长、需要折行的选项，现在会完整显示全部文字，不再有时被截成一行并加省略号（只在某些屏幕宽度和选项文字下出现）。回答页与确认页同样适用。
+
+请重点看
+• 有好几道题、选项文字又较长的提问：每个选项的所有行是否都显示出来，没有被截成一行加省略号；竖屏、横屏、iPad 或折叠屏内屏，以及较大的辅助字号下各看一眼。
+```
