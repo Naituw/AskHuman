@@ -237,6 +237,7 @@ AskHuman/
         mcp_config.rs        五家 MCP server 配置管理
         pi_extension.rs      Pi CLI/生命周期/插话/Stop 共用 Extension 管理
         agent_mode.rs        None/CLI/MCP 模式编排
+        agent_profiles.rs    六家 Agent 额外配置目录（agent-profiles.json）、T3 Antigravity 只读自动发现与独立账本同步
         agent_stop.rs        Agent Stop 结束确认配置
         antigravity_sidecars.rs  `agents sidecars [list|remove <id>|remove --all]`：AskHuman 为 Antigravity App 管理的 sidecar；另有不进 help 的 `__antigravity-desktop`（stdin JSON 的 `Operation`）与 `__antigravity-sidecar`（App 起的 sidecar 进程）
         login_item.rs        macOS/Linux/Windows GUI Host 与 daemon 登录项
@@ -295,7 +296,8 @@ AskHuman/
         title.rs             会话标题解析（五家取原生标题；Antigravity 没有可读的原生标题，取会话 transcript 里的首条用户请求）
         session_info.rs      原生工作区 / 模型 / 上下文与 Hook 私有快照
         activity.rs          transcript 尾部活动解析
-        session_paths.rs     Pi 自定义 sessionDir transcript 路径校验与缓存
+        session_paths.rs     六家 Agent 自定义与额外配置目录的 transcript 路径结构校验与缓存
+        t3_host.rs           T3 Code 委派子线程检测、有界 CLI 缓存与跨入口静默标记
         cursor_vscdb.rs      Cursor IDE 会话实时源（state.vscdb；活动/标题/完整会话）
         cursor_log.rs        Cursor 结构化日志的只读尾随（重试用尽、不发 stop 的最终出错）
         cursor_max/          旧按次计费计划下 Cursor Max 模式的判定、强制关闭与启动后复查（规格 cursor-max-control）
@@ -351,7 +353,7 @@ CLI、Popup Host、GUI Host 与 Daemon 共用 NDJSON 消息类型（`ClientMsg` 
 - 历史：`open_history`、`history_init`、`get_history`、`get_history_projects`、`history_count`、`trim_history`、`resolve_history_session_titles`、`delete_history_entries`、`clear_all_history`
 - Cursor / Claude 超时 Hook 与 Pi Extension：统一设置入口走 `agent_mode_*` 与 `agent_hook_reveal` / `open`
 - Agent Rules：`agent_rule_reveal` / `open`（安装、更新与卸载走 `agent_mode_*`）
-- Agent 模式与配置文件：`agent_mode_status` / `set` / `update`、`mcp_config_reveal` / `open`、`agent_hook_reveal` / `open`、`mcp_command_path`（`agent_mode_status` 只聚合本地集成产物；Agent CLI 是否在 PATH / Pi 版本由 `agent_task_readiness` 负责，它同时带上统一的「现在能不能启动任务」结论 `startable` / `startRoute`，见 `integrations/agent_start.rs`）
+- Agent 模式与配置文件：`agent_mode_status` / `set` / `update`、`agent_profile_{add,set_enabled,remove,sync,dismiss_discovered,reveal}`、`mcp_config_reveal` / `open`、`agent_hook_reveal` / `open`、`mcp_command_path`（`agent_mode_status` 只聚合本地集成产物与额外配置目录状态；Agent CLI 是否在 PATH / Pi 版本由 `agent_task_readiness` 负责，它同时带上统一的「现在能不能启动任务」结论 `startable` / `startRoute`，见 `integrations/agent_start.rs`）
 - 渠道测试与识别：`telegram_test`；钉钉、飞书、Slack 各自的 `*_test` / `*_detect_prepare` / `*_detect_wait`；共用 `detect_cancel`
 - iOS 渠道（设置页「通信渠道」Tab 的 iOS App 卡）：`ios_op`（状态 / 配对 / 撤销 / 重命名，经 IPC 的 `ClientMsg::Ios`）、`ios_test`（返回「消息 + 警告列表」，含隔离自检）、`ios_default_relay_url`、`ios_pair_qr`、`ios_connection_export` / `ios_connection_import`
 - iCloud 待办同步（设置页「实验」Tab 与待办窗口侧栏）：`todo_sync_*`（状态 / 启用 / 停用 / 立即同步 / 清除 / 修复，以及 iCloud 模式窗口用的项目列表、详情与移除；全部在阻塞线程上跑），见 `docs/overview-todo-sync.md`
@@ -532,6 +534,7 @@ Daemon 里的又一个渠道：手机上的 AskHuman App 回答问题、看 / �
   `docs/specs/codex-delegated-run-silence.md`。
 - 全局交互协议把 Sub Agent 作为唯一例外并禁止其使用 AskHuman；Claude/Codex mode 另带 `SubagentStart` 提示 Hook，Cursor/Grok/Pi/Antigravity 只依赖协议文本。
 - `agents update [<agent>]` 按当前 mode 重新 reconcile 单家或全部托管产物；重复设置相同 mode 也会完整更新，但不改独立保存的 capability 偏好。
+- 多配置目录与 T3 Code 兼容（规格 `docs/specs/t3-code-and-multi-profile.md`）：六家 Agent 均支持经 `agents profile` 或设置页追加额外配置目录（`agent-profiles.json`），与主目录共享模式及 capability 偏好并各自维护独立所有权账本；Unix 上只读扫描 T3 Code Antigravity 隔离目录（`~/.t3/userdata/providers/antigravity/<hash>`），需用户显式启用才写入真实插件目录。T3 Code 委派子线程（`parentThreadId != null || relationshipToParent != null`）在全六家 Agent 的 CLI/MCP/Hook 入口静默（`agents/t3_host.rs`）；Pi Extension 在 `--mode rpc` 或 `T3CODE_THREAD_ID` 下禁用后台控制轮询与 Stop 自动续跑。
 - `config` 是通用键值兜底，`doctor` 汇总 Daemon、已装二进制、渠道和集成；两者复用同一配置与集成模块，不维护第二套逻辑。`doctor install` 单独检查已装二进制（`install.sh` 装完后调用）。
 
 ## MCP 支持（CLI 之外的第二种集成形态）
