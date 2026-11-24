@@ -928,10 +928,10 @@ describe("IntegrationTab", () => {
       const discovered = [
         {
           agent: "antigravity",
-          root: "/Users/test/.t3/userdata/providers/antigravity/ac0a3dfd",
-          displayRoot: "~/.t3/userdata/providers/antigravity/ac0a3dfd",
-          label: "T3 Code (antigravity)",
-          source: "t3_discovered" as const,
+          root: "/Users/test/host-data/providers/antigravity/ac0a3dfd",
+          displayRoot: "~/host-data/providers/antigravity/ac0a3dfd",
+          label: "antigravity",
+          source: "discovered" as const,
         },
       ];
       const unintegrated = mountAgent(

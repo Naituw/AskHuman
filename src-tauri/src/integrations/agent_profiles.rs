@@ -1,12 +1,12 @@
 //! Extra config directory ("multi-profile") management for all 6 integrated agents
-//! (spec `docs/specs/t3-code-and-multi-profile.md`, L2).
+//! (spec `docs/specs/agent-profiles-and-host-guards.md`, L2).
 //!
 //! Primary integration directories (`~/.gemini`, `~/.codex`, `~/.claude`, `~/.cursor`, `~/.grok`,
 //! `~/.pi/agent`) remain the canonical owner of each agent's integration mode (`None / Cli / Mcp`)
 //! and capability preferences. Users may additionally enroll extra config directories — either
-//! discovered from T3 Code's isolated Antigravity homes (`~/.t3/userdata/providers/antigravity/*`)
-//! or added manually for any agent (`CODEX_HOME`, `CLAUDE_CONFIG_DIR`, `GROK_HOME`,
-//! `PI_CODING_AGENT_DIR`, `CURSOR_CONFIG_DIR`, `GEMINI_HOME`).
+//! discovered from the isolated Antigravity homes an external host creates (one per configured
+//! provider instance, see `host_providers_dir_in`) or added manually for any agent (`CODEX_HOME`,
+//! `CLAUDE_CONFIG_DIR`, `GROK_HOME`, `PI_CODING_AGENT_DIR`, `CURSOR_CONFIG_DIR`, `GEMINI_HOME`).
 //!
 //! Invariants:
 //! - AskHuman never writes into a discovered directory until the user explicitly opts in (D3).
@@ -39,10 +39,13 @@ use crate::paths;
 const STORE_VERSION: u32 = 1;
 const MAX_DISCOVERY_ENTRIES: usize = 64;
 
+/// Where an enrolled directory came from. Only informational (it picks the default label), so a
+/// value this build does not know is read as `Manual` instead of failing the whole store.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ProfileSource {
-    T3Discovered,
+    Discovered,
+    #[serde(other)]
     Manual,
 }
 
@@ -83,7 +86,8 @@ fn default_version() -> u32 {
     STORE_VERSION
 }
 
-/// Un-enrolled isolated directory discovered on disk (currently T3 Code Antigravity homes).
+/// Un-enrolled isolated directory discovered on disk (currently an external host's isolated
+/// Antigravity homes).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct DiscoveredProfile {
@@ -251,10 +255,8 @@ fn default_label(kind: AgentKind, root: &Path, source: ProfileSource) -> String 
         .filter(|s| !s.is_empty())
         .unwrap_or(kind.as_str());
     match source {
-        ProfileSource::T3Discovered => {
-            let short: String = tail.chars().take(8).collect();
-            format!("T3 Code ({short})")
-        }
+        // A discovered home is named by a hash: the first characters are enough to tell it apart.
+        ProfileSource::Discovered => tail.chars().take(8).collect(),
         ProfileSource::Manual => tail.to_string(),
     }
 }
@@ -311,16 +313,32 @@ fn is_user_owned_real_dir(_path: &Path) -> bool {
     false
 }
 
-/// Read-only scan for un-enrolled T3 Code Antigravity provider directories.
+/// Read-only scan for un-enrolled isolated Antigravity homes created by an external host.
 pub fn discover_for_agent(kind: AgentKind) -> Vec<DiscoveredProfile> {
     if kind != AgentKind::Antigravity || !cfg!(unix) || dev_isolated(kind) {
         return Vec::new();
     }
     let store = load_store_lenient();
-    discover_t3_antigravity_in(&paths::integration_home(), &store)
+    discover_isolated_homes_in(&paths::integration_home(), &store)
 }
 
-const MAX_T3_SETTINGS_BYTES: u64 = 256 * 1024;
+// What discovery knows about the external host's data layout. It is string data and nothing else
+// here depends on it: one isolated Antigravity home per configured provider instance under
+// `<data>/providers/antigravity/<sha256(instanceId)>`, and the instance names in
+// `<data>/settings.json`.
+const HOST_DATA_DIR: [&str; 2] = [".t3", "userdata"];
+const MAX_HOST_SETTINGS_BYTES: u64 = 256 * 1024;
+
+fn host_data_dir_in(home: &Path) -> PathBuf {
+    HOST_DATA_DIR
+        .iter()
+        .fold(home.to_path_buf(), |dir, part| dir.join(part))
+}
+
+/// The host's per-provider Antigravity root: one isolated home per configured provider instance.
+fn host_providers_dir_in(home: &Path) -> PathBuf {
+    host_data_dir_in(home).join("providers").join("antigravity")
+}
 
 fn sha256_hex(input: &str) -> String {
     format!("{:x}", Sha256::digest(input.as_bytes()))
@@ -351,21 +369,21 @@ fn display_root_for(root: &str) -> String {
     collapse_home_in(&paths::integration_home(), Path::new(root))
 }
 
-/// Best-effort read-only reverse lookup of T3 Code Antigravity provider instance hashes.
+/// Best-effort read-only reverse lookup of the host's provider instance hashes.
 ///
-/// T3 Code derives `~/.t3/userdata/providers/antigravity/<sha256(instanceId)>` per configured
-/// provider instance (not per session). Hashing known `providerInstances` keys from
-/// `~/.t3/userdata/settings.json` (plus the built-in `"antigravity"` instance) lets us display
-/// `T3 Code (antigravity)` instead of an opaque hex prefix.
-fn t3_instance_names_by_hash(home: &Path) -> BTreeMap<String, String> {
+/// The host derives `<providers dir>/<sha256(instanceId)>` per configured provider instance (not
+/// per session). Hashing the known `providerInstances` keys from its `settings.json` (plus the
+/// built-in `"antigravity"` instance) lets us show the instance name instead of an opaque hex
+/// prefix.
+fn host_instance_names_by_hash(home: &Path) -> BTreeMap<String, String> {
     let mut map = BTreeMap::new();
     map.insert(sha256_hex("antigravity"), "antigravity".to_string());
 
-    let settings_path = home.join(".t3").join("userdata").join("settings.json");
+    let settings_path = host_data_dir_in(home).join("settings.json");
     let Ok(meta) = std::fs::metadata(&settings_path) else {
         return map;
     };
-    if !meta.is_file() || meta.len() > MAX_T3_SETTINGS_BYTES {
+    if !meta.is_file() || meta.len() > MAX_HOST_SETTINGS_BYTES {
         return map;
     }
     let Ok(bytes) = std::fs::read(&settings_path) else {
@@ -389,15 +407,15 @@ fn t3_instance_names_by_hash(home: &Path) -> BTreeMap<String, String> {
     map
 }
 
-fn discover_t3_antigravity_in(home: &Path, store: &Store) -> Vec<DiscoveredProfile> {
+fn discover_isolated_homes_in(home: &Path, store: &Store) -> Vec<DiscoveredProfile> {
     if !cfg!(unix) {
         return Vec::new();
     }
-    let providers = paths::t3_antigravity_providers_dir_in(home);
+    let providers = host_providers_dir_in(home);
     let Ok(entries) = std::fs::read_dir(&providers) else {
         return Vec::new();
     };
-    let known_names = t3_instance_names_by_hash(home);
+    let known_names = host_instance_names_by_hash(home);
     let mut discovered = Vec::new();
     for entry in entries.flatten().take(MAX_DISCOVERY_ENTRIES) {
         let candidate = entry.path();
@@ -422,20 +440,16 @@ fn discover_t3_antigravity_in(home: &Path, store: &Store) -> Vec<DiscoveredProfi
             .file_name()
             .and_then(|n| n.to_str())
             .and_then(|dir_name| known_names.get(dir_name))
-            .map(|instance_id| format!("T3 Code ({instance_id})"))
+            .cloned()
             .unwrap_or_else(|| {
-                default_label(
-                    AgentKind::Antigravity,
-                    &physical,
-                    ProfileSource::T3Discovered,
-                )
+                default_label(AgentKind::Antigravity, &physical, ProfileSource::Discovered)
             });
         discovered.push(DiscoveredProfile {
             agent: AgentKind::Antigravity.as_str().to_string(),
             display_root: collapse_home_in(home, &physical),
             label,
             root: root_str,
-            source: ProfileSource::T3Discovered,
+            source: ProfileSource::Discovered,
         });
     }
     discovered.sort_by(|a, b| a.root.cmp(&b.root));
@@ -854,7 +868,7 @@ pub fn add(
     Ok(inspect_profile(&entry, target, primary_mode))
 }
 
-/// Enable or disable an existing extra profile (or enable a discovered T3 profile by path).
+/// Enable or disable an existing extra profile (or enable a discovered isolated home by path).
 /// Disabling uninstalls AskHuman-managed artifacts from that profile; on conflict, refuses unless
 /// `detach == true` (which removes only AskHuman's ledger without touching disk files).
 pub fn set_enabled(
@@ -873,7 +887,7 @@ pub fn set_enabled(
         // Convenience: `agents profile enable antigravity <discovered_path>` enrolls + enables it.
         if enabled {
             let candidate = normalize_lookup_path(kind, id_or_path);
-            let discovered = discover_t3_antigravity_in(&paths::integration_home(), &store);
+            let discovered = discover_isolated_homes_in(&paths::integration_home(), &store);
             if let Some(found) = discovered.into_iter().find(|d| {
                 d.agent == kind.as_str() && same_root(&d.root, &candidate.to_string_lossy())
             }) {
@@ -882,7 +896,7 @@ pub fn set_enabled(
                     target,
                     Path::new(&found.root),
                     Some(&found.label),
-                    ProfileSource::T3Discovered,
+                    ProfileSource::Discovered,
                     true,
                 );
             }
@@ -1061,7 +1075,7 @@ mod tests {
     fn profile_id_is_stable_and_filename_safe() {
         let id = profile_id(
             AgentKind::Antigravity,
-            Path::new("/Users/test/.t3/userdata/providers/antigravity/ac0a3dfd"),
+            Path::new("/Users/test/host-data/providers/antigravity/ac0a3dfd"),
         );
         assert!(id.starts_with("antigravity-"));
         assert_eq!(id.len(), "antigravity-".len() + 16);
@@ -1103,9 +1117,9 @@ mod tests {
 
     #[cfg(unix)]
     #[test]
-    fn discovers_t3_antigravity_dirs_and_respects_enrolled_and_dismissed() {
+    fn discovers_isolated_antigravity_homes_and_respects_enrolled_and_dismissed() {
         let home = tempfile::tempdir().unwrap();
-        let providers = paths::t3_antigravity_providers_dir_in(home.path());
+        let providers = host_providers_dir_in(home.path());
         let p1 = providers.join("ac0a3dfd12345678");
         let p2 = providers.join("deadbeef87654321");
         let ignored_empty = providers.join("empty_dir");
@@ -1114,10 +1128,10 @@ mod tests {
         std::fs::create_dir_all(&ignored_empty).unwrap();
 
         let empty_store = Store::default();
-        let found = discover_t3_antigravity_in(home.path(), &empty_store);
+        let found = discover_isolated_homes_in(home.path(), &empty_store);
         assert_eq!(found.len(), 2);
-        assert!(found.iter().any(|d| d.label == "T3 Code (ac0a3dfd)"));
-        assert!(found.iter().any(|d| d.label == "T3 Code (deadbeef)"));
+        assert!(found.iter().any(|d| d.label == "ac0a3dfd"));
+        assert!(found.iter().any(|d| d.label == "deadbeef"));
 
         let store_with_one_enrolled_and_one_dismissed = Store {
             version: 1,
@@ -1125,8 +1139,8 @@ mod tests {
                 id: "ag-1".into(),
                 agent: "antigravity".into(),
                 root: agent_rules::physical_root(p1).to_string_lossy().to_string(),
-                label: "T3".into(),
-                source: ProfileSource::T3Discovered,
+                label: "home".into(),
+                source: ProfileSource::Discovered,
                 enabled: false,
                 created_at: 1,
             }],
@@ -1137,8 +1151,30 @@ mod tests {
             }],
         };
         let after =
-            discover_t3_antigravity_in(home.path(), &store_with_one_enrolled_and_one_dismissed);
+            discover_isolated_homes_in(home.path(), &store_with_one_enrolled_and_one_dismissed);
         assert!(after.is_empty());
+    }
+
+    #[test]
+    fn an_unknown_profile_source_is_read_as_manual_without_dropping_the_store() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("agent-profiles.json");
+        std::fs::write(
+            &path,
+            r#"{"version":1,"profiles":[{"id":"antigravity-1","agent":"antigravity","root":"/tmp/home","label":"Saved label","source":"from_a_newer_build","enabled":true,"createdAt":1}],"dismissed":[]}"#,
+        )
+        .unwrap();
+
+        let store = load_store_from(&path).unwrap();
+        assert_eq!(store.profiles.len(), 1);
+        assert_eq!(store.profiles[0].source, ProfileSource::Manual);
+        assert_eq!(store.profiles[0].label, "Saved label");
+        assert!(store.profiles[0].enabled);
+
+        assert_eq!(
+            serde_json::from_str::<ProfileSource>("\"discovered\"").unwrap(),
+            ProfileSource::Discovered
+        );
     }
 
     #[test]
@@ -1167,13 +1203,13 @@ mod tests {
     #[test]
     fn reconcile_refuses_to_recreate_missing_extra_profile_root() {
         let dir = tempfile::tempdir().unwrap();
-        let missing = dir.path().join("vanished-t3-instance");
+        let missing = dir.path().join("vanished-host-instance");
         let entry = ProfileEntry {
             id: "antigravity-missing".into(),
             agent: "antigravity".into(),
             root: missing.to_string_lossy().to_string(),
-            label: "T3 Code (vanished)".into(),
-            source: ProfileSource::T3Discovered,
+            label: "vanished".into(),
+            source: ProfileSource::Discovered,
             enabled: true,
             created_at: 1,
         };
@@ -1222,17 +1258,17 @@ mod tests {
 
     #[cfg(unix)]
     #[test]
-    fn resolves_t3_instance_names_from_hash_and_collapses_home_prefix() {
+    fn resolves_instance_names_from_hash_and_collapses_home_prefix() {
         let home = tempfile::tempdir().unwrap();
-        let userdata = home.path().join(".t3/userdata");
-        std::fs::create_dir_all(&userdata).unwrap();
+        let data = host_data_dir_in(home.path());
+        std::fs::create_dir_all(&data).unwrap();
         std::fs::write(
-            userdata.join("settings.json"),
+            data.join("settings.json"),
             r#"{"providerInstances":{"antigravity":{"driver":"antigravity"},"antigravity-work":{"driver":"antigravity"}}}"#,
         )
         .unwrap();
 
-        let providers = paths::t3_antigravity_providers_dir_in(home.path());
+        let providers = host_providers_dir_in(home.path());
         let default_hash = sha256_hex("antigravity");
         let work_hash = sha256_hex("antigravity-work");
         let unknown_hash = "deadbeef0123456789";
@@ -1240,25 +1276,27 @@ mod tests {
         std::fs::create_dir_all(providers.join(&work_hash).join("antigravity-acp")).unwrap();
         std::fs::create_dir_all(providers.join(unknown_hash).join("config")).unwrap();
 
-        let found = discover_t3_antigravity_in(home.path(), &Store::default());
+        let found = discover_isolated_homes_in(home.path(), &Store::default());
         assert_eq!(found.len(), 3);
         let default_item = found
             .iter()
             .find(|d| d.root.ends_with(&default_hash))
             .unwrap();
-        assert_eq!(default_item.label, "T3 Code (antigravity)");
-        assert_eq!(
-            default_item.display_root,
-            format!("~/.t3/userdata/providers/antigravity/{default_hash}")
-        );
+        assert_eq!(default_item.label, "antigravity");
+        // The home prefix is collapsed to `~`; the rest of the path is shown as it is on disk.
+        assert!(default_item.display_root.starts_with("~/"));
+        assert!(default_item.display_root.ends_with(&default_hash));
+        assert!(!default_item
+            .display_root
+            .contains(&*home.path().to_string_lossy()));
 
         let work_item = found.iter().find(|d| d.root.ends_with(&work_hash)).unwrap();
-        assert_eq!(work_item.label, "T3 Code (antigravity-work)");
+        assert_eq!(work_item.label, "antigravity-work");
 
         let unknown_item = found
             .iter()
             .find(|d| d.root.ends_with(unknown_hash))
             .unwrap();
-        assert_eq!(unknown_item.label, "T3 Code (deadbeef)");
+        assert_eq!(unknown_item.label, "deadbeef");
     }
 }

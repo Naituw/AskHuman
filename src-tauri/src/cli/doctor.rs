@@ -379,8 +379,8 @@ fn render_text(
                 discovered.len(),
                 cfgio::t(
                     lang,
-                    "discovered T3 profile(s) not yet enabled — run: AskHuman agents profile list antigravity",
-                    "个自动发现的 T3 目录尚未启用 —— 查看：AskHuman agents profile list antigravity",
+                    "discovered isolated profile(s) not yet enabled — run: AskHuman agents profile list antigravity",
+                    "个自动发现的隔离目录尚未启用 —— 查看：AskHuman agents profile list antigravity",
                 )
             ));
         }

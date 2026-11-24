@@ -645,7 +645,7 @@ export default {
       profiles: {
         title: "Extra config directories",
         hint: "Sync the same integration mode and capability toggles to additional custom config directories (for example custom CODEX_HOME, CLAUDE_CONFIG_DIR, GROK_HOME, PI_CODING_AGENT_DIR, or CURSOR_CONFIG_DIR).",
-        antigravityHint: "Sync the same AskHuman plugin to additional isolated Antigravity homes (such as T3 Code provider directories). Discovered directories are never modified until you explicitly enable them.",
+        antigravityHint: "Sync the same AskHuman plugin to additional isolated Antigravity homes (such as the per-provider directories an external host creates). Discovered directories are never modified until you explicitly enable them.",
         addButton: "+ Add directory",
         discoveredBadge: "Discovered",
         enableAction: "Enable",
@@ -657,7 +657,7 @@ export default {
         browseAction: "Browse…",
         confirmAddAction: "Add",
         pathPlaceholder: "Absolute path to config directory…",
-        labelPlaceholder: "Optional label (e.g. T3 Code / Work)",
+        labelPlaceholder: "Optional label (e.g. Work / Testing)",
         state: {
           synced: "Synced",
           outdated: "Needs update",

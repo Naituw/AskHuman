@@ -448,7 +448,7 @@ export const agentProfileAdd = (
   agent: AgentId,
   root: string,
   label?: string,
-  source?: "t3_discovered" | "manual",
+  source?: "discovered" | "manual",
   enabled = true,
 ) =>
   invoke<import("./types").ExtraProfileStatus>("agent_profile_add", {

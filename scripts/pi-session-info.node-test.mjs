@@ -134,7 +134,7 @@ test("Pi error confirmation observes errors and supports control with full lifec
   await f.emit("session_shutdown");
 });
 
-test("Pi disables idle control polling and Stop continuation under --mode rpc and T3CODE_THREAD_ID", async () => {
+test("Pi disables idle control polling and Stop continuation under --mode rpc and a host thread id", async () => {
   for (const hostControl of [
     { argv: ["node", "pi", "--mode", "rpc"] },
     { argv: ["node", "pi", "--mode=rpc"] },

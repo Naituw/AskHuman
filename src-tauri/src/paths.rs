@@ -258,23 +258,14 @@ pub fn agent_profiles_file() -> PathBuf {
     config_dir().join("agent-profiles.json")
 }
 
-/// Cached T3 Code thread delegation lookups (`~/.askhuman/state/t3-threads`).
-pub fn t3_threads_cache_dir() -> PathBuf {
-    state_dir().join("t3-threads")
+/// Cached external-host thread delegation lookups (`~/.askhuman/state/host-threads`).
+pub fn host_threads_cache_dir() -> PathBuf {
+    state_dir().join("host-threads")
 }
 
-/// Session-keyed T3 Code delegated child thread markers (`~/.askhuman/state/t3-delegated`).
-pub fn t3_delegated_marker_dir() -> PathBuf {
-    state_dir().join("t3-delegated")
-}
-
-/// T3 Code's per-provider Antigravity userdata root (`~/.t3/userdata/providers/antigravity`).
-pub fn t3_antigravity_providers_dir_in(home_dir: &Path) -> PathBuf {
-    home_dir
-        .join(".t3")
-        .join("userdata")
-        .join("providers")
-        .join("antigravity")
+/// Session-keyed delegated child session markers (`~/.askhuman/state/host-delegated`).
+pub fn host_delegated_marker_dir() -> PathBuf {
+    state_dir().join("host-delegated")
 }
 
 thread_local! {

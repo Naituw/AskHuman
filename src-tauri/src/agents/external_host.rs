@@ -1,14 +1,15 @@
-//! T3 Code delegated child-thread detection and silence markers
-//! (spec `docs/specs/t3-code-and-multi-profile.md`, L3).
+//! Delegated child-session detection and silence markers for an external host
+//! (spec `docs/specs/agent-profiles-and-host-guards.md`, L3).
 //!
-//! When an agent runs inside T3 Code, T3 sets `T3CODE_THREAD_ID` and `T3CODE_CLI_PATH` in the
-//! child environment. Interactive main threads (`parentThreadId == null && relationshipToParent ==
-//! null`) retain full AskHuman functionality, whereas delegated child threads
-//! (`parentThreadId != null || relationshipToParent != null`) have no human attending them
-//! directly and must be silenced across every AskHuman surface (hooks, CLI, MCP, Stop,
+//! An external host is an orchestrator that launches agents on the user's behalf. It tells each
+//! agent which of its threads it runs in through a thread-id environment variable and the path of
+//! a CLI that describes that thread. Interactive main threads (`parentThreadId == null &&
+//! relationshipToParent == null`) retain full AskHuman functionality, whereas delegated child
+//! threads (`parentThreadId != null || relationshipToParent != null`) have no human attending
+//! them directly and must be silenced across every AskHuman surface (hooks, CLI, MCP, Stop,
 //! PermissionRequest, Claude AskUserQuestion, failure confirmation).
 //!
-//! All checks fail open: missing `T3CODE_THREAD_ID` incurs zero I/O, and CLI timeouts or parse
+//! All checks fail open: a missing thread-id variable incurs zero I/O, and CLI timeouts or parse
 //! failures treat the thread as interactive while caching the transient error briefly so hooks
 //! never stall repeatedly.
 
@@ -23,15 +24,18 @@ use sha2::{Digest, Sha256};
 
 use super::AgentKind;
 
-pub const T3CODE_THREAD_ID_ENV: &str = "T3CODE_THREAD_ID";
-pub const T3CODE_CLI_PATH_ENV: &str = "T3CODE_CLI_PATH";
+// The host's interface is the one thing in this module that is not ours to name: the environment
+// variables it sets for the agents it launches. They are string data only; nothing else here
+// depends on what the host is called.
+pub const HOST_THREAD_ID_ENV: &str = "T3CODE_THREAD_ID";
+pub const HOST_CLI_PATH_ENV: &str = "T3CODE_CLI_PATH";
 
-pub const REASON_ENV_DELEGATED: &str = "t3_delegated_child_thread";
-pub const REASON_MARKER_DELEGATED: &str = "t3_delegated_marker";
+pub const REASON_ENV_DELEGATED: &str = "delegated_child_thread";
+pub const REASON_MARKER_DELEGATED: &str = "delegated_marker";
 
-/// Guidance returned to models calling AskHuman CLI or MCP from a T3 delegated child thread.
+/// Guidance returned to models calling AskHuman CLI or MCP from a delegated child session.
 pub const DELEGATED_MESSAGE: &str =
-    "AskHuman is disabled in this T3 Code delegated child thread because no human is attending it directly.\n\
+    "AskHuman is disabled in this delegated child session because no human is attending it directly.\n\
 Do not retry or contact the human; complete the delegated task and return your result to the parent thread.";
 
 const CACHE_TTL_MS: u64 = 24 * 60 * 60 * 1000;
@@ -43,7 +47,7 @@ const CLI_TIMEOUT: Duration = Duration::from_millis(1_500);
 const MAX_CLI_OUTPUT_BYTES: usize = 256 * 1024;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct T3ThreadMeta {
+pub struct HostThreadMeta {
     pub delegated: bool,
     pub parent_thread_id: Option<String>,
     pub relationship_to_parent: Option<String>,
@@ -102,12 +106,12 @@ fn marker_file(dir: &Path, kind: AgentKind, session_id: &str) -> PathBuf {
     dir.join(format!("{}.json", sha256_hex(&key)))
 }
 
-/// Parse `t3 thread show --json --messages 0 <id>` output.
+/// Parse the host CLI's `thread show --json --messages 0 <id>` output.
 ///
 /// Only `parentThreadId` (non-empty string) or `relationshipToParent` (non-null) marks a thread
 /// as delegated; a top-level thread with `createdBy == "agent"` and `parentThreadId == null` is
 /// NOT delegated.
-pub fn parse_t3_thread_delegated(bytes: &[u8]) -> Option<T3ThreadMeta> {
+pub fn parse_host_thread_delegated(bytes: &[u8]) -> Option<HostThreadMeta> {
     let value: Value = serde_json::from_slice(bytes).ok()?;
     let thread = value.get("thread").unwrap_or(&value);
     if !thread.is_object() {
@@ -130,15 +134,15 @@ pub fn parse_t3_thread_delegated(bytes: &[u8]) -> Option<T3ThreadMeta> {
         }
     });
     let delegated = parent_thread_id.is_some() || relationship_to_parent.is_some();
-    Some(T3ThreadMeta {
+    Some(HostThreadMeta {
         delegated,
         parent_thread_id,
         relationship_to_parent,
     })
 }
 
-fn resolve_t3_cli_path() -> Option<PathBuf> {
-    if let Ok(raw) = std::env::var(T3CODE_CLI_PATH_ENV) {
+fn resolve_host_cli_path() -> Option<PathBuf> {
+    if let Ok(raw) = std::env::var(HOST_CLI_PATH_ENV) {
         let trimmed = raw.trim();
         if !trimmed.is_empty() && !trimmed.contains('\0') {
             let candidate = PathBuf::from(trimmed);
@@ -147,11 +151,12 @@ fn resolve_t3_cli_path() -> Option<PathBuf> {
             }
         }
     }
+    // Where the host installs its CLI when the variable did not reach this process.
     let fallback = crate::paths::system_account_home().ok()?.join(".t3/bin/t3");
     fallback.is_file().then_some(fallback)
 }
 
-fn run_t3_cli(cli: &Path, thread_id: &str, timeout: Duration) -> Option<Vec<u8>> {
+fn run_host_cli(cli: &Path, thread_id: &str, timeout: Duration) -> Option<Vec<u8>> {
     let mut child = Command::new(cli)
         .args(["thread", "show", "--json", "--messages", "0", thread_id])
         .stdin(Stdio::null())
@@ -235,8 +240,8 @@ fn lookup_thread_with(
     cache_dir: &Path,
     thread_id: &str,
     now: u64,
-    query: &dyn Fn(&str) -> Option<T3ThreadMeta>,
-) -> Option<T3ThreadMeta> {
+    query: &dyn Fn(&str) -> Option<HostThreadMeta>,
+) -> Option<HostThreadMeta> {
     if !valid_thread_id(thread_id) {
         return None;
     }
@@ -249,7 +254,7 @@ fn lookup_thread_with(
                 CACHE_TTL_MS
             };
             if entry.thread_id == thread_id && now.saturating_sub(entry.checked_at_ms) < ttl {
-                return (!entry.transient_error).then_some(T3ThreadMeta {
+                return (!entry.transient_error).then_some(HostThreadMeta {
                     delegated: entry.delegated,
                     parent_thread_id: entry.parent_thread_id,
                     relationship_to_parent: entry.relationship_to_parent,
@@ -284,14 +289,14 @@ fn lookup_thread_with(
     result
 }
 
-fn query_real_thread(thread_id: &str) -> Option<T3ThreadMeta> {
-    let cli = resolve_t3_cli_path()?;
-    let bytes = run_t3_cli(&cli, thread_id, CLI_TIMEOUT)?;
-    parse_t3_thread_delegated(&bytes)
+fn query_real_thread(thread_id: &str) -> Option<HostThreadMeta> {
+    let cli = resolve_host_cli_path()?;
+    let bytes = run_host_cli(&cli, thread_id, CLI_TIMEOUT)?;
+    parse_host_thread_delegated(&bytes)
 }
 
 fn current_env_thread_id() -> Option<String> {
-    std::env::var(T3CODE_THREAD_ID_ENV)
+    std::env::var(HOST_THREAD_ID_ENV)
         .ok()
         .map(|s| s.trim().to_string())
         .filter(|s| valid_thread_id(s))
@@ -345,11 +350,11 @@ fn clear_marker_in(dir: &Path, kind: AgentKind, session_id: &str) {
     let _ = std::fs::remove_file(marker_file(dir, kind, session_id));
 }
 
-/// Check only the current process environment (`T3CODE_THREAD_ID`). Zero I/O when unset.
+/// Check only the current process environment (the host's thread-id variable). Zero I/O when unset.
 pub fn env_delegated_reason() -> Option<&'static str> {
     let thread_id = current_env_thread_id()?;
     let meta = lookup_thread_with(
-        &crate::paths::t3_threads_cache_dir(),
+        &crate::paths::host_threads_cache_dir(),
         &thread_id,
         now_ms(),
         &query_real_thread,
@@ -357,15 +362,15 @@ pub fn env_delegated_reason() -> Option<&'static str> {
     meta.delegated.then_some(REASON_ENV_DELEGATED)
 }
 
-/// Record (or clear) the session-keyed T3 delegated marker from a hook invocation when
-/// `T3CODE_THREAD_ID` is present. Returns the silence reason if this session is a T3 delegated
-/// child thread (via env or existing marker).
+/// Record (or clear) the session-keyed delegated marker from a hook invocation when the host's
+/// thread-id variable is present. Returns the silence reason if this session is a delegated
+/// child session (via env or existing marker).
 pub fn classify_and_record_hook(kind: AgentKind, session_id: &str) -> Option<&'static str> {
     let now = now_ms();
-    let marker_dir = crate::paths::t3_delegated_marker_dir();
+    let marker_dir = crate::paths::host_delegated_marker_dir();
     if let Some(thread_id) = current_env_thread_id() {
         if let Some(meta) = lookup_thread_with(
-            &crate::paths::t3_threads_cache_dir(),
+            &crate::paths::host_threads_cache_dir(),
             &thread_id,
             now,
             &query_real_thread,
@@ -392,7 +397,7 @@ pub fn classify_and_record_hook(kind: AgentKind, session_id: &str) -> Option<&'s
 /// Check only the session-keyed marker (for daemon failure cards or env-stripped MCP servers).
 pub fn marker_silenced(kind: AgentKind, session_id: &str) -> Option<&'static str> {
     read_marker_in(
-        &crate::paths::t3_delegated_marker_dir(),
+        &crate::paths::host_delegated_marker_dir(),
         kind,
         session_id,
         now_ms(),
@@ -400,7 +405,7 @@ pub fn marker_silenced(kind: AgentKind, session_id: &str) -> Option<&'static str
     .then_some(REASON_MARKER_DELEGATED)
 }
 
-/// Emit a structured `askhuman_guard` audit line when a T3 delegated child thread is silenced.
+/// Emit a structured `askhuman_guard` audit line when a delegated child session is silenced.
 pub fn log_suppressed(
     component: &'static str,
     agent: Option<&str>,
@@ -414,7 +419,7 @@ pub fn log_suppressed(
         reason,
         tool,
         agent,
-        thread_source: Some("t3_delegated_child"),
+        thread_source: Some("delegated_child"),
         session_id,
         thread_id: current_env_thread_id().as_deref(),
         turn_id: None,
@@ -430,8 +435,8 @@ mod tests {
     fn parses_parent_and_relationship_without_flagging_top_level_agent_threads() {
         let main_human = br#"{"thread":{"id":"t1","parentThreadId":null,"relationshipToParent":null,"createdBy":"human"}}"#;
         assert_eq!(
-            parse_t3_thread_delegated(main_human),
-            Some(T3ThreadMeta {
+            parse_host_thread_delegated(main_human),
+            Some(HostThreadMeta {
                 delegated: false,
                 parent_thread_id: None,
                 relationship_to_parent: None,
@@ -440,22 +445,22 @@ mod tests {
 
         let top_level_agent = br#"{"thread":{"id":"t2","parentThreadId":null,"relationshipToParent":null,"createdBy":"agent"}}"#;
         assert!(
-            !parse_t3_thread_delegated(top_level_agent)
+            !parse_host_thread_delegated(top_level_agent)
                 .unwrap()
                 .delegated
         );
 
         let child_by_parent = br#"{"thread":{"id":"t3","parentThreadId":"t1","relationshipToParent":null,"createdBy":"agent"}}"#;
-        let meta = parse_t3_thread_delegated(child_by_parent).unwrap();
+        let meta = parse_host_thread_delegated(child_by_parent).unwrap();
         assert!(meta.delegated);
         assert_eq!(meta.parent_thread_id.as_deref(), Some("t1"));
 
         let child_by_rel = br#"{"thread":{"id":"t4","parentThreadId":null,"relationshipToParent":"delegate","createdBy":"agent"}}"#;
-        let meta = parse_t3_thread_delegated(child_by_rel).unwrap();
+        let meta = parse_host_thread_delegated(child_by_rel).unwrap();
         assert!(meta.delegated);
         assert_eq!(meta.relationship_to_parent.as_deref(), Some("delegate"));
 
-        assert!(parse_t3_thread_delegated(b"not json").is_none());
+        assert!(parse_host_thread_delegated(b"not json").is_none());
     }
 
     #[test]
@@ -464,7 +469,7 @@ mod tests {
         let calls = AtomicUsize::new(0);
         let query_ok = |_: &str| {
             calls.fetch_add(1, Ordering::SeqCst);
-            Some(T3ThreadMeta {
+            Some(HostThreadMeta {
                 delegated: true,
                 parent_thread_id: Some("parent-1".into()),
                 relationship_to_parent: None,
@@ -518,8 +523,8 @@ mod tests {
             dir.path(),
             AgentKind::Antigravity,
             "conv-1",
-            "t3-child-1",
-            Some("t3-parent".into()),
+            "host-child-1",
+            Some("host-parent".into()),
             10_000,
         );
         assert!(read_marker_in(
@@ -551,23 +556,23 @@ mod tests {
 
     #[cfg(unix)]
     #[test]
-    fn run_t3_cli_handles_mock_script_and_timeout_fail_open() {
+    fn run_host_cli_handles_mock_script_and_timeout_fail_open() {
         use std::os::unix::fs::PermissionsExt;
         let dir = tempfile::tempdir().unwrap();
 
-        let fast = dir.path().join("t3-fast");
+        let fast = dir.path().join("host-fast");
         std::fs::write(
             &fast,
             "#!/bin/sh\nprintf '%s' '{\"thread\":{\"id\":\"t-child\",\"parentThreadId\":\"t-root\"}}'\n",
         )
         .unwrap();
         std::fs::set_permissions(&fast, std::fs::Permissions::from_mode(0o755)).unwrap();
-        let out = run_t3_cli(&fast, "t-child", Duration::from_secs(2)).unwrap();
-        assert!(parse_t3_thread_delegated(&out).unwrap().delegated);
+        let out = run_host_cli(&fast, "t-child", Duration::from_secs(2)).unwrap();
+        assert!(parse_host_thread_delegated(&out).unwrap().delegated);
 
-        let slow = dir.path().join("t3-slow");
+        let slow = dir.path().join("host-slow");
         std::fs::write(&slow, "#!/bin/sh\nsleep 5\n").unwrap();
         std::fs::set_permissions(&slow, std::fs::Permissions::from_mode(0o755)).unwrap();
-        assert!(run_t3_cli(&slow, "t-slow", Duration::from_millis(80)).is_none());
+        assert!(run_host_cli(&slow, "t-slow", Duration::from_millis(80)).is_none());
     }
 }

@@ -1,14 +1,14 @@
-# T3 Code Compatibility & Multi-Profile Agent Integration — Implementation Plan
+# External Host Compatibility & Multi-Profile Agent Integration — Implementation Plan
 
-> **Spec**: [`docs/specs/t3-code-and-multi-profile.md`](../specs/t3-code-and-multi-profile.md)
-> **Worktree**: `/Users/wutian/Developer/HumanInLoop-t3-multi-profile` (branch `feat/t3-multi-profile`)
+> **Spec**: [`docs/specs/agent-profiles-and-host-guards.md`](../specs/agent-profiles-and-host-guards.md)
+> **Worktree**: an isolated Dev Worktree (see [`docs/agent-worktree-setup.md`](../agent-worktree-setup.md))
 > **Constraint**: Do not run live Cursor tests (`D2`). Check `node scripts/machine-health.mjs` before long Rust builds/tests.
 
 ---
 
 ## Phase 1 — L1 Universal Base Fixes
 
-**Goal**: Make transcript resolution, Antigravity ACP surface classification, `agy acp` PID handling, and T3 prompt wrapper cleaning work reliably across all non-default paths and hosts.
+**Goal**: Make transcript resolution, Antigravity ACP surface classification, `agy acp` PID handling, and host prompt wrapper cleaning work reliably across all non-default paths and hosts.
 
 ### Files to Edit
 1. `src-tauri/src/agents/session_paths.rs`
@@ -22,7 +22,7 @@
 4. `src-tauri/src/agents/detect.rs`
    - Add `is_shared_agy_acp(&ProcEntry)` and return `None` from `walk_agent_pid` when matched, preventing D7 same-PID eviction across multiplexed `agy acp` sessions.
 5. `src-tauri/src/agents/transcript_full.rs` & `src-tauri/src/agents/title.rs`
-   - Add pure `strip_host_wrappers()` removing paired `<t3_code_instructions>`, `<t3_code_orchestration>`, `<runtime_info>`, `<ADDITIONAL_METADATA>`, `<system-reminder>` and unwrapping `<USER_REQUEST>` / `<user_query>` / inner `<user_request>`.
+   - Add pure `strip_host_wrappers()` removing the host's paired instruction/orchestration blocks (`HOST_METADATA_TAGS`) plus `<runtime_info>`, `<ADDITIONAL_METADATA>`, `<system-reminder>` and unwrapping `<USER_REQUEST>` / `<user_query>` / inner `<user_request>`.
    - Wire into `clean_user`, `antigravity_first_request`, `grok_first_query`, and Antigravity `USER_INPUT` transcript parsing.
    - Update `title::transcript_path` (and `antigravity_transcript_in` / `paths::antigravity_brain_dirs_in`) to check `session_paths::get` first and include `antigravity-acp` alongside `antigravity` and `antigravity-cli`.
 6. `src-tauri/src/agents/stop.rs` & `src-tauri/src/mcp/ask.rs`
@@ -34,19 +34,19 @@
 
 ---
 
-## Phase 2 — L2 Multi-Profile Backend, T3 Discovery, CLI & Doctor
+## Phase 2 — L2 Multi-Profile Backend, Isolated-Home Discovery, CLI & Doctor
 
-**Goal**: Support extra config directories across all 6 agents with shared mode/capabilities, per-profile ownership ledgers, conflict/missing-root isolation, read-only T3 Antigravity auto-discovery, and full CLI/doctor support.
+**Goal**: Support extra config directories across all 6 agents with shared mode/capabilities, per-profile ownership ledgers, conflict/missing-root isolation, read-only isolated Antigravity home auto-discovery, and full CLI/doctor support.
 
 ### Files to Create / Edit
 1. `src-tauri/src/paths.rs`
-   - Add `agent_profiles_file()`, `antigravity_extra_plugin_ledger_in(config_dir, profile_id)`, `t3_antigravity_providers_dir_in(home)`.
+   - Add `agent_profiles_file()` and `antigravity_extra_plugin_ledger_in(config_dir, profile_id)`.
    - Add panic-safe thread-local RAII guard `with_agent_root(kind, root, f)` + `active_agent_root(kind)` subordinate to `development::session::directory_for(kind)`.
    - Ensure `claude_json()` returns `<root>/.claude.json` when `Claude` override is active.
 2. `src-tauri/src/integrations/agent_profiles.rs` (new module) & `src-tauri/src/integrations/mod.rs`
    - `AgentProfilesStore` (`~/.askhuman/agent-profiles.json`, version 1): `ProfileEntry`, `DismissedEntry`, `DiscoveredProfile`, `ExtraProfileStatus`, `ProfileSyncOutcome`.
    - Deterministic `profile_id` generation, root validation & Antigravity `/config` normalization (`P1`), duplicate/primary equivalence rejection.
-   - Read-only `discover_t3_antigravity_in(home)` scanner (bounded 64 entries, Unix only, excludes enrolled & dismissed).
+   - Read-only `discover_isolated_homes_in(home, store)` scanner (bounded 64 entries, Unix only, excludes enrolled & dismissed).
    - CRUD + reconcile orchestration: `list`, `add`, `set_enabled`, `remove`, `sync`, `dismiss_discovered`, `reconcile_enabled_profiles_unlocked(target, mode, env)`, `status_for_agent(target, primary_mode)`.
 3. `src-tauri/src/integrations/antigravity_plugin.rs`
    - Expose parameterized `Layout::for_antigravity_root(root, ledger)` + `snapshot_for_root`, `install_for_root`, `uninstall_for_root`, `set_lifecycle_for_root`, `set_stop_for_root`, `host_view_for_root`, `detach_ledger_for_root`.
@@ -61,16 +61,16 @@
    - In `context_recovery.rs` (Codex `has_legacy_block`), honor `CODEX_HOME` if it matches an enabled extra profile.
 7. `src-tauri/src/cli/agents_cmd.rs` & `src-tauri/src/cli/doctor.rs`
    - Add `agents profile <list|add|enable|disable|remove|sync|dismiss>` subcommands with zh/en help and `--json`.
-   - Update `agents show`, `agents cleanup`, and `doctor [--json]` to report/clean extra profiles and surface discovered T3 Antigravity profiles.
+   - Update `agents show`, `agents cleanup`, and `doctor [--json]` to report/clean extra profiles and surface discovered isolated Antigravity homes.
 
 ### Phase 2 Tests
-- Comprehensive unit & tempdir integration tests covering all 6 agents' extra profiles, Claude `.claude.json` placement, Codex per-profile `direct_only` ownership + canonical trust keys, Antigravity multi-profile independent ledgers + conflict + detach, missing root refusal, `Mode::None` retention, partial failure isolation, T3 scanner & dismiss, and CLI parsing/output.
+- Comprehensive unit & tempdir integration tests covering all 6 agents' extra profiles, Claude `.claude.json` placement, Codex per-profile `direct_only` ownership + canonical trust keys, Antigravity multi-profile independent ledgers + conflict + detach, missing root refusal, `Mode::None` retention, partial failure isolation, isolated-home scanner & dismiss, and CLI parsing/output.
 
 ---
 
 ## Phase 3 — L2 Settings UI, Tauri Commands & i18n
 
-**Goal**: Expose discovered T3 Antigravity profiles and manual extra config directories cleanly inside Settings → Agents without cluttering unintegrated cards.
+**Goal**: Expose discovered isolated Antigravity homes and manual extra config directories cleanly inside Settings → Agents without cluttering unintegrated cards.
 
 ### Files to Create / Edit
 1. `src-tauri/src/commands.rs` & `src-tauri/src/app/invoke.rs`
@@ -79,29 +79,29 @@
 2. `src/lib/types.ts` & `src/lib/ipc.ts`
    - Add TypeScript types (`ExtraProfileStatus`, `DiscoveredProfileInfo`) and IPC wrappers.
 3. `src/views/settings/AgentProfilesSection.vue` (new component)
-   - Displays discovered T3 profiles (`Enable` / `Ignore`), configured extra profiles (enable switch, status badge, path, per-profile host hints, `Sync` / `Reveal` / `Remove` / `Forget without deleting`), and `+ Add directory` form (folder picker + manual path input + optional label).
+   - Displays discovered isolated homes (`Enable` / `Ignore`), configured extra profiles (enable switch, status badge, path, per-profile host hints, `Sync` / `Reveal` / `Remove` / `Forget without deleting`), and `+ Add directory` form (folder picker + manual path input + optional label).
 4. `src/views/settings/IntegrationTab.vue`, `src/views/settings/useIntegration.ts`, `src/views/settings/agentCard.ts`, `src/views/settings/settings.css`
    - Surface Antigravity discovered-profile hint banner cleanly.
    - Reflect extra profile `needsUpdate` / `conflict` / `rootMissing` in `agentCard.ts` (`hasUpdate`, `agentTags`, `needsAction`) and "Update all" overview.
    - Wire profile actions with busy/error feedback and refresh.
 5. `src/i18n/zh.ts` & `src/i18n/en.ts`
-   - Add all zh/en strings for extra profiles, T3 discovery hint, conflict/missing-root actions, and tag labels.
+   - Add all zh/en strings for extra profiles, the discovery hint, conflict/missing-root actions, and tag labels.
 
 ### Phase 3 Tests
 - Add/update Vitest suites: `agentCard.test.ts`, `useIntegration.test.ts`, `IntegrationTab.test.ts`, plus `AgentProfilesSection.test.ts`.
 
 ---
 
-## Phase 4 — L3 Host Conflict Guardrails (T3 Delegated Child Threads + Pi RPC)
+## Phase 4 — L3 Host Conflict Guardrails (Delegated Child Sessions + Pi RPC)
 
-**Goal**: Silence AskHuman cleanly inside T3 delegated child threads across all 6 agents and disable conflicting Pi RPC background control.
+**Goal**: Silence AskHuman cleanly inside host-delegated child sessions across all 6 agents and disable conflicting Pi RPC background control.
 
 ### Files to Create / Edit
 1. `src-tauri/src/paths.rs`
-   - Add `t3_threads_cache_dir()` (`state/t3-threads`) and `t3_delegated_marker_dir()` (`state/t3-delegated`).
-2. `src-tauri/src/agents/t3_host.rs` (new module) & `src-tauri/src/agents/mod.rs`
-   - Implement `T3Probes` trait + `System` impl: env check (`T3CODE_THREAD_ID`), thread-id validation, disk cache (24 h TTL / 30 s error TTL + bounded pruning), bounded `t3 thread show --json --messages 0 <id>` subprocess (1.5 s timeout, 256 KiB output limit, fail-open).
-   - Implement session-keyed delegated markers (`record_session`, `marker_silenced`, `silence_reason`) across all 6 `AgentKind` variants.
+   - Add `host_threads_cache_dir()` (`state/host-threads`) and `host_delegated_marker_dir()` (`state/host-delegated`).
+2. `src-tauri/src/agents/external_host.rs` (new module) & `src-tauri/src/agents/mod.rs`
+   - Implement the thread lookup: env check (the host's thread-id variable), thread-id validation, disk cache (24 h TTL / 30 s error TTL + bounded pruning), bounded `<host cli> thread show --json --messages 0 <id>` subprocess (1.5 s timeout, 256 KiB output limit, fail-open), with the CLI query injectable for deterministic tests.
+   - Implement session-keyed delegated markers (`classify_and_record_hook`, `marker_silenced`, `env_delegated_reason`) across all 6 `AgentKind` variants.
 3. Wire L3 guards across every AskHuman entrypoint:
    - `src-tauri/src/agents/context_recovery.rs`: Codex & Claude `SessionStart`
    - `src-tauri/src/agents/report.rs`: lifecycle hooks & interjection polling (Claude/Codex/Cursor/Grok/Pi)
@@ -109,16 +109,16 @@
    - `src-tauri/src/agents/stop.rs`: Stop confirmation suppression for all 6 agents
    - `src-tauri/src/permissions.rs`: PermissionRequest suppression for both Claude and Codex
    - `src-tauri/src/ask_question.rs`: Claude `AskUserQuestion` suppression
-   - `src-tauri/src/mcp/ask.rs`: `t3_delegated_guard` across `ask`, `whats_next`, `show_last`, `todo_add`, `todo_update` (env + session-keyed marker)
+   - `src-tauri/src/mcp/ask.rs`: `delegated_child_guard` across `ask`, `whats_next`, `show_last`, `todo_add`, `todo_update` (env + session-keyed marker)
    - `src-tauri/src/cli/mod.rs`: CLI ask / `--whats-next` / `--show-last` / todo-write guard with clear non-retry message + `askhuman_guard` audit
-   - `src-tauri/src/daemon/runtime/failure_confirmation.rs`: suppress failure cards for T3 delegated sessions
+   - `src-tauri/src/daemon/runtime/failure_confirmation.rs`: suppress failure cards for delegated child sessions
 4. `src-tauri/resources/integrations/pi/index.ts`
-   - Add `isExternallyControlled()` checking `T3CODE_THREAD_ID` and `--mode rpc` / `--mode=rpc`.
+   - Add `isExternallyControlled()` checking the host's thread-id variable and `--mode rpc` / `--mode=rpc`.
    - Disable `startControlPolling()` (and `agent_settled` Stop `sendUserMessage` per P7) when externally controlled.
 
 ### Phase 4 Tests
-- Unit tests in `t3_host.rs`, `context_recovery.rs`, `report.rs`, `antigravity_hook.rs`, `stop.rs`, `permissions.rs`, `ask_question.rs`, `mcp/ask.rs`, `failure_confirmation.rs`.
-- Node/Vitest or Rust-driven JS test verifying Pi extension `isExternallyControlled()` detection and control-polling skip under `--mode rpc`, `--mode=rpc`, `T3CODE_THREAD_ID`, and normal interactive invocation.
+- Unit tests in `external_host.rs`, `context_recovery.rs`, `report.rs`, `antigravity_hook.rs`, `stop.rs`, `permissions.rs`, `ask_question.rs`, `mcp/ask.rs`, `failure_confirmation.rs`.
+- Node/Vitest or Rust-driven JS test verifying Pi extension `isExternallyControlled()` detection and control-polling skip under `--mode rpc`, `--mode=rpc`, the host's thread-id variable, and normal interactive invocation.
 
 ---
 
@@ -127,8 +127,8 @@
 **Goal**: Verify all code end-to-end inside the isolated Dev Worktree without touching real user configs or running Cursor.
 
 ### Steps
-1. **Enable Dev Instance in worktree** (`docs/agent-worktree-setup.md`):
-   - Inside `/Users/wutian/Developer/HumanInLoop-t3-multi-profile`, run `AskHuman dev enable` (and optionally `./scripts/seed-worktree-target.sh`).
+1. **Enable Dev Instance in the worktree** (`docs/agent-worktree-setup.md`):
+   - Inside the Dev Worktree, run `AskHuman dev enable` (and optionally `./scripts/seed-worktree-target.sh`).
 2. **Machine health check (`AGENTS.md`)**:
    - Run `node scripts/machine-health.mjs` before cargo/npm builds & tests.
 3. **Automated verification**:
@@ -136,14 +136,14 @@
    - `cargo clippy --all-targets -- -D warnings`
    - `npm test` (Vitest frontend + settings tests) & `npm run build` / `vue-tsc`
 4. **Build & install into Dev Instance**:
-   - Run `./scripts/install.sh` inside `/Users/wutian/Developer/HumanInLoop-t3-multi-profile`.
+   - Run `./scripts/install.sh` inside the Dev Worktree.
    - Verify Dev daemon via `node scripts/dev.mjs ask` (ordinary discussion continues on System daemon).
-5. **Isolated E2E probes (zero mutation to real `~/.gemini` / `~/.t3`; NO Cursor)**:
+5. **Isolated E2E probes (zero mutation to real `~/.gemini` or the host's data directory; NO Cursor)**:
    - **Antigravity ACP E2E**: Create `/tmp` fake Antigravity home, enroll via Dev CLI `agents profile add antigravity <tmp>`, switch mode to MCP, run isolated `agy acp --gemini-dir <tmp> --app-data-dir antigravity-acp`, verify plugin load, `Surface::Acp`, transcript/title/activity/Stop last-message resolution, then remove profile and confirm clean removal.
    - **Codex / Claude / Grok / Pi isolated profile E2E**: Enroll temp roots for each, verify artifact sync, Codex trust keys + per-profile `direct_only`, Claude `<root>/.claude.json`, Grok `skills/` + `config.toml` + `hooks/`, Pi `extensions/askhuman/index.ts` under `--mode rpc` (confirming zero `__agent-control` polling).
-   - **T3 child-thread silence E2E**: Verify current real T3 main thread is NOT silenced (`parentThreadId: null`); verify simulated child thread (`T3CODE_CLI_PATH=<mock>` returning `parentThreadId: "parent-1"`) IS silenced across CLI, MCP, Stop, Permission, AskUserQuestion, and lifecycle hooks with `askhuman_guard` logs.
-   - **Settings UI check**: Open Dev Settings (`node scripts/dev.mjs ui`) and verify Antigravity T3 discovery card, manual profile add/sync/remove, conflict banner, and zh/en copy.
+   - **Child-session silence E2E**: Verify the current real main thread is NOT silenced (`parentThreadId: null`); verify a simulated child thread (the CLI-path variable pointing at a mock returning `parentThreadId: "parent-1"`) IS silenced across CLI, MCP, Stop, Permission, AskUserQuestion, and lifecycle hooks with `askhuman_guard` logs.
+   - **Settings UI check**: Open Dev Settings (`node scripts/dev.mjs ui`) and verify the Antigravity isolated-home discovery card, manual profile add/sync/remove, conflict banner, and zh/en copy.
 6. **Documentation boundary check (`AGENTS.md`)**:
-   - Update `docs/PROGRESS.md` if any follow-up (e.g. `t3 thread` control plane) should be tracked.
+   - Update `docs/PROGRESS.md` if any follow-up (e.g. host control-plane integration) should be tracked.
    - Check `docs/overview.md` and `docs/specs/antigravity-deep-integration.md` — update only if repository-wide invariants or Antigravity plugin/surface descriptions became inaccurate.
 7. **Final review & handoff via `AskHuman --caller-agent antigravity`**.

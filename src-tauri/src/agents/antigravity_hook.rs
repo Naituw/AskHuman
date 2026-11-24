@@ -66,7 +66,7 @@ pub enum Surface {
     App,
     /// The `agy` command line (`~/.gemini/antigravity-cli/…`).
     Cli,
-    /// An ACP server (`<gemini_root>/antigravity-acp/…`, such as T3 Code).
+    /// An ACP server (`<gemini_root>/antigravity-acp/…`), as an external host runs it.
     Acp,
     /// The IDE and its extension (`~/.gemini/antigravity-ide/…`); not supported.
     Ide,
@@ -79,7 +79,7 @@ pub fn surface(transcript_path: Option<&str>) -> Surface {
     };
     let components: Vec<&str> = path.split(['/', '\\']).filter(|c| !c.is_empty()).collect();
     // Prefer the component directly before `brain`, because an outer provider path (such as
-    // `~/.t3/userdata/providers/antigravity/<hash>/antigravity-acp/brain/...`) can also contain
+    // `<host data>/providers/antigravity/<hash>/antigravity-acp/brain/...`) can also contain
     // `"antigravity"` as a parent folder name.
     if let Some(brain_idx) = components
         .iter()
@@ -342,10 +342,10 @@ pub fn run(args: &[String]) {
     };
     if let Some(session_id) = text(&input, "conversationId") {
         if let Some(reason) =
-            super::t3_host::classify_and_record_hook(AgentKind::Antigravity, session_id)
+            super::external_host::classify_and_record_hook(AgentKind::Antigravity, session_id)
         {
             if event == HookEvent::SessionStart {
-                super::t3_host::log_suppressed(
+                super::external_host::log_suppressed(
                     "lifecycle_hook",
                     Some(AgentKind::Antigravity.as_str()),
                     Some(session_id),
@@ -463,8 +463,8 @@ mod tests {
     }
 
     #[test]
-    fn t3_antigravity_acp_path_is_classified_as_acp_and_reported() {
-        let path = "/Users/u/.t3/userdata/providers/antigravity/ac0a3dfd/antigravity-acp/brain/4e200329-9002-48ef-9a74-faf0704f25d4/.system_generated/logs/transcript_full.jsonl";
+    fn host_antigravity_acp_path_is_classified_as_acp_and_reported() {
+        let path = "/Users/u/host-data/providers/antigravity/ac0a3dfd/antigravity-acp/brain/4e200329-9002-48ef-9a74-faf0704f25d4/.system_generated/logs/transcript_full.jsonl";
         assert_eq!(surface(Some(path)), Surface::Acp);
         let payload = json!({
             "conversationId": "4e200329-9002-48ef-9a74-faf0704f25d4",

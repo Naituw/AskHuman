@@ -445,7 +445,7 @@ export function useIntegration(
     agent: AgentId,
     root: string,
     label?: string,
-    source?: "t3_discovered" | "manual",
+    source?: "discovered" | "manual",
   ) {
     if (modeBusy.value[agent]) return;
     modeBusy.value[agent] = true;

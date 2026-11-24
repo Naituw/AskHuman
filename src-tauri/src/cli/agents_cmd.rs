@@ -910,8 +910,8 @@ fn print_profiles_summary(
             "  {}:",
             cfgio::t(
                 lang,
-                "discovered T3 directories (not yet enabled)",
-                "发现的 T3 目录（尚未启用）"
+                "discovered isolated directories (not yet enabled)",
+                "发现的隔离目录（尚未启用）"
             )
         ));
         for d in &discovered {
@@ -979,7 +979,7 @@ fn profile_help(lang: Lang) -> String {
   agents profile disable <agent> <id|path> [--detach] Uninstall managed files and disable\n\
   agents profile remove <agent> <id|path> [--detach]  Uninstall (or detach) and remove entry\n\
   agents profile sync <agent> [<id|path>]             Reconcile one or all enabled extra directories\n\
-  agents profile dismiss <agent> <path>               Ignore a discovered T3 directory",
+  agents profile dismiss <agent> <path>               Ignore a discovered isolated directory",
         "AskHuman agents profile —— 管理额外 Agent 配置目录\n\
 \n\
   agents profile list [<agent>] [--json]              列出已配置与自动发现的目录\n\
@@ -988,7 +988,7 @@ fn profile_help(lang: Lang) -> String {
   agents profile disable <agent> <id|路径> [--detach] 卸载托管产物并停用\n\
   agents profile remove <agent> <id|路径> [--detach]  卸载（或仅取消托管）并删除条目\n\
   agents profile sync <agent> [<id|路径>]             同步单个或全部已启用额外目录\n\
-  agents profile dismiss <agent> <路径>               忽略已发现的 T3 目录",
+  agents profile dismiss <agent> <路径>               忽略已发现的隔离目录",
     )
 }
 
@@ -1277,7 +1277,7 @@ fn help(lang: Lang) -> String {
   agents stop <claude|codex|cursor|grok|pi|antigravity> [on|off]  Query or set completion/error confirmation\n\
   agents delegated codex [on|off]    Query or set whether delegated Codex runs (codex exec, review, plugins) may use AskHuman (on = allow; default off = silent)\n\
   agents lifecycle <agent> [on|off]  Query or set lifecycle tracking inside an active integration\n\
-  agents profile <list|add|enable|disable|remove|sync|dismiss> ...  Manage extra config directories (e.g. T3 Code Antigravity, custom CODEX_HOME)\n\
+  agents profile <list|add|enable|disable|remove|sync|dismiss> ...  Manage extra config directories (e.g. an isolated Antigravity home, custom CODEX_HOME)\n\
   agents cleanup                     Remove every AskHuman-managed Agent artifact\n\
   agents sidecars [list [--json]|remove <id>|remove --all]  The Antigravity App sidecars AskHuman keeps for starting tasks\n\
   agents show [<agent>]              Manual-integration prompt + paste paths + install status\n\
@@ -1298,7 +1298,7 @@ fn help(lang: Lang) -> String {
   agents stop <claude|codex|cursor|grok|pi|antigravity> [on|off]  查询或设置结束／出错确认\n\
   agents delegated codex [on|off]    查询或设置被委派的 Codex 运行（codex exec、review、插件等）是否可使用 AskHuman（on = 允许；默认 off = 静默）\n\
   agents lifecycle <agent> [on|off]  查询或设置已启用集成内的生命周期追踪\n\
-  agents profile <list|add|enable|disable|remove|sync|dismiss> ...  管理额外配置目录（如 T3 Code Antigravity、自定义 CODEX_HOME）\n\
+  agents profile <list|add|enable|disable|remove|sync|dismiss> ...  管理额外配置目录（如隔离的 Antigravity 目录、自定义 CODEX_HOME）\n\
   agents cleanup                     移除全部由 AskHuman 托管的 Agent 产物\n\
   agents sidecars [list [--json]|remove <id>|remove --all]  AskHuman 为启动任务在 Antigravity App 里保留的 sidecar\n\
   agents show [<agent>]              手动集成提示词 + 粘贴位置 + 安装状态\n\

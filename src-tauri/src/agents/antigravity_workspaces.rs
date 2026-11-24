@@ -19,7 +19,7 @@ const MAX_ROWS: usize = 300;
 const MAX_FOLDERS_BYTES: usize = 16 * 1024;
 
 /// The folders of the recent conversations of both products (plus enabled extra Antigravity
-/// profiles such as T3 Code ACP homes, spec P8), with the time each was last used (Unix seconds).
+/// profiles such as an external host's ACP homes, spec P8), with the time each was last used (Unix seconds).
 pub(crate) fn recent_workspaces() -> Vec<(PathBuf, u64)> {
     let mut latest = HashMap::<PathBuf, u64>::new();
     for (folder, used) in recent_workspaces_in(&crate::paths::integration_home()) {

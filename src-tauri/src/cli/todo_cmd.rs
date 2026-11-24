@@ -20,25 +20,25 @@ pub fn dispatch(args: &[String], lang: Lang) -> ! {
     crate::todo_sync::service::before_read(&project);
     match args.first().map(String::as_str) {
         Some("add") => {
-            guard_t3_delegated_todo("todo_add");
+            guard_delegated_todo("todo_add");
             add(&project, &args[1..], lang)
         }
         // 无子命令时默认 list（顺手查看）。
         Some("list") | None => list(&project, lang),
         Some("rm") => {
-            guard_t3_delegated_todo("todo_rm");
+            guard_delegated_todo("todo_rm");
             rm(&project, &args[1..], lang)
         }
         Some("attach") => {
-            guard_t3_delegated_todo("todo_attach");
+            guard_delegated_todo("todo_attach");
             attach(&project, &args[1..], lang)
         }
         Some("detach") => {
-            guard_t3_delegated_todo("todo_detach");
+            guard_delegated_todo("todo_detach");
             detach(&project, &args[1..], lang)
         }
         Some("clear") => {
-            guard_t3_delegated_todo("todo_clear");
+            guard_delegated_todo("todo_clear");
             clear(&project, &args[1..], lang)
         }
         Some(other) => {
@@ -52,13 +52,13 @@ pub fn dispatch(args: &[String], lang: Lang) -> ! {
     }
 }
 
-fn guard_t3_delegated_todo(tool: &'static str) {
-    if let Some(reason) = crate::agents::t3_host::env_delegated_reason() {
+fn guard_delegated_todo(tool: &'static str) {
+    if let Some(reason) = crate::agents::external_host::env_delegated_reason() {
         let agent = super::caller_agent_hint()
             .or_else(crate::agents::detect::detect_invoking_agent)
             .map(|k| k.as_str());
-        crate::agents::t3_host::log_suppressed("cli_todo", agent, None, Some(tool), reason);
-        eprintln!("{}", crate::agents::t3_host::DELEGATED_MESSAGE);
+        crate::agents::external_host::log_suppressed("cli_todo", agent, None, Some(tool), reason);
+        eprintln!("{}", crate::agents::external_host::DELEGATED_MESSAGE);
         exit(2);
     }
 }

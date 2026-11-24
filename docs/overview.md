@@ -237,7 +237,7 @@ AskHuman/
         mcp_config.rs        五家 MCP server 配置管理
         pi_extension.rs      Pi CLI/生命周期/插话/Stop 共用 Extension 管理
         agent_mode.rs        None/CLI/MCP 模式编排
-        agent_profiles.rs    六家 Agent 额外配置目录（agent-profiles.json）、T3 Antigravity 只读自动发现与独立账本同步
+        agent_profiles.rs    六家 Agent 额外配置目录（agent-profiles.json）、外部宿主 Antigravity 隔离目录只读自动发现与独立账本同步
         agent_stop.rs        Agent Stop 结束确认配置
         antigravity_sidecars.rs  `agents sidecars [list|remove <id>|remove --all]`：AskHuman 为 Antigravity App 管理的 sidecar；另有不进 help 的 `__antigravity-desktop`（stdin JSON 的 `Operation`）与 `__antigravity-sidecar`（App 起的 sidecar 进程）
         login_item.rs        macOS/Linux/Windows GUI Host 与 daemon 登录项
@@ -297,7 +297,7 @@ AskHuman/
         session_info.rs      原生工作区 / 模型 / 上下文与 Hook 私有快照
         activity.rs          transcript 尾部活动解析
         session_paths.rs     六家 Agent 自定义与额外配置目录的 transcript 路径结构校验与缓存
-        t3_host.rs           T3 Code 委派子线程检测、有界 CLI 缓存与跨入口静默标记
+        external_host.rs     外部宿主委派子会话检测、有界 CLI 缓存与跨入口静默标记
         cursor_vscdb.rs      Cursor IDE 会话实时源（state.vscdb；活动/标题/完整会话）
         cursor_log.rs        Cursor 结构化日志的只读尾随（重试用尽、不发 stop 的最终出错）
         cursor_max/          旧按次计费计划下 Cursor Max 模式的判定、强制关闭与启动后复查（规格 cursor-max-control）
@@ -534,7 +534,7 @@ Daemon 里的又一个渠道：手机上的 AskHuman App 回答问题、看 / �
   `docs/specs/codex-delegated-run-silence.md`。
 - 全局交互协议把 Sub Agent 作为唯一例外并禁止其使用 AskHuman；Claude/Codex mode 另带 `SubagentStart` 提示 Hook，Cursor/Grok/Pi/Antigravity 只依赖协议文本。
 - `agents update [<agent>]` 按当前 mode 重新 reconcile 单家或全部托管产物；重复设置相同 mode 也会完整更新，但不改独立保存的 capability 偏好。
-- 多配置目录与 T3 Code 兼容（规格 `docs/specs/t3-code-and-multi-profile.md`）：六家 Agent 均支持经 `agents profile` 或设置页追加额外配置目录（`agent-profiles.json`），与主目录共享模式及 capability 偏好并各自维护独立所有权账本；Unix 上只读扫描 T3 Code Antigravity 隔离目录（`~/.t3/userdata/providers/antigravity/<hash>`），需用户显式启用才写入真实插件目录。T3 Code 委派子线程（`parentThreadId != null || relationshipToParent != null`）在全六家 Agent 的 CLI/MCP/Hook 入口静默（`agents/t3_host.rs`）；Pi Extension 在 `--mode rpc` 或 `T3CODE_THREAD_ID` 下禁用后台控制轮询与 Stop 自动续跑。
+- 多配置目录与外部宿主兼容（规格 `docs/specs/agent-profiles-and-host-guards.md`）：六家 Agent 均支持经 `agents profile` 或设置页追加额外配置目录（`agent-profiles.json`），与主目录共享模式及 capability 偏好并各自维护独立所有权账本；Unix 上只读扫描外部宿主为各 provider 实例创建的 Antigravity 隔离目录，需用户显式启用才写入真实插件目录。外部宿主委派出来的子会话（宿主 CLI 报告它有父线程或父子关系）在全六家 Agent 的 CLI/MCP/Hook 入口静默（`agents/external_host.rs`）；Pi Extension 在 `--mode rpc` 或宿主设置了线程环境变量时禁用后台控制轮询与 Stop 自动续跑。宿主接口的字面量（环境变量名、CLI 与数据目录位置、提示词标签）只作为字符串数据留在 `external_host.rs`、`agent_profiles.rs`、`transcript_full.rs` 与 Pi Extension 里，其余代码与文档不依赖宿主叫什么。
 - `config` 是通用键值兜底，`doctor` 汇总 Daemon、已装二进制、渠道和集成；两者复用同一配置与集成模块，不维护第二套逻辑。`doctor install` 单独检查已装二进制（`install.sh` 装完后调用）。
 
 ## MCP 支持（CLI 之外的第二种集成形态）

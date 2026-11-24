@@ -186,7 +186,7 @@ fn is_shared_app_server(entry: &ProcEntry) -> bool {
     })
 }
 
-/// Identifies a shared `agy acp` process (such as T3 Code's Antigravity provider) that can host
+/// Identifies a shared `agy acp` process (such as an external host's Antigravity provider) that can host
 /// multiple `session/new` conversations under a single PID. Returning `None` from `walk_agent_pid`
 /// avoids same-PID eviction across concurrent ACP sessions.
 fn is_shared_agy_acp(entry: &ProcEntry) -> bool {
@@ -1272,7 +1272,7 @@ mod tests {
             pid: 100,
             ppid: 1,
             comm: "agy".to_string(),
-            command: "/Users/u/.local/bin/agy acp --gemini-dir /Users/u/.t3/userdata/providers/antigravity/abc --app-data-dir antigravity-acp".to_string(),
+            command: "/Users/u/.local/bin/agy acp --gemini-dir /Users/u/host-data/providers/antigravity/abc --app-data-dir antigravity-acp".to_string(),
         };
         assert!(is_shared_agy_acp(&acp));
 

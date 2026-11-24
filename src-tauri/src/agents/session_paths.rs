@@ -1,7 +1,7 @@
 //! Validated runtime transcript-path hints for agents whose session directory is configurable.
 //!
 //! Hooks and MCP metadata can report a conversation's transcript path when an agent runs under a
-//! non-default configuration root (for example T3 Code's `--gemini-dir ... --app-data-dir
+//! non-default configuration root (for example an external host's `--gemini-dir ... --app-data-dir
 //! antigravity-acp`, custom `CODEX_HOME` / `CLAUDE_CONFIG_DIR` / `GROK_HOME` /
 //! `PI_CODING_AGENT_DIR` / `CURSOR_CONFIG_DIR`). Every path is canonicalized and structurally
 //! verified against the agent's session layout before being cached or read, so an untrusted

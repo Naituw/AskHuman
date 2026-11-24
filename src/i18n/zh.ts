@@ -632,7 +632,7 @@ export default {
       profiles: {
         title: "额外配置目录",
         hint: "将当前集成模式与能力开关同步到其他自定义配置目录（例如自定义 CODEX_HOME、CLAUDE_CONFIG_DIR、GROK_HOME、PI_CODING_AGENT_DIR 或 CURSOR_CONFIG_DIR）。",
-        antigravityHint: "将相同的 AskHuman 插件同步到额外的隔离 Antigravity 目录（如 T3 Code 隔离登录目录）。自动发现的目录不会静默写入，需你显式勾选启用。",
+        antigravityHint: "将相同的 AskHuman 插件同步到额外的隔离 Antigravity 目录（如外部宿主为各 provider 创建的隔离登录目录）。自动发现的目录不会静默写入，需你显式勾选启用。",
         addButton: "+ 添加目录",
         discoveredBadge: "新发现",
         enableAction: "启用",
@@ -644,7 +644,7 @@ export default {
         browseAction: "选择文件夹…",
         confirmAddAction: "添加",
         pathPlaceholder: "输入配置目录的绝对路径…",
-        labelPlaceholder: "可选备注（如 T3 Code / 工作）",
+        labelPlaceholder: "可选备注（如 工作 / 测试）",
         state: {
           synced: "已同步",
           outdated: "需更新",

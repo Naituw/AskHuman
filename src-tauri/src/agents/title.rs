@@ -512,7 +512,7 @@ pub(crate) fn antigravity_transcript_in(home: &Path, session_id: &str) -> Option
 }
 
 /// The first request the person typed: the first `USER_INPUT` step the user wrote, with the
-/// `<USER_REQUEST>` and T3 Code wrappers removed. A conversation started by another one (a
+/// `<USER_REQUEST>` and external-host wrappers removed. A conversation started by another one (a
 /// subagent) begins with a system message instead and has no such step.
 fn antigravity_first_request(path: &Path) -> Option<String> {
     let file = fs::File::open(path).ok()?;
@@ -559,7 +559,7 @@ pub(crate) fn transcript_path(kind: AgentKind, session_id: &str) -> Option<PathB
         return Some(path);
     }
     match kind {
-        // The conversation log of the App, `agy`, or enabled extra profiles (such as T3 Code ACP),
+        // The conversation log of the App, `agy`, or enabled extra profiles (such as an external host's ACP homes),
         // found by the id a hook or MCP reported; the activity, latest-text and transcript views
         // all read it.
         AgentKind::Antigravity => antigravity_transcript_in(&paths::integration_home(), session_id)

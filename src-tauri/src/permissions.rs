@@ -74,14 +74,16 @@ pub fn run(agent: Option<&str>) -> Option<String> {
         return None;
     }
     let input: Value = serde_json::from_slice(&bytes).ok()?;
-    // Silence T3 Code delegated child threads for both Claude and Codex (spec L3, P6).
-    let t3_kind = match agent {
+    // Silence an external host's delegated child sessions for both Claude and Codex (spec L3, P6).
+    let host_kind = match agent {
         Agent::Claude => crate::agents::AgentKind::Claude,
         Agent::Codex => crate::agents::AgentKind::Codex,
     };
     let perm_sid = crate::agents::delegated::session_id_of(&input).unwrap_or_default();
-    if let Some(reason) = crate::agents::t3_host::classify_and_record_hook(t3_kind, &perm_sid) {
-        crate::agents::t3_host::log_suppressed(
+    if let Some(reason) =
+        crate::agents::external_host::classify_and_record_hook(host_kind, &perm_sid)
+    {
+        crate::agents::external_host::log_suppressed(
             "permission_hook",
             Some(agent.id()),
             (!perm_sid.is_empty()).then_some(perm_sid.as_str()),

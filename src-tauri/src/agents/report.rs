@@ -55,9 +55,9 @@ pub fn run(args: &[String]) {
     if session_id.is_empty() {
         return;
     }
-    if let Some(reason) = super::t3_host::classify_and_record_hook(intended, &session_id) {
+    if let Some(reason) = super::external_host::classify_and_record_hook(intended, &session_id) {
         if event == super::LifecycleEvent::SessionStart {
-            super::t3_host::log_suppressed(
+            super::external_host::log_suppressed(
                 "lifecycle_hook",
                 Some(intended.as_str()),
                 Some(&session_id),

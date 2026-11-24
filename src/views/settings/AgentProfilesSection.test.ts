@@ -9,15 +9,15 @@ vi.mock("@tauri-apps/plugin-dialog", () => ({
 }));
 
 describe("AgentProfilesSection", () => {
-  it("renders discovered T3 profiles and emits explicit enable / ignore actions", async () => {
+  it("renders discovered isolated homes and emits explicit enable / ignore actions", async () => {
     i18n.global.locale.value = "en";
     const discovered: DiscoveredProfileInfo[] = [
       {
         agent: "antigravity",
-        root: "/Users/test/.t3/userdata/providers/antigravity/ac0a3dfd",
-        displayRoot: "~/.t3/userdata/providers/antigravity/ac0a3dfd",
-        label: "T3 Code (antigravity)",
-        source: "t3_discovered",
+        root: "/Users/test/host-data/providers/antigravity/ac0a3dfd",
+        displayRoot: "~/host-data/providers/antigravity/ac0a3dfd",
+        label: "antigravity",
+        source: "discovered",
       },
     ];
     const wrapper = mount(AgentProfilesSection, {
@@ -26,17 +26,17 @@ describe("AgentProfilesSection", () => {
     });
 
     const row = wrapper.get(`[data-testid="discovered-profile-${discovered[0].root}"]`);
-    expect(row.text()).toContain("T3 Code (antigravity)");
+    expect(row.text()).toContain("antigravity");
     const pathEl = row.get(".agent-path");
-    expect(pathEl.text()).toBe("~/.t3/userdata/providers/antigravity/ac0a3dfd");
+    expect(pathEl.text()).toBe("~/host-data/providers/antigravity/ac0a3dfd");
     expect(pathEl.attributes("title")).toBe(discovered[0].root);
 
     const buttons = row.findAll("button");
     await buttons[0].trigger("click");
     expect(wrapper.emitted("add")?.[0]).toEqual([
       discovered[0].root,
-      "T3 Code (antigravity)",
-      "t3_discovered",
+      "antigravity",
+      "discovered",
     ]);
 
     await buttons[1].trigger("click");

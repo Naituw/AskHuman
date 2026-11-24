@@ -59,8 +59,8 @@ fn run_inner(args: &[String]) -> Option<Value> {
     if session_id.is_empty() {
         return None;
     }
-    if let Some(reason) = super::t3_host::classify_and_record_hook(kind, &session_id) {
-        super::t3_host::log_suppressed(
+    if let Some(reason) = super::external_host::classify_and_record_hook(kind, &session_id) {
+        super::external_host::log_suppressed(
             "stop_confirmation",
             Some(kind.as_str()),
             Some(&session_id),
@@ -371,8 +371,8 @@ fn normalize_last_assistant_message(raw: Option<&str>) -> LastAssistantMessage {
 }
 
 /// The agent's last reply, read from the conversation log. Prefers a structurally validated
-/// `transcriptPath` from the hook payload (covering isolated ACP homes such as T3 Code even inside
-/// this short-lived hook process), and falls back to looking up the log by conversation id.
+/// `transcriptPath` from the hook payload (covering isolated ACP homes an external host runs even
+/// inside this short-lived hook process), and falls back to looking up the log by conversation id.
 fn antigravity_last_message(input: &Value) -> Option<String> {
     antigravity_last_message_with(input, &|id| {
         if let Some(raw) = input

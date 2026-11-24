@@ -29,8 +29,8 @@ pub fn run(args: &[String]) {
     }
     let input = super::report::read_stdin_json();
     let session_id = super::report::resolve_session_id(kind, &env, input.as_ref());
-    if let Some(reason) = super::t3_host::classify_and_record_hook(kind, &session_id) {
-        super::t3_host::log_suppressed(
+    if let Some(reason) = super::external_host::classify_and_record_hook(kind, &session_id) {
+        super::external_host::log_suppressed(
             "protocol_hook",
             Some(kind.as_str()),
             (!session_id.is_empty()).then_some(session_id.as_str()),

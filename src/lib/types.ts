@@ -1619,11 +1619,11 @@ export interface AgentModeStatus {
   mcpGrant: boolean | null;
   /** Configured extra config directories for this agent. */
   profiles?: ExtraProfileStatus[];
-  /** Un-enrolled directories discovered on disk (currently T3 Code Antigravity homes). */
+  /** Un-enrolled directories discovered on disk (currently an external host's isolated Antigravity homes). */
   discoveredProfiles?: DiscoveredProfileInfo[];
 }
 
-export type ProfileSource = "t3_discovered" | "manual";
+export type ProfileSource = "discovered" | "manual";
 
 export type ExtraProfileState =
   | "synced"

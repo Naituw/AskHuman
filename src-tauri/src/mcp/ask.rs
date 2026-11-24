@@ -269,19 +269,20 @@ fn codex_thread_guard_with(
     (action == "suppressed").then(|| CallToolResult::error(vec![ContentBlock::text(message)]))
 }
 
-/// Runtime guard silencing MCP calls from T3 Code delegated child threads across all agents
-/// (spec `t3-code-and-multi-profile`, L3 / P6). Checks both the MCP server's own environment
-/// (`T3CODE_THREAD_ID`) and the session-keyed marker written by hooks (for shared MCP processes).
-fn t3_delegated_guard(
+/// Runtime guard silencing MCP calls from an external host's delegated child sessions across all
+/// agents (spec `agent-profiles-and-host-guards`, L3 / P6). Checks both the MCP server's own
+/// environment (the host's thread-id variable) and the session-keyed marker written by hooks
+/// (for shared MCP processes).
+fn delegated_child_guard(
     binding: Option<&crate::context_binding::AgentBinding>,
     tool: &str,
 ) -> Option<CallToolResult> {
-    let reason = crate::agents::t3_host::env_delegated_reason().or_else(|| {
+    let reason = crate::agents::external_host::env_delegated_reason().or_else(|| {
         let binding = binding?;
         let kind = crate::agents::AgentKind::parse(&binding.agent_kind)?;
-        crate::agents::t3_host::marker_silenced(kind, &binding.session_id)
+        crate::agents::external_host::marker_silenced(kind, &binding.session_id)
     })?;
-    crate::agents::t3_host::log_suppressed(
+    crate::agents::external_host::log_suppressed(
         "mcp_tool",
         binding.map(|b| b.agent_kind.as_str()),
         binding.map(|b| b.session_id.as_str()),
@@ -289,7 +290,7 @@ fn t3_delegated_guard(
         reason,
     );
     Some(CallToolResult::error(vec![ContentBlock::text(
-        crate::agents::t3_host::DELEGATED_MESSAGE,
+        crate::agents::external_host::DELEGATED_MESSAGE,
     )]))
 }
 
@@ -594,7 +595,7 @@ earlier answer — follow its instructions). Answers to multiple questions come 
                 &public_arguments,
             )
             .await;
-        if let Some(blocked) = t3_delegated_guard(binding.as_ref(), "ask") {
+        if let Some(blocked) = delegated_child_guard(binding.as_ref(), "ask") {
             return Ok(blocked);
         }
         let argv = build_argv(&params);
@@ -684,7 +685,7 @@ Cursor has one user-enabled exception: an automatic status receipt beginning wit
                 &public_arguments,
             )
             .await;
-        if let Some(blocked) = t3_delegated_guard(binding.as_ref(), "whats_next") {
+        if let Some(blocked) = delegated_child_guard(binding.as_ref(), "whats_next") {
             return Ok(blocked);
         }
         let argv = build_whats_next_argv(&params);
@@ -766,7 +767,7 @@ summarization/compaction, or whenever prior AskHuman details are uncertain. Opti
                 &public_arguments,
             )
             .await;
-        if let Some(blocked) = t3_delegated_guard(binding.as_ref(), "show_last") {
+        if let Some(blocked) = delegated_child_guard(binding.as_ref(), "show_last") {
             return Ok(blocked);
         }
         let transcript = binding.as_ref().map(|b| crate::show_last::TranscriptHint {
@@ -822,7 +823,7 @@ stable todo ID, 1-based index, stored text, and attachment IDs on success.",
                 &todo_arguments_value(&params),
             )
             .await;
-        if let Some(blocked) = t3_delegated_guard(binding.as_ref(), "todo_add") {
+        if let Some(blocked) = delegated_child_guard(binding.as_ref(), "todo_add") {
             return Ok(blocked);
         }
         let project = self.project_for_binding(binding).await;
@@ -952,7 +953,7 @@ required.",
                 &todo_arguments_value(&params),
             )
             .await;
-        if let Some(blocked) = t3_delegated_guard(binding.as_ref(), "todo_update") {
+        if let Some(blocked) = delegated_child_guard(binding.as_ref(), "todo_update") {
             return Ok(blocked);
         }
         let project = self.project_for_binding(binding).await;

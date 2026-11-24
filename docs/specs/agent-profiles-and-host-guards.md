@@ -1,30 +1,31 @@
-# T3 Code Compatibility & Multi-Profile Agent Integration Specification
+# External Host Compatibility & Multi-Profile Agent Integration Specification
 
 > **Status**: Approved (2026-11-24, all D1–D6 and P1–P9 confirmed).
 > **Scope**: L1 (universal base fixes) + L2 (multi-profile / extra config directory deployment) + L3 (host conflict guardrails).
-> **Out of scope**: `t3 thread` control-plane integration (sending idle messages or creating new threads via T3 CLI), live testing against Cursor.
+> **Out of scope**: Control-plane integration with the host (sending idle messages or creating new threads through the host's CLI), live testing against Cursor.
+> **Vocabulary**: An *external host* is an orchestrator (desktop or web app) that launches agents on the user's behalf. A *delegated child session* is a session the host spawned for another (parent) thread, with no human attending it directly. An *isolated config home* is a per-instance agent config directory the host creates for the agents it launches. The host's own interface strings (environment variable names, CLI and data-directory locations, prompt wrapper tags) live as data in four code locations only — see §4.3.4 — and nowhere else.
 
 ---
 
 ## 1. Background & Problem Statement
 
-T3 Code (`t3`, desktop & web orchestrator) hosts all six agents AskHuman integrates with: **Antigravity** (`agy acp`), **Codex** (`codex app-server`), **Claude Code**, **Cursor**, **Grok** (`grok agent stdio`), and **Pi** (`pi --mode rpc`).
+An external host can launch all six agents AskHuman integrates with: **Antigravity** (`agy acp`), **Codex** (`codex app-server`), **Claude Code**, **Cursor**, **Grok** (`grok agent stdio`), and **Pi** (`pi --mode rpc`).
 
-Running these agents inside T3 Code — or under any isolated/custom configuration directory (`GEMINI_HOME`, `CODEX_HOME`, `CLAUDE_CONFIG_DIR`, `GROK_HOME`, `PI_CODING_AGENT_DIR`, `CURSOR_CONFIG_DIR`) — exposes three classes of defects in AskHuman:
+Running these agents inside such a host — or under any isolated/custom configuration directory (`GEMINI_HOME`, `CODEX_HOME`, `CLAUDE_CONFIG_DIR`, `GROK_HOME`, `PI_CODING_AGENT_DIR`, `CURSOR_CONFIG_DIR`) — exposes three classes of defects in AskHuman:
 
 1. **Universal base assumptions break under non-default paths and wrappers (L1)**:
-   - `paths::antigravity_brain_dirs_in` and `title::antigravity_transcript_in` only look inside `~/.gemini/{antigravity,antigravity-cli}/brain/`, and `daemon/runtime/mod.rs` only persists hook-supplied `transcript_path` for `AgentKind::Pi`. Any Antigravity session under `--gemini-dir <custom> --app-data-dir antigravity-acp` (such as T3 Code) or any other agent running under a custom config root loses titles, Watch/activity, `/transcript`, Stop last-message display, and Antigravity subagent tree folding.
-   - `antigravity_hook::surface()` matches the substring `"antigravity"` anywhere in the path, misclassifying `~/.t3/userdata/providers/antigravity/<hash>/antigravity-acp/...` as `Surface::App`.
+   - `paths::antigravity_brain_dirs_in` and `title::antigravity_transcript_in` only look inside `~/.gemini/{antigravity,antigravity-cli}/brain/`, and `daemon/runtime/mod.rs` only persists hook-supplied `transcript_path` for `AgentKind::Pi`. Any Antigravity session under `--gemini-dir <custom> --app-data-dir antigravity-acp` (as an external host launches it) or any other agent running under a custom config root loses titles, Watch/activity, `/transcript`, Stop last-message display, and Antigravity subagent tree folding.
+   - `antigravity_hook::surface()` matches the substring `"antigravity"` anywhere in the path, misclassifying `<host data>/providers/antigravity/<hash>/antigravity-acp/...` as `Surface::App`.
    - `detect.rs` treats `agy` as a single-session process (`walk_agent_pid` returns its PID). Because one `agy acp` process can multiplex multiple `session/new` sessions, D7 same-PID eviction can prematurely end live sessions (the same issue Codex hit with `codex app-server`).
-   - T3 Code injects wrapper blocks (`<t3_code_instructions>`, `<t3_code_orchestration>`, `<runtime_info>`, `<ADDITIONAL_METADATA>`, and nested `<user_request>`) into user turns across agents, polluting session titles and `/transcript` output (and causing `is_injected_block` to drop the entire first turn in Cursor transcripts).
+   - The host injects wrapper blocks (its own instruction and orchestration tags, plus `<runtime_info>`, `<ADDITIONAL_METADATA>`, and a nested `<user_request>`) into user turns across agents, polluting session titles and `/transcript` output (and causing `is_injected_block` to drop the entire first turn in Cursor transcripts).
 
-2. **Single-root integration misses isolated provider homes (L2)**:
-   - T3 Code launches Antigravity with `--gemini-dir ~/.t3/userdata/providers/antigravity/<sha256(instanceId)> --app-data-dir antigravity-acp` and `GEMINI_HOME=<that dir>`. Its `<hash>/config/` does not inherit `~/.gemini/config/plugins/askhuman/`, so Antigravity inside T3 Code receives zero AskHuman rules, MCP server declarations, or lifecycle/Stop hooks.
+2. **Single-root integration misses isolated config homes (L2)**:
+   - A host launches Antigravity with `--gemini-dir <host data>/providers/antigravity/<sha256(instanceId)> --app-data-dir antigravity-acp` and `GEMINI_HOME=<that dir>`. Its `<hash>/config/` does not inherit `~/.gemini/config/plugins/askhuman/`, so Antigravity inside the host receives zero AskHuman rules, MCP server declarations, or lifecycle/Stop hooks.
    - Users running multiple profiles or isolated config roots for Codex (`CODEX_HOME`), Claude (`CLAUDE_CONFIG_DIR`), Grok (`GROK_HOME`), Pi (`PI_CODING_AGENT_DIR`), Cursor (`CURSOR_CONFIG_DIR`), or Antigravity (`GEMINI_HOME`) currently have no way to sync AskHuman integrations to extra config directories without manually copying files.
 
-3. **Host orchestration conflicts when T3 Code owns delegation and RPC control (L3)**:
-   - T3 Code spawns delegated child threads (`delegate_task` → child thread with `parentThreadId != null`) using the same provider config directory as interactive parent threads. Static rule files, MCP tools, Stop confirmation, PermissionRequest, Claude `AskUserQuestion` takeover, failure cards, and lifecycle notifications would otherwise fire on unattended child threads.
-   - Pi's managed extension (`resources/integrations/pi/index.ts`) runs `startControlPolling()` unconditionally whenever `lifecycle || stop` is enabled, calling `pi.sendUserMessage()` while idle. In `pi --mode rpc` (which T3 Code drives over stdio JSON-RPC), `ctx.hasUI` remains `true`, so background `sendUserMessage()` calls race with T3 Code's RPC session state.
+3. **Host orchestration conflicts when the host owns delegation and RPC control (L3)**:
+   - A host spawns delegated child threads (a delegate-task call creates a child thread with `parentThreadId != null`) using the same provider config directory as interactive parent threads. Static rule files, MCP tools, Stop confirmation, PermissionRequest, Claude `AskUserQuestion` takeover, failure cards, and lifecycle notifications would otherwise fire on unattended child threads.
+   - Pi's managed extension (`resources/integrations/pi/index.ts`) runs `startControlPolling()` unconditionally whenever `lifecycle || stop` is enabled, calling `pi.sendUserMessage()` while idle. In `pi --mode rpc` (which the host drives over stdio JSON-RPC), `ctx.hasUI` remains `true`, so background `sendUserMessage()` calls race with the host's RPC session state.
 
 ---
 
@@ -34,19 +35,19 @@ All probes below were executed in isolated `/tmp` directories (cleaned up afterw
 
 | ID | Agent / Host | Verified Fact | Confidence |
 | --- | --- | --- | --- |
-| E1 | T3 Code → Antigravity | T3 launches `agy acp --gemini-dir ~/.t3/userdata/providers/antigravity/<hash> --app-data-dir antigravity-acp` with `GEMINI_HOME=<hash>`, `AGY_ACP_FORCE_FILE_STORAGE=1`, `T3CODE_THREAD_ID`, `T3CODE_CLI_PATH`. No `--sandbox` flag; CLI `AskHuman` reaches `~/.askhuman/daemon.sock`. | Verified |
-| E2 | T3 Code Antigravity dir | `<hash>/config/` contains `config.json`, `mcp_config.json` (empty), `projects/`, and symlink `skills -> ~/.gemini/config/skills`. No `plugins/`, `rules/`, or `hooks.json`. | Verified |
+| E1 | External host → Antigravity | The host launches `agy acp --gemini-dir <host data>/providers/antigravity/<hash> --app-data-dir antigravity-acp` with `GEMINI_HOME=<hash>`, `AGY_ACP_FORCE_FILE_STORAGE=1`, plus a thread-id variable and a CLI-path variable. No `--sandbox` flag; CLI `AskHuman` reaches `~/.askhuman/daemon.sock`. | Verified |
+| E2 | Host's Antigravity dir | `<hash>/config/` contains `config.json`, `mcp_config.json` (empty), `projects/`, and symlink `skills -> ~/.gemini/config/skills`. No `plugins/`, `rules/`, or `hooks.json`. | Verified |
 | E3 | `agy acp` plugin loading | Real directory `<gemini_root>/config/plugins/askhuman/` loads `rules/AGENTS.md`, `mcp_config.json` (`askhuman_mcp`), and `hooks.json` without `trustedWorkspaces`. | Verified (isolated `/tmp` `agy acp`, Flash Low) |
-| E4 | `agy acp` MCP merge | ACP `session/new` `mcpServers` (e.g. `t3-code`) **merges** with plugin `mcp_config.json`; neither overwrites the other. | Verified |
+| E4 | `agy acp` MCP merge | ACP `session/new` `mcpServers` (e.g. the host's own MCP server) **merges** with plugin `mcp_config.json`; neither overwrites the other. | Verified |
 | E5 | `agy acp` MCP `_meta` | `tools/call` `params._meta` includes `antigravity.google/conversation_id`, `antigravity.google/root_conversation_id`, and `antigravity.google/artifacts_dir` (`<gemini_root>/antigravity-acp/brain/<uuid>`). | Verified |
 | E6 | `agy acp` hooks | `SessionStart`, `PreInvocation` (`injectSteps` injection observed), and `Stop` (`decision: "continue"` observed) all fire without `trustedWorkspaces`, providing `conversationId`, `cwd`, `workspacePaths`, `modelName`, and full `transcriptPath`. | Verified |
 | E7 | `agy acp` multiplexing | One `agy acp` process can create and host multiple `session/new` sessions under the same PID. | Verified |
 | E8 | `grok agent stdio` | Speaks ACP JSON-RPC; runs explicit `phase: "mcp_merge"` merging `$GROK_HOME/config.toml` MCP servers with session `mcpServers`. `GROK_HOME` redirects `skills/`, `config.toml`, and `hooks/`. | Verified (zero-LLM) |
 | E9 | `codex app-server` | `CODEX_HOME=<dir> codex app-server --listen stdio://` redirects `hooks.json` (trust keys use canonical `<CODEX_HOME>/hooks.json:...`) and `config.toml` MCP. | Verified (zero-LLM) |
-| E10 | `pi --mode rpc` | `PI_CODING_AGENT_DIR=<dir> pi --mode rpc --session-dir <dir>` loads `<dir>/extensions/`. **`ctx.hasUI` is STILL `true` in `--mode rpc`**, so RPC detection must inspect `process.argv` / `process.env.T3CODE_THREAD_ID`, never `ctx.hasUI`. | Verified (zero-LLM) |
-| E11 | T3 Code thread metadata | `T3CODE_THREAD_ID` and `T3CODE_CLI_PATH` (`/Users/wutian/.t3/bin/t3`) are present in child env. `t3 thread show --json --messages 0 <id>` completes in ~263 ms and returns `thread.parentThreadId`, `thread.relationshipToParent`, `thread.createdBy`, `thread.providerInstanceId`, `thread.title`. | Verified |
-| E12 | T3 prompt wrappers | Observed in real Antigravity transcript: `<USER_REQUEST>\n<t3_code_instructions>...</t3_code_instructions>\n\n<user_request>...</user_request><runtime_info>...</runtime_info>\n</USER_REQUEST>`. Observed in real Cursor SDK transcript: `<timestamp>...</timestamp>\n<user_query>\n<t3_code_orchestration>...`. | Verified (read-only transcript inspection) |
-| E13 | Unverified items | (a) Whether T3 Code preserves `<hash>/config/plugins/askhuman/` across T3 app restarts/updates (expected yes because `<hash>/config/` holds persistent user config, to be confirmed in Phase 5); (b) live UI behavior of Claude Code / Pi inside T3 Code desktop UI; (c) Cursor live runs (explicitly excluded by D2). | Explicitly unverified |
+| E10 | `pi --mode rpc` | `PI_CODING_AGENT_DIR=<dir> pi --mode rpc --session-dir <dir>` loads `<dir>/extensions/`. **`ctx.hasUI` is STILL `true` in `--mode rpc`**, so RPC detection must inspect `process.argv` / the host's thread-id variable, never `ctx.hasUI`. | Verified (zero-LLM) |
+| E11 | Host thread metadata | The thread-id variable and the CLI-path variable are present in the child env. The host CLI's `thread show --json --messages 0 <id>` completes in ~263 ms and returns `thread.parentThreadId`, `thread.relationshipToParent`, `thread.createdBy`, `thread.providerInstanceId`, `thread.title`. | Verified |
+| E12 | Host prompt wrappers | Observed in a real Antigravity transcript: `<USER_REQUEST>\n<host instruction block>...</host instruction block>\n\n<user_request>...</user_request><runtime_info>...</runtime_info>\n</USER_REQUEST>`. Observed in a real Cursor SDK transcript: `<timestamp>...</timestamp>\n<user_query>\n<host orchestration block>...`. The real tag names are listed in `HOST_METADATA_TAGS` (§4.3.4). | Verified (read-only transcript inspection) |
+| E13 | Unverified items | (a) Whether the host preserves `<hash>/config/plugins/askhuman/` across host app restarts/updates (expected yes because `<hash>/config/` holds persistent user config, to be confirmed in Phase 5); (b) live UI behavior of Claude Code / Pi inside the host's desktop UI; (c) Cursor live runs (explicitly excluded by D2). | Explicitly unverified |
 
 ---
 
@@ -56,26 +57,26 @@ All probes below were executed in isolated `/tmp` directories (cleaned up afterw
 
 | ID | Decision |
 | --- | --- |
-| **D1** | **Scope**: Implement L1 (universal base fixes) + L2 (multi-profile / extra config directory deployment) + L3 (host conflict guardrails). Exclude `t3 thread` control plane (idle messaging / `/new` creating T3 threads) from this phase. |
+| **D1** | **Scope**: Implement L1 (universal base fixes) + L2 (multi-profile / extra config directory deployment) + L3 (host conflict guardrails). Exclude the host control plane (idle messaging / creating host threads through its CLI) from this phase. |
 | **D2** | **No live Cursor tests**: Never launch Cursor or run live Cursor model probes. Cursor receives only generic L1 prompt cleaning and L2 extra config directory plumbing covered by unit tests. |
-| **D3** | **Discovery + explicit opt-in**: Auto-discover T3 Code Antigravity isolated directories (`~/.t3/userdata/providers/antigravity/<hash>`) and show them in Settings / CLI, requiring explicit user opt-in before writing anything. Newly discovered directories on future logins only surface a hint — **never silently write into `~/.t3/`**. All 6 agents support manually adding extra config directories. |
+| **D3** | **Discovery + explicit opt-in**: Auto-discover the host's Antigravity isolated directories (`<host data>/providers/antigravity/<hash>`) and show them in Settings / CLI, requiring explicit user opt-in before writing anything. Newly discovered directories on future logins only surface a hint — **never silently write into the host's data directory**. All 6 agents support manually adding extra config directories. |
 | **D4** | **Shared mode & capability model**: An agent's primary directory and all enabled extra profiles share one integration mode (`None / CLI / MCP`) and one set of capability toggles (`lifecycle`, `stop`, `permission`, `askQuestion`, `collaborationStyle`). Each profile maintains independent ownership ledgers and conflict/status reporting. Antigravity extra profiles always publish real managed plugin directories (never symlinks) under strict ownership rules. |
-| **D5** | **Host guardrails**: Silence T3 delegated child threads (`parentThreadId != null`) across all 6 agents, and disable Pi RPC `startControlPolling()` / background `pi.sendUserMessage()` when externally controlled (`--mode rpc` / `T3CODE_THREAD_ID`). Main T3 threads retain AskHuman rules, Claude `AskUserQuestion` takeover, Claude/Codex `PermissionRequest`, and Stop confirmation. |
-| **D6** | **Workflow & execution location**: Author spec + phased implementation plan first and submit via `AskHuman` for approval before coding. Perform all development in the isolated Dev Worktree `/Users/wutian/Developer/HumanInLoop-t3-multi-profile` (`feat/t3-multi-profile`). |
+| **D5** | **Host guardrails**: Silence host-delegated child threads (`parentThreadId != null`) across all 6 agents, and disable Pi RPC `startControlPolling()` / background `pi.sendUserMessage()` when externally controlled (`--mode rpc` / the host's thread-id variable). Main host threads retain AskHuman rules, Claude `AskUserQuestion` takeover, Claude/Codex `PermissionRequest`, and Stop confirmation. |
+| **D6** | **Workflow & execution location**: Author spec + phased implementation plan first and submit via `AskHuman` for approval before coding. Perform all development in an isolated Dev Worktree. |
 
 ### 3.2 Proposed Default Decisions for Approval (P1–P9)
 
 | ID | Topic | Proposed Default | Rationale / Alternative |
 | --- | --- | --- | --- |
-| **P1** | Antigravity extra profile root | Store the `GEMINI_HOME` root (e.g. `~/.t3/userdata/providers/antigravity/<hash>`), not the inner `/config` directory. If a user manually pastes `<root>/config` where `<root>` is an Antigravity home (under `~/.t3/userdata/providers/antigravity/<hash>/config` or sibling `antigravity*` dir exists), normalize to `<root>` and display the normalized root. | One root cleanly derives `config/plugins/askhuman`, `config/config.json` (`host_view`), `<surface>/brain/<uuid>/...`, and `<surface>/conversation_summaries.db`. |
-| **P2** | Missing extra profile root on disk | Refuse to `mkdir -p` a missing extra profile root. Report `rootMissing`, skip writing it without blocking other profiles, and offer one-click Remove in Settings / `agents profile remove` in CLI. Inside an *existing* root, creating `config/plugins/askhuman` (or `hooks/`, `rules/`, `extensions/`) is allowed as normal. | Prevents creating zombie directories inside `~/.t3/` after T3 deletes a provider instance. |
+| **P1** | Antigravity extra profile root | Store the `GEMINI_HOME` root (e.g. `<host data>/providers/antigravity/<hash>`), not the inner `/config` directory. If a user manually pastes `<root>/config` where `<root>` is an Antigravity home (under `<host data>/providers/antigravity/<hash>/config` or sibling `antigravity*` dir exists), normalize to `<root>` and display the normalized root. | One root cleanly derives `config/plugins/askhuman`, `config/config.json` (`host_view`), `<surface>/brain/<uuid>/...`, and `<surface>/conversation_summaries.db`. |
+| **P2** | Missing extra profile root on disk | Refuse to `mkdir -p` a missing extra profile root. Report `rootMissing`, skip writing it without blocking other profiles, and offer one-click Remove in Settings / `agents profile remove` in CLI. Inside an *existing* root, creating `config/plugins/askhuman` (or `hooks/`, `rules/`, `extensions/`) is allowed as normal. | Prevents creating zombie directories inside the host's data directory after the host deletes a provider instance. |
 | **P3** | Disable / Remove / `Mode::None` cleanup | Disabling or removing an extra profile uninstalls AskHuman-managed artifacts in that profile via its own ledger (preserving user content). On strict ownership conflict, refuse deletion and offer explicit detach (`--detach` / "Forget without deleting"). Switching the agent to `Mode::None` uninstalls artifacts from primary + all enabled extra profiles while **keeping** the saved profile list in `agent-profiles.json`. `agents cleanup` cleans primary + all enabled extra profiles. | Safe by default (never destroys user edits), convenient when toggling `Mode::None` → `Mode::Mcp` without re-adding profiles. |
-| **P4** | Partial failure & conflict isolation | Reconcile primary first, then each enabled extra profile independently. One failing/missing/conflicting extra profile never blocks primary or other healthy extra profiles. Preference toggles (`stop`, `permission`, `askQuestion`, `lifecycle`) roll back only if primary fails; if primary succeeds and an extra profile fails, retain the preference and report per-profile errors. | A stale or hand-edited T3 directory cannot brick the user's primary Agent setup. |
-| **P5** | T3 Antigravity discovery & dismiss | Read-only scan of `~/.t3/userdata/providers/antigravity/*` (bounded to 64 entries; requires directory containing `config/` or `antigravity-acp/`). Un-enrolled entries appear in Antigravity Settings card + `agents profile list antigravity` + `doctor` with `Enable` and `Ignore` (`dismissed` list in `agent-profiles.json`). Ignored roots stop hinting unless manually re-added or un-dismissed. | Clear visibility without nagging users who intentionally keep an isolated test login unmanaged. |
-| **P6** | L3 T3 child-thread silence scope & Codex delegated toggle | Silence **all** AskHuman surfaces in a T3 delegated child thread (`parentThreadId != null || relationshipToParent != null`): protocol/recovery injection, CLI ask/`--whats-next`/`--show-last`/todo-write, MCP ask/`whats_next`/`show_last`/`todo_add`/`todo_update`, Stop confirmation, PermissionRequest, Claude `AskUserQuestion`, failure cards, and lifecycle/interjection reporting. Always active even if `agents delegated codex on` is enabled (that toggle specifically governs CLI `codex exec` / plugin runs). Fail-open on T3 CLI error/timeout (1.5 s cap, 24 h cache, 30 s transient error cache). | Matches D5 + `codex-delegated-run-silence` D1 ("behave as if not integrated"), prevents child-thread cards/IM spam, and never delays or breaks interactive threads when `t3` is unavailable. |
-| **P7** | Pi `--mode rpc` Stop continuation | Always disable `startControlPolling()` when `--mode rpc` / `--mode=rpc` or `T3CODE_THREAD_ID` is present. For `agent_settled` Stop confirmation under `--mode rpc`: **also disable** `pi.sendUserMessage()` continuation (still report `turn-end` cleanly) unless Phase 5 verifies that T3 Code's Pi RPC adapter cleanly handles post-`agent_end` extension-initiated user messages. | Avoids unverified RPC state-desync risk from extension-injected turns after T3 already received `agent_end` (`AGENTS.md`: no unverified workarounds). |
-| **P8** | Workspace seeding from extra Antigravity profiles | Extend `agents/antigravity_workspaces.rs` to also inspect `<root>/{antigravity,antigravity-cli,antigravity-acp}/conversation_summaries.db` (read-only immutable SQLite, best-effort) for enabled extra Antigravity profiles. | Lets T3 Antigravity workspaces appear alongside App/`agy` recent folders with zero write risk. |
-| **P9** | Protocol & storage compatibility | Keep IPC `PROTOCOL_VERSION` unchanged (6) and SQLite recovery `SCHEMA_VERSION` unchanged. Persist extra profiles in `~/.askhuman/agent-profiles.json`, extra Antigravity ledgers in `~/.askhuman/antigravity-plugin-profiles/<id>.json`, Codex extra `direct_only` ownership inside existing `integration-state.json`, and T3 caches/markers in `~/.askhuman/state/{t3-threads,t3-delegated}/`. | Zero breaking protocol/schema migrations; fully backward compatible with existing `config.json` and daemon recovery DBs. |
+| **P4** | Partial failure & conflict isolation | Reconcile primary first, then each enabled extra profile independently. One failing/missing/conflicting extra profile never blocks primary or other healthy extra profiles. Preference toggles (`stop`, `permission`, `askQuestion`, `lifecycle`) roll back only if primary fails; if primary succeeds and an extra profile fails, retain the preference and report per-profile errors. | A stale or hand-edited host directory cannot brick the user's primary Agent setup. |
+| **P5** | Isolated Antigravity home discovery & dismiss | Read-only scan of `<host data>/providers/antigravity/*` (bounded to 64 entries; requires directory containing `config/` or `antigravity-acp/`). Un-enrolled entries appear in Antigravity Settings card + `agents profile list antigravity` + `doctor` with `Enable` and `Ignore` (`dismissed` list in `agent-profiles.json`). Ignored roots stop hinting unless manually re-added or un-dismissed. | Clear visibility without nagging users who intentionally keep an isolated test login unmanaged. |
+| **P6** | L3 child-session silence scope & Codex delegated toggle | Silence **all** AskHuman surfaces in a host-delegated child session (`parentThreadId != null || relationshipToParent != null`): protocol/recovery injection, CLI ask/`--whats-next`/`--show-last`/todo-write, MCP ask/`whats_next`/`show_last`/`todo_add`/`todo_update`, Stop confirmation, PermissionRequest, Claude `AskUserQuestion`, failure cards, and lifecycle/interjection reporting. Always active even if `agents delegated codex on` is enabled (that toggle specifically governs CLI `codex exec` / plugin runs). Fail-open on host CLI error/timeout (1.5 s cap, 24 h cache, 30 s transient error cache). | Matches D5 + `codex-delegated-run-silence` D1 ("behave as if not integrated"), prevents child-session cards/IM spam, and never delays or breaks interactive threads when the host CLI is unavailable. |
+| **P7** | Pi `--mode rpc` Stop continuation | Always disable `startControlPolling()` when `--mode rpc` / `--mode=rpc` or the host's thread-id variable is present. For `agent_settled` Stop confirmation under `--mode rpc`: **also disable** `pi.sendUserMessage()` continuation (still report `turn-end` cleanly) unless Phase 5 verifies that the host's Pi RPC adapter cleanly handles post-`agent_end` extension-initiated user messages. | Avoids unverified RPC state-desync risk from extension-injected turns after the host already received `agent_end` (`AGENTS.md`: no unverified workarounds). |
+| **P8** | Workspace seeding from extra Antigravity profiles | Extend `agents/antigravity_workspaces.rs` to also inspect `<root>/{antigravity,antigravity-cli,antigravity-acp}/conversation_summaries.db` (read-only immutable SQLite, best-effort) for enabled extra Antigravity profiles. | Lets the host's Antigravity workspaces appear alongside App/`agy` recent folders with zero write risk. |
+| **P9** | Protocol & storage compatibility | Keep IPC `PROTOCOL_VERSION` unchanged (6) and SQLite recovery `SCHEMA_VERSION` unchanged. Persist extra profiles in `~/.askhuman/agent-profiles.json`, extra Antigravity ledgers in `~/.askhuman/antigravity-plugin-profiles/<id>.json`, Codex extra `direct_only` ownership inside existing `integration-state.json`, and host caches/markers in `~/.askhuman/state/{host-threads,host-delegated}/`. | Zero breaking protocol/schema migrations; fully backward compatible with existing `config.json` and daemon recovery DBs. |
 
 ---
 
@@ -145,14 +146,13 @@ In `src-tauri/src/agents/detect.rs`:
 - In `walk_agent_pid`, hitting `is_shared_agy_acp` for `AgentKind::Antigravity` returns `None` immediately (no session PID attached), preventing D7 same-PID eviction across concurrent `session/new` conversations hosted by one `agy acp` process.
 - Standalone `agy` (interactive CLI) still resolves its own PID as before.
 
-#### 4.1.4 T3 Code Prompt Wrapper Cleaning
+#### 4.1.4 Host Prompt Wrapper Cleaning
 
 In `src-tauri/src/agents/transcript_full.rs` (shared with `title.rs`):
 - Add a pure helper `strip_host_wrappers(text: &str) -> String`:
   1. Unwrap outer `<USER_REQUEST>...</USER_REQUEST>` (Antigravity) and `<user_query>...</user_query>` (Cursor/Grok) when present.
   2. Strip known paired host-injected XML-like metadata blocks (non-greedy, repeated):
-     - `<t3_code_instructions>...</t3_code_instructions>`
-     - `<t3_code_orchestration>...</t3_code_orchestration>`
+     - the host's instruction block and orchestration block (the two tags in `HOST_METADATA_TAGS`, §4.3.4)
      - `<runtime_info>...</runtime_info>`
      - `<ADDITIONAL_METADATA>...</ADDITIONAL_METADATA>`
      - `<system-reminder>...</system-reminder>`
@@ -180,9 +180,9 @@ New module `src-tauri/src/integrations/agent_profiles.rs`:
       {
         "id": "ag-7f8a9b1c2d3e4f50",
         "agent": "antigravity",
-        "root": "/Users/wutian/.t3/userdata/providers/antigravity/ac0a3dfd...",
-        "label": "T3 Code (ac0a3dfd)",
-        "source": "t3_discovered",
+        "root": "<host data>/providers/antigravity/ac0a3dfd...",
+        "label": "antigravity",
+        "source": "discovered",
         "enabled": true,
         "createdAt": 1795444600
       }
@@ -190,31 +190,32 @@ New module `src-tauri/src/integrations/agent_profiles.rs`:
     "dismissed": [
       {
         "agent": "antigravity",
-        "root": "/Users/wutian/.t3/userdata/providers/antigravity/deadbeef...",
+        "root": "<host data>/providers/antigravity/deadbeef...",
         "dismissedAt": 1795444600
       }
     ]
   }
   ```
+- **Source tolerance**: `source` (`"discovered"` | `"manual"`) is informational only — it picks the default label. A value this build does not know (for example one written by a different build) is read as `manual` instead of failing the load, so an upgrade or downgrade never silently drops the user's enrolled profiles (a parse failure would otherwise fall back to an empty store).
 - **Stable profile ID**: `id` is derived deterministically from `(agent, canonical_or_normalized_root)` via `format!("{}-{}", agent.as_str(), &sha256(canonical_root)[..16])` (safe ASCII filename segment for per-profile ledgers and CLI targeting; unique per `(agent, root)`).
 - **Root validation on add**:
   - Must be an absolute path, no NUL bytes, no `..` traversal components after normalization.
   - Must exist as a directory on disk at add time.
   - Must not equal the agent's primary root (canonicalized comparison via `path_identity::equivalent`), nor duplicate an existing profile for the same agent.
-  - For Antigravity (P1): if the supplied path ends with `/config` and its parent is an Antigravity root (under `~/.t3/userdata/providers/antigravity/*` or has sibling `antigravity*` dir), normalize to the parent directory and return the normalized root.
+  - For Antigravity (P1): if the supplied path ends with `/config` and its parent is an Antigravity root (under `<host data>/providers/antigravity/*` or has sibling `antigravity*` dir), normalize to the parent directory and return the normalized root.
 - **Dev Test Profile Isolation**:
   - Whenever `development::session::directory_for(kind)` is active (a Dev Test Profile), `agent_profiles` returns **no extra profiles** — Dev tests stay 100% hermetic in their single test directory.
 
-#### 4.2.2 T3 Code Antigravity Auto-Discovery (Read-Only)
+#### 4.2.2 Isolated Antigravity Home Auto-Discovery (Read-Only)
 
 In `agent_profiles.rs`:
-- `discover_t3_antigravity_in(home: &Path) -> Vec<DiscoveredProfile>`:
-  - Inspects `<home>/.t3/userdata/providers/antigravity` (Unix only, matching Antigravity's Unix-only integration).
+- `discover_isolated_homes_in(home: &Path, store: &Store) -> Vec<DiscoveredProfile>`:
+  - Inspects `<host data>/providers/antigravity` under `<home>` (Unix only, matching Antigravity's Unix-only integration; the host data directory is a constant, §4.3.4).
   - Read-only `read_dir`, bounded to at most 64 entries.
   - Accepts entries whose symlink-free metadata is a real directory owned by the current user AND containing either `config/` or `antigravity-acp/` subdirectory.
   - Canonicalizes each candidate root via `physical_root`; skips any root already present in `profiles` (enabled or disabled) or in `dismissed`.
-  - Derives a human-friendly default label: `"T3 Code (<first 8 chars of dir name>)"`, plus optional secondary hint if `<root>/antigravity-acp/brain` has recent mtime.
-  - **Never creates or modifies anything inside `~/.t3/`**.
+  - Derives a human-friendly default label: the host's instance id when the directory name matches `sha256(instanceId)` for an instance in the host's `settings.json` (`providerInstances`, plus the built-in default instance), otherwise the first 8 characters of the directory name.
+  - **Never creates or modifies anything inside the host's data directory**.
 - Discovery runs on read (`agent_mode_status`, `agents profile list`, `agents show`, `doctor`) — strictly fast local `readdir` + `stat`, zero subprocesses.
 
 #### 4.2.3 Scoped Root Dispatch (`paths::with_agent_root`)
@@ -269,7 +270,7 @@ All mutation entry points hold `IntegrationMutationLock` and reconcile **primary
       pub agent: String,
       pub root: String,
       pub label: String,
-      pub source: String,              // "t3_discovered" | "manual"
+      pub source: String,              // "discovered" | "manual"
       pub enabled: bool,
       pub state: String,               // "synced" | "outdated" | "notInstalled" | "conflict" | "rootMissing" | "disabled"
       pub mode: String,                // observed on-disk mode in this profile ("none"|"cli"|"mcp")
@@ -291,7 +292,7 @@ All mutation entry points hold `IntegrationMutationLock` and reconcile **primary
 #### 4.2.5 CLI Surface (`AskHuman agents profile ...` & `doctor` & `agents show`)
 
 Add `agents profile` subcommand group in `src-tauri/src/cli/agents_cmd.rs`:
-- `AskHuman agents profile list [<agent>] [--json]` — lists configured extra profiles (with status) and newly discovered T3 Antigravity directories.
+- `AskHuman agents profile list [<agent>] [--json]` — lists configured extra profiles (with status) and newly discovered isolated Antigravity directories.
 - `AskHuman agents profile add <agent> <path> [--label <name>] [--disabled]` — validates & enrolls a custom config directory (immediately syncs if agent mode != None and not `--disabled`).
 - `AskHuman agents profile enable <agent> <id|path>` — enables a saved or discovered profile and syncs it to the agent's current mode.
 - `AskHuman agents profile disable <agent> <id|path> [--detach]` — cleanly uninstalls managed artifacts from that profile and disables it.
@@ -299,8 +300,8 @@ Add `agents profile` subcommand group in `src-tauri/src/cli/agents_cmd.rs`:
 - `AskHuman agents profile sync <agent> [<id|path>]` — reconciles one or all enabled extra profiles for `<agent>`.
 - `AskHuman agents profile dismiss <agent> <path>` — ignores a discovered directory.
 - `AskHuman agents show [<agent>]` and `AskHuman doctor [--json]`:
-  - Include extra profiles summary (count, per-profile sync/conflict/missing status, and count of un-enrolled discovered T3 Antigravity directories).
-  - In `doctor`, an enabled extra profile in `conflict` or `rootMissing` reports a clear diagnostic warning/error; an un-enrolled discovered T3 directory reports an informational note (never exits non-zero on its own).
+  - Include extra profiles summary (count, per-profile sync/conflict/missing status, and count of un-enrolled discovered isolated Antigravity directories).
+  - In `doctor`, an enabled extra profile in `conflict` or `rootMissing` reports a clear diagnostic warning/error; an un-enrolled discovered isolated directory reports an informational note (never exits non-zero on its own).
 
 #### 4.2.6 Settings UI & Tauri Commands
 
@@ -320,9 +321,9 @@ Add `agents profile` subcommand group in `src-tauri/src/cli/agents_cmd.rs`:
   - Keep card headers clean (`docs/specs/settings-agents-channels-cards.md`):
     - If any enabled extra profile has `needsUpdate`, `hasUpdate` becomes `true` (so the card's `needsUpdate` tag and top "Update all" overview naturally include it!).
     - If any enabled extra profile has `conflict` or `rootMissing`, surface a `profileIssue` warning tag on the card header and auto-expand details via `needsAction`.
-    - Keep unintegrated (`mode === "none"`) and folded cards free of extra hint text outside `Details` (`docs/specs/settings-agents-channels-cards.md` D13); discovered T3 directories live strictly inside `AgentProfilesSection.vue` under `Details`, reverse-mapping T3 `providerInstances` names (e.g. `T3 Code (antigravity)`) and collapsing `$HOME` to `~` in display paths (with full path on hover).
+    - Keep unintegrated (`mode === "none"`) and folded cards free of extra hint text outside `Details` (`docs/specs/settings-agents-channels-cards.md` D13); discovered isolated directories live strictly inside `AgentProfilesSection.vue` under `Details`, reverse-mapping the host's `providerInstances` names (e.g. `antigravity`) and collapsing `$HOME` to `~` in display paths (with full path on hover).
   - Inside each agent's **Details** section, add a dedicated `AgentProfilesSection.vue` subsection ("Extra config directories"):
-    - Lists discovered (un-enrolled) T3 directories with `Enable` and `Ignore` buttons.
+    - Lists discovered (un-enrolled) isolated directories with `Enable` and `Ignore` buttons.
     - Lists configured extra profiles with enable/disable toggle, status badge (`Synced` / `Needs update` / `Conflict` / `Folder missing` / `Disabled`), path, Antigravity `hostPluginDisabled` / `mcpGrant` per-profile notes, quick actions (`Sync` / `Reveal` / `Remove`, plus `Forget without deleting` if conflict).
     - `+ Add directory` action (folder picker + manual path input + optional label) available for **all 6 agents**.
   - Full `zh.ts` + `en.ts` i18n coverage.
@@ -331,19 +332,19 @@ Add `agents profile` subcommand group in `src-tauri/src/cli/agents_cmd.rs`:
 
 ### 4.3 L3 — Host Conflict Guardrails
 
-#### 4.3.1 T3 Code Delegated Child Thread Detection (`src-tauri/src/agents/t3_host.rs`)
+#### 4.3.1 Delegated Child Session Detection (`src-tauri/src/agents/external_host.rs`)
 
-New focused module `src-tauri/src/agents/t3_host.rs`:
+New focused module `src-tauri/src/agents/external_host.rs`:
 
-1. **Trigger**: Check `T3CODE_THREAD_ID` in the environment. If unset or empty → immediately return `T3ThreadState::NotT3` (zero I/O, zero subprocesses for non-T3 users!).
-2. **Thread ID validation**: Reject IDs longer than 128 chars or containing anything outside `[A-Za-z0-9_-]` (fail-open as `Unknown`).
-3. **Disk cache (`~/.askhuman/state/t3-threads/<sha256(thread_id)>.json`)**:
+1. **Trigger**: Check the host's thread-id variable (`HOST_THREAD_ID_ENV`) in the environment. If unset or empty → return `None` immediately (zero I/O, zero subprocesses for users who do not run under a host).
+2. **Thread ID validation**: Reject IDs longer than 128 chars or containing anything outside `[A-Za-z0-9_-]` (fail-open: treated as not delegated).
+3. **Disk cache (`~/.askhuman/state/host-threads/<sha256(thread_id)>.json`)**:
    - Stores `{ "threadId", "delegated": bool, "parentThreadId": Option<String>, "relationshipToParent": Option<String>, "checkedAtMs": u64, "transientError": bool }`.
-   - Valid TTL: **24 hours** for conclusive answers (`transientError == false`); **30 seconds** for transient errors (`transientError == true`, preventing repeated 1.5 s timeouts on every hook invocation if `t3` daemon is momentarily unresponsive).
+   - Valid TTL: **24 hours** for conclusive answers (`transientError == false`); **30 seconds** for transient errors (`transientError == true`, preventing repeated 1.5 s timeouts on every hook invocation if the host's daemon is momentarily unresponsive).
    - Opportunistic pruning (same pattern as `delegated.rs`: scan at most 200 entries on write, prune files older than 7 days).
 4. **CLI query on cache miss**:
-   - Locate `t3` binary: `T3CODE_CLI_PATH` env if set, absolute, and an existing regular file; otherwise fallback to `<system_account_home>/.t3/bin/t3`.
-   - Spawn `<t3> thread show --json --messages 0 <thread_id>` with `stdin(null)`, captured stdout/stderr, bounded output (256 KiB), and hard timeout **1,500 ms** (kill child on timeout).
+   - Locate the host CLI: the path in the host's CLI-path variable (`HOST_CLI_PATH_ENV`) if set, absolute, and an existing regular file; otherwise the host's default install location under `<system_account_home>` (§4.3.4).
+   - Spawn `<cli> thread show --json --messages 0 <thread_id>` with `stdin(null)`, captured stdout, bounded output (256 KiB), and hard timeout **1,500 ms** (kill child on timeout).
    - Parse JSON `thread`:
      ```rust
      let delegated = thread.get("parentThreadId")
@@ -353,41 +354,39 @@ New focused module `src-tauri/src/agents/t3_host.rs`:
      ```
    - Deliberately does **NOT** treat top-level threads with `createdBy == "agent"` and `parentThreadId == null` as delegated.
    - Any failure (missing binary, non-zero exit, invalid JSON, timeout) records a 30 s transient-error cache entry and **fails open** (`delegated = false`).
-5. **Session-keyed T3 delegated marker (`~/.askhuman/state/t3-delegated/<sha256(kind:session_id)>.json`)**:
-   - Why needed in addition to env lookup:
-     - The daemon (`failure_confirmation.rs`) never inherits a child thread's `T3CODE_THREAD_ID`.
-     - Shared MCP server processes (e.g. a shared `agy acp` or `codex app-server` MCP server) may not inherit a child thread's `T3CODE_THREAD_ID`, whereas hooks (`SessionStart`, `PreInvocation`, `Stop`) DO run in the child's context and carry `(kind, session_id)`.
-   - API (injectable `Probes` trait for deterministic unit tests, mirroring `agents/delegated.rs`):
-     - `record_session(kind, session_id)` on hook entry when `T3CODE_THREAD_ID` is present:
-       - If `delegated == true` → write marker `{ kind, session_id, thread_id, parent_thread_id, ts_ms }` (14-day TTL pruning).
-       - If `delegated == false` (confirmed main interactive T3 thread) → clear any stale marker for `(kind, session_id)`.
-     - `silence_reason(kind, session_id: Option<&str>) -> Option<String>`:
-       1. If `T3CODE_THREAD_ID` is present in current process env:
-          - If `delegated == true` → return `Some("t3_delegated_child_thread")`.
-          - If `delegated == false` → do **not** trust env alone if shared process? Check marker for `(kind, session_id)` too! (Wait: for a confirmed non-delegated session, `record_session` cleared its marker; for a child session sharing a parent's process env, the child's own marker is present and catches it!)
-       2. Otherwise, if `session_id` is non-empty and a valid marker exists for `(kind, session_id)` → return `Some("t3_delegated_marker")`.
-       3. Otherwise `None` (interactive).
+5. **Session-keyed delegated marker (`~/.askhuman/state/host-delegated/<sha256(kind:session_id)>.json`)**:
+   - Why needed in addition to the env lookup:
+     - The daemon (`failure_confirmation.rs`) never inherits a child thread's thread-id variable.
+     - Shared MCP server processes (e.g. a shared `agy acp` or `codex app-server` MCP server) may not inherit a child thread's variable, whereas hooks (`SessionStart`, `PreInvocation`, `Stop`) DO run in the child's context and carry `(kind, session_id)`.
+   - API (the CLI query is an injectable function, so unit tests are deterministic; same approach as `agents/delegated.rs`):
+     - `classify_and_record_hook(kind, session_id)` on hook entry, when the thread-id variable is present:
+       - Delegated → write marker `{ agent, sessionId, threadId, parentThreadId, tsMs }` (14-day TTL pruning) and return the reason `delegated_child_thread`.
+       - Confirmed interactive main thread → clear any stale marker for `(kind, session_id)` and return `None`.
+       - Variable absent, or the lookup failed open → fall back to an existing valid marker for `(kind, session_id)` and return the reason `delegated_marker`, else `None`. A child session that shares its parent's process env is therefore still caught by its own marker.
+     - `env_delegated_reason()` — checks only the current process env (CLI and MCP entry points that have no `(kind, session_id)` yet).
+     - `marker_silenced(kind, session_id)` — checks only the marker (daemon failure cards, env-stripped MCP servers).
+     - `log_suppressed(...)` — emits the structured `askhuman_guard` audit line (`thread_source: delegated_child`).
 
 #### 4.3.2 Guard Coverage Across All AskHuman Surfaces (All 6 Agents)
 
-| Surface | File | Behavior when T3 delegated child thread |
+| Surface | File | Behavior when the session is a delegated child |
 | --- | --- | --- |
 | Codex / Claude `SessionStart` protocol & compact recovery | `agents/context_recovery.rs` | Records marker, emits no output, logs `askhuman_guard` (`component: "protocol_hook"`). |
 | Lifecycle & Interjection hooks (Claude/Codex/Cursor/Grok/Pi) | `agents/report.rs` | Records marker on `SessionStart` (or first event); logs `askhuman_guard` on `SessionStart`; skips reporting event to daemon and skips `interject_poll`. |
 | Antigravity hooks (`SessionStart`, `PreInvocation`, `Stop` track) | `agents/antigravity_hook.rs` | Records marker; skips reporting to daemon and skips `PreInvocation` interjection; emits empty stdout. |
 | Stop confirmation (all 6 agents) | `agents/stop.rs` | Checked in `confirmation_suppression_reason` for **all** `AgentKind` (not just Codex). Logs `askhuman_guard` (`component: "stop_confirmation"`), emits empty/`{}` without raising card or reporting turn-end. |
-| PermissionRequest (Claude & Codex) | `permissions.rs` | Checked for **both** Claude and Codex (generalizing `delegated_silence`). Logs `askhuman_guard` (`component: "permission_hook"`), emits nothing so host/T3 handles permission natively. |
-| Claude `AskUserQuestion` takeover | `ask_question.rs` | Checked before building task; logs `askhuman_guard` (`component: "ask_question_hook"`), emits nothing so Claude/T3 handles natively. |
-| MCP server (`ask`, `whats_next`, `show_last`, `todo_add`, `todo_update`) | `mcp/ask.rs` | New `t3_delegated_guard(binding, tool)` runs for **all** agents (not just Codex) after resolving binding (or before via env check). Returns `CallToolResult::error` with clear non-retry guidance text and logs `askhuman_guard` (`component: "mcp_tool"`). `todo_list` remains read-only allowed. |
-| CLI `AskHuman` (ask / `--whats-next` / `--show-last` / todo-write) | `cli/mod.rs` | Before connecting to daemon for user-interactive prompts, checks `t3_host::env_delegated_reason()`. If delegated, logs `askhuman_guard` (`component: "cli_ask"`), prints non-retry guidance message to stdout/stderr, exits with code 2. Management subcommands (`agents`, `doctor`, `daemon`, `dev`, `config`, `channel`, `away`, `__*`) are never blocked. |
-| Failure confirmation cards | `daemon/runtime/failure_confirmation.rs` | Generalizes line 689 to also suppress when `t3_host::marker_silenced(kind, sid).is_some()`. |
+| PermissionRequest (Claude & Codex) | `permissions.rs` | Checked for **both** Claude and Codex (generalizing `delegated_silence`). Logs `askhuman_guard` (`component: "permission_hook"`), emits nothing so the host handles permission natively. |
+| Claude `AskUserQuestion` takeover | `ask_question.rs` | Checked before building task; logs `askhuman_guard` (`component: "ask_question_hook"`), emits nothing so Claude/the host handles natively. |
+| MCP server (`ask`, `whats_next`, `show_last`, `todo_add`, `todo_update`) | `mcp/ask.rs` | `delegated_child_guard(binding, tool)` runs for **all** agents (not just Codex) after resolving binding (or before via env check). Returns `CallToolResult::error` with clear non-retry guidance text and logs `askhuman_guard` (`component: "mcp_tool"`). `todo_list` remains read-only allowed. |
+| CLI `AskHuman` (ask / `--whats-next` / `--show-last` / todo-write) | `cli/mod.rs` | Before connecting to daemon for user-interactive prompts, checks `external_host::env_delegated_reason()`. If delegated, logs `askhuman_guard` (`component: "cli_ask"`), prints non-retry guidance message to stdout/stderr, exits with code 2. Management subcommands (`agents`, `doctor`, `daemon`, `dev`, `config`, `channel`, `away`, `__*`) are never blocked. |
+| Failure confirmation cards | `daemon/runtime/failure_confirmation.rs` | Generalizes line 689 to also suppress when `external_host::marker_silenced(kind, sid).is_some()`. |
 
 #### 4.3.3 Pi RPC Extension Guardrail (`src-tauri/resources/integrations/pi/index.ts`)
 
 Add an explicit helper:
 ```ts
 function isExternallyControlled(): boolean {
-  if (process.env.T3CODE_THREAD_ID) return true;
+  if (process.env[HOST_THREAD_ID_ENV]) return true; // the host's thread-id variable (literal lives in index.ts, §4.3.4)
   const argv = process.argv;
   for (let i = 0; i < argv.length; i += 1) {
     const arg = argv[i];
@@ -397,19 +396,31 @@ function isExternallyControlled(): boolean {
   return false;
 }
 ```
+
 - In `startControlPolling(pi, ctx)`: return immediately when `isExternallyControlled()` is `true` (never poll `__agent-control`, never call `pi.sendUserMessage()` asynchronously while idle).
-- In `pi.on("agent_settled", ...)`: under P7, when `isExternallyControlled()` is `true`, skip spawning `__stop-hook pi confirm` / calling `pi.sendUserMessage()` and report `turn-end` directly (unless Phase 5 confirms RPC `sendUserMessage` safety with T3 Code and the user prefers keeping Stop confirmation on main T3 Pi threads).
+- In `pi.on("agent_settled", ...)`: under P7, when `isExternallyControlled()` is `true`, skip spawning `__stop-hook pi confirm` / calling `pi.sendUserMessage()` and report `turn-end` directly (unless Phase 5 confirms RPC `sendUserMessage` safety with the host and the user prefers keeping Stop confirmation on main host Pi threads).
 - Because `pi/index.ts` changes, `pi_extension::status().outdated` will naturally flag installed Pi extensions for update via the standard "Update" button / `AskHuman agents update pi`.
+
+#### 4.3.4 Host Interface Literals
+
+The host's own names are not ours to choose, so they exist only as string data in these four places. Everything else — module, type and function names, state directories, audit fields, CLI help, UI copy and documentation — is host-agnostic (the tests that exercise these literals necessarily repeat them):
+
+1. `agents/external_host.rs`: the thread-id variable (`HOST_THREAD_ID_ENV`), the CLI-path variable (`HOST_CLI_PATH_ENV`), and the host CLI's default install location.
+2. `integrations/agent_profiles.rs`: the host's data directory under the user's home (`HOST_DATA_DIR`) and the `settings.json` file inside it whose `providerInstances` map names the instances.
+3. `agents/transcript_full.rs`: the host's two prompt wrapper tags (`HOST_METADATA_TAGS`).
+4. `resources/integrations/pi/index.ts`: the thread-id variable read by `isExternallyControlled()`.
+
+If the host renames any of them, only these places change.
 
 ---
 
 ## 5. Security, Ownership & Invariants
 
-1. **No silent writes into third-party directories**: AskHuman NEVER writes into `~/.t3/` unless the user explicitly enables a discovered profile or manually adds a path.
+1. **No silent writes into third-party directories**: AskHuman NEVER writes into the host's data directory unless the user explicitly enables a discovered profile or manually adds a path.
 2. **Strict ownership preserved per profile**: Every Antigravity extra profile has its own SHA-256 ledger (`~/.askhuman/antigravity-plugin-profiles/<id>.json`) and atomic staging/rename flow. Hand-edited files trigger `Conflict` and are never overwritten or deleted.
 3. **No symlink tricks for Antigravity plugins**: Every Antigravity profile publishes a real directory tree.
 4. **No path traversal in transcript hints**: `session_paths::validate_path` canonicalizes and checks agent-specific structural suffixes (and UID ownership for Antigravity) before caching or reading.
-5. **Bounded latency & fail-open**: T3 CLI queries are strictly bounded (1.5 s timeout, 256 KiB output cap, 24 h cache, 30 s error cache) and fail open on any error. Non-T3 users incur zero overhead (single `env::var_os("T3CODE_THREAD_ID")` check).
+5. **Bounded latency & fail-open**: Host CLI queries are strictly bounded (1.5 s timeout, 256 KiB output cap, 24 h cache, 30 s error cache) and fail open on any error. Users who do not run under a host incur zero overhead (single `env::var_os` check on the thread-id variable).
 6. **Dev Instance & Dev Test Profile isolation**: `development::session::directory_for` always takes precedence over `paths::with_agent_root`, and `agent-profiles.json` lives inside `paths::config_dir()` (`$ASKHUMAN_HOME`), so Dev Instances never mutate the user's production profile list or System daemon.
 
 ---
@@ -417,12 +428,12 @@ function isExternallyControlled(): boolean {
 ## 6. Verification & Acceptance Criteria
 
 1. **Unit & Integration Tests (Rust + Vitest)**:
-   - L1: `session_paths` validation per agent (valid & malicious/traversal paths), `Surface::Acp` vs `App`/`Cli`/`Ide`, `is_shared_agy_acp` process matching, T3 wrapper stripping across Antigravity/Cursor/Claude/Codex/Grok/Pi transcripts, `antigravity_last_message` with `transcriptPath`.
-   - L2: `agent_profiles` CRUD, normalization, duplicate/primary rejection, T3 Antigravity discovery & dismiss, `paths::with_agent_root` thread-local scoping & panic safety, Claude custom root `.claude.json` placement, Codex per-profile `direct_only` ownership, Antigravity multi-profile independent ledgers & conflict isolation, missing root refusal, `Mode::None` cleanup + profile retention, partial failure isolation, `agents profile` CLI, `doctor --json`, Settings Vue component & `agentCard.ts` tests.
-   - L3: `t3_host` JSON parsing (`parentThreadId`, `relationshipToParent`, top-level `createdBy == "agent"` NOT delegated), cache TTL & transient error cache, fail-open on timeout/missing binary, session-keyed marker write/clear/read, guard suppression + `askhuman_guard` audit across `context_recovery`, `report`, `antigravity_hook`, `stop`, `permissions`, `ask_question`, `mcp/ask`, `cli`, `failure_confirmation`; Pi extension unit test for `isExternallyControlled()` (`--mode rpc`, `--mode=rpc`, `T3CODE_THREAD_ID`, normal interactive mode).
+   - L1: `session_paths` validation per agent (valid & malicious/traversal paths), `Surface::Acp` vs `App`/`Cli`/`Ide`, `is_shared_agy_acp` process matching, host wrapper stripping across Antigravity/Cursor/Claude/Codex/Grok/Pi transcripts, `antigravity_last_message` with `transcriptPath`.
+   - L2: `agent_profiles` CRUD, normalization, duplicate/primary rejection, isolated Antigravity home discovery & dismiss, unknown `source` read as `manual`, `paths::with_agent_root` thread-local scoping & panic safety, Claude custom root `.claude.json` placement, Codex per-profile `direct_only` ownership, Antigravity multi-profile independent ledgers & conflict isolation, missing root refusal, `Mode::None` cleanup + profile retention, partial failure isolation, `agents profile` CLI, `doctor --json`, Settings Vue component & `agentCard.ts` tests.
+   - L3: `external_host` JSON parsing (`parentThreadId`, `relationshipToParent`, top-level `createdBy == "agent"` NOT delegated), cache TTL & transient error cache, fail-open on timeout/missing binary, session-keyed marker write/clear/read, guard suppression + `askhuman_guard` audit across `context_recovery`, `report`, `antigravity_hook`, `stop`, `permissions`, `ask_question`, `mcp/ask`, `cli`, `failure_confirmation`; Pi extension unit test for `isExternallyControlled()` (`--mode rpc`, `--mode=rpc`, the host's thread-id variable, normal interactive mode).
 2. **Isolated E2E Verification in Dev Worktree (NO Cursor)**:
-   - Enable Dev Instance in `/Users/wutian/Developer/HumanInLoop-t3-multi-profile`, build & install via `./scripts/install.sh` (checking `node scripts/machine-health.mjs` first).
+   - Enable Dev Instance in the isolated Dev Worktree, build & install via `./scripts/install.sh` (checking `node scripts/machine-health.mjs` first).
    - Run isolated `/tmp` `agy acp --gemini-dir <tmp> --app-data-dir antigravity-acp` with an enrolled extra Antigravity profile: verify plugin install, `rules/AGENTS.md` + MCP + hooks, `Surface::Acp`, transcript/title/activity/`/transcript`/Stop last-message resolution, and clean uninstall.
    - Run zero-LLM isolated profile verification for Codex (`CODEX_HOME`), Claude (`CLAUDE_CONFIG_DIR`), Grok (`GROK_HOME`), and Pi (`PI_CODING_AGENT_DIR` + `--mode rpc`).
-   - Run T3 child-thread silence verification using a mock `T3CODE_CLI_PATH` script + real `t3 thread show` on the current main thread (confirming main thread is NOT silenced while a simulated child thread IS silenced across CLI, MCP, Stop, Permission, AskUserQuestion, and lifecycle hooks).
+   - Run child-session silence verification using a mock host CLI script (pointed to by the CLI-path variable) + the real host CLI on the current main thread (confirming the main thread is NOT silenced while a simulated child thread IS silenced across CLI, MCP, Stop, Permission, AskUserQuestion, and lifecycle hooks).
    - Verify Settings UI in Dev Instance (`node scripts/dev.mjs ui`) visually / interactively.

@@ -3917,9 +3917,10 @@ pub struct AgentModeStatus {
     /// Antigravity MCP mode only: whether the user's "always allow" list covers the MCP tool
     /// (`None` when the question does not apply). A hint, since the host's format is private.
     mcp_grant: Option<bool>,
-    /// Configured extra config directories for this agent (spec `t3-code-and-multi-profile`, L2).
+    /// Configured extra config directories for this agent (spec `agent-profiles-and-host-guards`, L2).
     profiles: Vec<agent_profiles::ExtraProfileStatus>,
-    /// Un-enrolled directories discovered on disk (currently T3 Code Antigravity homes).
+    /// Un-enrolled directories discovered on disk (currently an external host's isolated
+    /// Antigravity homes).
     discovered_profiles: Vec<agent_profiles::DiscoveredProfile>,
 }
 
@@ -4010,7 +4011,7 @@ pub async fn agent_profile_add(
     let status = tokio::task::spawn_blocking(move || {
         let target = parse_agent(&agent)?;
         let src = match source.as_deref() {
-            Some("t3_discovered") => agent_profiles::ProfileSource::T3Discovered,
+            Some("discovered") => agent_profiles::ProfileSource::Discovered,
             _ => agent_profiles::ProfileSource::Manual,
         };
         agent_profiles::add(

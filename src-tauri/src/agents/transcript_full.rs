@@ -2008,6 +2008,7 @@ fn extract_cursor_timestamp(text: &str) -> (String, Option<String>) {
 
 /// Paired host-injected metadata tags stripped before displaying titles or transcript turns.
 /// Kept as an explicit allowlist so arbitrary user-written HTML/XML snippets are never touched.
+/// The first two are the tags an external orchestrator host wraps around the turns it forwards.
 const HOST_METADATA_TAGS: &[&str] = &[
     "t3_code_instructions",
     "t3_code_orchestration",
@@ -2031,9 +2032,9 @@ fn strip_paired_tag(input: &str, tag: &str) -> String {
     s
 }
 
-/// Remove known host wrappers (Antigravity `<USER_REQUEST>`, Cursor/Grok `<user_query>`, T3 Code
-/// `<t3_code_instructions>` / `<t3_code_orchestration>` / `<runtime_info>` /
-/// `<ADDITIONAL_METADATA>` / nested `<user_request>`, and `<system-reminder>`).
+/// Remove known host wrappers (Antigravity `<USER_REQUEST>`, Cursor/Grok `<user_query>`, the
+/// external-host tags in `HOST_METADATA_TAGS` such as `<runtime_info>` / `<ADDITIONAL_METADATA>`,
+/// nested `<user_request>`, and `<system-reminder>`).
 pub(super) fn strip_host_wrappers(t: &str) -> String {
     let mut s = t.trim().to_string();
     if let Some(inner) = extract_tag(&s, "USER_REQUEST") {
@@ -3009,8 +3010,8 @@ mod tests {
     }
 
     #[test]
-    fn strip_host_wrappers_cleans_t3_antigravity_and_cursor_envelopes() {
-        let antigravity_wrapped = "<USER_REQUEST>\n<t3_code_instructions>\n## T3 Code\nLots of rules\n</t3_code_instructions>\n\n<user_request>\n帮我调研支持方案\n</user_request><runtime_info>cwd=/tmp</runtime_info>\n</USER_REQUEST>";
+    fn strip_host_wrappers_cleans_host_antigravity_and_cursor_envelopes() {
+        let antigravity_wrapped = "<USER_REQUEST>\n<t3_code_instructions>\n## Host rules\nLots of rules\n</t3_code_instructions>\n\n<user_request>\n帮我调研支持方案\n</user_request><runtime_info>cwd=/tmp</runtime_info>\n</USER_REQUEST>";
         assert_eq!(strip_host_wrappers(antigravity_wrapped), "帮我调研支持方案");
 
         let cursor_wrapped = "<timestamp>Tue, Nov 24, 2026</timestamp>\n<user_query>\n<t3_code_orchestration>delegate info</t3_code_orchestration>\n\nFix the login bug\n</user_query>";

@@ -16,7 +16,7 @@ const props = defineProps<{
 }>();
 
 const emit = defineEmits<{
-  (e: "add", root: string, label?: string, source?: "t3_discovered" | "manual"): void;
+  (e: "add", root: string, label?: string, source?: "discovered" | "manual"): void;
   (e: "toggle", id: string, enabled: boolean, detach?: boolean): void;
   (e: "remove", id: string, detach?: boolean): void;
   (e: "sync", id: string): void;
@@ -81,7 +81,7 @@ function stateLabel(state: ExtraProfileStatus["state"]): string {
       {{ t(agent === "antigravity" ? "settings.integration.profiles.antigravityHint" : "settings.integration.profiles.hint") }}
     </p>
 
-    <!-- Discovered T3 Code Antigravity directories awaiting explicit opt-in -->
+    <!-- Discovered isolated Antigravity directories awaiting explicit opt-in -->
     <div
       v-for="item in discovered"
       :key="item.root"
@@ -96,7 +96,7 @@ function stateLabel(state: ExtraProfileStatus["state"]): string {
           type="button"
           class="btn btn-update"
           :disabled="busy"
-          @click="emit('add', item.root, item.label, 't3_discovered')"
+          @click="emit('add', item.root, item.label, 'discovered')"
         >
           {{ t("settings.integration.profiles.enableAction") }}
         </button>

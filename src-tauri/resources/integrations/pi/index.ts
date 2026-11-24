@@ -126,6 +126,7 @@ function report(ctx: ExtensionContext, event: string, extra: JsonObject = {}): v
 }
 
 function isExternallyControlled(): boolean {
+  // The thread-id variable an external host sets for the agents it launches.
   if (process.env?.T3CODE_THREAD_ID) return true;
   const argv = Array.isArray(process.argv) ? process.argv : [];
   for (let i = 0; i < argv.length; i += 1) {
@@ -147,7 +148,7 @@ function stopControlPolling(): void {
 function startControlPolling(pi: ExtensionAPI, ctx: ExtensionContext): void {
   stopControlPolling();
   // Never poll __agent-control or inject background user messages when Pi is driven by an
-  // external RPC host such as T3 Code (spec t3-code-and-multi-profile D5).
+  // external RPC host (spec agent-profiles-and-host-guards D5).
   if (isExternallyControlled()) return;
   if (!CONFIG.lifecycle && !CONFIG.stop) return;
   const lease = controlGeneration;
