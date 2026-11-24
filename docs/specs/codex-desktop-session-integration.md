@@ -107,6 +107,15 @@ App 打开失败保留已创建 ID；传输结果未知保留任务和附件，�
 本轮已通过 56 项 Rust 桌面回归、本机 App 事件门槛契约、Clippy（all targets／`-D warnings`）、
 格式检查与 `./scripts/install.sh`。
 
+2026-11-24 复核已装的 ChatGPT.app 26.1111.21308（Codex Desktop 现在的包名，bundle id 仍是
+`com.openai.codex`，内置 `codex-cli 0.169.0-alpha.11.1`）：App 包的布局变了——渲染进程没有
+`app-initial-*.js` 了，门槛在 `webview/assets/async/*.js` 的分块里（主进程包里还有一份），成了
+启动函数返回对象的 `didStart` 方法，依赖改由一个解构参数传入。契约没变：只有 owner、直接启动、
+没有正式标题且带会话类型时才发 `initial-title-requested`；新增的临时标题分支只与侧会话有关，
+AskHuman 不经过。契约测试因此改为按内容在 App 包里找门槛（两份都执行），按解构的键名而不是
+压缩后的变量名绑定它的依赖；故意改坏门槛的对照实验确认测试会失败。只做了静态执行，没有运行
+App 或模型。
+
 2026-11-01 经用户批准，以 `gpt-6-luna`／低推理运行一次真实验收。首次准备空线程时，当前 CLI
 对 `thread/read(includeTurns=true)` 返回 `list_turns is not supported yet`，此时没有提交任务；改为
 元数据读取后沿用同一操作与线程续接，成功提交一轮任务。观察到名称由空变为原生生成的「回复收到」
