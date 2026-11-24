@@ -354,6 +354,46 @@ public enum MockData {
         items([(homeMacId, "Home MacBook Pro", strictAsk(now: now), true, -60)], now: now)
     }
 
+    // MARK: Options that wrap
+
+    /// Two select-only questions whose options break lines on purpose: the first has five options of one line and two of two
+    /// lines, the second three of three lines. The breaks are in the texts, so the number of lines does not depend on how
+    /// wide the screen is. The first card is the taller one and the one that can give up less height: the shape in which a
+    /// page that hands its content a height of its own took the lines out of the options of the first card and left them
+    /// cut to one line (`AskHumanOptionLayoutUITests`).
+    public static func optionWrapAsk(now: Date = Date()) -> RequestView {
+        RequestView(
+            id: "req-wrap", kind: "ask", createdAt: ms(now.addingTimeInterval(-60)), agent: claude,
+            project: ProjectRef(key: "proj-relay", name: "relay"), sessionTitle: "Choose the scope",
+            source: "claude", contentHash: hash("wrap"),
+            ask: AskView(
+                isMarkdown: true,
+                message: MessageView(text: "确认这次的范围。", files: []),
+                questions: [
+                    QuestionView(text: "选哪个方向？", options: [
+                        OptionView(text: "方案 A", recommended: true),
+                        OptionView(text: "方案 B", recommended: false),
+                        OptionView(text: "方案 C", recommended: false),
+                        OptionView(text: "方案 D", recommended: false),
+                        OptionView(text: "方案 E", recommended: false),
+                        OptionView(text: "只做底座\n其余 5 家再评估", recommended: false),
+                        OptionView(text: "先实测隔离目录\n再起草规格", recommended: false),
+                    ]),
+                    QuestionView(text: "本次支持范围想做到哪一层？", options: [
+                        OptionView(text: "L1 底座\nL2 隔离目录投放\nL3 防冲突护栏", recommended: false),
+                        OptionView(text: "只做 L1 底座\n优先打通一家\n其余等验证后再接入", recommended: false),
+                        OptionView(text: "L1 + L2 + L3 全套\n含空闲消息与 /new\n需要适配每家的目录约定", recommended: false),
+                    ]),
+                ],
+                selectOnly: true, single: true
+            )
+        )
+    }
+
+    public static func optionWrapOnly(now: Date = Date()) -> [InboxItem] {
+        items([(homeMacId, "Home MacBook Pro", optionWrapAsk(now: now), true, -60)], now: now)
+    }
+
     public static func selectOnlyAsk(now: Date = Date()) -> RequestView {
         RequestView(
             id: "req-select", kind: "ask", createdAt: ms(now.addingTimeInterval(-600)), agent: claude,

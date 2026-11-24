@@ -26,6 +26,10 @@ public actor MockBackend: RemoteBackend {
         case markdown
         /// The demo with one request left: a select-only form of three questions that needs a scroll.
         case strict
+        /// The demo with one request left: two select-only questions whose options break lines on purpose, the taller card
+        /// being the one that can give up less height (the shape in which a page that hands its content a height of its own
+        /// squeezes the lines out of the options).
+        case optionWrap
         /// The demo with one request left: the Markdown showcase's tall message over two short questions.
         case tall
         /// The demo with one request left: a message with a link of every kind (a web address, an app's scheme, a
@@ -244,14 +248,15 @@ public actor MockBackend: RemoteBackend {
         let date = now()
         var initial: EngineState
         switch scenario {
-        case .demo, .agentResults, .quota, .single, .longs, .markdown, .strict, .tall, .links, .gallery, .outdated, .bothSync, .todoPick,
-             .away, .awayOn, .annotations, .direct, .sessionHistory, .historyPictures, .previews:
+        case .demo, .agentResults, .quota, .single, .longs, .markdown, .strict, .optionWrap, .tall, .links, .gallery, .outdated, .bothSync,
+             .todoPick, .away, .awayOn, .annotations, .direct, .sessionHistory, .historyPictures, .previews:
             let inbox: [InboxItem]
             switch scenario {
             case .single: inbox = MockData.inbox(now: date).filter { $0.requestId == "req-select" }
             case .longs: inbox = MockData.longPair(now: date)
             case .markdown: inbox = MockData.markdownOnly(now: date)
             case .strict: inbox = MockData.strictOnly(now: date)
+            case .optionWrap: inbox = MockData.optionWrapOnly(now: date)
             case .tall: inbox = MockData.tallMessageOnly(now: date)
             case .links: inbox = MockData.linksOnly(now: date)
             case .gallery: inbox = MockData.galleryOnly(now: date)

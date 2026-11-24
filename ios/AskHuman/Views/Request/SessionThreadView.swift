@@ -99,6 +99,14 @@ extension View {
 /// page looks as it always did: the request at the top, empty below.
 ///
 /// The structure is the same whether or not there is a thread (nothing under it is rebuilt when the thread comes in).
+///
+/// The request itself is laid out at the height it needs, whatever the `ZStack` offers it: the room only makes the area at
+/// least as tall as the screen, it must not size the request. Left to take the height the `ZStack` offers (the height it
+/// measured the request at, offered again and then again as the request gives some back), the stack of question cards
+/// would share that height out among the cards that can shrink, least flexible first, and a card that is taller than the
+/// next but has fewer lines to give up would end up with less than it needs: its options that break lines are cut to
+/// one line (with an ellipsis) while the next card shows every line. See `docs/specs/ios-session-history.md` §7.3 and
+/// `AskHumanOptionLayoutUITests`.
 private struct RequestRoom: ViewModifier {
     let history: RequestHistory?
 
@@ -107,7 +115,7 @@ private struct RequestRoom: ViewModifier {
         let room = history?.showsThread ?? false
         ZStack(alignment: .top) {
             Color.clear.containerRelativeFrame(.vertical) { length, _ in room ? length : 0 }
-            content
+            content.fixedSize(horizontal: false, vertical: true)
         }
     }
 }
