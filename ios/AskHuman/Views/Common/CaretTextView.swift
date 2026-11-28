@@ -239,6 +239,15 @@ final class InlineTextView: UITextView {
         setNeedsLayout()
     }
 
+    /// Clears this editor through UIKit so the delegate sees the change and the keyboard keeps its focus.
+    /// `updateUIView` leaves marked text alone to preserve the input method's composition during normal updates.
+    func clearText() {
+        unmarkText()
+        if let all = textRange(from: beginningOfDocument, to: endOfDocument) {
+            replace(all, withText: "")
+        }
+    }
+
     override func layoutSubviews() {
         super.layoutSubviews()
         placeholder.frame = CGRect(origin: .zero, size: CGSize(width: bounds.width, height: font?.lineHeight ?? 22))

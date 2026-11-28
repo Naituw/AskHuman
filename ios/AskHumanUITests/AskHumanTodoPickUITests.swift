@@ -106,6 +106,15 @@ final class AskHumanTodoPickUITests: XCTestCase {
         field.typeText(text)
     }
 
+    private func writeTodoDraft(_ text: String) {
+        launch()
+        openRequest("req-migration")
+        openTheCard()
+        XCTAssertTrue(reveal("todo-add-row"))
+        element("todo-add-row").tap()
+        type(text)
+    }
+
     /// Scrolls until the element exists (a lazy form only makes the rows near the visible area), then until it sits
     /// clear of the bars. `false` when it never showed up.
     @discardableResult
@@ -129,6 +138,14 @@ final class AskHumanTodoPickUITests: XCTestCase {
             start.press(forDuration: 0.05, thenDragTo: start.withOffset(CGVector(dx: 0, dy: travel)), withVelocity: .slow, thenHoldForDuration: 0.2)
         }
         return true
+    }
+
+    /// Scrolls the form without dragging its keyboard away.
+    private func scrollAboveKeyboard(towardTop: Bool) {
+        let top = app.coordinate(withNormalizedOffset: CGVector(dx: 0.35, dy: 0.14))
+        let bottom = app.coordinate(withNormalizedOffset: CGVector(dx: 0.35, dy: 0.42))
+        let (start, end) = towardTop ? (top, bottom) : (bottom, top)
+        start.press(forDuration: 0.05, thenDragTo: end, withVelocity: .fast, thenHoldForDuration: 0)
     }
 
     private func answered(_ n: Int, of total: Int) -> String {
@@ -421,6 +438,104 @@ final class AskHumanTodoPickUITests: XCTestCase {
     }
 
     // MARK: adding in place (D6/D7)
+
+    func testWritingATodoMakesTheBarAddItInsteadOfSendingTheAnswer() {
+        let text = "Write the migration notes"
+        writeTodoDraft(text)
+        let add = requireElement("add-todo-button")
+        XCTAssertEqual(add.label, localized("Add todo", "添加待办"))
+        requireElement("discard-todo-button")
+        XCTAssertFalse(element("answered-count").exists)
+        XCTAssertFalse(element("send-button").exists)
+        XCTAssertFalse(element("next-button").exists)
+        shot("todo-draft-1-bar")
+
+        add.tap()
+        XCTAssertTrue(requireElement("todo-row-7").label.contains(text))
+        XCTAssertEqual(requireElement("todo-add-field").value as? String, "")
+        XCTAssertTrue(gone("add-todo-button"))
+        XCTAssertTrue(gone("discard-todo-button"))
+        requireElement("answered-count")
+        XCTAssertTrue(element("send-button").exists || element("next-button").exists)
+        XCTAssertTrue(requireElement("request-title").exists)
+        shot("todo-draft-2-added")
+    }
+
+    func testDiscardingADraftRequiresConfirmationAndRestoresTheBar() {
+        let text = "A todo to discard"
+        writeTodoDraft(text)
+        let discard = requireElement("discard-todo-button")
+        let discardLabel = localized("Discard todo", "放弃待办")
+        XCTAssertEqual(discard.label, discardLabel)
+        XCTAssertFalse(element("todo-add-clear").exists)
+        XCTAssertFalse(element("answered-count").exists)
+
+        discard.tap()
+        let dialog = app.alerts.firstMatch
+        let title = dialog.staticTexts[localized("Discard this todo?", "放弃这条待办？")]
+        XCTAssertTrue(title.waitForExistence(timeout: 5))
+        shot("todo-draft-3-discard-dialog")
+        dialog.buttons[localized("Keep editing", "继续编辑")].tap()
+
+        XCTAssertEqual(requireElement("todo-add-field").value as? String, text)
+        requireElement("add-todo-button")
+        XCTAssertFalse(element("answered-count").exists)
+
+        discard.tap()
+        let confirm = dialog.buttons[discardLabel]
+        XCTAssertTrue(confirm.waitForExistence(timeout: 5))
+        confirm.tap()
+
+        XCTAssertEqual(requireElement("todo-add-field").value as? String, "")
+        XCTAssertTrue(gone("discard-todo-button"))
+        XCTAssertTrue(gone("add-todo-button"))
+        requireElement("answered-count")
+        XCTAssertTrue(element("send-button").exists || element("next-button").exists)
+        XCTAssertFalse(element("todo-row-7").exists)
+    }
+
+    func testADraftStillHoldsTheBarAfterTheKeyboardIsGone() {
+        let text = "A todo to keep"
+        writeTodoDraft(text)
+        let keyboard = app.keyboards.firstMatch
+        XCTAssertTrue(keyboard.waitForExistence(timeout: 5))
+        let scroll = app.scrollViews.containing(.textView, identifier: "todo-add-field").firstMatch
+        let origin = scroll.coordinate(withNormalizedOffset: .zero)
+        let x = scroll.frame.width * 0.4
+        let top = keyboard.frame.minY - scroll.frame.minY
+        let bottom = app.windows.firstMatch.frame.maxY - scroll.frame.minY - 10
+        origin.withOffset(CGVector(dx: x, dy: top * 0.2))
+            .press(forDuration: 0.05, thenDragTo: origin.withOffset(CGVector(dx: x, dy: bottom)))
+        let dismissed = XCTNSPredicateExpectation(predicate: NSPredicate(format: "exists == false"), object: keyboard)
+        XCTAssertEqual(XCTWaiter().wait(for: [dismissed], timeout: 15), .completed)
+
+        XCTAssertTrue(reveal("todo-add-field"))
+        XCTAssertEqual(requireElement("todo-add-field").value as? String, text)
+        requireElement("add-todo-button")
+        requireElement("discard-todo-button")
+    }
+
+    func testAddingATodoLeavesWhatIsWrittenInAnAnswerBoxAlone() {
+        for buttonID in ["todo-add-send", "add-todo-button"] {
+            let text = "A separate todo"
+            writeTodoDraft(text)
+            let answer = requireElement("answer-text-0")
+            for _ in 0..<8 where !answer.isHittable { scrollAboveKeyboard(towardTop: true) }
+            XCTAssertTrue(answer.isHittable)
+            answer.tap()
+            answer.typeText("keep me")
+            XCTAssertEqual(answer.value as? String, "keep me")
+
+            if buttonID == "todo-add-send" {
+                for _ in 0..<8 where !element(buttonID).isHittable { scrollAboveKeyboard(towardTop: false) }
+                XCTAssertTrue(reveal(buttonID))
+            }
+            XCTAssertTrue(app.keyboards.firstMatch.exists, "the answer still has the keyboard")
+            requireElement(buttonID).tap()
+            XCTAssertTrue(requireElement("todo-row-7").label.contains(text))
+            XCTAssertEqual(answer.value as? String, "keep me", "adding the todo preserves the focused answer (\(buttonID))")
+        }
+    }
 
     func testTheAddRowTakesOneTodoAfterAnotherAndNeverPicksThem() {
         launch()

@@ -3,11 +3,13 @@ import AHCore
 import AHProtocol
 
 // The last row of a todo list on a request page: a dashed line that becomes a multi-line input in place, with a send button
-// at its end (docs/specs/todo-list-actions.md D6/D7). Sending adds the todo at the end of the queue and leaves the input
-// open for the next one; the keyboard stays. A todo added here is text only (no ⚡, no attachments) and is never picked:
-// adding is not answering.
+// at its end (docs/specs/todo-list-actions.md D6/D7). Sending adds the todo at the end of the queue and keeps a focused
+// input open for the next one. A todo added here is text only (no ⚡, no attachments) and is never picked: adding is not
+// answering.
 
 struct TodoAddRow: View {
+    static let scrollID = "todo-add"
+
     let picker: RequestTodoPicker
     /// Where the page scrolls to keep the caret on screen.
     @State private var reveal = InputRevealTarget()
@@ -25,6 +27,8 @@ struct TodoAddRow: View {
                     .accessibilityIdentifier("todo-add-problem")
             }
         }
+        .id(Self.scrollID)
+        .onChange(of: picker.draftClearSerial) { _, _ in reveal.textView?.clearText() }
     }
 
     /// "Add todo" as a dashed line, which opens the input.
@@ -72,7 +76,7 @@ struct TodoAddRow: View {
             .padding(.vertical, 11)
             .background(InputRevealAnchor(target: reveal, part: .editor))
             Button {
-                send()
+                picker.submitAdd()
             } label: {
                 Image(systemName: "arrow.up.circle.fill")
                     .font(.system(size: 30))
@@ -92,15 +96,7 @@ struct TodoAddRow: View {
     }
 
     private var canSend: Bool {
-        picker.canWrite && !picker.addText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-    }
-
-    /// Adds what is written and clears it for the next one. The field is emptied through the responder chain, as the
-    /// Todos tab does: an input method's composition would survive the binding being set.
-    private func send() {
-        let draft = picker.addText
-        picker.submitAdd()
-        if picker.addText.isEmpty, !draft.isEmpty { FocusedTextInput.clear() }
+        picker.canWrite && picker.hasDraft
     }
 }
 

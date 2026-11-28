@@ -1872,6 +1872,26 @@
         }
       }
     },
+    "Discard this todo?" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "放弃这条待办？"
+          }
+        }
+      }
+    },
+    "Discard todo" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "放弃待办"
+          }
+        }
+      }
+    },
     "Discard your changes?" : {
       "localizations" : {
         "zh-Hans" : {

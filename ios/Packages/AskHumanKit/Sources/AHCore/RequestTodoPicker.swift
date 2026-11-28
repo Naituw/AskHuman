@@ -70,6 +70,9 @@ public final class RequestTodoPicker {
     /// What is being written in the add row. Memory only, kept while the request page is: collapsing the row (or the
     /// keyboard) does not lose it.
     public var addText = ""
+    public var hasDraft: Bool { !addText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
+    /// Changes when the app empties the draft, so the input clears its own text.
+    public private(set) var draftClearSerial = 0
     /// The add row is an input (and not the dashed line that opens it).
     public private(set) var isAdding = false
     /// The input has the keyboard.
@@ -345,18 +348,25 @@ public final class RequestTodoPicker {
         }
     }
 
-    /// The input's own send: adds what is written, and clears it for the next one. The row stays an input.
+    /// Adds what is written and clears the draft. The row stays an input while it has the keyboard.
     public func submitAdd() {
         switch add(addText) {
         case .added:
-            addText = ""
-            addProblem = nil
+            discardDraft()
         case .invalid(let error):
             // Nothing written is not worth a word.
             addProblem = error == .empty ? nil : error
         case .unavailable:
             break
         }
+    }
+
+    /// Clears the draft and closes the input if it has lost focus.
+    public func discardDraft() {
+        addText = ""
+        addProblem = nil
+        draftClearSerial += 1
+        if !addFocused { isAdding = false }
     }
 
     /// Opens the add row for typing: the dashed line (or the single-line entry of a project without todos) was tapped.
@@ -370,7 +380,7 @@ public final class RequestTodoPicker {
     /// so that a draft is never hidden.
     public func addFocusChanged(_ focused: Bool) {
         addFocused = focused
-        if !focused, addText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+        if !focused, !hasDraft {
             isAdding = false
             addProblem = nil
         }

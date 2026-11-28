@@ -136,6 +136,8 @@ ZH = {
     "I checked the original chat": "我已检查原聊天",
     "Describe the task": "描述任务",
     "Discard this task?": "放弃这个任务？",
+    "Discard this todo?": "放弃这条待办？",
+    "Discard todo": "放弃待办",
     "Edit": "编辑",
     "Edit task": "修改任务",
     "Edited": "修改了",

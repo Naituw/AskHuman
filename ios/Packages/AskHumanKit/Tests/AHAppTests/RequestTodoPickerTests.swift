@@ -396,9 +396,11 @@ final class RequestTodoPickerTests: XCTestCase {
         XCTAssertTrue(picker.isExpanded, "even from a folded card")
 
         picker.addText = "one"
+        let serial = picker.draftClearSerial
         picker.submitAdd()
         XCTAssertEqual(picker.addText, "", "cleared for the next one")
         XCTAssertTrue(picker.isAdding, "and it stays an input")
+        XCTAssertEqual(picker.draftClearSerial, serial + 1)
         picker.addFocusChanged(false)
         XCTAssertFalse(picker.isAdding, "nothing written and no keyboard: back to the line")
 
@@ -409,14 +411,71 @@ final class RequestTodoPickerTests: XCTestCase {
         XCTAssertEqual(picker.addText, "a draft")
     }
 
-    func testATooLongTextStaysInTheInputWithTheReason() async throws {
+    func testOnlyNonWhitespaceTextIsADraft() async throws {
+        await make()
+        let picker = try await loaded("req-migration")
+        for text in ["", " ", "\n"] {
+            picker.addText = text
+            XCTAssertFalse(picker.hasDraft)
+        }
+        for text in ["x", " x "] {
+            picker.addText = text
+            XCTAssertTrue(picker.hasDraft)
+        }
+    }
+
+    func testDiscardingADraftKeepsTheInputOpenOnlyWhileFocused() async throws {
         await make()
         let picker = try await loaded("req-migration")
         picker.beginAdd()
         picker.addText = String(repeating: "x", count: Wire.todoTextMaxChars + 1)
         picker.submitAdd()
         XCTAssertEqual(picker.addProblem, .tooLong)
-        XCTAssertFalse(picker.addText.isEmpty, "what was written is not lost")
+
+        let serial = picker.draftClearSerial
+        picker.discardDraft()
+        XCTAssertEqual(picker.addText, "")
+        XCTAssertNil(picker.addProblem)
+        XCTAssertTrue(picker.isAdding)
+        XCTAssertEqual(picker.draftClearSerial, serial + 1)
+
+        picker.addText = "a draft"
+        picker.addFocusChanged(false)
+        XCTAssertTrue(picker.isAdding)
+        picker.discardDraft()
+        XCTAssertEqual(picker.addText, "")
+        XCTAssertNil(picker.addProblem)
+        XCTAssertFalse(picker.isAdding)
+        XCTAssertEqual(picker.draftClearSerial, serial + 2)
+    }
+
+    func testAddingADraftWithoutFocusClosesTheInput() async throws {
+        await make()
+        let picker = try await loaded("req-migration")
+        picker.beginAdd()
+        picker.addText = "a draft"
+        picker.addFocusChanged(false)
+        XCTAssertTrue(picker.isAdding)
+
+        let serial = picker.draftClearSerial
+        picker.submitAdd()
+        XCTAssertEqual(picker.todos.last?.text, "a draft")
+        XCTAssertEqual(picker.addText, "")
+        XCTAssertFalse(picker.isAdding)
+        XCTAssertEqual(picker.draftClearSerial, serial + 1)
+    }
+
+    func testATooLongTextStaysInTheInputWithTheReason() async throws {
+        await make()
+        let picker = try await loaded("req-migration")
+        picker.beginAdd()
+        let tooLong = String(repeating: "x", count: Wire.todoTextMaxChars + 1)
+        picker.addText = tooLong
+        let serial = picker.draftClearSerial
+        picker.submitAdd()
+        XCTAssertEqual(picker.addProblem, .tooLong)
+        XCTAssertEqual(picker.addText, tooLong, "what was written is not lost")
+        XCTAssertEqual(picker.draftClearSerial, serial)
         picker.addTextChanged()
         XCTAssertNil(picker.addProblem, "the reason is for the text it was about")
         picker.addText = " "

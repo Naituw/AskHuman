@@ -98,7 +98,9 @@ struct AnswerScreen: View {
                     SendBar(
                         item: item, composer: composer, moreBelow: tracker.moreBelow, ended: ended,
                         connection: store.state.requestConnection(macId: item.macId),
+                        picker: picker,
                         onSend: { send(composer) },
+                        onAddTodo: { addTodo(picker, proxy: proxy) },
                         onQuickReply: { reply in send(composer, quickReply: reply) },
                         onNext: { next(composer, proxy: proxy) },
                         onAnnotations: { showAnnotations() },
@@ -177,6 +179,13 @@ struct AnswerScreen: View {
             } catch {
                 store.reportRequestError(error.userMessage, for: item.id)
             }
+        }
+    }
+
+    private func addTodo(_ picker: RequestTodoPicker?, proxy: ScrollViewProxy) {
+        picker?.submitAdd()
+        if picker?.addProblem != nil {
+            withAnimation(.easeInOut(duration: 0.3)) { proxy.scrollTo(TodoAddRow.scrollID, anchor: .center) }
         }
     }
 
@@ -775,7 +784,9 @@ private struct SendBar: View {
     let moreBelow: Bool
     let ended: Bool
     let connection: RequestConnection
+    let picker: RequestTodoPicker?
     let onSend: () -> Void
+    let onAddTodo: () -> Void
     /// A quick reply of the bar menu: sends the form with it.
     let onQuickReply: (String) -> Void
     let onNext: () -> Void
@@ -785,10 +796,12 @@ private struct SendBar: View {
 
     @Environment(\.dynamicTypeSize) private var typeSize
     @Environment(AppStore.self) private var store
+    @State private var confirmDiscard = false
 
     /// At the accessibility text sizes the buttons go under the text: side by side they would leave
     /// the words a few letters of width.
     private var stacked: Bool { typeSize.isAccessibilitySize }
+    private var addsTodo: Bool { (picker?.hasDraft ?? false) && !ended && !busy }
 
     var body: some View {
         VStack(spacing: 8) {
@@ -832,6 +845,12 @@ private struct SendBar: View {
         .animation(.snappy(duration: 0.25), value: moreBelow)
         .animation(.snappy(duration: 0.25), value: composer.annotations.isEmpty)
         .animation(.snappy(duration: 0.25), value: composer.directive?.kind)
+        .animation(.snappy(duration: 0.25), value: addsTodo)
+        // Inline confirmation dialogs hide the cancel button; an alert keeps both choices visible.
+        .alert("Discard this todo?", isPresented: $confirmDiscard) {
+            Button("Discard todo", role: .destructive) { picker?.discardDraft() }
+            Button("Keep editing", role: .cancel) {}
+        }
         // Once the question is over (sent, or answered elsewhere) there is nothing left to arm: the panel goes, and with
         // it the keyboard of its note.
         .onChange(of: ended) { _, nowEnded in
@@ -853,7 +872,7 @@ private struct SendBar: View {
     private var controls: some View {
         if BottomBar.floats, !stacked {
             CountAndButtons() {
-                adaptiveCountChip
+                if addsTodo { discardButton } else { adaptiveCountChip }
                 buttons()
             }
         } else if stacked {
@@ -909,7 +928,7 @@ private struct SendBar: View {
         // there. After that "Send" takes the main place, and "Next" stays beside it while there
         // are questions below the screen, as the popup's "Next" does until it reaches the last.
         if store.offersDirectives(for: item) {
-            DirectiveMenu(composer: composer, disabled: ended || busy, canSend: enabled, onQuickReply: onQuickReply,
+            DirectiveMenu(composer: composer, disabled: ended || busy || addsTodo, canSend: enabled, onQuickReply: onQuickReply,
                           fillsRow: BottomBar.floats)
         }
         // Only once there is a note, and for as long as there is: notes the message page cannot take any more (it was
@@ -928,7 +947,9 @@ private struct SendBar: View {
 
     @ViewBuilder
     private var statusBlock: some View {
-        if BottomBar.floats {
+        if addsTodo {
+            discardButton
+        } else if BottomBar.floats {
             countChip
         } else {
             VStack(alignment: .leading, spacing: 2) {
@@ -936,6 +957,22 @@ private struct SendBar: View {
                 if let hint { hintView(hint, chip: false) }
             }
         }
+    }
+
+    private var discardButton: some View {
+        Button {
+            confirmDiscard = true
+        } label: {
+            Text("Discard todo")
+                .font(.headline)
+                .foregroundStyle(.primary)
+                .lineLimit(1)
+                .fixedSize(horizontal: true, vertical: false)
+                .frame(maxHeight: rowFill)
+        }
+        .barSecondaryButton()
+        .accessibilityLabel("Discard todo")
+        .accessibilityIdentifier("discard-todo-button")
     }
 
     /// The count of the classic bar and of the accessibility text sizes. The row of the floating bar has
@@ -1002,15 +1039,17 @@ private struct SendBar: View {
             .barStatusChip(fillsHeight: !stacked)
     }
 
-    /// "Next" until the last question was reached, then "Send" in the same place. It is one button, so
+    /// "Add todo" for a todo draft, otherwise "Next" until the last question was reached and then "Send". It is one button, so
     /// that on the glass bar the capsule stays and only the words change, rather than one capsule
     /// going and another coming.
     private func primaryButton(fillsRow: Bool) -> some View {
         let reached = composer.hasReachedEnd
-        let label: LocalizedStringKey = reached ? (busy ? "Sending…" : sendTitle) : "Next question"
-        return Button(action: reached ? onSend : onNext) {
+        let label: LocalizedStringKey = addsTodo ? "Add todo" : (reached ? (busy ? "Sending…" : sendTitle) : "Next question")
+        return Button(action: addsTodo ? onAddTodo : (reached ? onSend : onNext)) {
             ZStack {
-                if reached {
+                if addsTodo {
+                    Text("Add todo").font(.headline).lineLimit(1)
+                } else if reached {
                     HStack(spacing: 6) {
                         if busy { ProgressView().controlSize(.small).tint(.white) }
                         // "Send and go away" is longer than "Send": it shrinks a little before it would be cut.
@@ -1030,9 +1069,9 @@ private struct SendBar: View {
             .frame(minWidth: 84, maxWidth: stacked || fillsRow || BottomBar.floats ? .infinity : nil, maxHeight: BottomBar.floats ? .infinity : nil)
         }
         .barPrimaryButton()
-        .disabled(reached ? !enabled : (ended || sendingState))
+        .disabled(addsTodo ? !(picker?.canWrite ?? false) : (reached ? !enabled : (ended || sendingState)))
         .accessibilityLabel(label)
-        .accessibilityIdentifier(reached ? "send-button" : "next-button")
+        .accessibilityIdentifier(addsTodo ? "add-todo-button" : (reached ? "send-button" : "next-button"))
     }
 
     /// What "Send" says: an armed instruction is part of what is sent.
