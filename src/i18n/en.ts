@@ -1744,10 +1744,10 @@ export default {
   todosWin: {
     title: "Todos",
     projectLabel: "Project",
-    sectionWithTodos: "With todos",
+    sectionWithTodos: "Todo projects",
     sectionRecent: "Recent projects",
     sectionSynced: "Synced with iCloud",
-    sectionEmpty: "Projects without todos ({n})",
+    sectionEmpty: "No todos yet ({n})",
     sectionLocalOnly: "This Mac only (not synced)",
     searchProjects: "Search projects",
     allTodos: "All todos",

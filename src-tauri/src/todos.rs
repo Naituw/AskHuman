@@ -255,7 +255,12 @@ pub fn list(project: &str) -> Vec<TodoEntry> {
 
 /// Full snapshot: project key → entries (GUI window / project selector).
 pub fn all() -> HashMap<String, Vec<TodoEntry>> {
-    load_at(&todos_file()).projects
+    snapshot().projects
+}
+
+/// Read pending todos and execution history together from the local store.
+pub(crate) fn snapshot() -> TodoFile {
+    load_at(&todos_file())
 }
 
 pub fn cleanup_attachment_orphans() {

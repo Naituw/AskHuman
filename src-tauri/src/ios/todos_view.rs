@@ -148,8 +148,7 @@ struct Merged {
 
 /// Folds `candidates` (in the window's ranking, which puts the most recently used directory of a
 /// repository first) into one entry per repository, then appends synced projects the list does
-/// not mention (a project whose todos are all finished lives only in the history). Port of
-/// `mergeProjects`.
+/// not mention with zero pending and history counts. Port of `mergeProjects`.
 fn merge(candidates: &[Candidate], sync: &[SyncedProject]) -> Vec<Merged> {
     let mut by_sync_key: HashMap<&str, &SyncedProject> = HashMap::new();
     for project in sync {
@@ -191,7 +190,7 @@ fn merge(candidates: &[Candidate], sync: &[SyncedProject]) -> Vec<Merged> {
             continue;
         };
         if let Some(&index) = by_identity.get(project.identity.as_str()) {
-            // Replicas agree once the local phase ran; until then the larger count is the newer one.
+            // Replicas agree once the local phase runs. Until then, take the larger counts.
             let seen = &mut merged[index];
             seen.pending = seen.pending.max(candidate.pending);
             seen.history = seen.history.max(candidate.history);
@@ -234,9 +233,10 @@ fn hint_of(hints: &HashMap<String, String>, key: &str) -> Option<String> {
 
 /// The rows of `todo.projects`, and whether more projects existed than the wire carries.
 ///
-/// With nothing synced this is the window's local mode: `withTodos` first, then `recent`. With
-/// synced projects it is iCloud mode: one row per repository, `synced` rows (todos pending), the
-/// `empty` ones, then the projects without a remote (`localOnly`).
+/// Local mode puts projects with pending or finished todos in `withTodos`, then lists `recent`.
+/// iCloud mode merges the directories of each repository, then lists `synced` projects with
+/// pending or finished todos, `empty` projects with neither, and `localOnly` projects with todos
+/// or history.
 pub fn build_rows(candidates: &[Candidate], sync: &[SyncedProject]) -> (Vec<TodoProjectRow>, bool) {
     let mut rows = if sync.is_empty() {
         local_rows(candidates)
@@ -267,8 +267,9 @@ fn local_rows(candidates: &[Candidate]) -> Vec<TodoProjectRow> {
         agent: agent_of(c.activity),
         macs: Vec::new(),
     };
-    let with_todos = candidates.iter().filter(|c| c.pending > 0);
-    let recent = candidates.iter().filter(|c| c.pending == 0);
+    let has_todos = |c: &&Candidate| c.pending > 0 || c.history > 0;
+    let with_todos = candidates.iter().filter(has_todos);
+    let recent = candidates.iter().filter(|c| !has_todos(c));
     with_todos
         .map(|c| row(c, "withTodos"))
         .chain(recent.map(|c| row(c, "recent")))
@@ -311,7 +312,7 @@ fn synced_rows(candidates: &[Candidate], sync: &[SyncedProject]) -> Vec<TodoProj
     let mut empty = Vec::new();
     let mut local_only = Vec::new();
     for m in &merged {
-        if m.pending == 0 {
+        if m.pending == 0 && m.history == 0 {
             empty.push(row(m, "empty"));
         } else if m.scope == Scope::LocalOnly {
             local_only.push(row(m, "localOnly"));
@@ -441,10 +442,14 @@ mod tests {
     }
 
     #[test]
-    fn local_mode_puts_projects_with_todos_first_and_keeps_the_ranking() {
+    fn local_mode_puts_pending_and_finished_projects_first_and_keeps_the_ranking() {
         let candidates = vec![
             cand("/w/idle", 0),
             cand("/w/busy", 2),
+            Candidate {
+                history: 3,
+                ..cand("/w/finished", 0)
+            },
             Candidate {
                 activity: 0,
                 ..cand("/w/working", 1)
@@ -454,18 +459,19 @@ mod tests {
         assert!(!truncated);
         let summary: Vec<_> = rows
             .iter()
-            .map(|r| (r.name.as_str(), r.section.as_str(), r.pending))
+            .map(|r| (r.name.as_str(), r.section.as_str(), r.pending, r.history))
             .collect();
         assert_eq!(
             summary,
             [
-                ("busy", "withTodos", 2),
-                ("working", "withTodos", 1),
-                ("idle", "recent", 0)
+                ("busy", "withTodos", 2, 0),
+                ("finished", "withTodos", 0, 3),
+                ("working", "withTodos", 1, 0),
+                ("idle", "recent", 0, 0)
             ]
         );
         assert!(rows.iter().all(|r| r.scope == "local" && r.repo.is_none()));
-        assert_eq!(rows[1].agent.as_deref(), Some("working"));
+        assert_eq!(rows[2].agent.as_deref(), Some("working"));
         assert_eq!(rows[0].agent, None);
     }
 
@@ -506,20 +512,30 @@ mod tests {
 
     #[test]
     fn icloud_sections_are_synced_then_empty_then_local_only() {
-        let (candidates, sync) = icloud_world();
+        let (mut candidates, sync) = icloud_world();
+        candidates
+            .iter_mut()
+            .find(|c| c.name == "blog")
+            .unwrap()
+            .history = 2;
+        candidates.push(Candidate {
+            history: 1,
+            ..cand("/Users/me/Scratch/finished", 0)
+        });
         let (rows, _) = build_rows(&candidates, &sync);
         let order: Vec<_> = rows
             .iter()
-            .map(|r| (r.name.as_str(), r.section.as_str()))
+            .map(|r| (r.name.as_str(), r.section.as_str(), r.pending, r.history))
             .collect();
         assert_eq!(
             order,
             [
-                ("app", "synced"),
-                ("dotfiles", "synced"),
-                ("blog", "empty"),
-                ("lonely", "empty"),
-                ("notes", "localOnly"),
+                ("app", "synced", 3, 0),
+                ("dotfiles", "synced", 2, 0),
+                ("blog", "synced", 0, 2),
+                ("lonely", "empty", 0, 0),
+                ("notes", "localOnly", 2, 0),
+                ("finished", "localOnly", 0, 1),
             ]
         );
         let notes = rows.iter().find(|r| r.name == "notes").unwrap();
@@ -554,12 +570,16 @@ mod tests {
         assert_eq!(empty[0].id, project_id(CLOUD_DOTS));
         assert_eq!(empty[0].scope, "cloudOnly");
         assert_eq!(empty[0].pending, 0);
+        assert_eq!(empty[0].history, 0);
     }
 
     #[test]
     fn replicas_report_the_larger_count_and_the_busiest_agent() {
         let candidates = vec![
-            cand("/Users/me/dev/app-wt", 2),
+            Candidate {
+                history: 2,
+                ..cand("/Users/me/dev/app-wt", 2)
+            },
             Candidate {
                 history: 4,
                 activity: 1,

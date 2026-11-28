@@ -6,9 +6,9 @@ import TodosSidebar from "./TodosSidebar.vue";
 import { ALL_KEY, buildSidebarModel } from "./todoProjects";
 
 const projects: TodoProjectInfo[] = [
-  { key: "/w/a/app", name: "app", count: 4, section: "withTodos" },
-  { key: "/w/b/app", name: "app", count: 2, section: "withTodos" },
-  { key: "/w/blog", name: "blog", count: 0, section: "recent" },
+  { key: "/w/a/app", name: "app", count: 4, history: 0, section: "withTodos" },
+  { key: "/w/b/app", name: "app", count: 2, history: 0, section: "withTodos" },
+  { key: "/w/blog", name: "blog", count: 0, history: 0, section: "recent" },
 ];
 
 function mountSidebar(props: { selectedKey?: string; query?: string; slots?: Record<string, string> } = {}) {
@@ -52,9 +52,25 @@ describe("TodosSidebar", () => {
     // No badge for a project without todos.
     expect(options[3].find(".td-side-count").exists()).toBe(false);
     expect(wrapper.findAll(".td-side-section-title").map((t) => t.text())).toEqual([
-      "有待办",
+      "待办项目",
       "最近项目",
     ]);
+  });
+
+  it("keeps a finished project under Todo projects and removes its badge", async () => {
+    i18n.global.locale.value = "en";
+    const wrapper = mountSidebar();
+    const section = wrapper.get(".td-side-section-withTodos");
+    expect(section.get(".td-side-section-title").text()).toBe("Todo projects");
+    expect(section.get('[data-key="/w/a/app"] .td-side-count').text()).toBe("4");
+    await wrapper.setProps({
+      model: buildSidebarModel([{ ...projects[0], count: 0, history: 4 }, ...projects.slice(1)], ""),
+    });
+    expect(section.findAll("[role=option]").map((o) => o.attributes("data-key"))).toEqual([
+      "/w/a/app",
+      "/w/b/app",
+    ]);
+    expect(section.find('[data-key="/w/a/app"] .td-side-count').exists()).toBe(false);
   });
 
   it("marks the selected row and keeps a single tab stop on it", () => {
@@ -179,11 +195,11 @@ describe("TodosSidebar", () => {
 describe("TodosSidebar in iCloud mode", () => {
   const cloudKey = "icloud:github.com/acme/dotfiles";
   const world: TodoProjectInfo[] = [
-    { key: "/w/app-wt", name: "app-wt", count: 3, section: "withTodos" },
-    { key: "/w/app", name: "app", count: 3, section: "withTodos" },
-    { key: cloudKey, name: "dotfiles", count: 2, section: "withTodos" },
-    { key: "/w/notes", name: "notes", count: 1, section: "withTodos" },
-    { key: "/w/blog", name: "blog", count: 0, section: "recent" },
+    { key: "/w/app-wt", name: "app-wt", count: 3, history: 0, section: "withTodos" },
+    { key: "/w/app", name: "app", count: 3, history: 0, section: "withTodos" },
+    { key: cloudKey, name: "dotfiles", count: 0, history: 2, section: "withTodos" },
+    { key: "/w/notes", name: "notes", count: 0, history: 1, section: "withTodos" },
+    { key: "/w/blog", name: "blog", count: 0, history: 0, section: "recent" },
   ];
   const sync: TodoSyncProject[] = [
     { identity: "github.com/acme/app", keys: ["/w/app", "/w/app-wt"], cloudKey: null, macs: [] },
@@ -212,14 +228,14 @@ describe("TodosSidebar in iCloud mode", () => {
     document.body.innerHTML = "";
   });
 
-  it("titles the sections and folds the projects without todos into one row", () => {
+  it("titles the sections and folds only projects that never had todos", () => {
     const wrapper = mountSynced();
     expect(wrapper.findAll(".td-side-section-title").map((t) => t.text())).toEqual([
       "iCloud 同步的项目",
       "仅本机（不同步）",
     ]);
     const fold = wrapper.get(".td-side-fold");
-    expect(fold.text()).toContain("无待办的项目（1）");
+    expect(fold.text()).toContain("还没有待办的项目（1）");
     expect(fold.attributes("aria-expanded")).toBe("false");
     // The fold row is a button but not an option: it takes no part in selection or arrow keys.
     expect(fold.attributes("role")).toBeUndefined();
@@ -229,6 +245,7 @@ describe("TodosSidebar in iCloud mode", () => {
       cloudKey,
       "/w/notes",
     ]);
+    expect(wrapper.find(`[data-key="${cloudKey}"] .td-side-count`).exists()).toBe(false);
   });
 
   it("marks projects that only exist in iCloud, or only here", () => {
@@ -247,10 +264,13 @@ describe("TodosSidebar in iCloud mode", () => {
     await wrapper.get(".td-side-fold").trigger("click");
     expect(wrapper.emitted("toggle-empty")).toHaveLength(1);
 
+    i18n.global.locale.value = "en";
     const open = mountSynced({ emptyOpen: true });
+    expect(open.get(".td-side-fold").text()).toContain("No todos yet (1)");
     expect(open.get(".td-side-fold").attributes("aria-expanded")).toBe("true");
-    expect(open.get('[data-key="/w/blog"]').classes()).toContain("nested");
-    expect(open.findAll("[role=option]").map((o) => o.attributes("data-key"))).toContain("/w/blog");
+    expect(open.get(".td-side-section-empty").findAll("[role=option]").map((o) => o.attributes("data-key"))).toEqual([
+      "/w/blog",
+    ]);
   });
 
   it("highlights the row that merges the selected directory", () => {

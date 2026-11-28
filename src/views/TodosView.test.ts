@@ -41,10 +41,10 @@ const ipc = vi.hoisted(() => ({
   })),
   todosList: vi.fn(async (_project?: string): Promise<unknown[]> => []),
   todosProjects: vi.fn(async (): Promise<unknown[]> => [
-    { key: "/project", name: "project", count: 0, section: "recent" },
+    { key: "/project", name: "project", count: 0, history: 0, section: "recent" },
   ]),
   todosProjectsEnriched: vi.fn(async (): Promise<unknown[]> => [
-    { key: "/project", name: "project", count: 0, section: "recent" },
+    { key: "/project", name: "project", count: 0, history: 0, section: "recent" },
   ]),
   todosRemove: vi.fn(async () => {}),
   todosReorder: vi.fn(async () => {}),
@@ -282,9 +282,9 @@ function todo(id: string, text: string) {
 /** Two projects with todos (a: 2, b: 1) and one recent project; the home directory is /Users/me. */
 function useWorkspace(): void {
   const projects = [
-    { key: A, name: "a", count: 2, section: "withTodos" },
-    { key: B, name: "b", count: 1, section: "withTodos" },
-    { key: C, name: "c", count: 0, section: "recent" },
+    { key: A, name: "a", count: 2, history: 0, section: "withTodos" },
+    { key: B, name: "b", count: 1, history: 0, section: "withTodos" },
+    { key: C, name: "c", count: 0, history: 0, section: "recent" },
   ];
   ipc.todosProjects.mockImplementation(async () => projects);
   ipc.todosProjectsEnriched.mockImplementation(async () => projects);
@@ -681,11 +681,11 @@ describe("TodosView iCloud projects", () => {
   const NOTES = "/Users/me/Scratch/notes";
 
   const projects = [
-    { key: APP_WT, name: "app-wt", count: 2, section: "withTodos" },
-    { key: APP_DIR, name: "app", count: 2, section: "withTodos" },
-    { key: DOTS_KEY, name: "dotfiles", count: 1, section: "withTodos" },
-    { key: NOTES, name: "notes", count: 1, section: "withTodos" },
-    { key: "/Users/me/blog", name: "blog", count: 0, section: "recent" },
+    { key: APP_WT, name: "app-wt", count: 2, history: 2, section: "withTodos" },
+    { key: APP_DIR, name: "app", count: 2, history: 2, section: "withTodos" },
+    { key: DOTS_KEY, name: "dotfiles", count: 1, history: 0, section: "withTodos" },
+    { key: NOTES, name: "notes", count: 1, history: 0, section: "withTodos" },
+    { key: "/Users/me/blog", name: "blog", count: 0, history: 0, section: "recent" },
   ];
   const sync = [
     {
@@ -760,7 +760,7 @@ describe("TodosView iCloud projects", () => {
     ]);
     const keys = wrapper.findAll("[role=option]").map((o) => o.attributes("data-key"));
     expect(keys).toEqual([ALL_KEY, APP_WT, DOTS_KEY, NOTES]);
-    expect(wrapper.get(".td-side-fold").text()).toContain("无待办的项目（1）");
+    expect(wrapper.get(".td-side-fold").text()).toContain("还没有待办的项目（1）");
     // The first project is selected by the row's key; the header speaks of the repository.
     expect(wrapper.get(".td-project").text()).toBe("app");
     expect(wrapper.get(".td-path").text()).toBe(APP);
@@ -913,7 +913,7 @@ describe("TodosView iCloud projects", () => {
     ipc.todoSyncProjects.mockImplementation(async () => []);
     const wrapper = await open();
     expect(wrapper.findAll(".td-side-section-title").map((t) => t.text())).toEqual([
-      "有待办",
+      "待办项目",
       "最近项目",
     ]);
     expect(wrapper.find(".td-path-row .td-tag").exists()).toBe(false);

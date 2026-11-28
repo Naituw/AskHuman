@@ -1165,7 +1165,9 @@ pub struct TodoProjectInfo {
     pub name: String,
     /// 该项目当前待办条数。
     pub count: usize,
-    /// 选择器分组：`withTodos`（有待办）或 `recent`（最近工作过；与 IM `/todo` 候选同源）。
+    /// Finished todos in the project's history.
+    pub history: usize,
+    /// `withTodos` for pending or finished todos, `recent` for workspace or live Agent projects without either.
     pub section: String,
 }
 
@@ -1179,6 +1181,7 @@ struct GuiTodoProjectCandidate {
     /// 0 = working, 1 = idle, 2 = no live Agent.
     activity_rank: u8,
     todo_count: usize,
+    history: usize,
 }
 
 fn gui_todo_project_sort(
@@ -1203,6 +1206,7 @@ fn gui_todo_project_sort(
 pub(crate) struct RankedTodoProject {
     pub key: String,
     pub count: usize,
+    pub history: usize,
     /// 0 = an Agent works in the project, 1 = an idle one, 2 = none.
     pub activity_rank: u8,
     /// `withTodos` or `recent`.
@@ -1210,26 +1214,33 @@ pub(crate) struct RankedTodoProject {
 }
 
 fn build_todo_project_list(agents: Option<&serde_json::Value>) -> Vec<TodoProjectInfo> {
+    let file = crate::todos::snapshot();
+    let sync = crate::todo_sync::service::projects();
     rank_todo_projects(
-        &crate::todos::all(),
+        &file,
         crate::agents::workspaces::list(),
         agents,
+        sync.iter()
+            .flat_map(|project| project.keys.iter().chain(project.cloud_key.iter())),
     )
     .into_iter()
     .map(|project| TodoProjectInfo {
         name: crate::project::display_name(&project.key),
         count: project.count,
+        history: project.history,
         key: project.key,
         section: project.section.into(),
     })
     .collect()
 }
 
-/// 候选项目排序（待办窗口与 iOS 共用）：有待办的在前，其后是最近用过 / 有活跃 Agent 的。
-pub(crate) fn rank_todo_projects(
-    todos: &std::collections::HashMap<String, Vec<crate::todos::TodoEntry>>,
+/// Rank projects with pending or finished todos first, then other workspaces and live Agents.
+/// A sync registry link also makes a history-only project eligible.
+pub(crate) fn rank_todo_projects<'a>(
+    file: &'a crate::todos::TodoFile,
     workspaces: Vec<crate::agents::workspaces::Workspace>,
     agents: Option<&serde_json::Value>,
+    registry_keys: impl IntoIterator<Item = &'a String>,
 ) -> Vec<RankedTodoProject> {
     let mut by_key: std::collections::HashMap<String, GuiTodoProjectCandidate> =
         std::collections::HashMap::new();
@@ -1249,14 +1260,20 @@ pub(crate) fn rank_todo_projects(
                 has_workspace: true,
                 activity_rank: 2,
                 todo_count: 0,
+                history: 0,
             });
         entry.pinned |= workspace.pinned;
         entry.last_used_at = entry.last_used_at.max(workspace.last_used_at);
         entry.has_workspace = true;
     }
 
-    for (key, entries) in todos {
-        let entry = by_key
+    let pending_keys = file
+        .projects
+        .iter()
+        .filter(|(_, entries)| !entries.is_empty())
+        .map(|(key, _)| key);
+    for key in pending_keys.chain(registry_keys) {
+        by_key
             .entry(key.clone())
             .or_insert_with(|| GuiTodoProjectCandidate {
                 key: key.clone(),
@@ -1265,8 +1282,8 @@ pub(crate) fn rank_todo_projects(
                 has_workspace: false,
                 activity_rank: 2,
                 todo_count: 0,
+                history: 0,
             });
-        entry.todo_count = entries.len();
     }
 
     if let Some(agents) = agents {
@@ -1296,6 +1313,7 @@ pub(crate) fn rank_todo_projects(
                     has_workspace: false,
                     activity_rank: rank,
                     todo_count: 0,
+                    history: 0,
                 });
             entry.activity_rank = entry.activity_rank.min(rank);
         }
@@ -1303,11 +1321,12 @@ pub(crate) fn rank_todo_projects(
 
     let mut with_todos: Vec<GuiTodoProjectCandidate> = Vec::new();
     let mut recent: Vec<GuiTodoProjectCandidate> = Vec::new();
-    for candidate in by_key.into_values() {
-        if candidate.todo_count > 0 {
+    for mut candidate in by_key.into_values() {
+        candidate.todo_count = file.projects.get(&candidate.key).map_or(0, Vec::len);
+        candidate.history = file.history.get(&candidate.key).map_or(0, Vec::len);
+        if candidate.todo_count > 0 || candidate.history > 0 {
             with_todos.push(candidate);
         } else if candidate.has_workspace || candidate.activity_rank < 2 {
-            // Recent section: workspaces + live agents only (no orphan empty keys).
             recent.push(candidate);
         }
     }
@@ -1320,6 +1339,7 @@ pub(crate) fn rank_todo_projects(
             out.push(RankedTodoProject {
                 key: candidate.key,
                 count: candidate.todo_count,
+                history: candidate.history,
                 activity_rank: candidate.activity_rank,
                 section,
             });
@@ -1328,8 +1348,8 @@ pub(crate) fn rank_todo_projects(
     out
 }
 
-/// 项目选择器候选（本地快路径）：有待办 ∪ 最近 workspace。**不**连 daemon 拉 agent，
-/// 供前端首屏瞬时填充下拉；agent 段见 `todos_projects_enriched`。
+/// Project picker from the local todo file, workspace index and sync registry.
+/// The daemon's Agent snapshot is added by `todos_projects_enriched`.
 #[tauri::command]
 pub fn todos_projects() -> Vec<TodoProjectInfo> {
     build_todo_project_list(None)
@@ -5568,6 +5588,78 @@ pub fn restart_settings(app: AppHandle) -> Result<(), String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn todo_project_ranking_keeps_finished_workspace_in_place() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("todos.json");
+        let lock = dir.path().join("todos.lock");
+        let ids = ["one", "two", "three"].map(|text| {
+            crate::todos::add_at(&path, &lock, "/w/app", text)
+                .unwrap()
+                .id
+        });
+        crate::todos::add_at(&path, &lock, "/w/blog", "pending").unwrap();
+        let workspaces =
+            [("/w/app", 3), ("/w/blog", 2), ("/w/unused", 1)].map(|(path, last_used_at)| {
+                crate::agents::workspaces::Workspace {
+                    path: path.into(),
+                    label: path.into(),
+                    last_used_at,
+                    agents: Vec::new(),
+                    pinned: false,
+                    hidden: false,
+                }
+            });
+        let rank = || {
+            let file = crate::todos::read_checked_at(&path).unwrap();
+            rank_todo_projects(&file, workspaces.to_vec(), None, [])
+        };
+        let before = rank();
+        assert_eq!(before[0].count, 3);
+        crate::todos::take_at(&path, &lock, "/w/app", &ids, 10);
+        let after = rank();
+        let sections = |rows: &[RankedTodoProject]| {
+            rows.iter()
+                .map(|row| (row.key.clone(), row.section))
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(sections(&before), sections(&after));
+        assert_eq!(
+            sections(&after),
+            [
+                ("/w/app".to_string(), "withTodos"),
+                ("/w/blog".to_string(), "withTodos"),
+                ("/w/unused".to_string(), "recent"),
+            ]
+        );
+        assert_eq!((after[0].count, after[0].history), (0, 3));
+    }
+
+    #[test]
+    fn todo_project_ranking_requires_a_registry_link_for_history_only_orphans() {
+        let linked = String::from("/w/linked");
+        let cloud = String::from("icloud:github.com/acme/app");
+        let unused = String::from("/w/unused");
+        let file = serde_json::from_value(serde_json::json!({
+            "history": {
+                "/w/orphan": [{ "id": "o", "text": "finished" }],
+                (linked.as_str()): [{ "id": "l", "text": "finished" }],
+                (cloud.as_str()): [{ "id": "c", "text": "finished" }]
+            }
+        }))
+        .unwrap();
+        let rows = rank_todo_projects(&file, Vec::new(), None, [&linked, &cloud, &unused]);
+        assert_eq!(
+            rows.iter()
+                .map(|row| (row.key.as_str(), row.section, row.count, row.history))
+                .collect::<Vec<_>>(),
+            [
+                (cloud.as_str(), "withTodos", 0, 1),
+                (linked.as_str(), "withTodos", 0, 1),
+            ]
+        );
+    }
 
     #[cfg(unix)]
     #[test]

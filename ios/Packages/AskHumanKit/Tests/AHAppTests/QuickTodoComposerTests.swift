@@ -489,18 +489,14 @@ final class QuickTodoComposerTests: XCTestCase {
         await make()
         await composer.loadProjects()
         let cloud = composer.sections(of: .icloud)
-        XCTAssertEqual(cloud.map(\.kind), [.synced, .empty, .localOnly])
-        XCTAssertEqual(cloud[0].rows.map(\.name), ["AskHuman", "Billing Service", "blog", "notes"])
-        XCTAssertTrue(cloud[1].collapsed, "the projects without todos stay closed until asked for")
-        XCTAssertEqual(cloud[1].total, 1)
-        XCTAssertEqual(cloud[2].macId, home)
-
-        composer.emptyExpanded = true
-        XCTAssertEqual(composer.sections(of: .icloud).first { $0.kind == .empty }?.rows.map(\.name), ["dotfiles"])
+        XCTAssertEqual(cloud.map(\.kind), [.synced, .localOnly])
+        XCTAssertEqual(
+            cloud[0].rows.map(\.name), ["AskHuman", "Billing Service", "blog", "notes", "dotfiles"],
+            "a project whose todos are all done stays with the others"
+        )
+        XCTAssertEqual(cloud[1].macId, home)
 
         XCTAssertEqual(composer.sections(of: .mac(office)).map(\.kind), [.withTodos, .recent])
-        composer.closeProjects()
-        XCTAssertFalse(composer.emptyExpanded, "a list that is opened again starts closed")
     }
 
     func testMacsThatBothSyncAreOneICloudAndTheSameProjectIsListedOnce() async throws {
@@ -518,7 +514,14 @@ final class QuickTodoComposerTests: XCTestCase {
         let sections = composer.sections(of: .icloud)
         XCTAssertEqual(sections.map(\.kind), [.synced, .empty, .localOnly, .localOnly])
         XCTAssertEqual(sections.filter { $0.kind == .localOnly }.map(\.macId), [home, self.office])
-        XCTAssertEqual(sections.first { $0.kind == .empty }?.total, 2, "the Office iMac's project without todos joins the others")
+        let empty = try XCTUnwrap(sections.first { $0.kind == .empty })
+        XCTAssertEqual(empty.total, 1, "the Office iMac's project that never had a todo; a finished one keeps its place")
+        XCTAssertTrue(empty.collapsed, "the projects that never had a todo stay closed until asked for")
+
+        composer.emptyExpanded = true
+        XCTAssertEqual(composer.sections(of: .icloud).first { $0.kind == .empty }?.rows.map(\.name), ["sandbox"])
+        composer.closeProjects()
+        XCTAssertFalse(composer.emptyExpanded, "a list that is opened again starts closed")
     }
 
     func testWithOneMacPairedICloudAndTheMacAreBothListedAsOnTheTodosTab() async {
@@ -647,7 +650,7 @@ final class QuickTodoComposerTests: XCTestCase {
         XCTAssertTrue(composer.sections(of: .icloud).isEmpty, "iCloud has no such project")
 
         composer.query = "dotfiles"
-        XCTAssertEqual(composer.sections(of: .icloud).flatMap(\.rows).map(\.name), ["dotfiles"], "a search opens the projects without todos")
+        XCTAssertEqual(composer.sections(of: .icloud).flatMap(\.rows).map(\.name), ["dotfiles"], "a project with only finished todos is found like the others")
 
         composer.query = "no such project anywhere"
         XCTAssertTrue(composer.sections(of: .icloud).isEmpty)

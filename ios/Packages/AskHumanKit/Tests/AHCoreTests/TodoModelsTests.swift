@@ -183,6 +183,21 @@ final class TodoModelsTests: XCTestCase {
         XCTAssertEqual(sections[1].rows.map(\.macName), ["Mac b"], "an empty project knows which Mac it is on")
     }
 
+    func testAProjectOnlyAnotherMacHasKeepsItsPlaceOnceItsTodosAreDone() {
+        let served = TodoProjects(rev: 1, mode: "icloud", projects: [row("1", name: "Synced", section: "synced", scope: "synced")])
+        let others = ["b": TodoProjects(rev: 1, mode: "icloud", projects: [
+            TodoProjectRow(id: "2", name: "open", pending: 2, scope: "localOnly", section: "localOnly"),
+            // An older Mac still files a project whose todos are all done under "empty".
+            TodoProjectRow(id: "3", name: "done", history: 3, scope: "localOnly", section: "empty"),
+            TodoProjectRow(id: "4", name: "never", scope: "localOnly", section: "localOnly"),
+        ])]
+        let listed = TodoRows.listed(served, of: .icloud, servedBy: "a", macs: [mac("a"), mac("b")], others: others)
+        let sections = Dictionary(uniqueKeysWithValues: listed.map { ($0.row.name, $0.row.section) })
+        XCTAssertEqual(sections["open"], TodoSection.Kind.localOnly.rawValue)
+        XCTAssertEqual(sections["done"], TodoSection.Kind.localOnly.rawValue, "finished todos count as having been used")
+        XCTAssertEqual(sections["never"], TodoSection.Kind.empty.rawValue, "only a project that never had one is put away")
+    }
+
     func testSearchFindsAProjectByTheMacItIsOnlyOn() {
         let studio = TodoListedProject(
             macId: "s", macName: "Mac Studio", row: row("1", name: "intranet", section: "localOnly", scope: "localOnly")

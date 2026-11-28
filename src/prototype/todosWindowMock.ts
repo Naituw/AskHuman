@@ -319,12 +319,19 @@ function makeStore(data: DataSet): Store {
 
 function projectsOf(store: Store): TodoProjectInfo[] {
   const base = (key: string) => key.split("/").filter(Boolean).pop() ?? key;
-  const withTodos = [...store.todos.entries()]
-    .filter(([, list]) => list.length > 0)
-    .map(([key, list]): TodoProjectInfo => ({ key, name: base(key), count: list.length, section: "withTodos" }));
-  const recent = store.recent
-    .filter((key) => !withTodos.some((p) => p.key === key))
-    .map((key): TodoProjectInfo => ({ key, name: base(key), count: 0, section: "recent" }));
+  const workspaces = new Set(store.recent);
+  const withTodos: TodoProjectInfo[] = [];
+  const recent: TodoProjectInfo[] = [];
+  for (const key of new Set([...store.todos.keys(), ...workspaces])) {
+    const count = store.todos.get(key)?.length ?? 0;
+    const history = store.history.get(key)?.length ?? 0;
+    const name = base(key);
+    if (count || history) {
+      withTodos.push({ key, name, count, history, section: "withTodos" });
+    } else if (workspaces.has(key)) {
+      recent.push({ key, name, count, history, section: "recent" });
+    }
+  }
   return [...withTodos, ...recent];
 }
 

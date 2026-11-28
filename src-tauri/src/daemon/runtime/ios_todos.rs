@@ -6,7 +6,6 @@
 //! tests run against a temp directory; the daemon hands in the real one. The project list itself
 //! is assembled by the pure `ios::todos_view`.
 
-use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::UNIX_EPOCH;
@@ -121,13 +120,19 @@ impl World {
         in_flight: Vec<String>,
     ) -> Self {
         let file = env.file();
-        let ranked = rank_todo_projects(&file.projects, workspaces, agents);
         let enabled = env.sync.enabled();
         let sync = if enabled {
             env.sync.projects()
         } else {
             Vec::new()
         };
+        let ranked = rank_todo_projects(
+            &file,
+            workspaces,
+            agents,
+            sync.iter()
+                .flat_map(|project| project.keys.iter().chain(project.cloud_key.iter())),
+        );
         Self {
             file,
             ranked,
@@ -191,34 +196,17 @@ fn sync_info(status: &service::Status) -> wire::TodoSyncInfo {
 }
 
 fn projects_of(env: &TodoEnv, world: &World) -> wire::TodoProjects {
-    let history_of = |key: &str| world.file.history.get(key).map_or(0, Vec::len);
-    let mut candidates: Vec<Candidate> = world
+    let candidates: Vec<Candidate> = world
         .ranked
         .iter()
         .map(|project| Candidate {
             key: project.key.clone(),
             name: project_name(&project.key),
             pending: project.count,
-            history: history_of(&project.key),
+            history: project.history,
             activity: project.activity_rank,
         })
         .collect();
-    // A synced project that finished everything is not in the ranking, but its row still says
-    // how many finished todos it holds.
-    let ranked: HashSet<&str> = world.ranked.iter().map(|p| p.key.as_str()).collect();
-    for project in &world.sync {
-        for key in project.keys.iter().chain(project.cloud_key.iter()) {
-            if !ranked.contains(key.as_str()) && history_of(key) > 0 {
-                candidates.push(Candidate {
-                    key: key.clone(),
-                    name: project_name(key),
-                    pending: 0,
-                    history: history_of(key),
-                    activity: 2,
-                });
-            }
-        }
-    }
     let synced: Vec<SyncedProject> = world
         .sync
         .iter()
@@ -484,7 +472,7 @@ pub(super) fn refresh() {
 
 #[cfg(test)]
 mod tests {
-    use std::collections::HashMap;
+    use std::collections::{HashMap, HashSet};
     use std::sync::{Arc, Mutex};
 
     use super::*;
@@ -718,6 +706,7 @@ mod tests {
         let list = projects_of(&s.env, &world);
         assert_eq!(list.projects.len(), 1);
         assert_eq!((list.projects[0].pending, list.projects[0].history), (0, 1));
+        assert_eq!(list.projects[0].section, "withTodos");
     }
 
     #[test]
@@ -789,9 +778,29 @@ mod tests {
         let row = &list.projects[0];
         assert_eq!(
             (row.section.as_str(), row.pending, row.history),
-            ("empty", 0, 1)
+            ("synced", 0, 1)
         );
         assert_eq!(row.id, project_id(CLOUD));
+    }
+
+    #[test]
+    fn a_finished_synced_project_stays_in_synced() {
+        let s = setup(FakeSync {
+            enabled: true,
+            projects: vec![synced("github.com/acme/app", &["/w/app"], None)],
+            ..FakeSync::default()
+        });
+        let id = s.add("/w/app", "one");
+        let before = s.projects();
+        assert_eq!(before.projects[0].section, "synced");
+        s.finish("/w/app", &id);
+        let after = s.projects();
+        assert_eq!(after.projects.len(), 1);
+        let row = &after.projects[0];
+        assert_eq!(row.id, before.projects[0].id);
+        assert_eq!(row.section, "synced");
+        assert_eq!(row.scope, "synced");
+        assert_eq!((row.pending, row.history), (0, 1));
     }
 
     #[test]

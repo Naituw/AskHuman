@@ -3222,6 +3222,16 @@
         }
       }
     },
+    "No todos yet" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "还没有待办的项目"
+          }
+        }
+      }
+    },
     "None" : {
       "localizations" : {
         "zh-Hans" : {
@@ -6269,6 +6279,16 @@
         }
       }
     },
+    "Todo projects" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "待办项目"
+          }
+        }
+      }
+    },
     "Todos" : {
       "localizations" : {
         "zh-Hans" : {
@@ -6709,16 +6729,6 @@
         }
       }
     },
-    "With todos" : {
-      "localizations" : {
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "有待办"
-          }
-        }
-      }
-    },
     "Withdraw" : {
       "localizations" : {
         "zh-Hans" : {
@@ -6735,16 +6745,6 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "没有通知的话，只有在 App 打开时才能看到新提问。"
-          }
-        }
-      }
-    },
-    "Without todos" : {
-      "localizations" : {
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "没有待办"
           }
         }
       }

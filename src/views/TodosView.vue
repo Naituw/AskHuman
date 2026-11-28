@@ -294,6 +294,7 @@ function applyProjects(list: TodoProjectInfo[]): void {
       key: selected.value,
       name: baseName(selected.value),
       count: 0,
+      history: 0,
       section: "recent",
     });
   }

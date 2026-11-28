@@ -16,9 +16,10 @@ import {
 function project(
   key: string,
   count = 0,
-  section: TodoProjectInfo["section"] = count ? "withTodos" : "recent"
+  history = 0,
+  section: TodoProjectInfo["section"] = count || history ? "withTodos" : "recent"
 ): TodoProjectInfo {
-  return { key, name: baseName(key), count, section };
+  return { key, name: baseName(key), count, history, section };
 }
 
 function entry(id: string): TodoEntry {
@@ -108,8 +109,21 @@ describe("buildSidebarModel", () => {
   });
 
   it("treats unknown sections as recent", () => {
-    const model = buildSidebarModel([project("/w/x", 0, "somethingNew")], "");
+    const model = buildSidebarModel([project("/w/x", 0, 0, "somethingNew")], "");
     expect(model.sections.map((s) => s.id)).toEqual(["recent"]);
+  });
+
+  it("keeps a finished project in the same position in the todo section", () => {
+    const before = buildSidebarModel(projects, "");
+    const after = buildSidebarModel([project("/w/a", 0, 4), ...projects.slice(1)], "");
+    expect(after.sections.map((s) => [s.id, s.keys])).toEqual(
+      before.sections.map((s) => [s.id, s.keys])
+    );
+    expect(after.sections[0].rows.map((r) => [r.key, r.count])).toEqual([
+      ["/w/a", 0],
+      ["/w/b", 2],
+    ]);
+    expect(after.allCount).toBe(2);
   });
 
   it("narrows rows by the search but not the total", () => {
@@ -295,7 +309,7 @@ describe("buildSidebarModel in iCloud mode", () => {
     expect(buildSidebarModel(projects, "", HOME, { sync }).allCount).toBe(3 + 2 + 2);
   });
 
-  it("folds the projects without todos and counts them, unfolding on request or search", () => {
+  it("folds only projects without pending or finished todos, unfolding on request or search", () => {
     const { projects, sync } = iCloudWorld();
     const folded = buildSidebarModel(projects, "", HOME, { sync });
     const empty = folded.sections.find((s) => s.id === "empty");
@@ -316,6 +330,24 @@ describe("buildSidebarModel in iCloud mode", () => {
     expect(found.sections.map((s) => s.id)).toEqual(["empty"]);
     expect(found.sections[0].rows.map((r) => r.name)).toEqual(["blog"]);
     expect(found.navKeys).toEqual([ALL_KEY, "/Users/me/dev/blog"]);
+  });
+
+  it("keeps finished projects in their synced or local-only sections", () => {
+    const { projects, sync } = iCloudWorld();
+    const finished = [
+      project("/Users/me/dev/app-wt", 0, 0),
+      project("/Users/me/dev/app", 0, 3),
+      project(CLOUD_DOTS, 0, 2),
+      project("/Users/me/Scratch/notes", 0, 1),
+      ...projects.slice(4),
+    ];
+    const model = buildSidebarModel(finished, "", HOME, { sync });
+    expect(model.sections.map((s) => [s.id, s.keys])).toEqual([
+      ["synced", ["/Users/me/dev/app-wt", CLOUD_DOTS]],
+      ["empty", ["/Users/me/dev/blog", "/Users/me/dev/lonely"]],
+      ["localOnly", ["/Users/me/Scratch/notes"]],
+    ]);
+    expect(model.allCount).toBe(0);
   });
 
   it("lists projects without a remote last, labelled by directory", () => {
@@ -343,7 +375,7 @@ describe("buildSidebarModel in iCloud mode", () => {
     expect(rows.map((r) => r.hint)).toEqual(["acme", "other"]);
   });
 
-  it("shows synced projects the list does not mention (all finished: only history)", () => {
+  it("puts registry-only projects without todos or history in the folded section", () => {
     const projects = [project("/Users/me/dev/app", 1)];
     const sync = [synced(APP, ["/Users/me/dev/app"]), synced(DOTS, [], CLOUD_DOTS)];
     const model = buildSidebarModel(projects, "", HOME, { sync, emptyOpen: true });

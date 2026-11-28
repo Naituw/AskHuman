@@ -402,10 +402,10 @@ export interface TodoProjectInfo {
   name: string;
   /** 该项目当前待办条数。 */
   count: number;
+  /** Finished todos in the project's history. */
+  history: number;
   /**
-   * 选择器分组：
-   * - `withTodos`：当前有待办的项目
-   * - `recent`：最近工作过的项目（活跃 Agent / workspace；不含已在 withTodos 出现的 key）
+   * `withTodos` for pending or finished todos, `recent` for workspace or live Agent projects without either.
    */
   section: "withTodos" | "recent" | string;
 }

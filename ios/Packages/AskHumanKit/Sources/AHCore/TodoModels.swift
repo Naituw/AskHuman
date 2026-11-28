@@ -300,8 +300,10 @@ public enum TodoRows {
         for mac in macs where mac.id != serving {
             guard let reply = others[mac.id] else { continue }
             for var row in reply.projects where row.scope == "localOnly" || row.scope == "local" {
-                // Whatever the Mac called its sections, here they are the ones of the iCloud view.
-                row.section = (row.pending > 0 ? TodoSection.Kind.localOnly : .empty).rawValue
+                // Whatever the Mac called its sections, here they are the ones of the iCloud view. A project that has
+                // had todos (open or finished) is listed like one that has open ones.
+                let used = row.pending > 0 || row.history > 0
+                row.section = (used ? TodoSection.Kind.localOnly : .empty).rawValue
                 out.append(TodoListedProject(macId: mac.id, macName: mac.name, row: row))
             }
         }

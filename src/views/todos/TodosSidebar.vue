@@ -474,10 +474,10 @@ defineExpose({
   text-align: right;
   font-size: 11px;
   font-variant-numeric: tabular-nums;
-  color: var(--text-tertiary);
+  color: var(--text-secondary);
 }
 .td-side-row.selected .td-side-count {
-  color: var(--text-secondary);
+  color: var(--text-primary);
 }
 .td-side-empty {
   margin: 12px 8px;

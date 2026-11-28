@@ -106,10 +106,10 @@ extension TodoSection {
     /// their groups alike. `macName` is the Mac of a group of projects that are only on one Mac.
     func title(macName: String?) -> Text {
         switch kind {
-        case .withTodos: Text("With todos")
+        case .withTodos: Text("Todo projects")
         case .synced: Text("Synced with iCloud")
         case .recent: Text("Recent projects")
-        case .empty: Text("Without todos")
+        case .empty: Text("No todos yet")
         case .localOnly: Text("Only on \(macName ?? String(localized: "this Mac"))")
         }
     }

@@ -136,9 +136,11 @@ final class TodosStoreTests: XCTestCase {
         await select(.icloud)
         XCTAssertEqual(todos.accessMacId, home)
         XCTAssertEqual(todos.accessName, "Home MacBook Pro")
-        XCTAssertEqual(todos.sections.map(\.kind), [.synced, .empty, .localOnly])
-        XCTAssertEqual(todos.sections[0].rows.map(\.name), ["AskHuman", "Billing Service", "blog", "notes"])
-        XCTAssertTrue(todos.sections[1].collapsed)
+        XCTAssertEqual(todos.sections.map(\.kind), [.synced, .localOnly])
+        XCTAssertEqual(
+            todos.sections[0].rows.map(\.name), ["AskHuman", "Billing Service", "blog", "notes", "dotfiles"],
+            "dotfiles has only finished todos and still sits with the others"
+        )
         XCTAssertNotNil(todos.syncLine)
 
         await select(.mac(office))
@@ -156,10 +158,10 @@ final class TodosStoreTests: XCTestCase {
         XCTAssertEqual(todos.choices.map(\.id), ["icloud", "mac:\(home)"])
         XCTAssertTrue(todos.choices[1].syncs)
         XCTAssertTrue(todos.choices[0].members.isEmpty)
-        XCTAssertEqual(todos.sections[0].rows.map(\.name), ["AskHuman", "Billing Service", "blog"], "no directory here for a cloud-only project")
+        XCTAssertEqual(todos.sections[0].rows.map(\.name), ["AskHuman", "Billing Service", "blog", "dotfiles"], "no directory here for a cloud-only project")
 
         await select(.icloud)
-        XCTAssertEqual(todos.sections[0].rows.map(\.name), ["AskHuman", "Billing Service", "blog", "notes"])
+        XCTAssertEqual(todos.sections[0].rows.map(\.name), ["AskHuman", "Billing Service", "blog", "notes", "dotfiles"])
     }
 
     // MARK: several Macs behind iCloud
@@ -177,7 +179,8 @@ final class TodosStoreTests: XCTestCase {
         XCTAssertEqual(alone.rows.map(\.name), ["intranet"])
         XCTAssertEqual(alone.rows.first?.macId, office)
         XCTAssertEqual(alone.rows.first?.macName, "Office iMac")
-        XCTAssertEqual(todos.sections[1].total, 2, "the projects without todos of both Macs")
+        XCTAssertEqual(todos.sections[1].total, 1, "the Office iMac's project that never had a todo; a finished one keeps its place")
+        XCTAssertTrue(todos.sections[1].collapsed)
 
         todos.emptyExpanded = true
         let names = todos.sections.flatMap(\.rows).map(\.name)
@@ -249,7 +252,7 @@ final class TodosStoreTests: XCTestCase {
         XCTAssertEqual(todos.modes[office], .local)
         XCTAssertNil(todos.others[office])
         XCTAssertEqual(todos.choices.map(\.id), ["icloud", "mac:\(office)"])
-        XCTAssertEqual(todos.sections.map(\.kind), [.synced, .empty, .localOnly])
+        XCTAssertEqual(todos.sections.map(\.kind), [.synced, .localOnly])
         XCTAssertEqual(todos.source, .icloud)
     }
 

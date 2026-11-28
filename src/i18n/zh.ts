@@ -1719,10 +1719,10 @@ export default {
   todosWin: {
     title: "待办",
     projectLabel: "项目",
-    sectionWithTodos: "有待办",
+    sectionWithTodos: "待办项目",
     sectionRecent: "最近项目",
     sectionSynced: "iCloud 同步的项目",
-    sectionEmpty: "无待办的项目（{n}）",
+    sectionEmpty: "还没有待办的项目（{n}）",
     sectionLocalOnly: "仅本机（不同步）",
     searchProjects: "搜索项目",
     allTodos: "全部待办",

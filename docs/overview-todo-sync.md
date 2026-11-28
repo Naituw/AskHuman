@@ -64,14 +64,14 @@ fixture enable 要求 helper 与调用方同账户。运行中的旧 HOME-only h
 2. 照常 diff，所以在虚拟副本里做的编辑也会成为实体事件；
 3. `cloudkeys::prune`：真实目录出现（待办改物化到那里）或没有存活实体时，丢掉虚拟键及其快照与文件切片——放在 diff 之后，所以克隆仓库前一刻在虚拟副本里的编辑不会丢。
 
-`remove_project`（窗口的「从 iCloud 移除此项目」）给该身份的所有存活实体打墓碑，对所有 Mac 生效；这不是封禁，之后新待办会让项目重新出现。虚拟键不进设备记录的项目列表，也不进「新建任务」候选与 IM `/todo` 的项目选择；它进 `todos_projects`（有待办时）与「全部待办」。
+`remove_project`（窗口的「从 iCloud 移除此项目」）给该身份的所有存活实体打墓碑，对所有 Mac 生效；这不是封禁，之后新待办会让项目重新出现。虚拟键不进设备记录的项目列表，也不进「新建任务」候选与 IM `/todo` 的项目选择；它进 `todos_projects`（有待办或有历史时，T17）与「全部待办」。
 
 ## 前端
 
 | 位置 | 职责 |
 |---|---|
 | `src/views/TodosView.vue` | 待办窗口：侧栏 + 项目头 + 列表；iCloud 模式的项目头标签、菜单、仅云端说明条、来源设备与附件提示、历史的设备标注、移除确认 |
-| `src/views/todos/todoProjects.ts` | 侧栏与「全部待办」的视图模型（纯函数）：本机模式两段、iCloud 模式三段（同步 / 无待办折叠 / 仅本机），同一仓库的多个目录合并成一行（`rowKeyOf` / `labelOf`） |
+| `src/views/todos/todoProjects.ts` | 侧栏与「全部待办」的视图模型（纯函数）：本机模式两段、iCloud 模式三段（同步 / 从没有过待办的折叠 / 仅本机；分界线是「用没用过待办」，T17），同一仓库的多个目录合并成一行（`rowKeyOf` / `labelOf`） |
 | `src/views/todos/TodosSidebar.vue` · `SyncFooter.vue` · `syncState.ts` · `useSyncStatus.ts` | 侧栏、底部状态槽（需求 §9.7 的各状态与动作）、状态到展示的映射、状态轮询（首帧之后才请求，只在同步开启时轮询） |
 | `src/views/settings/TodoSyncCard.vue` · `useTodoSync.ts` | 设置 → 实验 →「待办存储」卡片 |
 | `src/prototype/todos-window.html` · `settings-sync.html` | 浏览器预览（`mockIPC` 驱动真实组件；`data=real|stress|empty|dups|icloud`、`theme`、`platform`、`project`、`sync=…`），看布局、深浅色、窄窗抽屉与大数据，生产构建不引用 |

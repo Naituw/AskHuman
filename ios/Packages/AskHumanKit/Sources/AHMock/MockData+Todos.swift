@@ -117,7 +117,7 @@ extension MockData {
         add(
             homeMacId,
             TodoProjectRow(
-                id: todoDotfilesProject, name: "dotfiles", repo: "github.com/naituw/dotfiles", scope: "synced", section: "empty",
+                id: todoDotfilesProject, name: "dotfiles", repo: "github.com/naituw/dotfiles", scope: "synced", section: "synced",
                 macs: ["Home MacBook Pro"]
             ),
             history: [

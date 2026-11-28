@@ -1,6 +1,7 @@
 // Sidebar view model of the todos window (spec todo-sync §9): labels, grouping, search, keyboard
 // stepping and the "All todos" aggregate. Pure functions only, so the window stays cheap to open
 // (everything here is O(projects) string work) and is unit-testable without a DOM.
+// Keep the grouping in sync with src-tauri/src/ios/todos_view.rs.
 
 import type {
   TodoEntry,
@@ -81,7 +82,7 @@ export interface SidebarModel {
 export interface SidebarOptions {
   /** `todo_sync_projects`; empty or absent = local mode. */
   sync?: ReadonlyArray<TodoSyncProject> | null;
-  /** The "projects without todos" section is unfolded. */
+  /** The "No todos yet" section is unfolded. */
   emptyOpen?: boolean;
 }
 
@@ -168,6 +169,7 @@ interface MergedProject {
   /** Every key that belongs to the project (directories and the replica key). */
   keys: string[];
   count: number;
+  history: number;
   scope: ProjectScope;
   /** Normalized remote; `null` for projects without one. */
   identity: string | null;
@@ -176,8 +178,8 @@ interface MergedProject {
 
 /**
  * Folds `projects` (in the backend's order, which ranks the most recently used directory first)
- * into one entry per repository, then appends synced projects the list does not mention (a
- * project whose todos are all finished lives only in the history).
+ * into one entry per repository, then appends synced projects the list does not mention with
+ * zero pending and history counts.
  */
 function mergeProjects(
   projects: ReadonlyArray<TodoProjectInfo>,
@@ -190,10 +192,11 @@ function mergeProjects(
   }
   const merged: MergedProject[] = [];
   const byIdentity = new Map<string, MergedProject>();
-  const fromSync = (key: string, count: number, project: TodoSyncProject): MergedProject => ({
+  const fromSync = (key: string, count: number, history: number, project: TodoSyncProject): MergedProject => ({
     key,
     keys: project.cloudKey ? [...project.keys, project.cloudKey] : [...project.keys],
     count,
+    history,
     scope: project.keys.length ? "synced" : "cloudOnly",
     identity: project.identity,
     name: baseName(project.identity),
@@ -205,6 +208,7 @@ function mergeProjects(
         key: info.key,
         keys: [info.key],
         count: info.count,
+        history: info.history,
         scope: "localOnly",
         identity: null,
         name: info.name,
@@ -213,11 +217,12 @@ function mergeProjects(
     }
     const seen = byIdentity.get(project.identity);
     if (seen) {
-      // Replicas agree once the local phase ran; until then the larger count is the newer one.
+      // Replicas agree once the local phase runs. Until then, take the larger counts.
       seen.count = Math.max(seen.count, info.count);
+      seen.history = Math.max(seen.history, info.history);
       continue;
     }
-    const entry = fromSync(info.key, info.count, project);
+    const entry = fromSync(info.key, info.count, info.history, project);
     byIdentity.set(project.identity, entry);
     merged.push(entry);
   }
@@ -225,7 +230,7 @@ function mergeProjects(
     if (byIdentity.has(project.identity)) continue;
     const key = project.keys[0] ?? project.cloudKey;
     if (!key) continue;
-    const entry = fromSync(key, 0, project);
+    const entry = fromSync(key, 0, 0, project);
     byIdentity.set(project.identity, entry);
     merged.push(entry);
   }
@@ -305,8 +310,8 @@ export function buildSidebarModel(
 }
 
 /**
- * iCloud mode: one row per repository, "iCloud projects" first, the projects without todos folded
- * into one section, projects without a remote last (spec todo-sync §9.2).
+ * iCloud mode: one row per repository. Projects with pending or finished todos go in "iCloud
+ * projects" or the local-only section. The rest are folded into "No todos yet".
  */
 function buildSyncedSidebarModel(
   projects: ReadonlyArray<TodoProjectInfo>,
@@ -331,7 +336,7 @@ function buildSyncedSidebarModel(
     }
     if (!matchesQuery(label, query, directoriesText(m, home))) continue;
     const row: SidebarRow = { ...label, key: m.key, count: m.count, scope: m.scope };
-    if (m.count === 0) empty.push(row);
+    if (m.count === 0 && m.history === 0) empty.push(row);
     else if (m.scope === "localOnly") localOnly.push(row);
     else synced.push(row);
   }
