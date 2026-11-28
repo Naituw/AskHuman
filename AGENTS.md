@@ -48,6 +48,10 @@ for routine updates; credentials stay outside the repository.
 
 Routine TestFlight publication defaults to the existing Internal, Friends and Public groups, including Beta review, starting testing, and assigning the build to the public group. Use internal-only distribution only when explicitly requested. Keep existing testers and invitations; do not add recipients, and do not open, resize or close the public link for a routine update.
 
+## Releasing the relay
+
+Publishing a new version of the production push relay (`askhuman-relay`, Tencent SCF in Hong Kong), moving its `live` / `$DEFAULT` aliases, rolling back, or changing its reserved quota or per-instance concurrency goes through the project skill [`relay-release`](.agents/skills/relay-release/SKILL.md). It reads the settings back in the Owner's QR-logged-in console (no API key; owner decision, 2026-11-28) and probes the entrances: per-instance concurrency 8 on `$LATEST` and on the new version, reserved quota 256 MB, both aliases on the new version, and 12 simultaneous requests all answered. A version published with the default concurrency of 1 shrinks the 16 slots to 2 and silently drops real pushes. Do not skip a gate, and do not report the release done before every gate has passed.
+
 ## Changing IPC messages
 
 Before editing the message types in [`src-tauri/src/ipc/mod.rs`](src-tauri/src/ipc/mod.rs) (`ClientMsg`, `ServerMsg` and their payloads), read the [“IPC 协议号”](docs/overview.md#ipc-协议号protocol_version) section of `docs/overview.md`. It says which changes must bump `PROTOCOL_VERSION` and which must not, and what to update when you bump. In short: an additive field with `#[serde(default)]` never bumps; a new enum variant an older peer can receive, or any change an older peer would misread, always does. A daemon may serve clients of the same protocol number but a different build, so “same number” has to keep meaning “can talk”.

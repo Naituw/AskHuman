@@ -1,0 +1,4 @@
+interface:
+  display_name: "Relay release"
+  short_description: "Release the production relay behind read-back gates"
+  default_prompt: "Use $relay-release to publish a new version of the production askhuman-relay and verify its per-instance concurrency, reserved quota and alias targets before and after the aliases move."
