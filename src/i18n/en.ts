@@ -84,7 +84,7 @@ export default {
       dropFailed: "Could not add the files to “{title}”",
       kind: { ask: "Question", permission: "Permission", stop: "Finish task" },
       recovered: "The answer window has reopened. Please check any unsubmitted answers.",
-      external: "This request ended ({source}). Continuing to the next request…", submitError: "Answer was not sent. Please retry: {message}",
+      ended: "The previous request ended", submitError: "Answer was not sent. Please retry: {message}",
       closeTitle: "How should pending requests be handled?", continue: "Continue answering", cancelCurrent: "Cancel current request", cancelAll: "Cancel all pending requests", cancelOne: "Cancel this request",
       newExcluded: "{n} newly arrived request is excluded from this cancellation. | {n} newly arrived requests are excluded from this cancellation.", draftsLost: "{n} unsubmitted draft will be discarded | {n} unsubmitted drafts will be discarded", separator: "; ",
       consequence: { ask: "{n} question will be canceled | {n} questions will be canceled", permission: "{n} permission request will be denied | {n} permission requests will be denied", stop: "{n} task will be allowed to finish | {n} tasks will be allowed to finish" },

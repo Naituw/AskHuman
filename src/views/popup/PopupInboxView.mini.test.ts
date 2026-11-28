@@ -248,7 +248,7 @@ describe("the small window and the body swap", () => {
       await later("a");
       expect(attr("data-view")).toBe("collapsed");
       mock.handlers.get("popup-inbox-terminal")!({ payload: { requestId: "a", winner: "slack" } });
-      await tick(600);
+      await flushPromises();
       expect(attr("data-view")).toBe("expanded");
       expect(attr("data-settled")).toBe("no");
     });

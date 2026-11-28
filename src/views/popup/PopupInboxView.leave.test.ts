@@ -224,7 +224,6 @@ describe("leaving AskHuman (C23, R11)", () => {
       await later("b");
       mock.invoke.mockClear();
       emit("popup-inbox-terminal", { requestId: "a", winner: "slack" }); await flushPromises();
-      await tick(600);
     }
 
     it("asks native once the page listens, and only once", async () => {
@@ -263,7 +262,6 @@ describe("leaving AskHuman (C23, R11)", () => {
       await later("b");
       mock.invoke.mockClear();
       emit("popup-inbox-terminal", { requestId: "a", winner: "slack" }); await flushPromises();
-      await tick(600);
       expect(calls("popup_inbox_activate")).toEqual([{ requestId: "b" }]);
     });
 

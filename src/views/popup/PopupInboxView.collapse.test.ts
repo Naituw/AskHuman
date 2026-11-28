@@ -297,11 +297,12 @@ describe("answer later and the small window", () => {
       await later("b");
       emit("popup-app-active", false);
       emit("popup-inbox-terminal", { requestId: "a", winner: "slack" }); await flushPromises();
-      await tick(600);
       expect(small()).toBe(true);
       expect(calls("popup_inbox_activate")).toEqual([]);
       expect(wrapper.findAll(".inbox-row")).toHaveLength(1);
       expect(bodyInert()).toBe(true);
+      // The small window has no card to say it on.
+      expect(wrapper.find(".inbox-hint").exists()).toBe(false);
       // Opening the remaining request from the small window works as usual.
       await wrapper.findAll(".inbox-row")[0].trigger("click"); await flushPromises();
       expect(small()).toBe(false);
@@ -315,7 +316,6 @@ describe("answer later and the small window", () => {
       emit("popup-inbox-close", undefined); await flushPromises();
       emit("popup-app-active", false);
       emit("popup-inbox-terminal", { requestId: "a", winner: "slack" }); await flushPromises();
-      await tick(600);
       expect(activated()).toEqual(["b"]);
       expect(small()).toBe(false);
       expect(wrapper.find(".inbox-close-dialog").exists()).toBe(true);
@@ -326,7 +326,6 @@ describe("answer later and the small window", () => {
       await later("b");
       emit("popup-app-active", false);
       emit("popup-inbox-terminal", { requestId: "a", winner: "slack" }); await flushPromises();
-      await tick(600);
       expect(activated()).toEqual(["c"]);
       expect(small()).toBe(false);
     });
@@ -337,9 +336,9 @@ describe("answer later and the small window", () => {
       emit("popup-app-active", false);
       emit("popup-app-active", true);
       emit("popup-inbox-terminal", { requestId: "a", winner: "slack" }); await flushPromises();
-      await tick(600);
       expect(activated()).toEqual(["b"]);
       expect(small()).toBe(false);
+      expect(wrapper.find(".inbox-hint-source").text()).toBe("slack");
     });
 
     it("only resizes the small window when another request ends while it is small", async () => {
@@ -359,7 +358,6 @@ describe("answer later and the small window", () => {
       await later("a"); await later("b");
       mock.invoke.mockClear();
       emit("popup-inbox-terminal", { requestId: "b", winner: "slack" }); await flushPromises();
-      await tick(600);
       expect(small()).toBe(true);
       expect(calls("popup_inbox_activate")).toEqual([]);
       expect(wrapper.findAll(".inbox-row")).toHaveLength(1);
@@ -378,7 +376,6 @@ describe("answer later and the small window", () => {
       await start("a");
       await later("a");
       emit("popup-inbox-terminal", { requestId: "a", winner: "slack" }); await flushPromises();
-      await tick(600);
       expect(calls("popup_inbox_idle")).toHaveLength(1);
       mock.invoke.mockClear();
 
@@ -399,7 +396,6 @@ describe("answer later and the small window", () => {
       await later("a");
       expect(small()).toBe(true);
       emit("popup-inbox-terminal", { requestId: "a", winner: "slack" }); await flushPromises();
-      await tick(600);
       expect(calls("popup_inbox_idle")).toHaveLength(1);
       // The window form is not carried over even before the next request arrives.
       mock.invoke.mockClear();

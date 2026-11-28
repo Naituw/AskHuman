@@ -84,6 +84,10 @@ const error = ref("");
 const notice = ref("");
 // A warning (files that did not get attached, and why) stays longer and is marked; a plain notice just informs.
 const noticeLevel = ref<"info" | "warn">("info");
+// What happened to the request the user was on when it ended elsewhere, said on the card that took its place (spec D13).
+// `placed` is where that card's title bar ends, measured when the hint appears; without a layout the CSS position holds.
+const endedHint = ref<{ serial: number; id: string; source: string; placed: { left: number; top: number } | null } | null>(null);
+let hintSerial = 0;
 const modal = ref<{ ids: string[]; current: string | null } | null>(null);
 const cancelBusy = ref(false);
 const advancing = ref(false);
@@ -660,7 +664,7 @@ function keepDraftOf(id: string) {
 async function finishRound() {
   pendingArrivals.clear(); shownArrivals.clear(); arriving.value.clear(); arrivalNotice.value?.clear(); hostPresented = false;
   active.value = null; sidebar.value = false; sidebarWidth.value = 0; groupOrder.value = [];
-  recovered.value = false; modal.value = null; error.value = ""; notice.value = "";
+  recovered.value = false; modal.value = null; error.value = ""; notice.value = ""; endedHint.value = null;
   pin.value = null;
   // R9: the next round starts expanded and unmarked; native resets the window position (C30).
   secondary.value.clear(); view.value = "expanded"; look.value = "expanded"; shifting.value = false; lastBrowsed = null;
@@ -684,11 +688,25 @@ async function advance(preferred: string | null) {
   }
   if (!requests.value.length) await finishRound();
 }
-async function completed(id: string, completion: CompletionFeedback) {
+// The request the user was on ended elsewhere and `id` took its place: a light chip over the lower edge of its title bar says
+// so, with where it ended when that is known, and leaves by itself like any notice.
+function tellEnded(id: string, source: string) {
+  const bar = root.value?.querySelector<HTMLElement>(`[data-inbox-request="${CSS.escape(id)}"] .navbar`)?.getBoundingClientRect();
+  const frame = root.value?.getBoundingClientRect();
+  const placed = bar && frame && bar.width > 0 ? { left: bar.left - frame.left + bar.width / 2, top: bar.bottom - frame.top } : null;
+  const serial = ++hintSerial;
+  endedHint.value = { serial, id, source, placed };
+  later(() => { if (endedHint.value?.serial === serial) endedHint.value = null; }, NOTICE_MS.info);
+}
+// `ended` is set when the request left because it ended elsewhere (nothing was sent from here, `completion` is null): the
+// user is taken on at once, without the answer's animation, and the card that takes over tells what happened.
+async function completed(id: string, completion: CompletionFeedback | null, ended?: { source: string }) {
   // The answer's own transition takes over from a body swap that is still fading in.
   swap.value = null;
   const timer = transitionClock(); clock = timer;
-  const reduced = window.matchMedia?.("(prefers-reduced-motion: reduce)").matches ?? false;
+  // A request that ended elsewhere never animates its leaving (spec §18): the hand-over is as instant as reduced motion makes
+  // it, and the ended body stays on screen, inert, only until the next one can be answered.
+  const reduced = !completion || (window.matchMedia?.("(prefers-reduced-motion: reduce)").matches ?? false);
   const row = root.value?.querySelector<HTMLElement>(`[data-inbox-row="${CSS.escape(id)}"]`);
   const group = row?.closest<HTMLElement>(".inbox-group");
   const from = requests.value.find(r => r.requestId === id)!;
@@ -739,6 +757,7 @@ async function completed(id: string, completion: CompletionFeedback) {
       motion.value!.phase = "in";
       if (readyIds.has(next)) visited.value.add(next);
       await nextTick();
+      if (ended && !terminals.has(next)) tellEnded(next, ended.source);
       root.value?.querySelector<HTMLElement>(`[data-inbox-request="${CSS.escape(next)}"] .content`)?.getBoundingClientRect();
       if (readyIds.has(next)) await popupShowWindow(next);
       if (!reduced && !await timer.wait(answerTransition.enter)) return;
@@ -771,19 +790,16 @@ async function terminal(id: string, winner: string, completion?: CompletionFeedb
   if (wasActive && winner === "popup" && completion && !modal.value) {
     await completed(id, completion); return;
   }
-  if (wasActive && winner !== "popup") {
-    advancing.value = true;
-    noticeLevel.value = "info";
-    notice.value = t("popup.inbox.external", { source: winner });
-    clock = transitionClock(); await clock.wait(600); clock.cancel(); clock = null;
-    if (disposed) return;
-    advancing.value = false;
-    notice.value = "";
-  }
   // R4/R6/C22: decide with the queue as it is now. A user who is here (this window, or the app is active) is taken
   // to the next request; when nobody is looking and only secondary requests remain, the window goes small.
   const engaged = winner === "popup" || appActive.value || !!modal.value;
   const outcome = model.finish(collapseState({ keep: id }), id, { engaged });
+  // D13: the open request ended elsewhere and there is a next one to go to. Nothing is held back for a notice: the ended
+  // body stays up, inert, only until the next is ready, and then the next one says what happened. With no next one the
+  // window closes below, at once and silently.
+  if (wasActive && winner !== "popup" && !modal.value && view.value === "expanded" && !shifting.value && outcome.effect === "switch") {
+    await completed(id, null, { source: winner }); return;
+  }
   removeLocal(id);
   if (modal.value && !snapshot.value.length) modal.value = null;
   if (!requests.value.length) await finishRound();
@@ -980,6 +996,22 @@ onBeforeUnmount(() => {
     <div class="mini-ring" aria-hidden="true"></div>
     <InboxArrivalNotice ref="arrivalNotice" :measure="measureArrival" @settled="arrivalSettled" />
     <div v-if="notice" class="inbox-notice" :data-level="noticeLevel" :role="noticeLevel === 'warn' ? 'alert' : 'status'">{{ notice }}</div>
+    <!-- The request the user was on ended elsewhere (spec D13): the card that took its place says so, then the chip leaves. -->
+    <Transition name="inbox-hint">
+      <div v-if="endedHint && endedHint.id === active && look === 'expanded'" class="inbox-hint" role="status"
+        :style="endedHint.placed ? { left: `${endedHint.placed.left}px`, top: `${endedHint.placed.top}px` } : undefined">
+        <svg class="inbox-hint-ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <circle cx="12" cy="12" r="9" />
+          <path d="M12 11v5" />
+          <path d="M12 8h.01" />
+        </svg>
+        <span class="inbox-hint-text">{{ t("popup.inbox.ended") }}</span>
+        <template v-if="endedHint.source">
+          <span class="inbox-hint-dot" aria-hidden="true">·</span>
+          <span class="inbox-hint-source">{{ endedHint.source }}</span>
+        </template>
+      </div>
+    </Transition>
     <div v-if="modal" class="inbox-close-backdrop" @click.self="continueAnswering">
       <section class="inbox-close-dialog" role="dialog" aria-modal="true" aria-labelledby="inbox-close-title">
         <h2 id="inbox-close-title">{{ t('popup.inbox.closeTitle') }}</h2>
@@ -1059,6 +1091,30 @@ onBeforeUnmount(() => {
 .inbox-notice { pointer-events: none; width: max-content; max-width: min(420px, 80%); }
 /* A warning says what went wrong and what to do about it: wider, and marked with the warning color. */
 .inbox-notice[data-level="warn"] { max-width: min(520px, 92%); line-height: 1.5; box-shadow: 0 4px 24px #0002, inset 3px 0 0 var(--accent-orange, #ff9500); }
+/* The chip over the lower edge of the title bar of the card that took an ended request's place (spec D13). It hangs from the
+   bar in the band between the title row and the question's first line, takes no clicks, and moves nothing: the card under it
+   is already where it stays. `left` / `top` are set from the measured title bar; the values here are the fallback when there
+   is none to measure. */
+.inbox-hint {
+  position: absolute; z-index: 90; left: 50%; top: 56px; margin-top: -7px; transform: translateX(-50%);
+  display: flex; align-items: center; gap: 7px; width: max-content; max-width: min(440px, calc(100% - 32px)); box-sizing: border-box;
+  padding: 4px 12px 4px 9px; border-radius: 999px; font-size: 12px; line-height: 16px; white-space: nowrap;
+  color: var(--text-primary); pointer-events: none;
+  background: color-mix(in srgb, var(--accent) 8%, var(--surface-overlay, #fff));
+  border: var(--hairline, 1px) solid color-mix(in srgb, var(--accent) 26%, var(--border, #0001));
+  box-shadow: 0 8px 24px color-mix(in srgb, #000 14%, transparent), 0 1px 2px color-mix(in srgb, #000 10%, transparent);
+}
+.inbox-hint-ico { flex: none; width: 14px; height: 14px; color: var(--accent); }
+.inbox-hint-text { flex: none; }
+.inbox-hint-dot { flex: none; color: var(--text-tertiary); }
+.inbox-hint-source { min-width: 0; overflow: hidden; text-overflow: ellipsis; color: var(--text-secondary); }
+.inbox-hint-enter-active { transition: opacity 220ms var(--inbox-ease-out) 80ms, transform 260ms var(--inbox-ease) 80ms; }
+.inbox-hint-leave-active { transition: opacity 200ms var(--inbox-ease-in), transform 200ms var(--inbox-ease-in); }
+.inbox-hint-enter-from, .inbox-hint-leave-to { opacity: 0; transform: translate(-50%, -6px); }
+@media (prefers-reduced-motion: reduce) {
+  .inbox-hint-enter-active, .inbox-hint-leave-active { transition: opacity 120ms linear; }
+  .inbox-hint-enter-from, .inbox-hint-leave-to { transform: translateX(-50%); }
+}
 .inbox-close-backdrop { position: absolute; inset: 0; z-index: 100; background: #0003; display: grid; place-items: center; }
 .inbox-close-dialog { background: var(--surface-overlay, #fff); border-radius: 16px; padding: 24px; width: min(390px, calc(100% - 48px)); box-shadow: 0 12px 60px #0003; color: var(--text-primary, #222); }
 .inbox-close-dialog h2 { font-size: 16px; margin: 0 0 14px; }

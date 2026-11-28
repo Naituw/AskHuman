@@ -411,9 +411,86 @@ describe("shared popup navigation", () => {
     await start(); vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
     emit("popup-inbox-terminal", { requestId: "a", winner: "slack", completion: "sent" }); await flushPromises();
     expect(phase()).toBeUndefined(); expect(wrapper.find(".inbox-completed-check").exists()).toBe(false);
-    await tick(600);
     emit("popup-inbox-terminal", { requestId: "b", winner: "popup" }); await flushPromises();
     expect(wrapper.findAll(".inbox-row")).toHaveLength(0); expect(phase()).toBeUndefined();
+  });
+  describe("a request that ends elsewhere while it is open (spec D13)", () => {
+    const hint = () => wrapper.find(".inbox-hint");
+    it("takes the user on to the next request at once and says what happened there", async () => {
+      await start(); vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+      emit("popup-inbox-terminal", { requestId: "a", winner: "Slack" }); await flushPromises();
+      // No stop to read a notice and no animation: the next body is simply there, and a chip says what happened.
+      expect(phase()).toBeUndefined();
+      expect(wrapper.find('[data-inbox-request="a"]').exists()).toBe(false);
+      expect(wrapper.find('[data-inbox-request="b"]').isVisible()).toBe(true);
+      expect(mock.invoke.mock.calls.some(([cmd, args]) => cmd === "popup_inbox_activate" && args.requestId === "b")).toBe(true);
+      expect(wrapper.find(".inbox-notice").exists()).toBe(false);
+      expect(hint().find(".inbox-hint-text").text()).toBe(en.popup.inbox.ended);
+      expect(hint().find(".inbox-hint-source").text()).toBe("Slack");
+      await tick(2599); expect(hint().exists()).toBe(true);
+      await tick(1); expect(hint().exists()).toBe(false);
+      expect(vi.getTimerCount()).toBe(0);
+    });
+    it("keeps the ended body on screen, inert, until the next one is ready, so the window is never blank", async () => {
+      await start(); mock.heldReady.add("b"); vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+      emit("popup-inbox-terminal", { requestId: "a", winner: "Slack" }); await flushPromises();
+      expect(wrapper.find('[data-inbox-request="a"]').isVisible()).toBe(true);
+      expect(mock.scopes.get("a")!.blocked.value).toBe(true);
+      expect(hint().exists()).toBe(false);
+      // Readiness is the only gate: there is no deadline and no pause.
+      await tick(5000); expect(wrapper.find('[data-inbox-request="a"]').isVisible()).toBe(true);
+      mock.scopes.get("b")!.ready("b"); await flushPromises();
+      expect(wrapper.find('[data-inbox-request="a"]').exists()).toBe(false);
+      expect(wrapper.find('[data-inbox-request="b"]').isVisible()).toBe(true);
+      expect(hint().exists()).toBe(true);
+    });
+    it("closes at once and says nothing when it was the last request", async () => {
+      mock.invoke.mockImplementation(async command => {
+        if (command === "popup_inbox_init") return { requests: [request("a")], recovered: false };
+        if (command === "popup_inbox_layout") return { revision: 1, sidebarWidth: 240, mainWidth: 560, mainHeight: 620, previewWidth: 0 };
+      });
+      await start(); vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+      emit("popup-inbox-terminal", { requestId: "a", winner: "Slack" }); await flushPromises();
+      expect(wrapper.findAll(".inbox-row")).toHaveLength(0);
+      expect(mock.invoke.mock.calls.some(([cmd]) => cmd === "popup_inbox_idle")).toBe(true);
+      expect(wrapper.find(".inbox-notice").exists()).toBe(false); expect(hint().exists()).toBe(false);
+      expect(vi.getTimerCount()).toBe(0);
+    });
+    it("leaves a request that was not open alone and says nothing", async () => {
+      await start();
+      emit("popup-inbox-terminal", { requestId: "b", winner: "Slack" }); await flushPromises();
+      expect(wrapper.find('[data-inbox-request="a"]').isVisible()).toBe(true);
+      expect(wrapper.findAll(".inbox-row")).toHaveLength(1); expect(hint().exists()).toBe(false);
+    });
+    it("names no source when the request ended without one", async () => {
+      await start();
+      emit("popup-inbox-terminal", { requestId: "a", winner: "" }); await flushPromises();
+      expect(hint().find(".inbox-hint-text").text()).toBe(en.popup.inbox.ended);
+      expect(hint().find(".inbox-hint-source").exists()).toBe(false);
+    });
+    it("takes the hint away with the card it was said on", async () => {
+      await start(); emit("popup-inbox-show", request("c", "/other")); await flushPromises();
+      vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+      emit("popup-inbox-terminal", { requestId: "a", winner: "Slack" }); await flushPromises();
+      expect(wrapper.find('[data-inbox-request="b"]').isVisible()).toBe(true); expect(hint().exists()).toBe(true);
+      await wrapper.find('[data-inbox-row="c"]').trigger("click"); await tick(126); await tick(174);
+      expect(wrapper.find('[data-inbox-request="c"]').isVisible()).toBe(true);
+      expect(hint().exists()).toBe(false);
+    });
+    it("replaces the hint when the next request ends as well", async () => {
+      await start(); emit("popup-inbox-show", request("c")); await flushPromises();
+      vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+      emit("popup-inbox-terminal", { requestId: "a", winner: "Slack" }); await flushPromises();
+      expect(hint().find(".inbox-hint-source").text()).toBe("Slack");
+      await tick(1500);
+      emit("popup-inbox-terminal", { requestId: "b", winner: "Telegram" }); await flushPromises();
+      expect(wrapper.find('[data-inbox-request="c"]').isVisible()).toBe(true);
+      expect(wrapper.findAll(".inbox-hint")).toHaveLength(1);
+      expect(hint().find(".inbox-hint-source").text()).toBe("Telegram");
+      // The first hint's time is over now; it must not take the second one away early.
+      await tick(1100); expect(hint().exists()).toBe(true);
+      await tick(1500); expect(hint().exists()).toBe(false);
+    });
   });
   it("settles all readiness and animation waits on disposal", async () => {
     await start(); mock.heldReady.add("b"); vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });

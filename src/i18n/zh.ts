@@ -83,7 +83,7 @@ export default {
       dropFailed: "无法把文件添加到「{title}」",
       kind: { ask: "提问", permission: "权限", stop: "结束确认" },
       recovered: "作答窗口已重新打开，请检查未提交的内容。",
-      external: "当前请求已结束（{source}），即将继续下一条", submitError: "发送未完成，请重试：{message}",
+      ended: "上一条请求已结束", submitError: "发送未完成，请重试：{message}",
       closeTitle: "如何处理等待回答的请求？", continue: "继续回答", cancelCurrent: "取消当前请求", cancelAll: "取消全部待答请求", cancelOne: "取消此请求",
       newExcluded: "刚到达的 {n} 条请求不在本次取消范围内。", draftsLost: "将丢弃 {n} 份未提交草稿", separator: "；",
       consequence: { ask: "{n} 个提问将取消", permission: "{n} 个权限申请将拒绝", stop: "{n} 个任务将允许结束" },

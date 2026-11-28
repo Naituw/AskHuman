@@ -5,7 +5,8 @@ export const answerTransition = { exit: 126, enter: 174, queue: 300 } as const;
 /** The state of one answer transition, as the page and the Sidebar rows read it. */
 export interface InboxMotion {
   from: string;
-  completion: CompletionFeedback;
+  /** What the leaving card shows; null when the request ended elsewhere, so nothing was sent from here. */
+  completion: CompletionFeedback | null;
   phase: "waiting" | "out" | "prepare" | "in";
   incoming: string | null;
   reduced: boolean;
