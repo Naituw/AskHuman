@@ -1,0 +1,60 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>AskHuman · 留言（弹窗）图板</title>
+<!-- A board of the popup prototype (popup-note.html): several windows side by side, each in an iframe of the prototype
+     page, with a caption above. Not product code; the images in docs/assets/agent-notes/ were rendered from it.
+     ?board=card   the note card: Received, Interject, Wake (with its confirmation), and a reply that is off
+     ?board=list   the merged window with notes among the questions, and the small window in its two forms
+     ?theme=dark   dark appearance
+     `cells=1,2` limits a board to some of its cells; `cols=2` lays the cells out in that many columns. -->
+<style>
+html, body { margin: 0; background: #dedfe3; font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", "PingFang SC", "Helvetica Neue", sans-serif; -webkit-font-smoothing: antialiased; }
+body.dark { background: #111113; }
+.board { display: grid; grid-template-columns: repeat(var(--cols, 4), max-content); gap: 0; padding: 22px 16px 8px; width: max-content; }
+.cell { flex: none; }
+.cap { height: 92px; padding: 0 26px; font-size: 14px; line-height: 1.5; color: #3a3a3c; }
+body.dark .cap { color: #d1d1d6; }
+.cap b { display: block; margin-bottom: 2px; font-size: 17px; color: #111; }
+body.dark .cap b { color: #fff; }
+iframe { display: block; border: 0; background: transparent; }
+</style>
+</head>
+<body>
+<div class="board" id="board"></div>
+<script>
+const q = new URLSearchParams(location.search);
+const board = q.get("board") || "card";
+const theme = q.get("theme") === "dark" ? "dark" : "light";
+if (theme === "dark") document.body.classList.add("dark");
+// [title, text, scene, frame width, frame height, window width, window height]
+const cells = {
+  card: [
+    ["① 留言来了：回复框是空的，按钮写「已收到」", "标签「留言 · 无需回复」说明没有谁在等这一条的答案。按钮是淡色的：点了只是告诉 Agent 你看过了，它收不到任何文字。", "empty"],
+    ["② 写了回复（或加了附注）：按钮换成「插话」", "有内容时按钮变成实心的强调色。Agent 还在工作：这条话在它的下一次工具调用前送到。", "typed"],
+    ["③ Agent 这一轮已经结束，但能续聊：按钮换成「唤醒」", "点它先弹确认：发送会开启新的一轮，会产生新的用量。确认后才发出（Cursor 这类按次计费的尤其如此）。", "confirm"],
+    ["④ 这个会话收不了回复：回复框停用，按钮仍是「已收到」", "没有可用的续聊通道（例如 Grok，或认不出的会话）：回复框置灰，不写原因。想记下疑问，用每张卡片都有的「添加待办」。", "locked"],
+  ],
+  list: [
+    ["⑤ 合并窗口：留言和提问在同一个列表里", "留言行带一枚「留言」小标签（和「权限」「结束确认」同一种位置），没有「稍后回答」。标题的计数只数待答的提问，留言单独写在后面。", "list", 884, 600, 560, 560],
+    ["⑥ 小窗：标题写「待答 2 · 留言 2」", "小窗里同样是这个列表。留言不需要你答，所以不进「待答」的数字。", "mini", 300, 600, 252],
+    ["⑦ 只剩留言：标题改叫「留言 2」", "提问都处理完、只剩留言时，窗口缩成小窗，标题改成「留言」，计数是留言的条数。", "mini-notes", 300, 600, 252],
+  ],
+};
+const W = 600, H = 600;
+document.getElementById("board").style.setProperty("--cols", q.get("cols") || String(cells[board].length));
+const pick = (q.get("cells") || "").split(",").map(Number).filter((n) => n > 0);
+document.getElementById("board").innerHTML = cells[board]
+  .map((c, i) => [c, i + 1])
+  .filter(([, n]) => !pick.length || pick.includes(n))
+  .map(([[title, text, scene, fw, fh, ww, wh]]) => {
+    const w = fw || W, h = fh || H;
+    const query = `scene=${scene}&w=${ww || 560}&h=${wh || 560}&theme=${theme}`;
+    return `<div class="cell" style="width:${w}px"><div class="cap"><b>${title}</b>${text}</div><iframe style="width:${w}px;height:${h}px" src="popup-note.html?${query}"></iframe></div>`;
+  })
+  .join("");
+</script>
+</body>
+</html>

@@ -1,0 +1,210 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>AskHuman · iOS 留言（静态示意）</title>
+<!-- A static mock of the "Note" (留言) on the iPhone (docs/specs/agent-notes.md): not product code, only drawn to be
+     looked at. It borrows the phone, cards and bottom bar of ios-todo-actions.html and matches the look of the real
+     screens in docs/assets/special-replies/ios-todo-ask.jpg.
+     ?board=flow   the inbox row, the note page with an empty reply (Received) and with a reply (Interject), the wake alert
+     ?board=more   a reply that is off, and what an App that predates notes shows
+     `cells=1,2` limits a board to some of its cells. -->
+<style>
+:root {
+  --bg: #f2f2f7; --card: #fff; --label: #000; --label2: rgba(60, 60, 67, .62); --label3: rgba(60, 60, 67, .32);
+  --fill: rgba(120, 120, 128, .12); --fill2: rgba(120, 120, 128, .2); --sep: rgba(60, 60, 67, .16);
+  --blue: #007aff; --orange: #ff9500; --green: #34c759; --red: #ff3b30; --note: #2fa8bf; --note-ink: #168399;
+}
+* { box-sizing: border-box; }
+html, body { margin: 0; background: #d9dadf; color: var(--label); font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", "PingFang SC", "Helvetica Neue", sans-serif; -webkit-font-smoothing: antialiased; }
+.board { display: flex; gap: 44px; padding: 26px 30px 40px; align-items: flex-start; width: max-content; }
+.cell { width: 393px; display: flex; flex-direction: column; gap: 16px; }
+.cap { min-height: 112px; padding: 0 6px; font-size: 15px; line-height: 1.45; color: #3a3a3c; }
+.cap b { display: block; margin-bottom: 2px; font-size: 18px; color: #111; }
+
+.phone { position: relative; width: 393px; height: 852px; border-radius: 52px; overflow: hidden; background: var(--bg); box-shadow: 0 0 0 7px #1d1d1f, 0 0 0 8px #4a4a4c, 0 24px 60px rgba(0, 0, 0, .3); }
+.island { position: absolute; z-index: 40; top: 11px; left: 50%; width: 124px; height: 36px; margin-left: -62px; border-radius: 18px; background: #000; }
+.status { position: absolute; z-index: 39; top: 0; left: 0; right: 0; height: 56px; padding: 19px 36px 0 48px; display: flex; justify-content: space-between; font-size: 17px; font-weight: 600; }
+.status .sys { display: flex; gap: 6px; align-items: center; }
+.fade { position: absolute; z-index: 28; top: 0; left: 0; right: 0; height: 128px; background: linear-gradient(var(--bg) 58%, rgba(242, 242, 247, 0)); pointer-events: none; }
+.nav { position: absolute; z-index: 30; top: 64px; left: 16px; right: 16px; display: flex; justify-content: space-between; }
+.circle { position: relative; width: 46px; height: 46px; border-radius: 50%; background: rgba(255, 255, 255, .92); box-shadow: 0 1px 8px rgba(0, 0, 0, .1), 0 0 0 .5px rgba(0, 0, 0, .04); display: grid; place-items: center; }
+.scroll { position: absolute; top: 122px; left: 16px; right: 16px; }
+.head { display: flex; gap: 12px; align-items: center; padding: 0 2px; }
+.appicon { flex: none; width: 50px; height: 50px; border-radius: 13px; background: linear-gradient(160deg, #5b9bff, #2f6bf2); display: grid; place-items: center; color: #fff; font: 700 15px ui-monospace, "SF Mono", Menlo, monospace; }
+.head .t { font-size: 17px; font-weight: 700; line-height: 1.25; }
+.head .m { margin-top: 2px; font-size: 12.5px; color: var(--label2); }
+.head .d { font-size: 12px; color: var(--label3); }
+.card { position: relative; margin-top: 14px; padding: 16px; border-radius: 20px; background: var(--card); overflow: hidden; }
+.md { font-size: 17px; line-height: 25px; letter-spacing: -.2px; }
+.md p { margin: 0 0 10px; } .md p:last-child { margin-bottom: 0; }
+.md ul { margin: 0 0 10px; padding-left: 22px; } .md li { margin: 2px 0; }
+.md code { font: 15px ui-monospace, "SF Mono", Menlo, monospace; padding: 1px 5px; border-radius: 5px; background: var(--fill); }
+.qtitle { font-size: 17px; line-height: 24px; font-weight: 600; letter-spacing: -.2px; }
+.opts { margin-top: 12px; display: flex; flex-direction: column; gap: 8px; }
+.opt { display: flex; align-items: center; gap: 12px; min-height: 46px; padding: 0 12px; border-radius: 12px; background: var(--fill); font-size: 17px; border: 2px solid transparent; }
+.radio { flex: none; width: 22px; height: 22px; border-radius: 50%; border: 1.5px solid var(--label3); }
+.field { margin-top: 10px; padding: 12px; border-radius: 12px; background: var(--fill); color: var(--label3); font-size: 17px; min-height: 48px; }
+.field.typed { color: var(--label); }
+.field.off { opacity: .55; }
+.attach { margin-top: 10px; display: flex; align-items: center; gap: 6px; color: var(--blue); font-size: 15px; }
+.attach.off { color: var(--label3); }
+.todo-add { margin-top: 14px; height: 44px; border-radius: 12px; display: flex; align-items: center; justify-content: center; gap: 6px; font-size: 17px; color: var(--blue); border: 1px dashed color-mix(in srgb, var(--blue) 50%, transparent); }
+.bar { position: absolute; z-index: 10; left: 16px; right: 16px; bottom: 34px; display: flex; gap: 8px; align-items: center; }
+.pill { height: 52px; padding: 0 18px; display: flex; align-items: center; border-radius: 26px; background: rgba(255, 255, 255, .95); box-shadow: 0 1px 8px rgba(0, 0, 0, .1); font-size: 16px; font-weight: 600; }
+.send { flex: 0 0 132px; height: 52px; display: grid; place-items: center; border-radius: 26px; background: var(--blue); color: #fff; font-size: 17px; font-weight: 600; box-shadow: 0 2px 10px rgba(0, 122, 255, .3); }
+.home { position: absolute; z-index: 45; bottom: 8px; left: 50%; width: 138px; height: 5px; margin-left: -69px; border-radius: 3px; background: #000; }
+
+/* ---- The note ---- */
+/* The message is the card: a quiet tinted sheet with the tag in its corner. */
+.card.note { background: color-mix(in srgb, var(--note) 9%, #fff); box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--note) 26%, transparent); padding: 14px 16px 16px; }
+.tag { display: inline-flex; align-items: center; gap: 5px; height: 26px; padding: 0 11px 0 9px; margin-bottom: 11px; border-radius: 13px; font-size: 13px; font-weight: 600; color: var(--note-ink); background: color-mix(in srgb, var(--note) 15%, transparent); }
+.tag i { font-style: normal; opacity: .55; margin: 0 -1px; }
+/* The bottom bar of a note: one button across, named after what it will do. */
+.bar.one .send { flex: 1; }
+.send.ack { background: color-mix(in srgb, var(--note) 16%, #fff); color: var(--note-ink); box-shadow: 0 0 0 1px color-mix(in srgb, var(--note) 38%, transparent), 0 1px 8px rgba(0, 0, 0, .08); }
+
+/* The system alert of the wake confirmation. */
+.dim { position: absolute; z-index: 60; inset: 0; background: rgba(0, 0, 0, .32); }
+.alert { position: absolute; z-index: 61; left: 50%; top: 50%; width: 290px; transform: translate(-50%, -50%); border-radius: 26px; background: rgba(250, 250, 252, .96); text-align: center; box-shadow: 0 12px 50px rgba(0, 0, 0, .3); overflow: hidden; }
+.alert .body { padding: 22px 20px 18px; }
+.alert h3 { margin: 0 0 6px; font-size: 17px; font-weight: 600; }
+.alert p { margin: 0; font-size: 13.5px; line-height: 1.4; color: #3a3a3c; }
+.alert .btns { display: flex; border-top: .5px solid rgba(60, 60, 67, .3); }
+.alert .btns div { flex: 1; height: 48px; display: grid; place-items: center; font-size: 17px; color: var(--blue); }
+.alert .btns div + div { border-left: .5px solid rgba(60, 60, 67, .3); font-weight: 600; }
+
+/* ---- The inbox ---- */
+.inbox-title { position: absolute; z-index: 30; top: 66px; left: 0; right: 0; text-align: center; font-size: 17px; font-weight: 600; }
+.filter { position: absolute; z-index: 30; top: 64px; left: 16px; width: 46px; height: 46px; border-radius: 50%; background: rgba(255, 255, 255, .92); box-shadow: 0 1px 8px rgba(0, 0, 0, .1); display: grid; place-items: center; }
+.list { position: absolute; top: 128px; left: 16px; right: 16px; border-radius: 20px; background: var(--card); overflow: hidden; }
+.irow { position: relative; display: flex; gap: 10px; padding: 12px 14px 12px 8px; }
+.irow + .irow::before { content: ""; position: absolute; top: 0; left: 70px; right: 0; border-top: .5px solid var(--sep); }
+.dot { flex: none; width: 9px; height: 9px; margin-top: 14px; border-radius: 50%; background: var(--blue); }
+.dot.off { visibility: hidden; }
+.badge { flex: none; width: 44px; height: 44px; border-radius: 12px; display: grid; place-items: center; color: #fff; font-weight: 700; }
+.badge.codex { background: linear-gradient(160deg, #5b9bff, #2f6bf2); font: 700 13px ui-monospace, "SF Mono", Menlo, monospace; }
+.badge.claude { background: linear-gradient(160deg, #e9946b, #cf6b3e); font-size: 20px; }
+.badge.cursor { background: linear-gradient(160deg, #4a4a4c, #1c1c1e); font-size: 17px; }
+.irow .txt { flex: 1; min-width: 0; }
+.irow .l1 { display: flex; align-items: baseline; gap: 8px; }
+.irow .l1 b { flex: 1; min-width: 0; font-size: 15px; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.irow .l1 span { font-size: 12.5px; color: var(--label2); }
+.irow .pv { margin-top: 3px; font-size: 15px; line-height: 20px; color: var(--label2); display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+.irow .chips { margin-top: 6px; display: flex; gap: 6px; }
+.ichip { display: inline-flex; align-items: center; gap: 4px; height: 22px; padding: 0 8px 0 6px; border-radius: 11px; font-size: 12.5px; font-weight: 500; background: var(--fill); color: var(--label2); }
+.ichip.note { background: color-mix(in srgb, var(--note) 14%, transparent); color: var(--note-ink); }
+.tabs { position: absolute; z-index: 30; left: 18px; right: 18px; bottom: 28px; height: 64px; padding: 5px; display: flex; border-radius: 32px; background: rgba(255, 255, 255, .94); box-shadow: 0 4px 22px rgba(0, 0, 0, .14), 0 0 0 .5px rgba(0, 0, 0, .05); }
+.tab { flex: 1; border-radius: 27px; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 2px; font-size: 10.5px; font-weight: 500; color: #3a3a3c; position: relative; }
+.tab.on { background: rgba(120, 120, 128, .14); color: var(--blue); }
+.tab .n { position: absolute; top: 3px; left: 54%; min-width: 18px; height: 18px; padding: 0 5px; border-radius: 9px; background: var(--red); color: #fff; font-size: 11.5px; font-weight: 600; display: grid; place-items: center; }
+</style>
+</head>
+<body>
+<div class="board" id="board"></div>
+<script>
+const I = (path, { w = 20, stroke = "currentColor", sw = 1.8, fill = "none" } = {}) =>
+  `<svg width="${w}" height="${w}" viewBox="0 0 24 24" fill="${fill}" stroke="${stroke}" stroke-width="${sw}" stroke-linecap="round" stroke-linejoin="round">${path}</svg>`;
+const ICON = {
+  back: '<svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="#000" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M15 5l-7 7 7 7"/></svg>',
+  dots: '<svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="#000" stroke-width="1.8"><circle cx="12" cy="12" r="9.5"/><circle cx="7.6" cy="12" r="1.15" fill="#000"/><circle cx="12" cy="12" r="1.15" fill="#000"/><circle cx="16.4" cy="12" r="1.15" fill="#000"/></svg>',
+  wifi: '<svg width="20" height="14" viewBox="0 0 20 14"><path d="M10 12.2l1.7-1.9a2.5 2.5 0 0 0-3.4 0zM5.6 7.4a6.4 6.4 0 0 1 8.8 0l1.2-1.4a8.2 8.2 0 0 0-11.2 0zM2 3.4a11.4 11.4 0 0 1 16 0l1.2-1.4a13.2 13.2 0 0 0-18.4 0z" fill="#000"/></svg>',
+  batt: '<svg width="30" height="14" viewBox="0 0 30 14"><rect x=".5" y=".5" width="25" height="13" rx="4" fill="none" stroke="#000" opacity=".4"/><rect x="2" y="2" width="22" height="10" rx="2.6" fill="#000"/><rect x="27" y="4.6" width="2" height="4.8" rx="1" fill="#000" opacity=".4"/></svg>',
+  mail: I('<rect x="3" y="5" width="18" height="14" rx="3"/><path d="m4 8 8 5.5L20 8"/>', { w: 15, sw: 1.9 }),
+  mailsm: I('<rect x="3" y="5" width="18" height="14" rx="3"/><path d="m4 8 8 5.5L20 8"/>', { w: 13, sw: 2 }),
+  list: I('<path d="M5 7h14M5 12h14M5 17h9"/>', { w: 12, sw: 2.2 }),
+  check: I('<path d="M5 12.5l4.5 4.5L19 7"/>', { w: 17, sw: 2.6 }),
+  plus: I('<path d="M12 5v14M5 12h14"/>', { w: 17, sw: 2.2 }),
+  clipb: I('<path d="M20 11.2l-8.1 8.1a5 5 0 0 1-7.1-7.1l8.5-8.5a3.3 3.3 0 0 1 4.7 4.7l-8.5 8.5a1.7 1.7 0 0 1-2.4-2.4l7.8-7.8"/>', { w: 18, sw: 1.8 }),
+  filter: I('<path d="M4 7h16M7 12h10M10 17h4"/>', { w: 22, sw: 2 }),
+  tray: I('<path d="M4 13l2.2-7a2 2 0 0 1 1.9-1.4h7.8a2 2 0 0 1 1.9 1.4L20 13v5a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2zM4 13h4.5a1 1 0 0 1 1 .8 2.6 2.6 0 0 0 5 0 1 1 0 0 1 1-.8H20"/>', { w: 24, sw: 1.7 }),
+  agents: I('<rect x="4" y="5" width="16" height="12" rx="3"/><path d="M9 20h6M12 17v3"/>', { w: 24, sw: 1.7 }),
+  todos: I('<path d="M4 6.5l1.6 1.6L8.4 5M4 12.5l1.6 1.6 2.8-3.1M4 18.5l1.6 1.6 2.8-3.1M12 7h8M12 13h8M12 19h8"/>', { w: 24, sw: 1.7 }),
+  history: I('<path d="M4 12a8 8 0 1 0 2.4-5.7L4 8.5M4 4v4.5h4.5M12 8v4.5l3 1.5"/>', { w: 24, sw: 1.7 }),
+};
+
+function shell(inner, { bar = "", extra = "" } = {}) {
+  return `<div class="phone">
+    <div class="island"></div>
+    <div class="fade"></div>
+    <div class="status"><span>14:32</span><span class="sys">${ICON.wifi}${ICON.batt}</span></div>
+    <div class="nav"><div class="circle">${ICON.back}</div><div class="circle">${ICON.dots}</div></div>
+    <div class="scroll">${inner}</div>
+    ${bar}
+    ${extra}
+    <div class="home"></div>
+  </div>`;
+}
+
+const head = `<div class="head"><div class="appicon">&gt;_</div><div><div class="t">重构配对接口的超时处理</div><div class="m">Codex · HumanInLoop · Home MacBook Pro</div><div class="d">11月4日 14:32</div></div></div>`;
+
+const NOTE_MD = `<p>你之前问的「请求超时之后为什么没有自动重试」，我查完了：</p>
+<ul><li><code>PairingClient</code> 的超时分支直接抛出 <code>TimeoutError</code>，没有经过 <code>retry()</code> 包装</li>
+<li>两周前为了避免重复扣费，这里的自动重试被去掉了，只在幂等的 <code>GET</code> 上保留</li></ul>
+<p>结论：现在的行为是有意的，不是 bug。如果希望 <code>POST /pair</code> 也能重试，要先给它加幂等键。这是一个独立的改动，我先不动，这一轮收尾后再和你确认。</p>`;
+
+const noteCard = () => `<div class="card note"><div class="tag">${ICON.mail}留言<i>·</i>无需回复</div><div class="md">${NOTE_MD}</div></div>`;
+// The page's todo list ends with the dashed "Add todo" row (TodoAddRow.swift); a note page has it like any request page.
+const replyCard = ({ typed = "", off = false } = {}) =>
+  `<div class="card"><div class="field${typed ? " typed" : ""}${off ? " off" : ""}">${typed || "回复这条留言"}</div><div class="attach${off ? " off" : ""}">${ICON.clipb}添加附件</div></div>
+  <div class="todo-add">${ICON.plus}添加待办</div>`;
+const noteBar = (label) => `<div class="bar one"><div class="send${label === "已收到" ? " ack" : ""}">${label}</div></div>`;
+
+const alertSheet = `<div class="dim"></div><div class="alert"><div class="body"><h3>重新唤醒 Agent？</h3><p>它这一轮已经结束了。发送后会开启新的一轮，会产生新的用量。</p></div><div class="btns"><div>取消</div><div>唤醒并发送</div></div></div>`;
+
+const REPLY = "幂等键要改几处？不多就顺手做掉。";
+
+function inboxRow({ agent, glyph, title, time, preview, chips = "", unread = false }) {
+  return `<div class="irow"><span class="dot${unread ? "" : " off"}"></span><span class="badge ${agent}">${glyph}</span>
+    <div class="txt"><div class="l1"><b>${title}</b><span>${time}</span></div><div class="pv">${preview}</div>${chips ? `<div class="chips">${chips}</div>` : ""}</div></div>`;
+}
+const noteChip = `<span class="ichip note">${ICON.mailsm}留言</span>`;
+const inbox = () => `<div class="phone">
+  <div class="island"></div><div class="fade"></div>
+  <div class="status"><span>14:32</span><span class="sys">${ICON.wifi}${ICON.batt}</span></div>
+  <div class="filter">${ICON.filter}</div><div class="inbox-title">收件箱</div>
+  <div class="list">
+    ${inboxRow({ agent: "codex", glyph: "&gt;_", title: "重构配对接口的超时处理", time: "刚刚", preview: "你之前问的「请求超时之后为什么没有自动重试」，我查完了：PairingClient 的超时分支直接抛出 TimeoutError……", chips: noteChip, unread: true })}
+    ${inboxRow({ agent: "claude", glyph: "✺", title: "修复登录页样式", time: "2 分钟前", preview: "已定位到登录页在 Safari 15 下样式错位的原因：.field-row 用了 flex 的 gap，旧版本不支持。", chips: `<span class="ichip">${ICON.list}2 个问题</span>`, unread: true })}
+    ${inboxRow({ agent: "cursor", glyph: "▲", title: "发布前检查清单", time: "9 分钟前", preview: "单测补完了，另外发现两处无关的告警，已经记进待办。", chips: noteChip })}
+    ${inboxRow({ agent: "cursor", glyph: "▲", title: "首页改版", time: "12 分钟前", preview: "首页文案已更新，选择首页的内容布局。" })}
+  </div>
+  <div class="tabs">
+    <div class="tab on">${ICON.tray}<span>收件箱</span><span class="n">4</span></div>
+    <div class="tab">${ICON.agents}<span>Agents</span></div>
+    <div class="tab">${ICON.todos}<span>待办</span></div>
+    <div class="tab">${ICON.history}<span>历史</span></div>
+  </div>
+  <div class="home"></div>
+</div>`;
+
+/** An App that predates notes: the Mac sends the note as an ordinary request with one option, as it does for a Cursor report. */
+const oldPage = shell(`${head}<div class="card"><div class="md">${NOTE_MD}</div></div>
+  <div class="card"><div class="opts" style="margin-top:0"><div class="opt"><span class="radio"></span>已收到</div></div></div>`,
+  { bar: `<div class="bar"><div class="pill">已回答 0/1</div><div style="flex:1"></div><div class="send">发送</div></div>` });
+
+const boards = {
+  flow: () => [
+    cell("<b>① 收件箱：留言是一行，带「留言」标签</b>和提问同在一个列表里，标签用同一种位置与形状（和「确认」「2 个问题」同类）。角标数的是收件箱里有几条，留言算在内。", inbox()),
+    cell("<b>② 留言页：回复框是空的，按钮写「已收到」</b>正文在一张淡青色的卡里，角上是「留言 · 无需回复」。底栏只有一个通栏按钮（没有「已回答 N/M」），淡色：点了只是告诉 Agent 你看过。", shell(head + noteCard() + replyCard(), { bar: noteBar("已收到") })),
+    cell("<b>③ 写了回复（或加了附注）：按钮换成「插话」</b>实心的强调色。Agent 还在工作时，这条话在它的下一次工具调用前送到；它正卡在别的提问上时，附在那条提问的答案后面。", shell(head + noteCard() + replyCard({ typed: REPLY }), { bar: noteBar("插话") })),
+    cell("<b>④ Agent 这一轮已结束但能续聊：按钮换成「唤醒」，点它先确认</b>系统提示框，两个按钮并排。发送会开启新的一轮，会产生新的用量；确认后才发出。", shell(head + noteCard() + replyCard({ typed: REPLY }), { bar: noteBar("唤醒"), extra: alertSheet })),
+  ],
+  more: () => [
+    cell("<b>⑤ 收不了回复的会话：回复框置灰，按钮仍是「已收到」</b>没有续聊通道（例如 Grok，或认不出的会话）。不写原因；想记下疑问，用每个请求页都有的「添加待办」。", shell(head + noteCard() + replyCard({ off: true }), { bar: noteBar("已收到") })),
+    cell("<b>⑥ 没升级的 App 看到的</b>Mac 同时把留言当作一个只有「已收到」一个选项的普通请求发过去（和现在的 Cursor 待阅汇报一样）：能读、能点掉，只是没有留言的样子，也不能回复。", oldPage),
+  ],
+};
+
+function cell(caption, phone) {
+  return `<div class="cell"><div class="cap">${caption}</div>${phone}</div>`;
+}
+
+const query = new URLSearchParams(location.search);
+const board = boards[query.get("board") || "flow"] || boards.flow;
+const only = (query.get("cells") || "").split(",").map(Number).filter((n) => n > 0);
+document.getElementById("board").innerHTML = board().filter((_, i) => !only.length || only.includes(i + 1)).join("");
+</script>
+</body>
+</html>

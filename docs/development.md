@@ -106,6 +106,14 @@ Current prototypes:
 - `ios-annotations.html` — a static mock of the same flow on the iPhone answer page, not product code and not a
   screenshot: `?board=flow|direct|bar&cells=1,2`. The `bar` board's widths are estimates; the real ones are measured by
   `AskHumanBarUITests` at 375 pt.
+- `popup-note.html` · `popup-note-board.html` · `ios-notes.html` — the design-round prototypes of the "Note" (留言), an
+  Agent message that needs no answer (spec `docs/specs/agent-notes.md`; the images in `docs/assets/agent-notes/` were
+  rendered from them). The popup pages run the **real** `PopupView` and `InboxSidebar` against `mockIPC`
+  (`noteMock.ts`) and draw what the product does not have yet (the note tag, the one primary button, the wake
+  confirmation, the list counts) over their DOM (`NoteFrame.vue`, `note.css`).
+  `popup-note.html?scene=empty|typed|idle|confirm|locked|list|mini|mini-notes&theme=light|dark&w=&h=` is one window;
+  `popup-note-board.html?board=card|list&cols=&theme=` lays the scenes out as iframes. `ios-notes.html?board=flow|more`
+  is a static mock of the iPhone states, not product code and not a screenshot.
 - `popup-todo-actions.html` · `popup-todo-actions-board.html` · `ios-todo-actions.html` — the design-round prototypes
   of complete / delete / add on every todo list of a request page (spec `docs/specs/todo-list-actions.md`; the images in
   `docs/assets/todo-list-actions/` were rendered from them). The popup pages run the real `PopupView` against `mockIPC`

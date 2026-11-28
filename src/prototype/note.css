@@ -1,0 +1,79 @@
+/* Prototype-only styles for the "Note" (留言) design (docs/specs/agent-notes.md). They are written with the popup's own
+   tokens and the control vocabulary of controls.css / popup.css, so a screenshot looks like what the product would draw.
+   The stage and the fake window come from replyMenu.css. Nothing here ships. */
+
+html.rp-frame { --note: #2fa8bf; --note-ink: #168399; }
+html.rp-frame.theme-dark { --note: #4cc3d9; --note-ink: #6fd2e4; }
+
+/* ---- The window: a Sidebar column beside the popup, or the small window (the column alone) -------------------- */
+.nt-window[style*="--rp-win-h: auto"] { height: auto; }
+.nt-sidebar {
+  flex: none; width: 252px; display: flex; flex-direction: column; min-height: 0;
+  --ms: 0ms; --inbox-ease: cubic-bezier(.2, 0, 0, 1); --inbox-ease-in: cubic-bezier(.4, 0, 1, 1); --inbox-ease-out: cubic-bezier(0, 0, .2, 1); --inbox-lift: 16px;
+}
+.nt-sidebar > .inbox-sidebar { flex: 1; }
+.nt-divider { flex: none; width: 6px; background: color-mix(in srgb, currentColor 8%, transparent); }
+.nt-main .popup-shell, .nt-main .popup-status { height: 100%; width: 100%; }
+/* The small window is as tall as its rows, like the product's (docs/specs/popup-inbox-collapse.md). */
+.nt-window:has(.nt-sidebar[data-view="collapsed"]) .rp-body { position: relative; }
+.nt-sidebar[data-view="collapsed"] { width: 100%; }
+.nt-sidebar[data-view="collapsed"] .inbox-navigation { padding-bottom: 12px; }
+.nt-mini-ring {
+  position: absolute; inset: 0; border-radius: 16px; pointer-events: none;
+  box-shadow: inset 0 0 0 1.5px color-mix(in srgb, var(--accent) 70%, transparent);
+}
+
+/* ---- The Sidebar: a note is a row among the questions, with its own tag and no "later" flag --------------------- */
+.nt-sidebar .inbox-entry[data-note] .inbox-kind {
+  color: var(--note-ink); border-color: color-mix(in srgb, var(--note) 45%, transparent);
+  background: color-mix(in srgb, var(--note) 10%, transparent);
+}
+.nt-sidebar .inbox-entry[data-note] .row-flag { display: none; }
+.nt-heading-notes { margin-left: 4px; font-weight: 500; font-size: 12px; color: var(--note-ink); }
+.nt-sidebar[data-view="collapsed"] .nt-heading-notes { color: var(--accent); opacity: .8; }
+
+/* ---- The note card ------------------------------------------------------------------------------------------- */
+.nt-tag {
+  order: -3; align-self: flex-start; display: inline-flex; align-items: center; gap: 5px; height: 22px; padding: 0 9px 0 7px;
+  border-radius: 11px; font-size: 11.5px; font-weight: 600; letter-spacing: .01em;
+  color: var(--note-ink); background: color-mix(in srgb, var(--note) 13%, transparent);
+  box-shadow: inset 0 0 0 .5px color-mix(in srgb, var(--note) 38%, transparent);
+}
+.nt-tag svg { width: 13px; height: 13px; fill: none; stroke: currentColor; stroke-width: 1.7; stroke-linecap: round; stroke-linejoin: round; }
+.nt-tag i { font-style: normal; opacity: .55; margin: 0 -1px; }
+/* The message is the card: a quiet tinted sheet under the tag, and nothing asks anything below it. */
+.nt-stage .content > .markdown-body {
+  order: -2; padding: 14px 16px; border-radius: 12px;
+  background: color-mix(in srgb, var(--note) 6.5%, transparent);
+  box-shadow: inset 0 0 0 .5px color-mix(in srgb, var(--note) 26%, transparent);
+}
+.nt-stage .content > .msg-tools { order: -1; }
+.nt-stage .content > .q-header { display: none; }
+/* The wire's single option "Received" is what an old build shows; a build that knows notes draws the button instead. */
+.nt-stage .question-pane > .options { display: none; }
+
+/* The footer has one button; the questions' own controls (Cancel, answer later, quick replies, Send) give way. */
+.nt-stage .popup-main > .footer > :not(.nt-send):not(.spacer):not([class*="annotation"]) { display: none !important; }
+.nt-send { min-width: 92px; }
+.nt-check { width: 12px; height: 12px; margin: 0 4px -1px 0; fill: none; stroke: currentColor; stroke-width: 2.6; stroke-linecap: round; stroke-linejoin: round; }
+.nt-send:not(.btn-primary) {
+  color: var(--note-ink); background: color-mix(in srgb, var(--note) 14%, var(--control-bg));
+  box-shadow: inset 0 0 0 .5px color-mix(in srgb, var(--note) 42%, transparent);
+}
+
+/* The reply field is a quiet one: it is there when something occurs to the reader. */
+.nt-stage[data-locked="yes"] textarea { opacity: .5; cursor: not-allowed; }
+
+/* ---- The wake confirmation ------------------------------------------------------------------------------------ */
+.nt-confirm {
+  position: absolute; z-index: 40; right: 16px; bottom: 62px; width: 296px; box-sizing: border-box; padding: 14px 16px 12px;
+  background: var(--surface-overlay); border: 1px solid var(--border); border-radius: 12px; color: var(--text-primary);
+  box-shadow: 0 10px 34px rgba(0, 0, 0, .26), 0 2px 8px rgba(0, 0, 0, .12);
+}
+.nt-confirm::after {
+  content: ""; position: absolute; right: 38px; bottom: -6px; width: 11px; height: 11px; transform: rotate(45deg);
+  background: var(--surface-overlay); border-right: 1px solid var(--border); border-bottom: 1px solid var(--border);
+}
+.nt-confirm h3 { margin: 0 0 5px; font-size: 13.5px; font-weight: 600; }
+.nt-confirm p { margin: 0 0 12px; font-size: 12px; line-height: 1.55; color: var(--text-secondary); }
+.nt-confirm-actions { display: flex; justify-content: flex-end; gap: 8px; }
